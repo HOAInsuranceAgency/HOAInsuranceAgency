@@ -15,13 +15,11 @@ import { useAsyncResource } from "../lib/useAsyncResource";
 import { useState, useEffect, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { uploadData } from "../lib/scopedStorage";
-import {
-  client,
+import { client,
   friendlyError,
-  US_STATES,
   validateAccountFields,
-  type Contact,
-} from "../lib/client";
+  type Contact } from "../lib/client";
+import { US_STATES } from "../../../shared/usStates";
 import { AddressAutocomplete } from "../lib/googlePlaces";
 import FileButton from "../components/FileButton";
 import {

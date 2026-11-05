@@ -12,7 +12,7 @@ import { activeLeadQuotes, isOpenLead, leadPersonMetrics, PIPELINE_SERIES } from
 import { StackedBars, type ChartRow, type ChartSeries } from '../../components/StackedBars';
 import { OpportunityEstimate } from '../../components/OpportunityEstimate';
 import { formatCommission, pendingCommission } from '../../../../shared/quotePackages';
-import { agencyDay } from '../../../../shared/leadActionGuidance';
+import { agencyDay } from "../../../../shared/agencyTime";
 import { useLastContacts } from "../../lib/lastContact";
 import { useCallback, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";

@@ -1,7 +1,8 @@
+import { formatUsdDollars, formatUsdCents } from '../../../../shared/money';
 import type { Schema } from '../../data/resource';
 import { isBusinessDeliveryFile, type BusinessDeliverySelection, type PublicProposalQuote } from '../../../../shared/frontBusinessDelivery';
 import { packageAssessment, packageTerms, type CommercialPlan } from '../../../../shared/quotePackages';
-import { agencyDay } from '../../../../shared/leadActionGuidance';
+import { agencyDay } from "../../../../shared/agencyTime";
 import { dataClient } from './data';
 import { canonical, check, get, hash, type Row, type Write } from './store';
 import { clientChargeBreakdown, clientChargeTotals } from '../../../../shared/clientCharges';
@@ -91,15 +92,15 @@ export async function loadDeliverySource(input: BusinessDeliverySelection): Prom
         passThroughCharges: normalizePassThroughCharges(q.passThroughCharges), clientConditions: q.clientConditions,
         ...Object.fromEntries(publicFields.map(field => [field, q[field] ?? null])) };
       quotes.push(publicQuote);
-      facts.push(`Carrier: ${publicQuote.carrierName}`, `Coverage: ${publicQuote.lines.join(', ')}`, `Premium: ${new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(publicQuote.premium)}`, `Term: ${publicQuote.effectiveDate} to ${publicQuote.expirationDate}`);
-      for (const charge of publicQuote.passThroughCharges!) facts.push(`${charge.description}: ${new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(charge.amountCents / 100)}`);
+      facts.push(`Carrier: ${publicQuote.carrierName}`, `Coverage: ${publicQuote.lines.join(', ')}`, `Premium: ${formatUsdDollars(publicQuote.premium)}`, `Term: ${publicQuote.effectiveDate} to ${publicQuote.expirationDate}`);
+      for (const charge of publicQuote.passThroughCharges!) facts.push(`${charge.description}: ${formatUsdCents(charge.amountCents)}`);
       const charges = clientChargeBreakdown(publicQuote);
-      if (charges.brokerFeeCents) facts.push(`HOA broker fee: ${new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(charges.brokerFeeCents / 100)}`);
+      if (charges.brokerFeeCents) facts.push(`HOA broker fee: ${formatUsdCents(charges.brokerFeeCents)}`);
     }
     const totals = clientChargeTotals(quotes);
-    if (totals.passThroughCents) facts.push(`Supplier fees and taxes: ${new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(totals.passThroughCents / 100)}`);
-    if (totals.brokerFeeCents) facts.push(`Total HOA broker fees: ${new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(totals.brokerFeeCents / 100)}`);
-    facts.push(`Total quoted policy cost: ${new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(totals.clientTotalCents / 100)}`);
+    if (totals.passThroughCents) facts.push(`Supplier fees and taxes: ${formatUsdCents(totals.passThroughCents)}`);
+    if (totals.brokerFeeCents) facts.push(`Total HOA broker fees: ${formatUsdCents(totals.brokerFeeCents)}`);
+    facts.push(`Total quoted policy cost: ${formatUsdCents(totals.clientTotalCents)}`);
   } else if (input.kind === 'CERTIFICATE') {
     const result = await client.models.Certificate.get({ id: input.recordId }), cert = result.data;
     if (result.errors?.length || !cert || cert.accountId !== input.accountId || cert.s3Key !== `certificates/${input.accountId}/${cert.id}.pdf`) throw businessValidation('Generate a certificate on this account before preparing it');

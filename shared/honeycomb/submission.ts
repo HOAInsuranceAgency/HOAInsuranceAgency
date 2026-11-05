@@ -1,3 +1,4 @@
+import { agencyDay } from '../agencyTime';
 /** Shared validation and display helpers; no secrets or browser data client. */
 import { HONEYCOMB_ENDPOINTS, isHoneycombEnvironment } from "./environment";
 export type SubmissionDetails = {
@@ -24,8 +25,7 @@ export function eligibleEstimate(estimate: SourceEstimate): boolean {
   return !!estimate.estimationId && ["READY", "UNAVAILABLE"].includes(estimate.status) && object(estimate.result).isOkToSubmit === true;
 }
 export function businessDate(now = new Date()): string {
-  const parts = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(now);
-  return ["year", "month", "day"].map(type => parts.find(p => p.type === type)!.value).join("-");
+  return agencyDay(now);
 }
 export function lastEffectiveDate(now = new Date()): string {
   return new Date(Date.parse(businessDate(now)) + 90 * 86400000).toISOString().slice(0, 10);

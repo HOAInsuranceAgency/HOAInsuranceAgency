@@ -1,11 +1,10 @@
 import type { SortDir } from './useSort';
-import { US_STATE_NAMES } from './usMap';
+import { usStateCode } from "../../../shared/usStates";
 
 export type AccountListStage = 'LEAD' | 'CLIENT';
 export const LEAD_VIEWS = ['Active', 'Snoozed', 'Follow-up due', 'All leads'] as const;
 export type LeadView = typeof LEAD_VIEWS[number];
 export type AccountListView = { leadView: LeadView; salesperson: string; state: string; sortKey: string; dir: SortDir };
-export { US_STATE_NAMES };
 const viewIds = { Active: 'active', Snoozed: 'snoozed', 'Follow-up due': 'due', 'All leads': 'all' } as const;
 const parameters = ['view', 'salesperson', 'state', 'sort', 'dir'] as const;
 const commonSorts = ['name', 'type', 'contact', 'city', 'state', 'units', 'tiv', 'renewal'];
@@ -13,8 +12,7 @@ const leadSorts = ['followUp', 'source', 'form', 'estimate', 'pending', 'entered
 const defaults: AccountListView = { leadView: 'Active', salesperson: '', state: '', sortKey: 'renewal', dir: 'asc' };
 
 export function accountStateCode(value: string | null | undefined) {
-  const text = value?.trim().toUpperCase();
-  return text ? Object.keys(US_STATE_NAMES).find(code => code === text || US_STATE_NAMES[code].toUpperCase() === text) ?? '' : '';
+  return usStateCode(value);
 }
 
 export function accountViewKey(scope: string | undefined, stage: AccountListStage) {

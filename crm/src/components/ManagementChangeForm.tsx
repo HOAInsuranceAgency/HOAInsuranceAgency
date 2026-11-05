@@ -12,7 +12,7 @@ import { communicationRequest } from '../lib/communications';
 import { type Contact, fmtDate } from '../lib/client';
 import type { PartyRecord, AccountRelationshipRecord } from '../lib/relationships';
 import { relationshipCurrent } from '../../../shared/relationships';
-import { agencyDay } from '../../../shared/leadActionGuidance';
+import { agencyDay } from "../../../shared/agencyTime";
 
 export default function ManagementChangeForm({
   accountId,

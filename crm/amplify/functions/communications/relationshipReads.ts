@@ -3,7 +3,7 @@ import { batchGetComplete } from '../storage/batchGet';
 import { AccountAccess } from '../crm-access/access';
 import type { Identity, RecordData } from '../crm-access/policy';
 import type { RoleRequest } from '../crm-access/active-role';
-import { agencyDay } from '../../../../shared/leadActionGuidance';
+import { agencyDay } from "../../../../shared/agencyTime";
 import { db, hash, canonical } from './store';
 import { dataClient } from './data';
 

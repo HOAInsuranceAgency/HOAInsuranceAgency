@@ -1,3 +1,4 @@
+import { formatUsdDollars } from '../../../shared/money';
 import { liveUpdates } from "./liveUpdates";
 import { assertGraphqlErrors } from './apiResponse';
 import { generateClient } from "aws-amplify/data";
@@ -225,13 +226,6 @@ export function licenseHealth(l: {
   };
 }
 
-export const US_STATES = [
-  "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA",
-  "KS","KY","LA","ME","MD","MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ",
-  "NM","NY","NC","ND","OH","OK","OR","PA","RI","SC","SD","TN","TX","UT","VT",
-  "VA","WA","WV","WI","WY","DC",
-];
-
 // Alphabetical.
 export const LINES_OF_BUSINESS = [
   /**
@@ -291,7 +285,8 @@ export function fmtNum(n: number | null | undefined): string {
 
 export function fmtMoney(n: number | null | undefined): string {
   if (n == null) return "—";
-  return n.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+  if (typeof n === "number") return formatUsdDollars(n, "whole");
+  return (n as number).toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 }
 
 export function fmtDate(d: string | null | undefined): string {

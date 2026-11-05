@@ -26,7 +26,8 @@ import { leadSnoozeStatus } from '../../../shared/leadSnooze';
 import { useAgencyDay } from '../lib/useAgencyDay';
 import { acquisitionLabel, websiteFormLabel } from '../../../shared/leadSource';
 import { formatCommission, pendingCommission } from '../../../shared/quotePackages';
-import { accountStateCode, LEAD_VIEWS, US_STATE_NAMES, type AccountListStage, type AccountListView, type LeadView } from '../lib/accountListView';
+import { accountStateCode, LEAD_VIEWS, type AccountListStage, type AccountListView, type LeadView } from "../lib/accountListView";
+import { US_STATE_NAMES } from "../../../shared/usStates";
 import { useAccountListPosition, useAccountListView } from '../lib/useAccountListView';
 import { MAX_NAMED_VIEWS, putNamedAccountView, readNamedAccountViews, writeNamedAccountViews, type NamedAccountView } from '../lib/namedAccountViews';
 

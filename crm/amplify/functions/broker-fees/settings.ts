@@ -1,3 +1,4 @@
+import { isUSStateCode } from '../../../../shared/usStates';
 import { activeRole, type RoleRequest } from '../crm-access/active-role';
 import { assertUserSession, activeTeamUserCheck } from '../crm-access/user-status';
 import type { Identity } from '../crm-access/policy';
@@ -9,7 +10,7 @@ export async function saveJurisdiction(event:{identity?:Identity;request?:RoleRe
   await assertUserSession(event.identity);
   if(!['ADMIN','OWNER'].includes(activeRole(event.identity,event.request)??''))throw new Error('Only an active agency administrator can configure broker fee jurisdictions.');
   const state=String(input.state??'').trim().toUpperCase();
-  if(!/^(A[KLRZ]|C[AOT]|D[CE]|FL|GA|HI|I[ADLN]|K[SY]|LA|M[ADEINOST]|N[CDEHJMVY]|O[HKR]|PA|RI|S[CD]|T[NX]|UT|V[AT]|W[AIVY])$/.test(state))throw new Error('Choose a US state or the District of Columbia.');
+  if(!isUSStateCode(state))throw new Error('Choose a US state or the District of Columbia.');
   const settings=await getModel<Record<string,unknown>>('AgencySettings','AGENCY');
   const prior=Number(settings?.brokerFeeJurisdictionsVersion??0);
   if(input.version!==prior)throw new Error('Jurisdiction settings changed. Reload before saving.');

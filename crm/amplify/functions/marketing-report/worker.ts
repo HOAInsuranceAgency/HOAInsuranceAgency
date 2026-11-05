@@ -1,3 +1,4 @@
+import { agencyDay } from '../../../../shared/agencyTime';
 import { TransactionalMailClient } from "../transactional-mail/client";
 import { MailDeliveryError } from "../transactional-mail/contract";
 import { SendEmailCommand } from "@aws-sdk/client-sesv2";
@@ -51,7 +52,7 @@ export const handler = async (event: Event) => {
     const report = buildMarketingLeadReport(await reportSnapshot(), record.data.asOf);
     const workbook = buildMarketingReportWorkbook(report);
     if (workbook.byteLength > 7 * 1024 * 1024) throw new Error("The report exceeds the email attachment size limit. No report was sent.");
-    const date = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(record.data.asOf));
+    const date = agencyDay(record.data.asOf);
     const text = `Attached is the HOA lead update generated from the CRM on ${date}.\n\nIt includes ${report.rows.length} account rows, including converted clients. Blank cells indicate information not recorded in the CRM. The workbook's Report Notes tab describes the field mappings and data limitations.\n\nWeekly delivery is scheduled for Fridays at 8:00 AM Eastern.`;
     const raw = buildMimeMessage({ from: sender, to: record.data.recipient, replyTo: sender, subject: `HOA Lead Update — ${date}`, text, html: text.split("\n\n").map(paragraph => `<p>${paragraph}</p>`).join(""), attachment: { filename: `HOA_LEAD_UPDATE_${date}.xlsx`, contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", content: workbook } });
     record = await updateRun(record, { rowCount: report.rows.length, sendStartedAt: new Date().toISOString() });

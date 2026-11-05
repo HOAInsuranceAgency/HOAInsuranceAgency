@@ -8,7 +8,8 @@ import { Table } from "../components/ui/Table";
 import { SegmentedControl } from "../components/ui/SegmentedControl";
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { client, assertNoErrors, fmtMoney, US_STATES, type AppetiteGuide, type Carrier } from "../lib/client";
+import { client, assertNoErrors, fmtMoney, type AppetiteGuide, type Carrier } from "../lib/client";
+import { US_STATES } from "../../../shared/usStates";
 import { listAllPages } from "../../../shared/pagination";
 import { Badge, flagBadge, CARRIER_APPOINTMENT_BADGE } from "../lib/badges";
 import {

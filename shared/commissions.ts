@@ -1,3 +1,4 @@
+import { agencyDay } from './agencyTime';
 /** Commission contracts and arithmetic. All ledger amounts are integer USD cents.
  * These records are private; never place them on shared Policy/UserProfile rows. */
 export type CommissionBasis = 'WRITTEN' | 'EARNED' | 'COLLECTED';
@@ -699,11 +700,7 @@ function bindCalendarDate(boundAt: string): string {
   if (/^\d{4}-\d{2}-\d{2}$/.test(boundAt)) return day(boundAt);
   const instant = new Date(boundAt);
   if (!Number.isFinite(instant.getTime())) throw new Error('The original bind timestamp is invalid.');
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
-  }).formatToParts(instant);
-  const part = (type: string) => parts.find((p) => p.type === type)!.value;
-  return day(`${part('year')}-${part('month')}-${part('day')}`);
+  return day(agencyDay(instant));
 }
 /** Calendar statement periods close on cutoffDay (default monthend). Monthly means
  * every month; quarterly means Mar/Jun/Sep/Dec. A later trigger rolls a full period.

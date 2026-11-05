@@ -1,8 +1,9 @@
+import { formatUsdCents as money } from '../../../shared/money';
 import { useEffect, useState } from 'react';
 import type { BrokerFeePublicTerms } from '../../../shared/brokerFees';
 import { loadBrokerFeeDisclosure, signBrokerFeeDisclosure } from '../lib/brokerFeeDisclosure';
 import './BrokerFeeDisclosure.css';
-const money = (cents: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(cents / 100);
+
 export function BrokerFeeDisclosure() {
   const [token] = useState(() => typeof window === 'undefined' ? '' : new URL(window.location.href).searchParams.get('t') || ''), [terms, setTerms] = useState<BrokerFeePublicTerms | null>(null), [error, setError] = useState(''), [busy, setBusy] = useState(false), [retry, setRetry] = useState(0);
   const [name, setName] = useState(''), [email, setEmail] = useState(''), [role, setRole] = useState(''), [consent, setConsent] = useState(false);

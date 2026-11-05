@@ -1,3 +1,4 @@
+import { formatUsdDollars as money } from '../../../shared/money';
 import { useEffect, useState } from "react";
 import {
   acceptElection,
@@ -52,8 +53,7 @@ function takeToken(): { token: string | null; done: boolean } {
   }
 }
 
-const money = (n: number) =>
-  n.toLocaleString("en-US", { style: "currency", currency: "USD" });
+
 
 export function FinanceElection() {
   const [{ token, done }] = useState(takeToken);

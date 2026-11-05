@@ -1,3 +1,4 @@
+import { agencyDay } from '../../../shared/agencyTime';
 export type DateRange = { from: string; to: string };
 export type DateRangePreset = 'all' | 'ytd' | '12mo';
 export type DateRangeValidation = {
@@ -7,11 +8,7 @@ export type DateRangeValidation = {
 
 /** Financial reports use the agency's civil day, independent of browser timezone. */
 export function reportToday(now = new Date()): string {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
-  }).formatToParts(now);
-  const part = (name: string) => parts.find(value => value.type === name)!.value;
-  return `${part('year')}-${part('month')}-${part('day')}`;
+  return agencyDay(now);
 }
 
 export function dateRangePreset(preset: DateRangePreset, today = reportToday()): DateRange {

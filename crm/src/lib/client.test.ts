@@ -15,6 +15,7 @@ import {
   daysUntil,
   fmtDate,
   fmtDateTime,
+  fmtMoney,
   fmtPhone,
   fmtProviderPhone,
   friendlyError,
@@ -839,5 +840,21 @@ describe("assertNoErrors", () => {
     expect(() => assertNoErrors({ errors: [] })).not.toThrow();
     // The distinction from `unwrap`, which is why both exist.
     expect(() => unwrap({ data: null })).toThrow();
+  });
+});
+
+
+describe("summary money presentation", () => {
+  it("keeps whole-dollar summaries and their missing/nonfinite behavior", () => {
+    expect(fmtMoney(null)).toBe("—");
+    expect(fmtMoney(undefined)).toBe("—");
+    expect(fmtMoney(0)).toBe("$0");
+    expect(fmtMoney(-0)).toBe("-$0");
+    expect(fmtMoney(12480.5)).toBe("$12,481");
+    expect(fmtMoney(-12480.5)).toBe("-$12,481");
+    expect(fmtMoney(NaN)).toBe("$NaN");
+    expect(fmtMoney(Infinity)).toBe("$∞");
+    // This boundary historically passes through strings rather than coercing them into dollars.
+    expect(fmtMoney("0" as unknown as number)).toBe("0");
   });
 });

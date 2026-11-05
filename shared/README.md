@@ -9,3 +9,11 @@ The CRM's `schemaContracts.test.ts` checks shared enum types against the generat
 Deployment-time modules stay inside `crm/amplify`, including Honeycomb branch selection used by Amplify's loader. Public endpoint identities and runtime business contracts live here; credentials remain in runtime configuration.
 
 Run `npm run verify:architecture` from the repository root. The central checker in `scripts/check-module-boundaries.mjs` rejects server imports from frontend source, browser runtime imports from server source, and app/platform dependencies in this directory. Generated schema type-only imports are allowed in browser adapters. The same checker runs in the full repository verifier and PR workflow.
+
+
+`agencyTime.ts` converts instants to the agency's New York civil day. Keep date-only
+calendar inputs and full wall-clock scheduling rules in their domain modules.
+`money.ts` formats explicit dollar or cent values with exact-cent, whole-dollar, or
+optional-cent presentation. It does not validate amounts, round ledger arithmetic,
+or choose missing-value fallbacks. `usStates.ts` owns the 50-state/DC identities;
+website editorial copy, map geometry, and signed jurisdiction rules stay separate.

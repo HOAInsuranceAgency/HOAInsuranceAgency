@@ -1,3 +1,4 @@
+import { agencyDay } from '../../../../shared/agencyTime';
 import { createHash, randomUUID } from 'node:crypto';
 import { QueryCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
 import { sendCrmWrite } from '../live-write';
@@ -21,7 +22,7 @@ interface Payment extends BrokerFeePaymentInput {
 const applyStatementLine = (policy:CommissionPolicy, statement:CommissionStatement, line:StatementLine, id:string) => appendEntry(policy,line,statement,id);
 const digest = (s: string) => createHash('sha256').update(s).digest('hex');
 const retryable = (error: unknown) => ['TransactionCanceledException','ConditionalCheckFailedException'].includes((error as {name?:string})?.name ?? '');
-const day = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York',year:'numeric',month:'2-digit',day:'2-digit' }).format(new Date());
+const day = () => agencyDay(new Date());
 const paymentId = (sourceId: string) => `payment:${digest(sourceId)}`;
 
 /** Pair fee-version checks on checkout claims with loan-version checks on a

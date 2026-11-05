@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { agencyDay } from '../../../shared/leadActionGuidance';
+import { agencyDay } from "../../../shared/agencyTime";
 
 /** Date-based follow-ups wake even when the Leads tab stays open overnight. */
 export function useAgencyDay() {

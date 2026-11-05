@@ -9,7 +9,7 @@ import {
   type Carrier,
   type Quote,
 } from '../lib/client';
-import { agencyDay } from '../../../shared/leadActionGuidance';
+import { agencyDay } from "../../../shared/agencyTime";
 import {
   formatCommission,
   emptyCommercialPlan,

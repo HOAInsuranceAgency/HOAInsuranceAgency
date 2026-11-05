@@ -1,5 +1,5 @@
 import type { IconKey } from "./icons";
-import { states as ALL_STATES } from "../../data/states";
+import { US_STATE_CATALOG } from "../../../../shared/usStates";
 
 /* ──────────────────────────────────────────────────────────
    STEP DEFINITIONS
@@ -85,12 +85,12 @@ export function validateText(
  * This used to carry only six states. Once states.ts grew to all fifty plus DC,
  * a visitor arriving from (say) the Texas page had no Texas to choose, was forced
  * onto "OTHER", and `buildCrmLead` drops "OTHER" — so the lead reached the CRM
- * with no state at all. Reading the list from the data file means the two cannot
+ * with no state at all. Reading the shared identity catalog means the two cannot
  * drift apart again.
  */
-const STATE_OPTIONS: Option[] = [...ALL_STATES]
+const STATE_OPTIONS: Option[] = [...US_STATE_CATALOG]
   .sort((a, b) => a.name.localeCompare(b.name))
-  .map((s) => ({ value: s.abbr, label: s.name }));
+  .map((s) => ({ value: s.code, label: s.name }));
 
 export const STEPS: Record<string, Step> = {
   welcome: {

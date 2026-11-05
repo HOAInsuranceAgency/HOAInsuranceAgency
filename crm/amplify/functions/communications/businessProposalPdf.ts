@@ -1,3 +1,4 @@
+import { formatUsdDollars as dollars } from '../../../../shared/money';
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from 'pdf-lib';
 import type { PublicProposalQuote } from '../../../../shared/frontBusinessDelivery';
 import { validCalendarDate } from '../../../../shared/renewalPolicy';
@@ -14,7 +15,7 @@ export interface BusinessProposalInput {
 }
 const NAVY = rgb(0.08, 0.19, 0.29), GOLD = rgb(0.66, 0.49, 0.21), INK = rgb(0.16, 0.20, 0.25), MUTED = rgb(0.38, 0.43, 0.48);
 const WIDTH = 612, HEIGHT = 792, MARGIN = 44, CONTENT = WIDTH - MARGIN * 2;
-const dollars = (value: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2 }).format(value);
+
 const words = (value: string) => value.toLowerCase().replace(/_/g, ' ').replace(/^\w/, first => first.toUpperCase());
 
 /** A dedicated customer projection: never serialize a Quote, plan, or UI object. */

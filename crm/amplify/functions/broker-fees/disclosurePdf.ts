@@ -1,9 +1,10 @@
+import { formatUsdCents as money } from '../../../../shared/money';
 import { PDFDocument, StandardFonts, rgb, type PDFPage } from 'pdf-lib';
 import type { BrokerFeeAgreement } from '../../../../shared/brokerFees';
 import { brokerFeeCents } from '../../../../shared/brokerFees';
 import { AGENCY } from '../../../../shared/agency';
 
-const money = (cents: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(cents / 100);
+
 /** Exactly one summary page; approved jurisdiction forms follow in the same signed PDF. */
 export async function createBrokerFeeDisclosurePdf(agreement: BrokerFeeAgreement) {
   const pdf = await PDFDocument.create({ updateMetadata: false });

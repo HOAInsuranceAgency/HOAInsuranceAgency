@@ -10,7 +10,8 @@ import {
 import { LICENSE_CLASS_LABELS } from "../../../../shared/enums";
 import { Badge } from "../../lib/badges";
 import { useSort, SortTh } from "../../lib/useSort";
-import { US_MAP_VIEWBOX, US_STATE_NAMES, US_STATE_PATHS } from "../../lib/usMap";
+import { US_MAP_VIEWBOX, US_STATE_PATHS } from "../../lib/usMap";
+import { US_STATE_NAMES } from "../../../../shared/usStates";
 import { holderLabel } from "./holder";
 import DocumentsPanel from "../DocumentsPanel";
 

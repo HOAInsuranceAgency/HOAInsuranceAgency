@@ -1,3 +1,4 @@
+import { agencyDay } from '../../../../shared/agencyTime';
 import { assertPreviewRead } from "../migration-readonly";
 import { apiFailure, decodeAwsJson, isRecord } from '../../../../shared/apiResponse';
 import { communicationOperationMode } from '../../../../shared/apiOperations';
@@ -194,7 +195,7 @@ export const handler = async (event: { arguments: { operation?: string; readOper
       }
       if (q.data.bindAuthorizedAt && q.data.bindAuthorizedTerms === terms) return { ok: true };
       if (!["QUOTED", "PRESENTED"].includes(q.data.status) || !q.data.carrierId || !validCalendarDate(q.data.effectiveDate) || !validCalendarDate(q.data.expirationDate) || q.data.expirationDate <= q.data.effectiveDate || !(q.data.premium != null && q.data.premium > 0) || !q.data.lines?.filter(Boolean).length) throw new Error("Finish the usable quote before recording client authorization");
-      const today = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+      const today = agencyDay(new Date());
       if (q.data.offerExpiresAt && (!validCalendarDate(q.data.offerExpiresAt) || q.data.offerExpiresAt < today)) throw new Error("The carrier offer has expired. Obtain current terms before requesting binding.");
       if (q.data.updatedAt !== text(input, "updatedAt")) throw new Error("The quote changed. Review its current terms before authorizing binding.");
       const now = new Date().toISOString();

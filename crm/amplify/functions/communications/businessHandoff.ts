@@ -3,7 +3,7 @@ import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3
 import type { BusinessDeliveryAttempt, BusinessDeliveryContext, BusinessDeliveryPreview, BusinessDeliverySelection, BusinessDeliverySender, PrepareBusinessDraftInput, ReconcileBusinessDraftInput } from '../../../../shared/frontBusinessDelivery';
 import type { Communication, TeamEligibility, LeadWorkflow } from '../../../../shared/leadWorkflow';
 import { packageAssessment, packageTerms, type CommercialPlan } from '../../../../shared/quotePackages';
-import { agencyDay } from '../../../../shared/leadActionGuidance';
+import { agencyDay } from "../../../../shared/agencyTime";
 import { currentContacts } from '../../../../shared/contacts';
 import { currentMessage } from '../../../../shared/serviceEvidence';
 import { contactProgress } from '../../../../shared/contactProgress';

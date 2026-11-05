@@ -2,13 +2,11 @@ import { Input } from "../ui/Input";
 import { Select } from "../ui/Select";
 import { Textarea } from "../ui/Textarea";
 import { Button } from "../ui/Button";
-import {
-  client,
-  US_STATES,
+import { client,
   unwrap,
   validateAccountFields,
-  type Account,
-} from "../../lib/client";
+  type Account } from "../../lib/client";
+import { US_STATES } from "../../../../shared/usStates";
 import { AddressAutocomplete } from "../../lib/googlePlaces";
 import { useFormState } from "../../lib/useFormState";
 import { SaveStatus, useSaveStatus } from "../SaveStatus";

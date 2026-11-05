@@ -1,3 +1,4 @@
+import { agencyDay } from '../../../../shared/agencyTime';
 import Stripe from 'stripe';
 import { QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { collectCompletePages } from '../storage/pages';
@@ -73,7 +74,7 @@ export async function confirmInvoicePayment(event:{identity?:Identity;request?:R
       throw error;
     }
   }
-  const now=new Date().toISOString(),paidAt=typeof invoice.paidAt==='string'?invoice.paidAt:new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(now));
+  const now=new Date().toISOString(),paidAt=typeof invoice.paidAt==='string'?invoice.paidAt:agencyDay(now);
   const update:Write={Update:{TableName:modelTable('Invoice'),Key:{id:invoice.id},UpdateExpression:'SET #status = :paid, paidAt = :date, updatedAt = :now, lastWriteBy = :actor REMOVE paymentUrl, brokerFeeFinanceUrl',ConditionExpression:'updatedAt = :old AND #status = :status',ExpressionAttributeNames:{'#status':'status'},ExpressionAttributeValues:{':paid':'PAID',':date':paidAt,':now':now,':actor':'broker-fee-manual-payment',':old':invoice.updatedAt,':status':invoice.status}}};
   await syncBrokerFeePayment({sourceId:`manual-invoice:${invoice.id}`,accountId:String(invoice.accountId),allocations,status:'PAID',receivedOn:paidAt,confirmedBy:access.actor},[...guards,...(invoice.status==='PAID'?[]:[update])],fee&&allocations.length?{[fee.quoteId]:fee.version}:undefined);
   return {ok:true,invoice:{...invoice,status:'PAID',paidAt}};
