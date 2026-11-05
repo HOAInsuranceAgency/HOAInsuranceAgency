@@ -43,7 +43,9 @@ export function queryFilter(filter: RecordData, partitionKey: string) {
   let sequence = 0;
   const value = (v: unknown) => { const key = `:f${sequence++}`; values[key] = v; return key; };
   type Expression = { text?: string; complete: boolean };
-  const join = (parts: string[], operator: string) => parts.length ? `(${parts.join(` ${operator} `)})` : undefined;
+  // DynamoDB rejects repeated wrappers such as ((#name = :value)). Only
+  // compound conditions need a group; preserve an existing single condition.
+  const join = (parts: string[], operator: string) => parts.length > 1 ? `(${parts.join(` ${operator} `)})` : parts[0];
   function fieldExpression(path: string, condition: RecordData): string | undefined {
     return join(Object.entries(condition).map(([op, expected]) => {
       switch (op) {
@@ -78,7 +80,7 @@ export function queryFilter(filter: RecordData, partitionKey: string) {
       }
       if (field === "not") {
         const child = compile(object(condition));
-        return { text: child.complete && child.text ? `NOT (${child.text})` : undefined, complete: child.complete && !!child.text };
+        return { text: child.complete && child.text ? `NOT ${child.text}` : undefined, complete: child.complete && !!child.text };
       }
       // Nullable GraphQL operator inputs and empty size predicates cannot be
       // translated literally (especially under NOT). Keep them in the final

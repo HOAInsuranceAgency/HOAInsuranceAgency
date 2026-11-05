@@ -2,6 +2,14 @@ import { describe, expect, it } from "vitest";
 import { queryFilter } from "../../amplify/functions/crm-access/filters";
 
 describe("DynamoDB query filter pushdown", () => {
+  it.each([
+    [{ name: { eq: "A" } }, "#f0 = :f1"],
+    [{ and: [{ name: { contains: "needle" } }] }, "contains(#f0, :f1)"],
+    [{ not: { name: { eq: null } } }, "NOT (attribute_not_exists(#f0) OR #f0 = :f1)"],
+    [{ not: { or: [{ name: { eq: "A" } }, { name: { eq: "B" } }] } }, "NOT (#f0 = :f1 OR #f2 = :f3)"],
+  ])("emits valid DynamoDB groups for a single or nested predicate: %j", (filter, expression) => {
+    expect(queryFilter(filter, "accountId").FilterExpression).toBe(expression);
+  });
   it("retains ordinary search OR predicates and excludes the partition key", () => {
     const result = queryFilter({ entityId: { eq: "a" }, or: [{ name: { contains: "needle" } }, { ocrText: { contains: "needle" } }] }, "entityId");
     expect(result.FilterExpression).toContain(" OR ");
@@ -22,7 +30,7 @@ describe("DynamoDB query filter pushdown", () => {
   });
   it("pushes comparisons, ranges, existence, types, sizes and complete negation", () => {
     const result = queryFilter({ not: { name: { beginsWith: "Old" } }, amount: { between: [10, 20], ge: 10 }, deleted: { attributeExists: false }, active: { attributeType: "BOOL" }, tags: { notContains: "Private", size: { ne: 0 } } }, "accountId");
-    expect(result.FilterExpression).toContain("NOT (");
+    expect(result.FilterExpression).toContain("NOT begins_with(");
     expect(result.FilterExpression).toContain(" BETWEEN ");
     expect(result.FilterExpression).toContain("attribute_type(");
     expect(result.FilterExpression).toMatch(/size\(#f\d+\) <> :f\d+/);
