@@ -31,6 +31,24 @@ npm run dev             # in a second terminal
 
 See [`crm/README.md`](crm/README.md) for CRM architecture and data model notes.
 
+## Repository verification
+
+Use Node 22 and install each app's locked dependencies with `npm ci --prefix crm`
+and `npm ci --prefix web`. Run `npm run verify` from the repository root before
+opening a PR. The same command runs on every PR to `main` or `staging` and on
+pushes to those branches, with read-only repository permissions and no secrets.
+
+Verification includes CRM tests and production build, backend typechecking and
+offline synthesis for the retained main and staging contracts, website tests,
+typechecking, production build, SEO comparison, and architecture checks. It stops
+at the first failure. It never deploys, signs in, sends mail, or calls payment APIs;
+build monitoring uploads and ambient deployment credentials are removed from its
+child-process environment.
+
+Scoped commands are `verify:crm`, `verify:web`, `verify:backend`, and
+`verify:architecture`. Both apps' dependencies are needed for the shared tooling.
+See [maintained code boundaries](docs/CODE-BOUNDARIES.md).
+
 Sentry monitors browser and backend errors through a separate HOA organization.
 See [configuration, privacy, and verification](docs/SENTRY.md).
 

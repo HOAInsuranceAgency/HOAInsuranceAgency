@@ -10,6 +10,7 @@
     "sandbox": "ampx sandbox",
     "test": "vitest",
     "test:run": "vitest run",
+    "test:architecture": "vitest run src/components/ui/ControlArchitecture.test.ts",
     "typecheck:backend": "tsc -p amplify/tsconfig.json --noEmit",
     "synth:check": "tsx scripts/synth-check.ts",
     "typecheck": "tsc -b && npm run typecheck:backend",
