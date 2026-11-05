@@ -58,6 +58,31 @@ it('accepts a nullable coverage list when it still contains a named coverage', a
   expect(await disclosure.loadBrokerFeeDisclosure('fictional-token')).toEqual(terms);
 });
 
+it.each(['carrierName', 'effectiveDate', 'expirationDate', 'premium'])(
+  'accepts optional %s as null or absent without inventing a value', async field => {
+    for (const value of [null, undefined]) {
+      const terms = { ...open(), quotes: [{ ...quote(), [field]: value }] };
+      const wire = JSON.stringify(terms);
+      fetchMock.mockResolvedValue(response(wire));
+      const result = await disclosure.loadBrokerFeeDisclosure('fictional-token');
+      expect(result).toEqual(JSON.parse(wire));
+      if (value === undefined) expect(result.quotes?.[0]).not.toHaveProperty(field);
+    }
+  },
+);
+
+it.each([undefined, null, []])('accepts server-shaped invoice terms with absent dates/carrier and zero-fee coverage %j', async lines => {
+  const terms = { ...open(), quotes: [
+    { ...quote(), carrierName: undefined, effectiveDate: null, expirationDate: null },
+    { id: 'fictional-zero-fee', brokerFee: 0, lines },
+  ] };
+  const wire = JSON.stringify(terms);
+  fetchMock.mockResolvedValue(response(wire));
+  const result = await disclosure.loadBrokerFeeDisclosure('fictional-token');
+  expect(result).toEqual(JSON.parse(wire));
+  expect(result.quotes?.[1]).not.toHaveProperty('premium');
+});
+
 it('preserves signed evidence and existing payment links after one explicit signing request', async () => {
   const terms = signed();
   const signer = { signerName: 'Fictional Board Member', signerEmail: 'board@example.test', signerRole: 'Treasurer', consent: true };
@@ -84,8 +109,8 @@ it.each(['accountName', 'agreementId', 'purpose', 'refundTerms'])(
 );
 
 it.each([
-  { id: undefined }, { carrierName: undefined }, { premium: undefined }, { brokerFee: undefined },
-  { effectiveDate: undefined }, { expirationDate: undefined }, { lines: undefined }, { lines: [] },
+  { id: undefined }, { brokerFee: undefined }, { lines: undefined }, { lines: null }, { lines: [] },
+  { carrierName: {} }, { effectiveDate: 123 }, { expirationDate: {} },
   { premium: '10000' }, { brokerFee: '500' }, { brokerFee: -1 }, { lines: ['Property', {}] },
 ])('refuses malformed policy display fields: %j', async patch => {
   fetchMock.mockResolvedValue(response({ ...open(), quotes: [{ ...quote(), ...patch }] }));

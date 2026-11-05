@@ -15,9 +15,13 @@ function isDisclosure(value: ApiRecord): value is ApiRecord & BrokerFeePublicTer
     || !Array.isArray(value.quotes) || !value.quotes.length || !Array.isArray(value.stateForms)) return false;
   let total = 0;
   for (const quote of value.quotes) {
-    if (!isRecord(quote) || !text(quote.id) || !Array.isArray(quote.lines) || !quote.lines.some(text) || !quote.lines.every(line => line === null || text(line))
-      || !text(quote.carrierName) || !amount(quote.premium) || quote.brokerFee != null && !amount(quote.brokerFee)
-      || !text(quote.effectiveDate) || !text(quote.expirationDate) || !optionalText(quote.billType)) return false;
+    if (!isRecord(quote) || !text(quote.id)
+      || quote.lines != null && (!Array.isArray(quote.lines) || !quote.lines.every(line => line === null || typeof line === 'string'))
+      || !optionalText(quote.carrierName) || quote.premium != null && !amount(quote.premium) || quote.brokerFee != null && !amount(quote.brokerFee)
+      || !optionalText(quote.effectiveDate) || !optionalText(quote.expirationDate) || !optionalText(quote.billType)) return false;
+    // State eligibility requires visible coverage for charged policies. Other
+    // display fields, and uncharged package policies, retain their wire nulls.
+    if (Number(quote.brokerFee ?? 0) > 0 && (!Array.isArray(quote.lines) || !quote.lines.some(text))) return false;
     if (quote.agencyCommissionPct != null || quote.agencyCommissionCents != null) {
       if (!amount(quote.agencyCommissionPct) || quote.agencyCommissionPct > 100 || !Number.isSafeInteger(quote.agencyCommissionCents) || Number(quote.agencyCommissionCents) < 0) return false;
     }

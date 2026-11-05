@@ -44,6 +44,15 @@ beforeEach(() => {
   h.models.set('Quote:q1', { id: 'q1', accountId: 'a1', carrierId: 'carrier1', lines: ['Property'], premium: 12000, commissionPct: 15, notes: 'PRIVATE NOTES', brokerFee: 250, billType: 'AGENCY', status: 'QUOTED', effectiveDate: '2027-01-01', expirationDate: '2028-01-01', updatedAt: NOW });
 });
 describe('broker fee client disclosure', () => {
+  it('retains optional policy display fields in the public terms returned for an issued disclosure', async () => {
+    const quote = h.models.get('Quote:q1');
+    quote.effectiveDate = null; delete quote.expirationDate; quote.premium = null;
+    const p = await prepared([{ ...snapshot(), carrierName: undefined }]);
+    expect(await brokerFeeDisclosure(p.token)).toMatchObject({
+      state: 'open', totalCents: 25000,
+      quotes: [{ id: 'q1', premium: null, effectiveDate: null, brokerFee: 250 }],
+    });
+  });
   it('retains all issued payment references when replacing stale fee terms', async () => {
     await prepared();
     Object.assign(h.rows.get('fee:q1'), { issuedInvoiceIds:['old-invoice'],issuedLoanIds:['old-loan'] });
