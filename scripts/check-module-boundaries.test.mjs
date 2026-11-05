@@ -91,7 +91,7 @@ test('current production modules satisfy the enforced boundaries', () => assert.
 
 test('production code cannot import fictional records, tests or preview helpers, including through type and dynamic paths', () => {
   const file = 'crm/src/lib/example.ts';
-  for (const path of ['../../fixtures/builders', '../../scripts/commercial-preview/fixtures', '../test/fixtures/commercialClient', './client.test.ts']) {
+  for (const path of ['../../fixtures/builders', '../../scripts/commercial-preview/fixtures', '../test/fixtures/commercialClient', './client.test.ts', './client.test', './client.spec', './client.spec.tsx', './client.test?used', './client.spec.ts?import']) {
     for (const declaration of ['import { account } from "' + path + '";', 'export * from "' + path + '";', 'import type { Example } from "' + path + '";', 'import("' + path + '");']) {
       assert.equal(inspect(declaration, file).length, 1, declaration);
     }
