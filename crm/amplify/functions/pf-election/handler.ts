@@ -122,7 +122,7 @@ function anchorFilter(loan: PfLoan): Record<string, unknown> | null {
 }
 
 /** The offer's own figures, and nothing else the page can't work without. */
-function termsShape(loan: PfLoan, associationName: string, state: "open" | "done" | "active") {
+function termsShape(loan: PfLoan, associationName: string, state: "open" | "done" | "active"): import('../../../../shared/financeElection').FinanceElectionOffer {
   return {
     ok: true,
     state,

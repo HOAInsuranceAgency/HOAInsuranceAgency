@@ -203,7 +203,7 @@ it('purges both stage caches on a GraphQL authorization error from an optional l
   await settled();
   h.contacts.mockResolvedValue({ data: [], errors: [{ message: 'Temporary issue' }, { message: 'Access denied', errorType: 'Unauthorized' }] });
   await act(async () => { await latest.refetch(); });
-  expect(latest.error).toBe('Access denied');
+  expect(latest.error).toBe('Temporary issue; Access denied');
   expect(latest.data.accounts).toEqual([]);
   const pending = deferred<{ data: Account[] }>();
   h.accounts.mockReturnValue(pending.promise);

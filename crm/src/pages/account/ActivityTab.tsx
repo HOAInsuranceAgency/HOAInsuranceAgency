@@ -5,7 +5,7 @@ import { useMemo, useState } from "react";
 import { client, fmtDateTime, fmtMoney, type Activity } from "../../lib/client";
 import { listAllPages } from "../../../../shared/pagination";
 import { useAsyncResource } from "../../lib/useAsyncResource";
-import { communicationRequest, type Communication } from "../../lib/communications";
+import { communicationRequest } from "../../lib/communications";
 import { isAuthorizationError } from "../../../../shared/authorizationError";
 import LeadWorkflowPanel from "../../components/LeadWorkflowPanel";
 import { fieldLabel } from "../../../../shared/activity";
@@ -268,7 +268,7 @@ function ChangeDetails({ accountId, summary, changes, noteId }: { accountId: str
 /** Unmount on collapse so reopening checks current access and note content. */
 function InternalNoteContent({ accountId, noteId }: { accountId: string; noteId: string }) {
   const note = useAsyncResource(async () => {
-    const result = await communicationRequest<{ communication?: Communication | null }>("activity", { id: noteId, accountId });
+    const result = await communicationRequest("activity", { id: noteId, accountId });
     const communication = result.communication;
     if (!communication || communication.id !== noteId || communication.accountId !== accountId || communication.channel !== "NOTE") {
       throw new Error("Could not load this note.");

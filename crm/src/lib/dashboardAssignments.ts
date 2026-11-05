@@ -1,5 +1,5 @@
 import { emptyCommercialPlan } from '../../../shared/quotePackages';
-import { communicationRequest, type TeamEligibility } from './communications';
+import { communicationRequest } from './communications';
 import type { CommercialData, CommercialEntry } from './commercial';
 import { allWithAuthorizationPriority } from './allWithAuthorizationPriority';
 
@@ -10,13 +10,13 @@ export interface AssignmentData extends CommercialData { accounts: ReportAccount
  * Four bounded requests can run together; one failure rejects the snapshot. */
 export async function loadAssignments(ids: string[]): Promise<AssignmentData> {
   const accounts = [...new Set(ids)].sort();
-  const roster = await communicationRequest<{ team: TeamEligibility[] }>('team');
+  const roster = await communicationRequest('team');
   if (!Array.isArray(roster.team)) throw new Error('Could not load teammates');
   const entries: Record<string, CommercialEntry> = {}, reportAccounts: ReportAccount[] = [];
   for (let offset = 0; offset < accounts.length; offset += 2000) {
     const results = await allWithAuthorizationPriority(Array.from({ length: Math.ceil(Math.min(2000, accounts.length - offset) / 500) }, async (_, batchIndex) => {
       const batch = accounts.slice(offset + batchIndex * 500, offset + (batchIndex + 1) * 500);
-      const result = await communicationRequest<{ items: Omit<CommercialEntry, 'plan'>[]; accounts: ReportAccount[] }>('dashboardAssignments', { accountIds: batch });
+      const result = await communicationRequest('dashboardAssignments', { accountIds: batch });
       if (!Array.isArray(result.items) || result.items.length !== batch.length || batch.some(id => !result.items.some(item => item.accountId === id)) || !Array.isArray(result.accounts)) {
         throw new Error('Report assignments are incomplete. Refresh to try again.');
       }

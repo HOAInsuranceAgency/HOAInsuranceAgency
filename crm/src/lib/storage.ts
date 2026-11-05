@@ -1,3 +1,4 @@
+import { assertGraphqlErrors } from './apiResponse';
 /**
  * S3 upload / download / delete primitives.
  *
@@ -158,7 +159,8 @@ export async function uploadDocument(opts: {
     sizeBytes: file.size,
     ocrStatus: "PENDING",
   });
-  if (errors?.length || !doc) {
+  assertGraphqlErrors({ errors });
+  if (!doc) {
     throw new Error(errors?.[0]?.message ?? `Couldn't record "${file.name}".`);
   }
 
@@ -176,7 +178,7 @@ export async function uploadDocument(opts: {
       id: doc.id,
       s3Key: path,
     });
-    if (linkErrors?.length) throw new Error(linkErrors[0].message);
+    assertGraphqlErrors({ errors: linkErrors });
 
     await uploadFile({ path, data: file, contentType: file.type });
     return linked ?? { ...doc, s3Key: path };
@@ -184,7 +186,7 @@ export async function uploadDocument(opts: {
     // Don't leave a ghost record behind for a file that never landed.
     try {
       const { errors: delErrors } = await client.models.Document.delete({ id: doc.id });
-      if (delErrors?.length) throw new Error(delErrors[0].message);
+      assertGraphqlErrors({ errors: delErrors });
     } catch (cleanupErr) {
       console.warn(
         `[storage] "${file.name}" failed to upload and its record ${doc.id} could not be ` +

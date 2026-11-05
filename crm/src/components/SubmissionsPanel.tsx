@@ -1,4 +1,5 @@
 import { Button, ButtonLink } from "./ui/Button";
+import { readSubmissionSettings, startCarrierSubmission, resolveCarrierSubmission } from '../lib/carrierSubmissions';
 import { Select } from "./ui/Select";
 import { Input } from "./ui/Input";
 import { Textarea } from "./ui/Textarea";
@@ -41,13 +42,10 @@ function SubmissionsPanelContent({ account, initialEstimateId }: { account: Acco
         const page = await client.models.HoneycombEstimate.listHoneycombEstimateByAccountId({ accountId: account.id }, { nextToken });
         return page;
       }),
-      client.queries.honeycombSubmissionSettings().then(settings => {
-        if (settings.errors?.length) throw settings.errors.find(isAuthorizationError) ?? settings.errors[0];
-        return settings;
-      }),
+      readSubmissionSettings(),
     ]);
-    const environment = object(settings.data).environment;
-    return { submissions: submissions.sort((a, b) => b.createdAt.localeCompare(a.createdAt)), estimates: estimates.sort((a, b) => b.createdAt.localeCompare(a.createdAt)), environment, enabled: object(settings.data).enabled === true && isHoneycombEnvironment(environment) };
+    const environment = settings.environment;
+    return { submissions: submissions.sort((a, b) => b.createdAt.localeCompare(a.createdAt)), estimates: estimates.sort((a, b) => b.createdAt.localeCompare(a.createdAt)), environment, enabled: settings.enabled && isHoneycombEnvironment(environment) };
   }, [account.id], { clearDataOnError: isAuthorizationError, live: { protectEdits: false } });
   const records = resource.data?.submissions ?? [];
   // Decide the initial empty-state composer once. Later history refreshes
@@ -108,9 +106,7 @@ function Composer({ account, estimates, records, retry, initialEstimateId, onCan
     try { partialInput(form, source); } catch (err) { setError((err as Error).message); return; }
     lock.current = true; setBusy(true); setError("");
     try {
-      const result = await client.mutations.startHoneycombSubmission({ accountId: account.id, details: JSON.stringify(form), sourceEstimateId: source?.id, reviewed, retryVersion: retry?.updatedAt });
-      const receipt = object(result.data);
-      if (result.errors?.length || receipt.ok !== true || typeof receipt.id !== "string") throw new Error(typeof receipt.error === "string" ? receipt.error : "Could not confirm the request. Refresh submission history before trying again.");
+      const receipt = await startCarrierSubmission({ accountId: account.id, details: JSON.stringify(form), sourceEstimateId: source?.id, reviewed, retryVersion: retry?.updatedAt });
       onQueued(receipt.id);
     } catch (err) { setError((err as Error).message); }
     finally { lock.current = false; setBusy(false); }
@@ -168,9 +164,7 @@ function Recovery({ record, refresh }: { record: Submission; refresh: () => Prom
     event.preventDefault(); if (lock.current) return;
     lock.current = true; setBusy(true); setError("");
     try {
-      const result = await client.mutations.resolveHoneycombSubmission({ id: record.id, outcome, submissionId: id.trim() || undefined, note, reviewed });
-      const receipt = object(result.data);
-      if (result.errors?.length || receipt.ok !== true) throw new Error(typeof receipt.error === "string" ? receipt.error : "Could not save the review. Refresh and try again.");
+      await resolveCarrierSubmission({ id: record.id, outcome, submissionId: id.trim() || undefined, note, reviewed });
       await refresh();
     } catch (err) { setError((err as Error).message); }
     finally { lock.current = false; setBusy(false); }

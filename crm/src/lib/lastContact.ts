@@ -8,7 +8,7 @@ export async function loadLastContacts(ids: string[], active: () => boolean = ()
     let pending = ids.slice(start, start + 10).map(accountId => ({ accountId, nextToken: undefined as string | undefined }));
     const seen = new Set<string>();
     while (pending.length && active()) {
-      const result = await communicationRequest<{ items: { accountId: string; contact: ContactStamp | null; complete: boolean; nextToken?: string }[] }>("lastContacts", { accounts: pending });
+      const result = await communicationRequest("lastContacts", { accounts: pending });
       if (result.items.length !== pending.length) throw new Error("Contact history was incomplete. Refresh to try again.");
       pending = [];
       for (const item of result.items) {

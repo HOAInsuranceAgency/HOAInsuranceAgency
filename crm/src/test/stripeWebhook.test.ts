@@ -904,7 +904,8 @@ describe("voiding an invoice", () => {
   it("does not write the status from the browser any more", () => {
     // The whole bug in one line. If this comes back, the link outlives the void.
     expect(EDITOR).not.toMatch(/patchInvoice\(\{\s*status:\s*"VOID"/);
-    expect(EDITOR).toContain("client.mutations.voidInvoice");
+    expect(EDITOR).toContain('await voidInvoice(invoice.id)');
+    expect(readFileSync(resolve(process.cwd(), 'src/lib/billingApi.ts'), 'utf8')).toContain('client.mutations.voidInvoice');
   });
 
   it("deactivates the link before writing the status", () => {

@@ -117,6 +117,16 @@ function adjustmentFixture(amount = 250, cost: number | null = 200) {
 }
 
 describe('real broker fee invoice send claim sequencing', () => {
+  it('sends the existing disclosure when the source quote has nullable dates and no carrier display name', async () => {
+    h.quote.effectiveDate = null;
+    h.models.Carrier.get = async () => ({ data: null });
+    h.getFee.mockResolvedValue({ amountCents: 50000, terms: authorizedQuoteTerms(h.quote), submittedCents: 0, collectedCents: 0, refundedCents: 0 });
+    expect(await send()).toMatchObject({ ok: true });
+    expect(h.prepare).toHaveBeenCalledWith('a', [expect.objectContaining({
+      id: 'q', effectiveDate: null, expirationDate: undefined, carrierName: undefined, brokerFee: 500,
+    })], undefined, { reuseContainingAgreement: true });
+    expect(h.mail).toHaveBeenCalledOnce();
+  });
   it('does not treat a quoted effective date as evidence of bound coverage in the attachment', async () => {
     Object.assign(h.quote, { effectiveDate: '2026-12-01', expirationDate: '2027-12-01' });
     expect(await send()).toMatchObject({ ok: true });

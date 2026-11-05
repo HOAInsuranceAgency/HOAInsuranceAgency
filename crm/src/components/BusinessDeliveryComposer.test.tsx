@@ -206,7 +206,7 @@ it("unlocks a fresh preview only for an explicit pre-dispatch rejection", async 
   const base = h.request.getMockImplementation()!;
   let tried = false;
   h.request.mockImplementation((op, input) => {
-    if (op === "prepareBusinessDraft" && !tried) { tried = true; return Promise.reject(Object.assign(new Error("The quote changed. Review a new preview"), { code: "BUSINESS_DRAFT_NOT_DISPATCHED" })); }
+    if (op === "prepareBusinessDraft" && !tried) { tried = true; return Promise.reject(Object.assign(new Error("The quote changed. Review a new preview"), { code: "BUSINESS_DRAFT_NOT_DISPATCHED", origin: 'application' })); }
     return base(op, input);
   });
   await mount(); recipients(); await review(); acknowledge();

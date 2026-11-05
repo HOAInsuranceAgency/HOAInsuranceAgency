@@ -1,4 +1,5 @@
 import { liveUpdates } from "./liveUpdates";
+import { assertGraphqlErrors } from './apiResponse';
 import { generateClient } from "aws-amplify/data";
 import { getCurrentUser } from "aws-amplify/auth";
 import type { Schema } from "../../amplify/data/resource";
@@ -391,9 +392,7 @@ export function unwrap<T>(r: {
  * reporting it on every retry.
  */
 export function assertNoErrors(r: { errors?: { message: string }[] }): void {
-  if (r.errors?.length) {
-    throw new Error(r.errors.map((e) => e.message).join("; "));
-  }
+  assertGraphqlErrors(r);
 }
 
 // Keep the existing form API while previews import the pure module directly.

@@ -95,7 +95,8 @@ export async function saveAgencyIdentifiers(
         ...fields,
       });
 
-  if (errors?.length || !data) {
+  assertNoErrors({ errors });
+  if (!data) {
     throw new Error(
       errors?.[0]?.message ?? "Couldn't save the agency identifiers."
     );

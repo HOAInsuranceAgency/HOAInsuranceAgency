@@ -11,7 +11,8 @@ import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, GetCommand } from "@aws-sdk/lib-dynamodb";
 import { batchGetComplete } from '../storage/batchGet';
 import { modelKeyName, resolveModelTable, storedModel } from '../storage/models';
-import { ACCOUNT_MODELS, ACCOUNT_REFERENCES, LIST_PARENTS, SHARED_MODELS, RETIRED_MODELS, AccessDenied, id, object, type Identity, type RecordData } from "./policy";
+import { ACCOUNT_MODELS, ACCOUNT_REFERENCES, LIST_PARENTS, SHARED_MODELS, RETIRED_MODELS, AccessDenied, id, type Identity, type RecordData } from "./policy";
+import { object } from '../api-input';
 import { isActiveAdmin, type RoleRequest } from "./active-role";
 export const db = DynamoDBDocumentClient.from(new DynamoDBClient());
 export function tableName(model: string) {

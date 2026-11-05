@@ -1,4 +1,5 @@
 import { assertPreviewRead } from "../migration-readonly";
+import { apiFailure, decodeAwsJson } from '../../../../shared/apiResponse';
 import { sendOwnerWrite } from '../live-write';
 import { randomUUID } from 'node:crypto';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
@@ -149,7 +150,7 @@ export function createHandler(store: ProfitabilityRepository) {
     assertPreviewRead((event.fieldName ?? event.info?.fieldName) === "ownerProfitability");
     try {
       const actor = text((event.identity as { sub?: string } | undefined)?.sub);
-      if (!actor || !isActiveOwner(event.identity, event.request)) throw new Error('Only Owners can access employee profitability and compensation.');
+      if (!actor || !isActiveOwner(event.identity, event.request)) throw Object.assign(new Error('Only Owners can access employee profitability and compensation.'), { name: 'Unauthorized' });
       const args = event.arguments ?? {}, field = event.fieldName ?? event.info?.fieldName;
       if (field === 'ownerProfitability') {
         const window = validateProfitabilityWindow(args.from, args.to);
@@ -163,7 +164,7 @@ export function createHandler(store: ProfitabilityRepository) {
         return { ok: true, employees: source.employees, compensations: source.compensations, report };
       }
       if (field === 'saveEmployeeCompensation') {
-        const terms = typeof args.terms === 'string' ? JSON.parse(args.terms) : args.terms;
+        const terms = decodeAwsJson(args.terms);
         const compensation = validateCompensationRecord({ userId: args.userId, version: args.version, terms });
         if (!/^[a-zA-Z0-9_-]{1,128}$/.test(compensation.userId)) throw new Error('Choose an existing employee.');
         return { ok: true, compensation: await sendOwnerWrite(store.save(compensation, actor)) };
@@ -174,7 +175,7 @@ export function createHandler(store: ProfitabilityRepository) {
       const message = kind === 'TransactionCanceledException' || kind === 'ConditionalCheckFailedException'
         ? 'Compensation changed. Refresh before saving.'
         : error instanceof Error ? error.message : 'Could not load owner reporting. Please retry.';
-      return { ok: false, error: message };
+      return apiFailure({ message, ...(kind === 'Unauthorized' ? { errorType: 'Unauthorized' } : {}) }, message);
     }
   };
 }

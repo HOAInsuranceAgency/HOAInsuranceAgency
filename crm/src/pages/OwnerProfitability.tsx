@@ -1,5 +1,6 @@
 import { isAuthorizationError } from "../../../shared/authorizationError";
 import { LiveStatus } from "../components/LiveStatus";
+import { readOwnerProfitability, saveOwnerCompensation, type ProfitabilityEmployee as Employee } from '../lib/ownerProfitability';
 import { useLiveUpdateBlock } from "../lib/useLiveUpdates";
 import { Button } from "../components/ui/Button";
 import { Table } from "../components/ui/Table";
@@ -10,7 +11,6 @@ import { ReportDownload } from "../components/ReportDownload";
 import { DateRangeFilter } from "../components/DateRangeFilter";
 import { dateRangeError, dateRangePreset } from "../lib/dateRange";
 import { useReportDateRange } from "../lib/useReportDateRange";
-import { client } from "../lib/client";
 import { useIsOwner } from "../lib/auth";
 import { useAsyncResource } from "../lib/useAsyncResource";
 import type { DashboardReport } from "../lib/reportDownload";
@@ -20,23 +20,9 @@ import {
 } from "../../../shared/employeeProfitability";
 import "./OwnerProfitability.css";
 
-type Employee = { userId: string; name: string; salesperson?: boolean };
-type Snapshot = { ok: true; employees: Employee[]; compensations: Record<string, EmployeeCompensation>; report: EmployeeProfitabilityResult; reportStale?: boolean };
 const money = (cents: number | null) => cents == null ? "Incomplete" : new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(cents / 100);
 const dollars = (cents: number | null) => cents == null ? null : cents / 100;
 const basis = "Estimated carrier commission plus broker fees less recorded fee refunds, by policy effective date and current account salesperson. The estimated producer share applies to both revenue sources; prorated annual salary is deducted. Cancelled carrier commission and other operating costs are excluded; retained broker fees remain included.";
-
-function response<T>(result: { data?: unknown; errors?: readonly { message?: string }[] }): T {
-  if (result.errors?.length) {
-    const denied = result.errors.find(isAuthorizationError);
-    throw Object.assign(new Error(result.errors.map(error => error.message || "Request failed").join("; ")), denied ? { name: "Unauthorized" } : {});
-  }
-  const data = typeof result.data === "string" ? JSON.parse(result.data) : result.data;
-  if (!data || typeof data !== "object" || !("ok" in data) || data.ok !== true) {
-    throw Object.assign(new Error(data && typeof data === "object" && "error" in data && typeof data.error === "string" ? data.error : "Could not load owner profitability."), isAuthorizationError(data) ? { name: "Unauthorized" } : {});
-  }
-  return data as T;
-}
 
 /** Unmount all private state when the active role leaves Owner. */
 export default function OwnerProfitability() {
@@ -69,7 +55,7 @@ function ProfitabilitySnapshot({ from, to, onEditingChange }: { from: string; to
   const resource = useAsyncResource(async () => {
     const reading = ++readVersion.current;
     try {
-      const snapshot = response<Snapshot>(await client.queries.ownerProfitability({ from, to }));
+      const snapshot = await readOwnerProfitability(from, to);
       if (!active.current || reading !== readVersion.current) return snapshot;
       const compensations = { ...snapshot.compensations };
       let reportStale = false;
@@ -196,9 +182,9 @@ function CompensationEditor({ employee, employees, compensation, defaultFrom, on
     try {
       const value = validateCompensationRecord({ userId: employee.userId, version: baseline?.version ?? 0, terms: terms.map(term => ({ from: term.from, ...(term.to ? { to: term.to } : {}), annualSalaryCents: decimalHundredths(term.salary, "annual salary"), producerShareBps: decimalHundredths(term.share, "commission share") })) });
       inFlight.current = true; setBusy(true); onBusyChange(true);
-      const result = response<{ ok: true; compensation: EmployeeCompensation }>(await client.mutations.saveEmployeeCompensation({ userId: employee.userId, version: value.version, terms: JSON.stringify(value.terms) }));
-      setBaseline(result.compensation); setTerms(initialTerms(result.compensation));
-      await onSaved(result.compensation);
+      const compensation = await saveOwnerCompensation(value);
+      setBaseline(compensation); setTerms(initialTerms(compensation));
+      await onSaved(compensation);
     } catch (error) { setError(error instanceof Error ? error.message : "Could not save pay settings."); }
     finally { inFlight.current = false; setBusy(false); onBusyChange(false); }
   }

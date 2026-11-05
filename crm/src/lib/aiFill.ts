@@ -1,3 +1,5 @@
+import { assertGraphqlErrors } from './apiResponse';
+import { decodeAwsJson, isRecord } from '../../../shared/apiResponse';
 import type { PDFDocument } from "pdf-lib";
 import { client } from "./client";
 import { applySuggestions, type EmptyField } from "./acordPdf";
@@ -67,9 +69,12 @@ export async function aiFillGaps(
       formKey,
       fieldNames: asked.map((f) => f.name),
     });
-    if (errors?.length) throw new Error(errors[0].message);
-    payload =
-      typeof data === "string" ? JSON.parse(data) : ((data ?? {}) as SuggestResponse);
+    assertGraphqlErrors({ errors: errors });
+    const value = decodeAwsJson(data);
+    if (!isRecord(value)) throw new Error('The AI response was unreadable.');
+    payload = { ok: value.ok === true ? true : value.ok === false ? false : undefined,
+      error: typeof value.error === 'string' ? value.error : undefined,
+      values: Array.isArray(value.values) ? value.values.filter(isRecord).map(item => ({ field: item.field, value: item.value, why: item.why })) : [] };
   } catch (err) {
     return {
       bytes,

@@ -3,17 +3,12 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import type { Contact } from '../lib/client';
 import { communicationRequest } from '../lib/communications';
-import { usePagedList, type Page } from '../lib/usePagedList';
+import { usePagedList } from '../lib/usePagedList';
 import PartyForm from './PartyForm';
-interface Candidate {
-  id: string;
-  contact: Contact;
-  accountName: string;
-}
 /** Each page is filtered and authorized on the server, with batched account names. */
 export default function LegacyManagerReview() {
   const resource = usePagedList(
-    (nextToken) => communicationRequest<Page<Candidate>>('relationshipLegacyCandidates', { nextToken }),
+    (nextToken) => communicationRequest('relationshipLegacyCandidates', { nextToken }),
     [],
   );
   const [selected, setSelected] = useState<Contact | null>(null);

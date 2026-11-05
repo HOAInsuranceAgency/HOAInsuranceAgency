@@ -1,3 +1,4 @@
+import { assertGraphqlErrors } from '../../lib/apiResponse';
 import { useLiveUpdateBlock } from "../../lib/useLiveUpdates";
 import { Button } from "../../components/ui/Button";
 import { Table } from "../../components/ui/Table";
@@ -58,7 +59,8 @@ function AccountPolicies({ accountId }: { accountId: string }) {
     setRowStatus(previous => ({ ...previous, [id]: { state: "saving" } }));
     try {
       const { data, errors } = await client.models.Policy.update({ id, ...patch });
-      if (errors?.length || !data) throw new Error(errors?.[0]?.message);
+      assertGraphqlErrors({ errors });
+      if (!data) throw new Error(errors?.[0]?.message);
       setPolicies(ps => ps.map(p => p.id === id ? data : p));
       setRowStatus(previous => ({ ...previous, [id]: { state: "saved", message: "Policy updated." } }));
     } catch (error) {

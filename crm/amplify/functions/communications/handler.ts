@@ -1,4 +1,6 @@
 import { assertPreviewRead } from "../migration-readonly";
+import { apiFailure, decodeAwsJson, isRecord } from '../../../../shared/apiResponse';
+import { communicationOperationMode } from '../../../../shared/apiOperations';
 import { currentContacts } from "../../../../shared/contacts";
 import { RELATIONSHIP_READS, RELATIONSHIP_WRITES, relationshipOperation } from "./relationships";
 import { receivesNewLeads, salespersonEligibility, salespersonWorkflow } from "../../../../shared/salespersonOwnership";
@@ -32,10 +34,10 @@ import { activeTeamUserCheck } from "../crm-access/user-status";
 
 type Input = Record<string, unknown>;
 function object(value: unknown): Input {
-  const parsed = typeof value === "string" ? JSON.parse(value) : value;
+  const parsed = decodeAwsJson(value);
   if (parsed == null) return {};
-  if (typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Invalid request");
-  return parsed as Input;
+  if (!isRecord(parsed)) throw new Error("Invalid request");
+  return parsed;
 }
 const text = (input: Input, key: string, max = 500) => typeof input[key] === "string" ? (input[key] as string).trim().slice(0, max) : "";
 function version(input: Input) { if (!Number.isInteger(input.version)) throw new Error("Refresh this record before saving"); return Number(input.version); }
@@ -61,6 +63,8 @@ export const handler = async (event: { arguments: { operation?: string; readOper
     if (!actor) throw new Error("Sign in to the CRM to continue");
     const admin = isActiveAdmin(event.identity, event.request);
     const input = object(event.arguments.input), op = event.arguments.readOperation ?? event.arguments.operation;
+    const transport = communicationOperationMode(op);
+    if (transport && transport !== (event.arguments.readOperation ? 'read' : 'write')) throw new Error('This operation uses a different API transport.');
     if (retiredTaskOperation(op ?? "", input)) tasksRemoved();
     if ((event.arguments.readOperation ? RELATIONSHIP_READS : RELATIONSHIP_WRITES).has(op ?? "")) {
       return { ok: true, ...await relationshipOperation(op!, input, { sub: actor, groups: event.identity?.groups ?? undefined, claims: event.identity?.claims }, event.request) };
@@ -435,7 +439,8 @@ export const handler = async (event: { arguments: { operation?: string; readOper
     }
     throw new Error("Unknown operation");
   } catch (e) {
-    return { ok: false, error: conflict(e) ? "This record changed. Refresh and try again." : e instanceof Error ? e.message : "The change could not be saved",
-      ...(e instanceof Error && 'code' in e && e.code === 'BUSINESS_DRAFT_NOT_DISPATCHED' ? { code: e.code } : {}) };
+    return apiFailure({ message: conflict(e) ? "This record changed. Refresh and try again." : e instanceof Error ? e.message : "The change could not be saved",
+      ...(e instanceof Error && e.name === 'Unauthorized' ? { errorType: 'Unauthorized' } : {}),
+      ...(e instanceof Error && 'code' in e && typeof e.code === 'string' && e.code.startsWith('BUSINESS_DRAFT_') ? { code: e.code } : {}) }, 'The change could not be saved');
   }
 };

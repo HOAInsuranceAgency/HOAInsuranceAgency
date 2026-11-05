@@ -9,6 +9,8 @@ vi.mock('./client', () => ({ client: {
 } }));
 import { communicationRequest } from './communications';
 
+const draftInput = { accountId: 'a', previewId: 'preview', previewHash: 'hash', requestId: 'request', to: ['board@example.test'], cc: [] };
+
 beforeEach(() => { api.read.mockReset(); api.write.mockReset(); });
 
 it.each([false, true])('preserves GraphQL authorization metadata, including later errors (write: %s)', async write => {
@@ -17,9 +19,9 @@ it.each([false, true])('preserves GraphQL authorization metadata, including late
     { message: 'A different field timed out', errorType: 'Timeout' },
     { message: 'The requested operation failed', errorType: 'Unauthorized' },
   ] });
-  const error = await communicationRequest('context', { accountId: 'a' }, write).catch(error => error);
+  const error = await (write ? communicationRequest('setResponsibilities', { accountId: 'a', salespersonId: 'owner', version: 1 }, true) : communicationRequest('context', { accountId: 'a' })).catch(error => error);
   expect(error).toBeInstanceOf(Error);
-  expect(error).toMatchObject({ message: 'The requested operation failed' });
+  expect(error).toMatchObject({ message: 'A different field timed out; The requested operation failed' });
   expect(isAuthorizationError(error)).toBe(true);
 });
 
@@ -33,7 +35,7 @@ it.each(['UnauthorizedException', 'NotAuthorizedException', 'UserUnAuthenticated
   const denied = Object.assign(new Error('Request failed'), { name });
   api.read.mockRejectedValue(denied);
   const error = await communicationRequest('context').catch(error => error);
-  expect(error).toBe(denied);
+  expect(error).toMatchObject({ name: 'Unauthorized', origin: 'transport' });
   expect(isAuthorizationError(error)).toBe(true);
 });
 
@@ -41,7 +43,7 @@ it('normalizes rejected GraphQL authorization envelopes to a readable error', as
   api.read.mockRejectedValue({ errors: [{ errorType: 'Unauthorized', message: 'Request failed' }] });
   const error = await communicationRequest('context').catch(error => error);
   expect(error).toBeInstanceOf(Error);
-  expect(error).toMatchObject({ message: "You don't have permission to do that." });
+  expect(error).toMatchObject({ message: "Request failed", origin: "transport" });
   expect(isAuthorizationError(error)).toBe(true);
 });
 
@@ -60,22 +62,23 @@ it('still decodes successful communication responses', async () => {
 it.each([false, true])('preserves only the explicit pre-dispatch code from a Lambda application response (JSON: %s)', async encoded => {
   const result = { ok: false, error: 'The quote changed. Review a new preview', code: 'BUSINESS_DRAFT_NOT_DISPATCHED' };
   api.write.mockResolvedValue({ data: encoded ? JSON.stringify(result) : result });
-  const error = await communicationRequest('prepareBusinessDraft', { accountId: 'a' }, true).catch(error => error);
+  const error = await communicationRequest('prepareBusinessDraft', draftInput, true).catch(error => error);
   expect(error).toBeInstanceOf(Error);
   expect(error).toMatchObject({ message: result.error, code: 'BUSINESS_DRAFT_NOT_DISPATCHED' });
   expect(isAuthorizationError(error)).toBe(false);
 });
 
-it.each(['BUSINESS_DRAFT_CONFLICT', 'NETWORK_FAILURE', 'business_draft_not_dispatched'])('does not promote unrelated application code %s into an editable draft rejection', async code => {
+it.each(['BUSINESS_DRAFT_CONFLICT', 'NETWORK_FAILURE', 'business_draft_not_dispatched'])('preserves application code %s without classifying it as an editable draft rejection', async code => {
   api.write.mockResolvedValue({ data: JSON.stringify({ ok: false, error: 'This request needs review', code }) });
-  const error = await communicationRequest('prepareBusinessDraft', {}, true).catch(error => error);
+  const error = await communicationRequest('prepareBusinessDraft', draftInput, true).catch(error => error);
   expect(error).toBeInstanceOf(Error);
-  expect(error).not.toHaveProperty('code');
+  expect(error).toMatchObject({ code, origin: 'application' });
+  expect(error).not.toMatchObject({ code: 'BUSINESS_DRAFT_NOT_DISPATCHED' });
 });
 
 it('does not copy a pre-dispatch-looking code from a GraphQL transport error', async () => {
   api.write.mockResolvedValue({ errors: [{ message: 'Transport failed', code: 'BUSINESS_DRAFT_NOT_DISPATCHED' }] });
-  const error = await communicationRequest('prepareBusinessDraft', {}, true).catch(error => error);
+  const error = await communicationRequest('prepareBusinessDraft', draftInput, true).catch(error => error);
   expect(error).toMatchObject({ message: 'Transport failed' });
   expect(error).not.toHaveProperty('code');
 });

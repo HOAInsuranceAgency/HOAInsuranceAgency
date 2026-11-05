@@ -1,3 +1,6 @@
+import { assertGraphqlErrors } from '../lib/apiResponse';
+import { readBrokerFeeStatus, confirmInvoicePayment } from '../lib/brokerFees';
+import { voidInvoice, sendInvoice } from '../lib/billingApi';
 import { useLiveUpdateBlock } from "../lib/useLiveUpdates";
 import { Button } from "./ui/Button";
 import { Table } from "./ui/Table";
@@ -142,7 +145,8 @@ function InvoiceEditorContent({
         const seeded = await client.models.InvoiceLine.create({ id: `invoice:${invoice.id}:adjustment`, invoiceId: invoice.id,
           accountId: invoice.accountId, policyId: invoice.policyId, kind: "ENDORSEMENT", description: "Endorsement or audit adjustment",
           retailAmount: null, costAmount: null, sortOrder: 0 });
-        if (seeded.errors?.length || !seeded.data) throw new Error(seeded.errors?.[0]?.message ?? "The adjustment line could not be refreshed. Retry this invoice.");
+        assertGraphqlErrors(seeded);
+        if (!seeded.data) throw new Error(seeded.errors?.[0]?.message ?? "The adjustment line could not be refreshed. Retry this invoice.");
         return [seeded.data];
       }
       // Unflagged drafts may be older endorsement/audit bills. Their existing
@@ -151,7 +155,8 @@ function InvoiceEditorContent({
       const sourceResult = invoice.policyId
         ? await client.models.Policy.get({ id: invoice.policyId })
         : await client.models.Quote.get({ id: invoice.quoteId! });
-      if (sourceResult.errors?.length || !sourceResult.data) throw new Error(sourceResult.errors?.[0]?.message ?? "The invoice source could not be refreshed.");
+      assertGraphqlErrors(sourceResult);
+      if (!sourceResult.data) throw new Error(sourceResult.errors?.[0]?.message ?? "The invoice source could not be refreshed.");
       setLegacyPolicyCharges(!!invoice.policyId && sourceResult.data.id === invoice.policyId && sourceResult.data.passThroughCharges == null);
       const expected = passThroughLinesFromSource(sourceResult.data, invoice.policyId ?? undefined);
       const expectedIds = new Set(expected.map(charge => charge.sourceQuoteChargeId));
@@ -166,14 +171,15 @@ function InvoiceEditorContent({
             ? await client.models.InvoiceLine.update({ id: premium.id, ...values })
             : await client.models.InvoiceLine.create({ id: `invoice:${invoice.id}:premium`, invoiceId: invoice.id, accountId: invoice.accountId,
               ...(invoice.policyId ? { policyId: invoice.policyId } : {}), ...values, costAmount: null, sortOrder: 0 });
-          if (result.errors?.length || !result.data) throw new Error(result.errors?.[0]?.message ?? "The source premium could not be refreshed. Retry this invoice before sending.");
+          assertGraphqlErrors(result);
+          if (!result.data) throw new Error(result.errors?.[0]?.message ?? "The source premium could not be refreshed. Retry this invoice before sending.");
           if (premium) next.splice(next.findIndex(line => line.id === premium.id), 1, result.data);
           else next.unshift(result.data);
         }
       }
       for (const line of loaded.filter(line => line.sourceQuoteChargeId && !expectedIds.has(line.sourceQuoteChargeId))) {
         const result = await client.models.InvoiceLine.delete({ id: line.id });
-        if (result.errors?.length) throw new Error(result.errors[0].message);
+        assertGraphqlErrors(result);
         next.splice(next.findIndex(row => row.id === line.id), 1);
       }
       for (const charge of expected) {
@@ -182,7 +188,8 @@ function InvoiceEditorContent({
         const result = previous
           ? await client.models.InvoiceLine.update({ id: previous.id, ...charge })
           : await client.models.InvoiceLine.create({ id: sourceChargeLineId(invoice.id, charge.sourceQuoteChargeId), invoiceId: invoice.id, accountId: invoice.accountId, ...charge, sortOrder: next.length });
-        if (result.errors?.length || !result.data) throw new Error(result.errors?.[0]?.message ?? "Supplier charges could not be refreshed. Retry this invoice before sending.");
+        assertGraphqlErrors(result);
+        if (!result.data) throw new Error(result.errors?.[0]?.message ?? "Supplier charges could not be refreshed. Retry this invoice before sending.");
         if (previous) next.splice(next.findIndex(line => line.id === previous.id), 1, result.data);
         else next.push(result.data);
       }
@@ -190,21 +197,19 @@ function InvoiceEditorContent({
       const priorFee = next.find(line => line.kind === "BROKER_FEE");
       if (!expectedFee && priorFee) {
         const removed = await client.models.InvoiceLine.delete({ id: priorFee.id });
-        if (removed.errors?.length) throw new Error(removed.errors[0].message);
+        assertGraphqlErrors(removed);
         next.splice(next.findIndex(line => line.id === priorFee.id), 1);
       } else if (expectedFee && (priorFee ? priorFee.retailAmount !== expectedFee.retailAmount || priorFee.brokerFeeQuoteId !== expectedFee.brokerFeeQuoteId : true)) {
         let alreadyCollected = Number('brokerFeeCollected' in sourceResult.data ? sourceResult.data.brokerFeeCollected : 0) > 0;
         if (!priorFee && !alreadyCollected) {
-          const response = await client.mutations.brokerFeeAction({ input: JSON.stringify({ op: "status", accountId: invoice.accountId, quoteIds: [expectedFee.brokerFeeQuoteId] }) });
-          if (response.errors?.length) throw new Error(response.errors[0].message);
-          const status = (typeof response.data === "string" ? JSON.parse(response.data) : response.data) as { ok?: boolean; error?: string; fees?: { quoteId: string; collectedCents: number }[] };
-          if (!status?.ok || !Array.isArray(status.fees)) throw new Error(status?.error ?? "The broker fee balance could not be refreshed.");
-          alreadyCollected = status.fees.some((fee: { quoteId: string; collectedCents: number }) => fee.quoteId === expectedFee.brokerFeeQuoteId && fee.collectedCents > 0);
+          const fees = await readBrokerFeeStatus(invoice.accountId, [expectedFee.brokerFeeQuoteId]);
+          alreadyCollected = fees.some(fee => fee.quoteId === expectedFee.brokerFeeQuoteId && fee.collectedCents > 0);
         }
         if (!alreadyCollected) {
           const saved = priorFee ? await client.models.InvoiceLine.update({ id: priorFee.id, ...expectedFee })
             : await client.models.InvoiceLine.create({ id: `invoice:${invoice.id}:broker-fee`, invoiceId: invoice.id, accountId: invoice.accountId, ...expectedFee, sortOrder: next.length });
-          if (saved.errors?.length || !saved.data) throw new Error(saved.errors?.[0]?.message ?? "The HOA broker fee could not be refreshed. Retry this invoice before sending.");
+          assertGraphqlErrors(saved);
+          if (!saved.data) throw new Error(saved.errors?.[0]?.message ?? "The HOA broker fee could not be refreshed. Retry this invoice before sending.");
           if (priorFee) next.splice(next.findIndex(line => line.id === priorFee.id), 1, saved.data);
           else next.push(saved.data);
         }
@@ -366,7 +371,8 @@ function InvoiceEditorContent({
     const linePatches = Object.entries(lineDraftsRef.current);
     if (Object.keys(invoicePatch).length) {
       const { data, errors } = await client.models.Invoice.update({ id: invoice.id, ...invoicePatch });
-      if (errors?.length || !data) throw new Error(errors?.[0]?.message ?? "Couldn't save invoice details.");
+      assertGraphqlErrors({ errors });
+      if (!data) throw new Error(errors?.[0]?.message ?? "Couldn't save invoice details.");
       if (!alive.current) return;
       acknowledgedInvoice.current = data;
       acknowledgedChanges.current = { ...acknowledgedChanges.current, ...invoicePatch };
@@ -377,7 +383,8 @@ function InvoiceEditorContent({
     for (const [id, patch] of linePatches) {
       if (!alive.current) return;
       const { data, errors } = await client.models.InvoiceLine.update({ id, ...patch });
-      if (errors?.length || !data) throw new Error(errors?.[0]?.message ?? "Couldn't save that line.");
+      assertGraphqlErrors({ errors });
+      if (!data) throw new Error(errors?.[0]?.message ?? "Couldn't save that line.");
       if (!alive.current) return;
       setLines(ls => ls.map(l => l.id === id ? data : l));
       const rest = remaining(lineDraftsRef.current[id] ?? {}, patch);
@@ -437,7 +444,8 @@ function InvoiceEditorContent({
         for (const line of linesRef.current.filter(l => (l.sortOrder ?? 0) >= at)
           .sort((a, b) => (b.sortOrder ?? 0) - (a.sortOrder ?? 0))) {
           const { data, errors } = await client.models.InvoiceLine.update({ id: line.id, sortOrder: (line.sortOrder ?? 0) + 1 });
-          if (errors?.length || !data) throw new Error(errors?.[0]?.message ?? "Couldn't reorder the lines. Try adding again.");
+          assertGraphqlErrors({ errors });
+          if (!data) throw new Error(errors?.[0]?.message ?? "Couldn't reorder the lines. Try adding again.");
           setLines(ls => ls.map(l => l.id === data.id ? data : l));
         }
       }
@@ -445,7 +453,8 @@ function InvoiceEditorContent({
         invoiceId: invoice.id, accountId: invoice.accountId,
         kind: "PREMIUM", description: "", sortOrder: at, ...seed,
       });
-      if (errors?.length || !data) throw new Error(errors?.[0]?.message ?? "Couldn't add that line.");
+      assertGraphqlErrors({ errors });
+      if (!data) throw new Error(errors?.[0]?.message ?? "Couldn't add that line.");
       setLines(ls => [...ls, data]);
     }, "Line added.", false, true);
   }
@@ -453,7 +462,7 @@ function InvoiceEditorContent({
   function removeLine(id: string) {
     return enqueue(async () => {
       const { errors } = await client.models.InvoiceLine.delete({ id });
-      if (errors?.length) throw new Error(errors[0].message);
+      assertGraphqlErrors({ errors: errors });
       setLines(ls => ls.filter(l => l.id !== id));
     }, "Line removed.", false, true);
   }
@@ -504,14 +513,7 @@ function InvoiceEditorContent({
   async function voidThis() {
     await enqueue(
       async () => {
-        const { data, errors } = await client.mutations.voidInvoice({
-          invoiceId: invoice.id,
-        });
-        if (errors?.length) throw new Error(errors[0].message);
-        // `a.json()` arrives as an AWSJSON string — see lib/aiExtraction.ts.
-        const result =
-          typeof data === "string" ? JSON.parse(data) : (data as Record<string, unknown>);
-        if (!result?.ok) throw new Error(String(result?.error ?? "Void failed."));
+        await voidInvoice(invoice.id);
         const refreshed = await refreshAfterAction(
           { ...acknowledgedInvoice.current, status: "VOID" },
           row => row.status === "VOID"
@@ -533,7 +535,7 @@ function InvoiceEditorContent({
           throw new Error("The previous send used different recipients. Reopen the invoice and review its delivery before starting another send.");
         }
         sendAttempt.current ??= { expectedSentAt: acknowledgedInvoice.current.sentAt ?? "", toEmail: selected };
-        const { data, errors } = await client.mutations.sendInvoice({
+        const result = await sendInvoice({
           invoiceId: invoice.id,
           // Always explicit now that the recipients are chosen rather than
           // typed. The Lambda still falls back to the primary contact when
@@ -541,12 +543,7 @@ function InvoiceEditorContent({
           toEmail: sendAttempt.current.toEmail,
           expectedSentAt: sendAttempt.current.expectedSentAt,
         });
-        if (errors?.length) throw new Error(errors[0].message);
-        // `a.json()` arrives as an AWSJSON string — see lib/aiExtraction.ts for
-        // the trap this is. Parsed here rather than trusted as an object.
-        const result =
-          typeof data === "string" ? JSON.parse(data) : (data as Record<string, unknown>);
-        if (!result?.ok) throw new Error(String(result?.error ?? "Send failed."));
+
         sendAttempt.current = null;
         // Generated fee lines can refresh from the quote at send; show the exact billed rows.
         if ((policy?.brokerFee ?? quote?.brokerFee ?? 0) > 0 || lines.some(line => line.kind === "BROKER_FEE")) {
@@ -608,7 +605,7 @@ function InvoiceEditorContent({
               disabled={actionBusy}
               onConfirm={() => enqueue(async () => {
                 const { errors } = await client.models.Invoice.delete({ id: invoice.id });
-                if (errors?.length) throw new Error(errors[0].message);
+                assertGraphqlErrors({ errors: errors });
                 if (alive.current) onDeleted();
               }, "Deleted.", false, true)}
             />
@@ -995,12 +992,10 @@ function InvoiceEditorContent({
             disabled={actionBusy}
             onClick={() =>
               void enqueue(async () => {
-                const response = await client.mutations.brokerFeeAction({ input: JSON.stringify({ op: "confirmInvoicePayment", invoiceId: invoice.id }) });
-                if (response.errors?.length) throw new Error(response.errors[0].message);
-                const result = typeof response.data === "string" ? JSON.parse(response.data) : response.data;
-                if (!result?.ok) throw new Error(result?.error ?? "Could not confirm payment.");
+                await confirmInvoicePayment(invoice.id);
                 const refreshed = await client.models.Invoice.get({ id: invoice.id });
-                if (refreshed.errors?.length || !refreshed.data) throw new Error("Payment recorded. Refresh the invoice to see its status.");
+                assertGraphqlErrors(refreshed);
+                if (!refreshed.data) throw new Error("Payment recorded. Refresh the invoice to see its status.");
                 if (alive.current) onChange(refreshed.data);
               }, "Marked paid.", false, true)
             }

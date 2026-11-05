@@ -1,4 +1,5 @@
 import { client, type License } from "./client";
+import { assertGraphqlErrors } from './apiResponse';
 import { listAllPages } from "../../../shared/pagination";
 
 export type SavedProducerLicense = Pick<License, "id" | "state" | "licenseNumber">;
@@ -10,9 +11,7 @@ export async function loadProducerLicenses(profileId: string): Promise<SavedProd
       { userProfileId: profileId },
       { filter: { holderType: { eq: "PRODUCER" } }, nextToken },
     );
-    if (result.errors?.length) {
-      throw new Error(result.errors[0].message || "Couldn't load your producer licenses.");
-    }
+    assertGraphqlErrors(result, "Couldn't load your producer licenses.");
     return result;
   });
   const seen = new Set<string>();

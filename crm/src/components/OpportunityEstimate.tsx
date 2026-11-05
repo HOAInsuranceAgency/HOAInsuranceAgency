@@ -61,9 +61,7 @@ export function OpportunityEstimate({
             setSaving(true);
             try {
               parseEstimate(amount);
-              const result = await communicationRequest<{
-                plan: CommercialPlan;
-              }>(
+              const result = await communicationRequest(
                 'saveCommercial',
                 {
                   accountId: plan.accountId,

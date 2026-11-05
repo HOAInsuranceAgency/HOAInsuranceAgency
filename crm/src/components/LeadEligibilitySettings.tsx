@@ -34,7 +34,7 @@ export function useLeadEligibilitySettings(members: readonly EligibilityRosterMe
   async function fetchSettings(ids: string[]) {
     const rows: TeamEligibility[] = [];
     for (let offset = 0; offset < ids.length; offset += 20) {
-      const page = await request<{ team: TeamEligibility[] }>("teamSettings", { userIds: ids.slice(offset, offset + 20) });
+      const page = await request("teamSettings", { userIds: ids.slice(offset, offset + 20) });
       if (!Array.isArray(page.team)) throw new Error('Could not load assignment settings.');
       rows.push(...page.team);
     }
@@ -125,7 +125,7 @@ export function useLeadEligibilitySettings(members: readonly EligibilityRosterMe
     inFlight.current = true; setBusy(true); setError(""); setMessage("");
     const ticket = ++generation.current;
     try {
-      const result = await request<{ member: TeamEligibility }>("saveEligibility", { userId: member.userId, version: member.version ?? 0, ...patch }, true);
+      const result = await request("saveEligibility", { userId: member.userId, version: member.version ?? 0, ...patch }, true);
       if (ticket !== generation.current) return false;
       saved.current.set(member.userId, result.member);
       loaded.current.add(member.userId);

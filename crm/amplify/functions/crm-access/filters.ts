@@ -1,4 +1,5 @@
-import { object, type RecordData } from "./policy";
+import { type RecordData } from "./policy";
+import { object } from '../api-input';
 
 /** Recheck the complete filter against the current, consistently read record. */
 export function matchesFilter(record: RecordData, filter: RecordData): boolean {

@@ -5,10 +5,8 @@ import { useAsyncResource } from "../lib/useAsyncResource";
 import { fmtDate, fmtProviderPhone } from "../lib/client";
 import { leadSourceLabel } from "../lib/communicationLabels";
 import ContactActions from "./ContactActions";
-type Summary = { name: string; source?: string; leadSource?: string; notes?: string; currentPolicyExpiration?: string; url: string; more: boolean;
-  contacts: { id: string; name?: string; email?: string; phone?: string }[]; quotes: { id: string; status: string; lines?: string[] }[]; documents: { id: string; name: string; status?: string }[] };
 export default function CommunicationAccountSummary({ accountId, open }: { accountId: string; open: (url: string) => void }) {
-  const resource = useAsyncResource(() => request<{ summary: Summary }>("accountSummary", { accountId }), [accountId], { initialData: null, errorMessage: "Account details are temporarily unavailable" , live: true });
+  const resource = useAsyncResource(() => request("accountSummary", { accountId }), [accountId], { initialData: null, errorMessage: "Account details are temporarily unavailable" , live: true });
   if (!resource.data) return <div className="front-lead-summary"><p className="muted small">{resource.error || "Loading account details…"}</p>{resource.error && <Button variant="secondary"  onClick={() => void resource.refetch()}>Retry account details</Button>}</div>;
   const s = resource.data.summary;
   return <section className="front-lead-summary" aria-label="Lead summary">

@@ -1,9 +1,11 @@
 import { captureHandledFailure } from "../monitoring";
+import { apiFailure } from '../../../../shared/apiResponse';
 import { brokerFeeDisclosure, signBrokerFeeDisclosure } from './agreements';
 import { accountFees, getFee } from './store';
 import { AccountAccess } from '../crm-access/access';
 import { assertUserSession } from '../crm-access/user-status';
-import { id, object, type Identity } from '../crm-access/policy';
+import { id, type Identity } from '../crm-access/policy';
+import { object } from '../api-input';
 import { assertPreviewRead } from '../migration-readonly';
 interface Event { source?: string; fieldName?: string; info?: { fieldName?: string }; arguments?: Record<string, unknown>; identity?: Identity; request?: { headers?: Record<string, unknown> }; }
 export const handler = async (event: Event) => {
@@ -39,6 +41,6 @@ export const handler = async (event: Event) => {
     const denied = error instanceof Error && error.name === 'Unauthorized';
     const message = denied ? 'Unauthorized: this broker fee request is no longer available to your account.'
       : error instanceof Error && error.name === 'Error' ? error.message : 'This broker fee request could not be completed. Please retry.';
-    return { ok: false, error: message, ...(denied ? { errorType: 'Unauthorized' } : {}) };
+    return apiFailure({ message, ...(denied ? { errorType: 'Unauthorized' } : {}) }, message);
   }
 };

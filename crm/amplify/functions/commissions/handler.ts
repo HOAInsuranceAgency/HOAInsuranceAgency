@@ -1,4 +1,5 @@
 import { assertPreviewRead } from "../migration-readonly";
+import { apiFailure } from '../../../../shared/apiResponse';
 import { QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { collectCompletePages } from '../storage/pages';
 import { bindDay, firstBindDate } from './account-history';
@@ -8,7 +9,8 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { activeRole, type RoleRequest } from '../crm-access/active-role';
 import { assertUserSession } from '../crm-access/user-status';
 import { AccountAccess, tableName } from '../crm-access/access';
-import { type Identity, object } from '../crm-access/policy';
+import { type Identity } from '../crm-access/policy';
+import { object } from '../api-input';
 import {
   appendEntry,
   day,
@@ -770,19 +772,18 @@ export async function handler(event: Event) {
     }
     throw new Error('Unknown commission action.');
   } catch (error) {
-    if (error instanceof Error && error.name === 'Unauthorized') return {
-      ok: false, error: 'Unauthorized: these commission records are no longer available to your account.', errorType: 'Unauthorized',
-    };
+    if (error instanceof Error && error.name === 'Unauthorized') return apiFailure({
+      message: 'Unauthorized: these commission records are no longer available to your account.', errorType: 'Unauthorized',
+    }, 'Commission operation failed.');
     const conflict = ['TransactionCanceledException', 'ConditionalCheckFailedException'].includes(
       (error as Error).name,
     );
-    return {
-      ok: false,
-      error: conflict
+    return apiFailure({
+      message: conflict
         ? 'The record changed or this statement, settlement, or carrier transaction was already posted. Refresh and check the ledger before retrying.'
         : error instanceof Error
           ? error.message
           : 'Commission operation failed.',
-    };
+    }, 'Commission operation failed.');
   }
 }

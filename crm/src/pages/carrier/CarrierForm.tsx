@@ -1,4 +1,5 @@
 import { str } from "../../lib/formCodec";
+import { assertGraphqlErrors } from '../../lib/apiResponse';
 import { Input } from "../../components/ui/Input";
 import { Select } from "../../components/ui/Select";
 import { Button } from "../../components/ui/Button";
@@ -84,7 +85,8 @@ export function CarrierForm({
           personalLines: form.personalLines,
           notes: str(form.notes),
         });
-        if (errors?.length || !data) throw new Error(errors?.[0]?.message);
+        assertGraphqlErrors({ errors });
+        if (!data) throw new Error(errors?.[0]?.message);
         markSaved(submitted);
         onChange(data);
       },

@@ -1,3 +1,4 @@
+import { assertGraphqlErrors } from '../lib/apiResponse';
 import { LiveStatus } from "../components/LiveStatus";
 import { useLiveUpdateBlock } from "../lib/useLiveUpdates";
 import { Input } from "../components/ui/Input";
@@ -195,7 +196,7 @@ function parse(raw: unknown): Record<string, unknown> {
 
 async function fetchTeamPage(nextToken?: string) {
   const { data, errors } = await client.queries.listTeamUsers({ nextToken });
-  if (errors?.length) throw new Error(errors[0].message);
+  assertGraphqlErrors({ errors: errors });
   const body = parse(data);
   if (body.ok === false) throw new Error(String(body.error ?? "Failed to load team"));
   const users = (body.users as TeamUser[] | undefined) ?? NO_USERS;
@@ -317,7 +318,7 @@ export default function Team({ profile }: { profile: UserProfile }) {
           email,
           roles: form.roles,
         });
-        if (errors?.length) throw new Error(errors[0].message);
+        assertGraphqlErrors({ errors: errors });
         const body = parse(data);
         if (!body.ok) {
           // Failed cleanup can leave a real member behind. Refresh access
@@ -342,7 +343,7 @@ export default function Team({ profile }: { profile: UserProfile }) {
 
   async function saveRoles(user: TeamUser, roles: UserRole[]) {
     const { data, errors } = await client.mutations.updateUserRoles({ userId: user.userId, roles });
-    if (errors?.length) throw new Error(errors[0].message);
+    assertGraphqlErrors({ errors: errors });
     const body = parse(data);
     if (!body.ok) {
       void team.refetch();
@@ -385,7 +386,8 @@ export default function Team({ profile }: { profile: UserProfile }) {
           id: p.id,
           ...patch,
         });
-        if (errors?.length || !data) throw new Error(errors?.[0]?.message);
+        assertGraphqlErrors({ errors });
+        if (!data) throw new Error(errors?.[0]?.message);
         // Only the submitted fields belong to this response; another control
         // may have saved a signature or profile decoration in the meantime.
         const committed = Object.fromEntries(Object.keys(patch).map(key => [key, data[key as keyof UserProfile]]));

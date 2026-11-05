@@ -18,7 +18,7 @@ export async function loadRecentFinanceInterest(asOf: Date): Promise<FinancePaym
   const found = new Map<string, FinancePaymentReceipt>(), tokens = new Set<string>();
   let nextToken: string | undefined;
   do {
-    const page = await communicationRequest<{ items: FinancePaymentReceipt[]; nextToken?: string }>(
+    const page = await communicationRequest(
       'dashboardInterestPage', { from, to, ...(nextToken ? { nextToken } : {}) },
     );
     if (!Array.isArray(page.items)) throw new Error('Recent finance receipts are incomplete; refresh to try again');
@@ -45,7 +45,7 @@ export async function loadFinancePolicyAnchors(ids: readonly string[]): Promise<
   const unique = [...new Set(ids)], batches: string[][] = [];
   for (let offset = 0; offset < unique.length; offset += 100) batches.push(unique.slice(offset, offset + 100));
   const pages = await mapLimited(batches, async policyIds => {
-    const result = await communicationRequest<{ items: FinancePolicyAnchor[]; missingIds: string[] }>('dashboardPolicyAnchors', { policyIds });
+    const result = await communicationRequest('dashboardPolicyAnchors', { policyIds });
     if (!Array.isArray(result.items) || !Array.isArray(result.missingIds)) throw new Error('Policy anchors are incomplete; refresh to try again');
     const resolved = new Set([...result.items.map(item => item.id), ...result.missingIds]);
     if (resolved.size !== policyIds.length || policyIds.some(id => !resolved.has(id))) throw new Error('Policy anchors are incomplete; refresh to try again');
@@ -63,7 +63,7 @@ export async function loadFinanceInvoiceAnchors(ids: readonly string[]): Promise
     const found = new Map<string, FinanceLineReceipt>(), tokens = new Set<string>(), requested = new Set(invoiceIds);
     let nextToken: string | undefined;
     do {
-      const page = await communicationRequest<{ items: FinanceLineReceipt[]; nextToken?: string }>(
+      const page = await communicationRequest(
         'dashboardInvoiceAnchors', { invoiceIds, ...(nextToken ? { nextToken } : {}) },
       );
       if (!Array.isArray(page.items)) throw new Error('Invoice anchors are incomplete; refresh to try again');

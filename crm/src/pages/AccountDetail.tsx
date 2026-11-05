@@ -1,3 +1,4 @@
+import { assertGraphqlErrors } from '../lib/apiResponse';
 import { Button } from "../components/ui/Button";
 import { Tabs, TabPanel } from "../components/ui/Tabs";
 import AccountRelationships from "../components/AccountRelationships";
@@ -198,7 +199,7 @@ function AccountDetailPage({ profile }: { profile: UserProfile }) {
     async () => {
       if (!id) return null;
       const response = await client.models.Account.get({ id });
-      if (response.errors?.length) throw new Error(response.errors[0].message);
+      assertGraphqlErrors(response);
       return response.data;
     },
     [id],
@@ -309,7 +310,7 @@ function AccountDetailPage({ profile }: { profile: UserProfile }) {
 function LeadAssignment({ account }: { account: Account }) {
   const savedWorkflow = useRef<LeadWorkflow | null>(null);
   const resource = useAsyncResource(async () => {
-    const context = await communicationRequest<WorkflowContext>("context", { accountId: account.id });
+    const context = await communicationRequest("context", { accountId: account.id });
     // An explicit retry may finish after a newer assignment save.
     const saved = savedWorkflow.current;
     return saved && saved.version > (context.workflow?.version ?? 0) ? { ...context, workflow: saved } : context;

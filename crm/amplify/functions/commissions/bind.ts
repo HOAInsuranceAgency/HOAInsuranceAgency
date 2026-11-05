@@ -9,7 +9,7 @@ import { QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { collectCompletePages } from '../storage/pages';
 import { AccountAccess, tableName } from '../crm-access/access';
 import { activeTeamUserCheck } from '../crm-access/user-status';
-import { object } from '../crm-access/policy';
+import { object } from '../api-input';
 import {
   packageTerms,
   type PackageQuote,

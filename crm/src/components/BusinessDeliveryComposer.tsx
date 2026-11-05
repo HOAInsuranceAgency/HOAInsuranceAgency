@@ -3,7 +3,7 @@ import { Input } from "./ui/Input";
 import { Button } from "./ui/Button";
 import { Select } from "./ui/Select";
 import { useEffect, useId, useRef, useState } from "react";
-import type { BusinessDeliveryAttempt, BusinessDeliveryContext, BusinessDeliveryKind, BusinessDeliveryPreview, PrepareBusinessDraftInput, PublicProposalQuote } from "../../../shared/frontBusinessDelivery";
+import type { BusinessDeliveryAttempt, BusinessDeliveryKind, BusinessDeliveryPreview, PrepareBusinessDraftInput, PublicProposalQuote } from "../../../shared/frontBusinessDelivery";
 import { isBusinessDeliveryFile } from "../../../shared/frontBusinessDelivery";
 import { communicationRequest as request } from "../lib/communications";
 import { fmtDate, fmtDateTime, fmtMoney, friendlyError } from "../lib/client";
@@ -100,9 +100,9 @@ function BusinessDeliveryComposerContent({ accountId, conversationId, kind, reco
     evidence.current.set(current.id, current);
     return current;
   }
-  const context = useAsyncResource(() => request<{ context: BusinessDeliveryContext }>("businessDeliveryContext", { accountId }), [accountId], { initialData: null, errorMessage: "Could not load delivery choices" , live: true });
+  const context = useAsyncResource(() => request("businessDeliveryContext", { accountId }), [accountId], { initialData: null, errorMessage: "Could not load delivery choices" , live: true });
   const history = useAsyncResource(async () => {
-    try { const page = await request<History>("historyBusinessDeliveries", { accountId }); return { ...page, items: page.items.map(rememberAttempt) }; }
+    try { const page = await request("historyBusinessDeliveries", { accountId }); return { ...page, items: page.items.map(rememberAttempt) }; }
     catch (err) { if (isAuthorizationError(err)) context.invalidate(err); throw err; }
   }, [accountId], { initialData: { items: [] } as History, errorMessage: "Could not load Front draft history", live: { protectEdits: false, intervalMs: 15_000 } });
   const [choiceKey, setChoiceKey] = useState(kind && recordId ? `${kind}:${recordId}` : "");
@@ -165,7 +165,7 @@ function BusinessDeliveryComposerContent({ accountId, conversationId, kind, reco
     if (flight.current || !choice || choice.disabledReason || !data?.sender || !validThread) return;
     flight.current = true; setBusy("Preparing preview…"); setError(""); setReviewed(false);
     try {
-      const result = await request<{ preview: BusinessDeliveryPreview }>("previewBusinessDelivery", { accountId, kind: choice.kind, recordId: choice.recordId, conversationId: thread, documentIds }, true);
+      const result = await request("previewBusinessDelivery", { accountId, kind: choice.kind, recordId: choice.recordId, conversationId: thread, documentIds }, true);
       if (mounted.current) { setPreview(result.preview); lastInput.current = null; }
     } catch (err) { if (mounted.current) reportError(err, "Could not prepare the preview"); }
     finally { flight.current = false; if (mounted.current) setBusy(""); }
@@ -182,13 +182,13 @@ function BusinessDeliveryComposerContent({ accountId, conversationId, kind, reco
     lastInput.current = input;
     flight.current = true; setBusy("Preparing Front draft…"); setError("");
     try {
-      const result = await request<{ attempt: BusinessDeliveryAttempt }>("prepareBusinessDraft", input, true);
+      const result = await request("prepareBusinessDraft", input, true);
       if (!mounted.current) return;
       setAttempt(rememberAttempt(result.attempt)); setUncertain(false); void history.refetch();
     } catch (err) {
       if (mounted.current) {
         reportError(err, "Could not confirm the Front draft");
-        if (err instanceof Error && (err as Error & { code?: unknown }).code === "BUSINESS_DRAFT_NOT_DISPATCHED") {
+        if (err instanceof Error && (err as Error & { code?: unknown }).code === "BUSINESS_DRAFT_NOT_DISPATCHED" && (err as Error & { origin?: unknown }).origin === 'application') {
           setPreview(null); setReviewed(false); lastInput.current = null; setUncertain(false);
         } else if (!isAuthorizationError(err)) { setUncertain(true); void history.refetch(); }
       }
@@ -199,7 +199,7 @@ function BusinessDeliveryComposerContent({ accountId, conversationId, kind, reco
     if (flight.current) return;
     flight.current = true; setBusy("Checking Front status…"); setError("");
     try {
-      const result = await request<{ attempt: BusinessDeliveryAttempt }>("reconcileBusinessDraft", { accountId, attemptId: item.id, ...(recoveryMessageId ? { recoveryMessageId } : {}) }, true);
+      const result = await request("reconcileBusinessDraft", { accountId, attemptId: item.id, ...(recoveryMessageId ? { recoveryMessageId } : {}) }, true);
       if (!mounted.current) return;
       const verified = rememberAttempt(result.attempt);
       history.setData(previous => ({ ...previous, items: previous.items.map(row => row.id === verified.id ? verified : row) }));
@@ -222,7 +222,7 @@ function BusinessDeliveryComposerContent({ accountId, conversationId, kind, reco
     if (loadingMore || !history.data.nextToken) return;
     const captured = history.data; setLoadingMore(true);
     try {
-      const result = await request<History>("historyBusinessDeliveries", { accountId, nextToken: captured.nextToken });
+      const result = await request("historyBusinessDeliveries", { accountId, nextToken: captured.nextToken });
       if (mounted.current) history.setData(previous => previous === captured ? { items: [...new Map([...previous.items, ...result.items.map(rememberAttempt)].map(item => [item.id, item])).values()], nextToken: result.nextToken } : previous);
     } catch (err) { if (mounted.current) reportError(err, "Could not load older drafts"); }
     finally { if (mounted.current) setLoadingMore(false); }

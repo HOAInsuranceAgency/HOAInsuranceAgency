@@ -164,7 +164,8 @@ export function useSingletonChild<T, F extends object>(
     assertNoErrors(existing);
     if (existing.data) return unwrap(await model.update({ accountId, ...payload }));
 
-    throw new Error(created.errors?.[0]?.message ?? `Couldn't save the ${noun}.`);
+    assertNoErrors(created);
+    throw new Error(`Couldn't save the ${noun}.`);
   }
 
   async function save() {

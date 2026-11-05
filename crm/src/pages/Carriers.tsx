@@ -1,4 +1,5 @@
 import { num } from "../lib/formCodec";
+import { assertGraphqlErrors } from '../lib/apiResponse';
 import { LiveStatus } from "../components/LiveStatus";
 import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
@@ -125,7 +126,8 @@ export default function Carriers() {
             name: form.name.trim(),
             appointed: form.appointed,
           });
-          if (errors?.length || !data) throw new Error(errors?.[0]?.message);
+          assertGraphqlErrors({ errors });
+          if (!data) throw new Error(errors?.[0]?.message);
           markSaved(submitted);
           navigate(`/carriers/${data.id}`);
         },

@@ -9,7 +9,7 @@ export interface BrokerFeeInvoiceSendClaim {
 }
 export interface BrokerFeeSignature { name: string; email: string; role: string; signedAt: string; consent: true; ip?: string; }
 export interface BrokerFeeQuote {
-  id: string; accountId: string; carrierId?: string | null; carrierName?: string; lines?: (string | null)[] | null;
+  id: string; accountId: string; carrierId?: string | null; carrierName?: string | null; lines?: (string | null)[] | null;
   premium?: number | null; brokerFee?: number | null; billType?: string | null; effectiveDate?: string | null; expirationDate?: string | null;
   agencyCommissionPct?: number; agencyCommissionCents?: number;
   terms: string;

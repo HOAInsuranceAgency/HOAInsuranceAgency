@@ -10,7 +10,7 @@ export type WorkItem = Partial<LeadTask & LeadWorkflow> & {
   communicationId?: string; phone?: string; urgency?: string; why?: string; instruction?: string; provider?: string; type?: string;
 };
 type WorkPage = { items: WorkItem[]; nextToken?: string };
-export function useWorkItems(kind: string, filters: { view?: string; mine?: boolean } = {}) {
+export function useWorkItems(kind: import('./communicationContracts').WorkKind, filters: { view?: string; mine?: boolean } = {}) {
   const { view = "", mine = false } = filters;
   const scope = JSON.stringify([kind, view, mine]);
   const current = useRef(scope); current.current = scope;
@@ -19,7 +19,7 @@ export function useWorkItems(kind: string, filters: { view?: string; mine?: bool
   const generation = useRef(0), paging = useRef(false);
   const [loadingMore, setLoadingMore] = useState(false), [pageError, setPageError] = useState("");
   const resource = useAsyncResource<WorkPage>(async () => {
-    const page = await readLoadedPages(token => request<WorkPage>("work", { kind, view, mine, ...(token ? { nextToken: token } : {}) }), pageDepth.current);
+    const page = await readLoadedPages(token => request("work", { kind, view, mine, ...(token ? { nextToken: token } : {}) }), pageDepth.current);
     if (!page) throw new Error('Could not refresh the loaded work.');
     return { items: page.items, nextToken: page.nextToken };
   }, [scope], {
@@ -44,7 +44,7 @@ export function useWorkItems(kind: string, filters: { view?: string; mine?: bool
     const ticket = generation.current;
     paging.current = true; setLoadingMore(true); setPageError("");
     try {
-      const page = await request<WorkPage>("work", { kind, view, mine, nextToken: cursor });
+      const page = await request("work", { kind, view, mine, nextToken: cursor });
       if (ticket !== generation.current || current.current !== scope) return;
       if (page.nextToken === cursor) throw new Error("More work could not be loaded. Refresh and try again.");
       pageDepth.current++;

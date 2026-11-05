@@ -34,9 +34,4 @@ export const listPartition = (model: string) => model === "Document" || model ==
 export type RecordData = Record<string, unknown>;
 export type Identity = { sub?: string; groups?: string[]; claims?: Record<string, unknown> };
 export class AccessDenied extends Error { constructor() { super("This record is not available to your account. Contact an administrator if it needs to be assigned to you."); this.name = "Unauthorized"; } }
-export const object = (value: unknown): RecordData => {
-  const parsed = typeof value === "string" ? JSON.parse(value) : value;
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
-  return parsed as RecordData;
-};
 export const id = (value: unknown): string => typeof value === "string" && value.length > 0 && value.length <= 500 ? value : "";

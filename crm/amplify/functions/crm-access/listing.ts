@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { AccountAccess, db, tableName } from "./access";
-import { ACCOUNT_MODELS, RETIRED_MODELS, LIST_PARENTS, AccessDenied, id, listPartition, object, type RecordData } from "./policy";
+import { ACCOUNT_MODELS, RETIRED_MODELS, LIST_PARENTS, AccessDenied, id, listPartition, type RecordData } from "./policy";
+import { object } from '../api-input';
 
 import { queryFilter, matchesFilter } from "./filters";
 export { matchesFilter } from "./filters";
