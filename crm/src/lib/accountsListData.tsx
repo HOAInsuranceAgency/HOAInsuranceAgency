@@ -165,6 +165,7 @@ export function useAccountsListData(stage: Stage) {
     fence: ReturnType<typeof liveUpdates.getSnapshot>;
     version: number;
     accessApplied: boolean;
+    reportDenial: (error: unknown) => void;
   }>();
   const nextBackgroundAt = useRef(0);
 
@@ -248,8 +249,19 @@ export function useAccountsListData(stage: Stage) {
       // semantics, but never restart/drain the book for every notification.
       if (Date.now() < nextBackgroundAt.current) return false;
       let team: CommercialData['team'] | undefined;
+      const version = ++ticket.current;
+      let denied = false;
+      // Parallel reads may reject before advance() finishes settling its other
+      // jobs. Deliver this cycle's denial once, and never retire a newer read.
+      const reportDenial = (error: unknown) => {
+        if (denied) return;
+        denied = true;
+        if (!mounted.current || scope.current.key !== key || scope.current.cache !== cache
+          || ticket.current !== version || backgroundCycle.current?.version !== version) return;
+        denyBackground(error);
+      };
       cycle = {
-        fence, version: ++ticket.current, accessApplied: false,
+        fence, version, accessApplied: false, reportDenial,
         reader: createAccountListRefreshCycle(stage, current.current.data, {
           accounts: nextToken => client.models.Account.list({ nextToken, limit: ACCOUNT_REFRESH_PAGE_SIZE }),
           contacts: nextToken => client.models.Contact.list({ nextToken, limit: ACCOUNT_REFRESH_PAGE_SIZE }),
@@ -259,7 +271,7 @@ export function useAccountsListData(stage: Stage) {
             const result = team ? await loadCommercial(ids, snoozeIds, team) : await loadCommercial(ids, snoozeIds);
             team = result.team; return result;
           },
-        }, denyBackground),
+        }, reportDenial),
       };
       backgroundCycle.current = cycle;
       publish({ ...current.current, refreshing: true, refreshError: '' });
@@ -291,7 +303,7 @@ export function useAccountsListData(stage: Stage) {
       backgroundCycle.current = undefined; nextBackgroundAt.current = Date.now() + 60_000;
       publish({ stage, isAdmin, data, loaded: true, loading: false, refreshing: false, error: '', refreshError: step.refreshError ?? '' });
     } catch (error) {
-      if (isAuthorizationError(error)) { denyBackground(error); return true; }
+      if (isAuthorizationError(error)) { cycle.reportDenial(error); return true; }
       if (!active()) return true;
       backgroundCycle.current = undefined;
       if (!liveUpdates.canPublish(cycle.fence)) {

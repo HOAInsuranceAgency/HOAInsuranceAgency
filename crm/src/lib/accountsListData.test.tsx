@@ -79,6 +79,63 @@ it('clears background-denied account data even if an editor opened while its rea
   act(() => release());
 });
 
+it('keeps a successful retry when an already reported background denial settles after another old page', async () => {
+  render(<App />);
+  await settled();
+  const oldContacts = deferred<{ data: never[] }>();
+  h.contacts.mockReturnValueOnce(oldContacts.promise);
+  h.quotes.mockResolvedValueOnce({ data: [], errors: [{ message: 'Access denied', errorType: 'Unauthorized' }] });
+  await invalidateLiveUpdates();
+  // The current denial must clear immediately, without waiting for contacts.
+  expect(latest.error).toBe('Access denied');
+  expect(latest.data.accounts).toEqual([]);
+  expect(h.contacts).toHaveBeenCalledTimes(2);
+
+  h.accounts.mockResolvedValueOnce({ data: [account('recovered')] });
+  await act(async () => { await latest.refetch(); });
+  expect(latest.error).toBe('');
+  expect(latest.data.accounts.map(row => row.id)).toEqual(['recovered']);
+  expect(Object.keys(latest.data.commercial.entries)).toEqual(['recovered']);
+
+  // Completing the old Promise.allSettled must not report its denial twice.
+  await act(async () => { oldContacts.resolve({ data: [] }); });
+  expect(latest.loading).toBe(false);
+  expect(latest.error).toBe('');
+  expect(latest.data.accounts.map(row => row.id)).toEqual(['recovered']);
+  expect(Object.keys(latest.data.commercial.entries)).toEqual(['recovered']);
+});
+
+it('ignores an old cycle first denying after a newer foreground retry has started', async () => {
+  render(<App />);
+  await settled();
+  const oldContacts = deferred<{ data: never[] }>();
+  const oldQuotes = deferred<{ data: never[]; errors?: { message: string; errorType: string }[] }>();
+  h.contacts.mockReturnValueOnce(oldContacts.promise);
+  h.quotes.mockReturnValueOnce(oldQuotes.promise);
+  await invalidateLiveUpdates();
+  expect(h.contacts).toHaveBeenCalledTimes(2); expect(h.quotes).toHaveBeenCalledTimes(2);
+
+  const freshAccounts = deferred<{ data: Account[] }>();
+  h.accounts.mockReturnValueOnce(freshAccounts.promise);
+  let retry!: Promise<void>;
+  act(() => { retry = latest.refetch(); });
+  expect(latest.loading).toBe(true);
+  expect(h.accounts).toHaveBeenCalledTimes(3);
+  await act(async () => {
+    oldQuotes.resolve({ data: [], errors: [{ message: 'Access denied', errorType: 'Unauthorized' }] });
+    oldContacts.resolve({ data: [] });
+  });
+  // The retired background cycle cannot increment the foreground ticket or
+  // replace its loading/error state, even on its first denial callback.
+  expect(latest.loading).toBe(true);
+  expect(latest.error).toBe('');
+  await act(async () => { freshAccounts.resolve({ data: [account('fresh')] }); await retry; });
+  expect(latest.loading).toBe(false);
+  expect(latest.error).toBe('');
+  expect(latest.data.accounts.map(row => row.id)).toEqual(['fresh']);
+  expect(Object.keys(latest.data.commercial.entries)).toEqual(['fresh']);
+});
+
 it('shows admin cache immediately while revalidating details on route return', async () => {
   const app = render(<App />);
   await settled();

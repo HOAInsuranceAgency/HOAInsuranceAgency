@@ -5,7 +5,7 @@ vi.mock('./communications', () => ({ communicationRequest: request }));
 import { loadCommercial, useCommercial } from './commercial';
 beforeEach(() => { request.mockReset(); });
 it('reuses a cycle roster for later bounded batches without rereading the team', async () => {
-  const team = [{ userId: 'sales', name: 'Sales', salesperson: true }];
+  const team = [{ userId: 'sales', name: 'Sales', email: 'sales@example.test', enabled: true, salesperson: true }];
   request.mockImplementation(async (_operation, input) => ({ items: input.accountIds.map((accountId: string) => ({ accountId })) }));
   const result = await loadCommercial(['a', 'b'], ['b'], team);
   expect(result.team).toBe(team);
@@ -38,7 +38,7 @@ it('does not turn a failed roster request into unassigned totals', async () => {
 it('loads at most four commercial batches at once while preserving sorted unique account ids', async () => {
   let active = 0, maxActive = 0;
   request.mockImplementation(async (operation, input) => {
-    if (operation === 'team') return { team: [{ userId: 'sales', name: 'Sales', salesperson: true }] };
+    if (operation === 'team') return { team: [{ userId: 'sales', name: 'Sales', email: 'sales@example.test', enabled: true, salesperson: true }] };
     active++; maxActive = Math.max(maxActive, active);
     await Promise.resolve(); active--;
     return { items: input.accountIds.map((accountId: string) => ({ accountId, salespersonId: 'sales' })) };
@@ -50,7 +50,7 @@ it('loads at most four commercial batches at once while preserving sorted unique
   expect(batches.flatMap(([, input]) => input.accountIds)).toEqual(ids);
   expect(maxActive).toBe(4);
   expect(Object.keys(result.entries)).toEqual(ids);
-  expect(result.team).toEqual([{ userId: 'sales', name: 'Sales', salesperson: true }]);
+  expect(result.team).toEqual([{ userId: 'sales', name: 'Sales', email: 'sales@example.test', enabled: true, salesperson: true }]);
 });
 it('settles all in-flight batches and rejects the snapshot without launching further batches after a failure', async () => {
   const batches: { accountIds: string[]; resolve: (value: unknown) => void; reject: (error: Error) => void }[] = [];
