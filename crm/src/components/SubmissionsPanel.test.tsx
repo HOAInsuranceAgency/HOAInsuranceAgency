@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
+import { Profiler } from "react";
 import type { Account } from "../lib/client";
 const h = vi.hoisted(() => ({ list: vi.fn(), estimates: vi.fn(), settings: vi.fn(), start: vi.fn(), resolve: vi.fn() }));
 vi.mock("../lib/client", () => ({ client: { models: { HoneycombSubmission: { listHoneycombSubmissionByAccountId: h.list }, HoneycombEstimate: { listHoneycombEstimateByAccountId: h.estimates } }, queries: { honeycombSubmissionSettings: h.settings }, mutations: { startHoneycombSubmission: h.start, resolveHoneycombSubmission: h.resolve } }, friendlyError: (e: Error) => e.message }));
@@ -13,6 +14,18 @@ beforeEach(() => {
   h.start.mockImplementation(async () => { h.list.mockResolvedValue({ data: [job] }); return { data: JSON.stringify({ ok: true, id: "job", status: "PENDING" }) }; }); h.resolve.mockResolvedValue({ data: { ok: true } });
 });
 afterEach(() => vi.useRealTimers());
+it("preserves an explicit open made before the initial history effect finishes", async () => {
+  h.list.mockResolvedValue({ data: [{ ...job, status: "CREATED", submissionId: "existing" }] });
+  let opened = false;
+  render(<Profiler id="initial-history" onRender={() => {
+    const button = [...document.querySelectorAll("button")].find(button => button.textContent === "New submission");
+    if (button && !opened) { opened = true; button.click(); }
+  }}><SubmissionsPanel account={account} /></Profiler>);
+  expect(await screen.findByRole("form", { name: "Review Honeycomb submission" })).toBeVisible();
+  expect(opened).toBe(true);
+  expect(screen.getByRole("checkbox")).toBeVisible();
+  expect(h.start).not.toHaveBeenCalled();
+});
 it("uses production portal links and removes staging language for production", async () => {
   h.settings.mockResolvedValue({ data: { enabled: true, environment: "production" } });
   h.list.mockResolvedValue({ data: [{ ...job, status: "CREATED", submissionId: "live", portalUrl: "https://evil.test", submissionStatus: "incomplete" }] });
