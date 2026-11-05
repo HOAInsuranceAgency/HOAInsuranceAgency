@@ -24,6 +24,7 @@ import {
 } from "../lib/enums";
 import { DateInput, MoneyInput, PercentInput } from "./inputs";
 import { brokerFeeCents } from "../../../shared/brokerFees";
+import { clientChargeBreakdown } from "../../../shared/clientCharges";
 import { normalizeClientConditions, normalizePassThroughCharges, type PassThroughCharge } from "../../../shared/passThroughCharges";
 import { formatMoney } from "../lib/invoiceTotals";
 
@@ -111,6 +112,18 @@ export default function CoverageForm({
   const [saving, setSaving] = useState(false);
   useLiveUpdateBlock(saving);
   const [error, setError] = useState("");
+
+  // Draft labels and blank rows need not be complete before the amount preview
+  // works. Only committed charges use their actual IDs/labels and strict save
+  // validation below; unfinished numeric input simply has no preview yet.
+  let clientTotal = "—";
+  try {
+    const passThroughCharges = form.passThroughCharges.flatMap(({ kind, amount }, index) => {
+      const amountCents = brokerFeeCents(num(amount));
+      return amountCents ? [{ id: `preview-${index}`, kind, description: 'Supplier charge', amountCents }] : [];
+    });
+    clientTotal = formatMoney(clientChargeBreakdown({ premium: num(form.premium), brokerFee: num(form.brokerFee), passThroughCharges }).clientTotalCents / 100);
+  } catch { /* Keep partially typed amounts editable without showing a false total. */ }
 
   function toggleLine(line: string) {
     setF("lines", (ls) =>
@@ -354,7 +367,7 @@ export default function CoverageForm({
             <Button variant="danger" type="button"  onClick={() => setF("passThroughCharges", rows => rows.filter(row => row.id !== charge.id))}>Remove charge {index + 1}</Button>
           </fieldset>)}
           {!isPolicy && existing?.status !== "BOUND" && <Button variant="secondary" type="button"  disabled={form.passThroughCharges.length >= 30} onClick={() => setF("passThroughCharges", rows => [...rows, { id: `charge-${crypto.randomUUID()}`, kind: "WHOLESALER_FEE", description: "", amountCents: 0, amount: "" }])}>Add supplier charge or tax</Button>}
-          <p className="small"><strong>Client policy total: {formatMoney((Number(form.premium) || 0) + form.passThroughCharges.reduce((sum, charge) => sum + (Number(charge.amount) || 0), 0) + (Number(form.brokerFee) || 0))}</strong> · Premium + supplier charges and taxes + HOA broker fee</p>
+          <p className="small"><strong>Client policy total: {clientTotal}</strong> · Premium + supplier charges and taxes + HOA broker fee</p>
           <label className="field">Client conditions<Textarea aria-label="Client conditions" maxLength={6000} rows={3} disabled={isPolicy || existing?.status === "BOUND"} value={form.clientConditions} onChange={e => setF("clientConditions", e.target.value)} /></label>
           <p className="small muted">Reviewed wording shown to the client with the quote, such as minimum earned premium, cancellation terms or coverage conditions. Keep internal notes below.</p>
         </div>

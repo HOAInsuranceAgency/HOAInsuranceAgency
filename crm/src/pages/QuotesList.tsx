@@ -20,6 +20,7 @@ import { useAsyncResource } from "../lib/useAsyncResource";
 import { useAgencyDay } from "../lib/useAgencyDay";
 import { matchesQuoteOfferFilter, quoteOfferDate, type QuoteOfferFilter } from "../lib/quoteOfferExpiry";
 import QuoteOfferExpiry from "../components/QuoteOfferExpiry";
+import PolicyCharges from "../components/PolicyCharges";
 
 export default function QuotesList() {
   const [openOnly, setOpenOnly] = useState(true);
@@ -133,7 +134,7 @@ export default function QuotesList() {
                       <strong>{accountName.get(q.accountId) ?? "—"}</strong>
                     </td>
                     <td>{q.carrierId ? carrierName.get(q.carrierId) ?? "—" : "—"}</td>
-                    <td>{fmtMoney(q.premium)}{(q.brokerFee ?? 0) > 0 && <div className="small muted">+ {fmtMoney(q.brokerFee)} broker fee · {fmtMoney((q.premium ?? 0) + (q.brokerFee ?? 0))} total</div>}</td>
+                    <td>{fmtMoney(q.premium)}<PolicyCharges source={q} /></td>
                     <td>{fmtDate(q.effectiveDate)}</td>
                     <td><QuoteOfferExpiry quote={q} today={today} /></td>
                     <td>

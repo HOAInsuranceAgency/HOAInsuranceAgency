@@ -72,6 +72,16 @@ it('paginates long multi-carrier proposals with every quote, subtotal, and page 
   pages.forEach((page, index) => expect(page).toContain(`${index + 1} / ${pages.length}`));
   expect(all).toContain('$1,266.12');
 });
+it('uses the same per-policy cents for a multi-policy premium, supplier and HOA fee total', async () => {
+  const input = fixture();
+  input.quotes = [
+    { ...input.quotes[0], premium: 100.104, brokerFee: 10.02, billType: 'AGENCY', passThroughCharges: [{ id: 'tax', kind: 'TAX', description: 'Supplier tax', amountCents: 503 }] },
+    { ...input.quotes[0], id: 'private-second-quote', premium: 200.104, brokerFee: 0 },
+  ];
+  const { all } = await contents((await createBusinessProposalPdf(input)).bytes);
+  for (const value of ['$115.15', '$200.10', '$300.20', '$5.03', '$10.02', '$315.25']) expect(all).toContain(value);
+  expect(all).not.toContain('private-second-quote');
+});
 it.each<[string, (input: BusinessProposalInput) => void]>([
   ['invalid quote dates', (input: BusinessProposalInput) => { input.quotes[0].effectiveDate = '2026-02-30'; }],
   ['invalid financial terms', (input: BusinessProposalInput) => { input.quotes[0].perOccurrenceDeductible = -1; }],

@@ -44,6 +44,16 @@ function names(table: HTMLElement) {
 }
 
 describe("quote offer expiry views", () => {
+  it('shows the full client cost, including supplier charges, without disclosing agency earnings', async () => {
+    h.quotes.mockResolvedValue({ data: [{ ...quotes[0], premium: 1000.01, brokerFee: 10.02, passThroughCharges: [{ id: 'tax', kind: 'TAX', description: 'Supplier tax', amountCents: 503 }], commissionPct: 72.125, notes: 'Private quote note' }] });
+    const table = await openPage();
+    expect(table).toHaveTextContent('Supplier tax: $5.03');
+    expect(table).toHaveTextContent('HOA broker fee: $10.02');
+    expect(table).toHaveTextContent('$1,015.06 client policy total');
+    expect(table).not.toHaveTextContent('72.125');
+    expect(table).not.toHaveTextContent('Private quote note');
+  });
+
   it("combines expiry and status views, counting only issued open offers", async () => {
     const table = await openPage();
     expect(screen.getByRole("button", { name: "In flight" })).toHaveAttribute("aria-pressed", "true");
