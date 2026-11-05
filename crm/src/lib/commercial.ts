@@ -66,6 +66,7 @@ export function useCommercial(ids: string[], revision?: unknown, snoozeAccountId
       },
       errorMessage: 'Could not load assignments and commission estimates',
       clearDataOnError: isAuthorizationError,
+      live: true,
     },
   );
 }

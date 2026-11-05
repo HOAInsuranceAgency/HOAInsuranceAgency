@@ -82,12 +82,12 @@ export default function Licensing() {
   const lic = useAsyncResource(
     () => listAllPages(nextToken => client.models.License.list({ nextToken })),
     [],
-    { initialData: [] as License[], errorMessage: "Failed to load licenses" }
+    { initialData: [] as License[], errorMessage: "Failed to load licenses" , live: true }
   );
   const prof = useAsyncResource(
     () => listAllPages(nextToken => client.models.UserProfile.list({ nextToken })),
     [],
-    { initialData: [] as UserProfile[], errorMessage: "Failed to load team profiles" }
+    { initialData: [] as UserProfile[], errorMessage: "Failed to load team profiles" , live: true }
   );
   const licenses = lic.data;
   const setLicenses = lic.setData;

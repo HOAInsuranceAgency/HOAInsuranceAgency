@@ -193,7 +193,7 @@ function CoverageParts({ accountId }: { accountId: string }) {
         })
       ),
     [accountId],
-    { initialData: [] as DoCoveragePart[], errorMessage: "Failed to load D&O parts" }
+    { initialData: [] as DoCoveragePart[], errorMessage: "Failed to load D&O parts" , live: true }
   );
 
   const status = useSaveStatus();

@@ -14,6 +14,8 @@ vi.mock('../lib/reportDownload', async original => ({ ...await original<typeof i
 import { accounts, plans } from '../../scripts/commercial-preview/fixtures';
 import { AdminContext } from '../lib/auth';
 import AccountsList from './AccountsList';
+import { enableLiveUpdates } from '../test/liveUpdates';
+import { liveUpdates } from '../lib/liveUpdates';
 
 const willow = 'Willow Court Condominium';
 const pine = 'Pine Grove Association';
@@ -25,6 +27,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime('2026-10-01T16:00:00Z');
+  enableLiveUpdates();
   snoozes = Object.fromEntries(['willow', 'pine', 'cedar'].map(id => [id, emptyLeadSnooze(id)]));
   currentAccounts = structuredClone(accounts);
   h.listAccounts.mockImplementation(async () => ({ data: structuredClone(currentAccounts) }));
@@ -63,8 +66,12 @@ function returnToPage(trigger: 'focus' | 'visibility' | 'both' = 'both') {
   if (trigger !== 'focus') document.dispatchEvent(new Event('visibilitychange'));
 }
 async function allowReturnRefresh() {
-  // The hook coalesces browser focus/visibility events for 100 ms.
-  await act(async () => { await new Promise(resolve => window.setTimeout(resolve, 150)); });
+  // Advance the Date-only test clock past the coordinator's coalescing window.
+  await act(async () => {
+    vi.setSystemTime(Date.now() + 1_100);
+    liveUpdates.wake();
+    await new Promise(resolve => window.setTimeout(resolve, 150));
+  });
 }
 
 it('lets an owned producer snooze, find, export, and bring back a lead without navigating', async () => {

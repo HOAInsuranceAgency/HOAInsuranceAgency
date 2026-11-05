@@ -1,4 +1,6 @@
 import { TransactionalMailClient } from "../transactional-mail/client";
+import { publishCrmChange, publishPersonalChange } from '../live-changes';
+import { sendCrmWrite } from '../live-write';
 import { MailDeliveryError } from "../transactional-mail/contract";
 import { randomUUID } from "node:crypto";
 import type { AppSyncResolverEvent } from "aws-lambda";
@@ -165,6 +167,7 @@ async function inviteUser(args: InviteArgs, invitedBy: string, owner: boolean) {
   }
 
   console.log(`Invited ${email} as ${roles.join(", ")} (by ${invitedBy})`);
+  await Promise.allSettled([publishCrmChange()]);
   return { ok: true, email, roles };
 }
 
@@ -215,11 +218,13 @@ async function updateUserRoles(args: UpdateRolesArgs, actor: { username: string;
     ]);
     if (restored.some(result => result.status === "rejected")) {
       console.error("Could not restore role groups after failed update", { username, error });
+      await Promise.allSettled([publishCrmChange(), ...(sub ? [publishPersonalChange(sub)] : [])]);
       return { ok: false, error: "The role change only partly completed. Refresh the team and check this member's roles before trying again." };
     }
     throw error;
   }
   console.log(`Updated roles for ${username} to ${roles.join(", ")} (by ${actor.username})`);
+  if (added.length || removed.length) await Promise.allSettled([publishCrmChange(), ...(sub ? [publishPersonalChange(sub)] : [])]);
   return { ok: true, userId: sub ?? userId, roles };
 }
 
@@ -245,12 +250,13 @@ async function setTeamUserEnabled(args: SetEnabledArgs, actor: { username: strin
   try {
     // Persist the denial before contacting Cognito. Cached JWTs can no longer
     // reach any CRM resolver even if a subsequent Cognito request fails.
-    await db.send(new UpdateCommand({
+    await sendCrmWrite(db.send(new UpdateCommand({
       TableName, Key: { userId: sub },
       UpdateExpression: "SET #disabled = :disabled, revokedBefore = :cutoff, changedBy = :actor, updatedAt = :now",
       ExpressionAttributeNames: { "#disabled": "disabled" },
       ExpressionAttributeValues: { ":disabled": true, ":cutoff": revokedBefore, ":actor": actor.sub ?? actor.username, ":now": new Date().toISOString() },
-    }));
+    })));
+    await Promise.allSettled([publishPersonalChange(sub)]);
   } catch (error) {
     console.error("Could not persist team access denial", { userId: sub, error });
     // A transport failure can follow a committed write. Read back the actual
@@ -279,11 +285,12 @@ async function setTeamUserEnabled(args: SetEnabledArgs, actor: { username: strin
     await cognito.send(new AdminEnableUserCommand({ UserPoolId: POOL_ID, Username: username }));
     const restored = await cognito.send(new AdminGetUserCommand({ UserPoolId: POOL_ID, Username: username }));
     if (restored.Enabled !== true) throw new Error("Cognito did not confirm enabled access.");
-    await db.send(new UpdateCommand({
+    await sendCrmWrite(db.send(new UpdateCommand({
       TableName, Key: { userId: sub }, UpdateExpression: "SET #disabled = :disabled, updatedAt = :now",
       ExpressionAttributeNames: { "#disabled": "disabled" },
       ExpressionAttributeValues: { ":disabled": false, ":now": new Date().toISOString() },
-    }));
+    })));
+    await Promise.allSettled([publishPersonalChange(sub)]);
   } catch (error) {
     console.error("Could not complete team access restoration", { userId: sub, error });
     // The final release may have committed despite a lost response.

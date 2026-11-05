@@ -1,3 +1,4 @@
+import { useLiveUpdateBlock } from "../lib/useLiveUpdates";
 import { Select } from "./ui/Select";
 import { Button } from "./ui/Button";
 import { useId, useRef, useState } from 'react';
@@ -29,6 +30,7 @@ export function AccountSalespersonSelect({
   // Native dropdowns can trigger window focus while their menu is open.
   // Keep the row mounted from focus through selection/cancel and any save.
   useRowInteraction(`assignment:${accountId}`, focused || pending !== null, onInteractionChange);
+  useLiveUpdateBlock(focused || pending !== null);
   const eligible = team.filter(isAssignableSalesperson);
 
   async function assign(nextId: string) {

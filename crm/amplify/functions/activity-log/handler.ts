@@ -5,6 +5,7 @@ import { unmarshall } from "@aws-sdk/util-dynamodb";
 import type { AttributeValue, DynamoDBStreamEvent } from "aws-lambda";
 import type { Schema } from "../../data/resource";
 import { holdMigrationStream } from "../migration-stream-hold";
+import { publishCrmChange } from "../live-changes";
 import {
   buildSummary,
   diffImages,
@@ -111,6 +112,8 @@ const readImage = (
 
 export const handler = async (event: DynamoDBStreamEvent): Promise<void> => {
   if (holdMigrationStream(event, "activityLog")) return;
+  // Direct DynamoDB writes and ignored activity fields still invalidate views.
+  if (event.Records.length) await publishCrmChange();
   const client = await getDataClient();
 
   for (const record of event.Records) {

@@ -1,3 +1,4 @@
+import { useLiveUpdateBlock } from "../lib/useLiveUpdates";
 import { Button } from "./ui/Button";
 import { Input } from "./ui/Input";
 import { useRef, useState } from 'react';
@@ -57,6 +58,7 @@ function QuotePackagesContent({
         [accountId]: { ...data.entries[accountId], accountId, plan: next },
       },
     }));
+  useLiveUpdateBlock(!!editor || saving);
   const writeLock = useRef(false);
   async function write(input: Record<string, unknown>) {
     if (writeLock.current) return;

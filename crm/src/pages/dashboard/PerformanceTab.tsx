@@ -67,7 +67,7 @@ function PerformanceSnapshot({ from, to, excludeCancelled }: { from: string; to:
     const quotes = rawQuotes.filter(quote => DECIDED_STATUSES.some(status => status === quote.status) && effectiveInWindow(quote.effectiveDate, from, to));
     const commercial = await loadAssignments([...new Set([...policies, ...quotes].map(row => row.accountId))]);
     return { policies, carriers, quotes, accounts: commercial.accounts, commercial };
-  }, [from, to, excludeCancelled], { initialData: EMPTY, errorMessage: "Failed to load dashboard", clearDataOnError: isAuthorizationError });
+  }, [from, to, excludeCancelled], { initialData: EMPTY, errorMessage: "Failed to load dashboard", clearDataOnError: isAuthorizationError , live: true });
   const series = useMemo(() => salespersonSeries(res.data.commercial), [res.data.commercial]);
   const result = useMemo(() => performanceBySalesperson({
     ...res.data, entries: res.data.commercial.entries, series, from, to, excludeCancelled,

@@ -33,7 +33,7 @@ export default function QuotesList() {
     async () =>
       listAllPages((nextToken) => client.models.Quote.list({ nextToken })),
     [],
-    { initialData: [] as Quote[], errorMessage: "Failed to load quotes" }
+    { initialData: [] as Quote[], errorMessage: "Failed to load quotes" , live: true }
   );
   const quotes = quoteRes.data;
 
@@ -43,7 +43,7 @@ export default function QuotesList() {
     async () =>
       listAllPages((nextToken) => client.models.Account.list({ nextToken })),
     [],
-    { initialData: [] as Account[], errorMessage: "Failed to load account names" }
+    { initialData: [] as Account[], errorMessage: "Failed to load account names" , live: true }
   );
   const accounts = accountRes.data;
 
@@ -51,7 +51,7 @@ export default function QuotesList() {
     async () =>
       listAllPages((nextToken) => client.models.Carrier.list({ nextToken })),
     [],
-    { initialData: [] as Carrier[], errorMessage: "Failed to load carrier names" }
+    { initialData: [] as Carrier[], errorMessage: "Failed to load carrier names" , live: true }
   );
   const carriers = carrierRes.data;
 

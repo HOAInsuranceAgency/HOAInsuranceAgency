@@ -4,10 +4,12 @@ import { join } from "node:path";
 import { Stack } from "aws-cdk-lib";
 import { CfnManagedPolicy, CfnPolicy, CfnRole } from "aws-cdk-lib/aws-iam";
 import { crmPolicySize } from "./iam-policy-size";
-import { CfnFunctionConfiguration, type CfnResolver } from "aws-cdk-lib/aws-appsync";
+import { CfnFunctionConfiguration, CfnResolver } from "aws-cdk-lib/aws-appsync";
 import type { CfnFunction } from "aws-cdk-lib/aws-lambda";
 import { ACCOUNT_MODELS, PUBLIC_OPERATIONS, ADMIN_OPERATIONS, OWNER_OPERATIONS, ADMIN_MODEL_OPERATIONS, CUSTOM_OPERATIONS } from "../amplify/functions/crm-access/policy";
 import type { backend as Backend } from "../amplify/backend";
+import { LIVE_PUBLISH_FIELDS } from '../amplify/live-changes';
+const LIVE_SUBSCRIPTION_FIELDS = ['onCrmChange', 'onOwnerChange', 'onPersonalChange'];
 
 export function checkAccountAccess(backend: typeof Backend, outdir: string) {
   const statusTable = backend.data.resources.graphqlApi.node.findChild("TeamUserAccess");
@@ -45,11 +47,11 @@ export function checkAccountAccess(backend: typeof Backend, outdir: string) {
   if (inlineSize > 10240) throw new Error(`CRM inline policies exceed the aggregate 10,240-character limit (${inlineSize})`);
   const functions = backend.data.resources.graphqlApi.node.findAll().filter((node): node is CfnFunctionConfiguration => node instanceof CfnFunctionConfiguration && node.name.startsWith("access_"));
   if (!functions.length) throw new Error("Assignment guards are missing");
-  const ids = new Set(functions.filter(fn => fn.name !== "access_session___").map(fn => fn.attrFunctionId));
+  const ids = new Set(functions.filter(fn => !['access_session___', 'access_notify___'].includes(fn.name)).map(fn => fn.attrFunctionId));
   const session = functions.find(fn => fn.name === "access_session___");
   if (!session) throw new Error("Persistent session guard is missing");
   for (const model of ACCOUNT_MODELS) if (!functions.some(fn => fn.name === `access_list_${model}__`)) throw new Error(`Assignment-scoped list missing for ${model}`);
-  for (const resolver of Object.values(backend.data.resources.cfnResources.cfnResolvers)) {
+  for (const resolver of backend.stack.node.root.node.findAll().filter((node): node is CfnResolver => node instanceof CfnResolver)) {
     if (resolver.responseMappingTemplate !== undefined && resolver.responseMappingTemplateS3Location !== undefined) throw new Error(`Conflicting inline and S3 response templates: ${resolver.typeName}.${resolver.fieldName}`);
     if (resolver.fieldName === "setTeamUserEnabled" && !resolver.responseMappingTemplate?.includes("$util.toJson($ctx.prev.result)")) throw new Error("Team invalidation must retain the generated pipeline response");
     const target = Object.entries(backend.data.resources.tables).find(([, table]) => resolver.requestMappingTemplate?.includes(`"tableName", "${table.tableName}"`))?.[0];
@@ -90,12 +92,19 @@ export function checkAccountAccess(backend: typeof Backend, outdir: string) {
         if (at < 1 || pipeline.functions[at + 1] !== data.attrFunctionId) throw new Error(`Scoped list must run between native authorization and data: ${resolver.fieldName}`);
       }
     }
-    if (!target && resolver.typeName !== "Subscription" && !PUBLIC_OPERATIONS.includes(resolver.fieldName) && !ADMIN_OPERATIONS.includes(resolver.fieldName) && !["crmAccess", "crmFile"].includes(resolver.fieldName) && !guarded) throw new Error(`Custom guard missing: ${resolver.fieldName}`);
-    if (resolver.typeName === "Subscription" && (resolver.fieldName.replace(/^on(Create|Update|Delete)/, "") !== "AgencySettings" || !resolver.responseMappingTemplate?.includes("setSubscriptionInvalidationFilter") || !resolver.responseMappingTemplate?.includes('"value":$ctx.identity.sub'))) throw new Error(`Unrevocable broadcast subscription: ${resolver.fieldName}`);
-    if (resolver.fieldName === "setTeamUserEnabled" && ["onCreateAgencySettings", "onUpdateAgencySettings", "onDeleteAgencySettings"].some(field => !resolver.responseMappingTemplate?.includes(`"subscriptionField":"${field}"`))) throw new Error("Team deactivation must invalidate all supported broadcasts");
+    if (!target && resolver.typeName !== "Subscription" && !(LIVE_PUBLISH_FIELDS as readonly string[]).includes(resolver.fieldName) && !PUBLIC_OPERATIONS.includes(resolver.fieldName) && !ADMIN_OPERATIONS.includes(resolver.fieldName) && !["crmAccess", "crmFile"].includes(resolver.fieldName) && !guarded) throw new Error(`Custom guard missing: ${resolver.fieldName}`);
+    // Custom live JS handlers set their own identity-bound revocation filters;
+    // checkLiveChanges verifies those exact deployed functions separately.
+    if (resolver.typeName === "Subscription" && !LIVE_SUBSCRIPTION_FIELDS.includes(resolver.fieldName) && (resolver.fieldName.replace(/^on(Create|Update|Delete)/, "") !== "AgencySettings" || !resolver.responseMappingTemplate?.includes("setSubscriptionInvalidationFilter") || !resolver.responseMappingTemplate?.includes('"value":$ctx.identity.sub'))) throw new Error(`Unrevocable broadcast subscription: ${resolver.fieldName}`);
+    if (resolver.fieldName === "setTeamUserEnabled" && ["onCreateAgencySettings", "onUpdateAgencySettings", "onDeleteAgencySettings", ...LIVE_SUBSCRIPTION_FIELDS].some(field => !resolver.responseMappingTemplate?.includes(`"subscriptionField":"${field}"`))) throw new Error("Team deactivation must invalidate all supported broadcasts");
     if (resolver.fieldName === "setTeamUserEnabled" && (!resolver.responseMappingTemplate?.includes("$ctx.arguments.enabled == false") || !resolver.responseMappingTemplate.includes('"userId":$ctx.prev.result.userId'))) throw new Error("Team invalidation must use the final pipeline identity, including uncertain shutdowns");
   }
   for (const fn of functions) {
+    if (fn.name === 'access_notify___') {
+      if (fn.responseMappingTemplate !== '$util.toJson($ctx.prev.result)' || JSON.parse(fn.requestMappingTemplate ?? '{}').invocationType !== 'Event' || !fn.requestMappingTemplate?.includes('"mode":"notify"')) throw new Error('Post-write notifications must invoke asynchronously and preserve committed native results even on notification failure');
+      continue;
+    }
+    if (fn.requestMappingTemplate?.includes('"invocationType":"Event"')) throw new Error('Authorization and financial guards must remain synchronous');
     if (!fn.requestMappingTemplate?.includes('$util.authType() == "IAM Authorization"') || !fn.responseMappingTemplate?.includes("$util.error")) throw new Error("Guard bypass or error handling changed");
     if (fn.name.startsWith("access_custom_") && !fn.requestMappingTemplate.includes('"field":$util.toJson($ctx.info.fieldName)')) throw new Error("Shared custom guards must use the actual AppSync schema field");
     if (!fn.requestMappingTemplate.includes('"request":$util.toJson($ctx.request)')) throw new Error("Assignment guards must receive the active-role header");

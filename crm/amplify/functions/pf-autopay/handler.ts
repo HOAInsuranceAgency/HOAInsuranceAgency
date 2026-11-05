@@ -1,3 +1,4 @@
+import { sendCrmWrite } from '../live-write';
 import { randomUUID } from "node:crypto";
 import { Amplify } from "aws-amplify";
 import { generateClient } from "aws-amplify/data";
@@ -61,7 +62,7 @@ async function log(row: {
   if (!table) return;
   const now = new Date().toISOString();
   try {
-    await ddb.send(
+    await sendCrmWrite(ddb.send(
       new PutCommand({
         TableName: table,
         Item: {
@@ -81,7 +82,7 @@ async function log(row: {
           occurredAt: now,
         },
       })
-    );
+    ));
   } catch (err) {
     console.error("pf-autopay: log write failed", err);
   }
@@ -205,7 +206,7 @@ export const handler = async () => {
           // In flight after all: point the marker at it and let the webhook
           // finish the story.
           try {
-            await ddb.send(
+            await sendCrmWrite(ddb.send(
               new UpdateCommand({
                 TableName: loanTable,
                 Key: { id: loan.id },
@@ -219,7 +220,7 @@ export const handler = async () => {
                   ":now": now,
                 },
               })
-            );
+            ));
             console.log(`pf-autopay: stale claim on ${loan.id} adopted clearing intent ${adopted.id}`);
           } catch (err) {
             console.error(`pf-autopay: could not adopt ${adopted.id} onto ${loan.id}`, err);
@@ -230,7 +231,7 @@ export const handler = async () => {
         // as a failed attempt — clear the wedge, stand down, let the sweep
         // see the loan again.
         try {
-          await ddb.send(
+          await sendCrmWrite(ddb.send(
             new UpdateCommand({
               TableName: loanTable,
               Key: { id: loan.id },
@@ -243,7 +244,7 @@ export const handler = async () => {
                 ":now": now,
               },
             })
-          );
+          ));
         } catch (err) {
           console.error(`pf-autopay: could not clear the dead claim on ${loan.id}`, err);
         }
@@ -264,7 +265,7 @@ export const handler = async () => {
     const claim = `claim-${randomUUID()}`;
     const reclaiming = staleClaim(loan);
     try {
-      await ddb.send(
+      await sendCrmWrite(ddb.send(
         new UpdateCommand({
           TableName: loanTable,
           Key: { id: loan.id },
@@ -285,7 +286,7 @@ export const handler = async () => {
             ...(reclaiming ? { ":stale": loan.autopayPendingIntentId } : {}),
           },
         })
-      );
+      ));
     } catch (err) {
       if ((err as { name?: string }).name === "ConditionalCheckFailedException") {
         console.log(`pf-autopay: ${loan.id} moved before the claim; skipping`);
@@ -342,7 +343,7 @@ export const handler = async () => {
 
     /** The claim becomes the real intent id the webhook will clear. */
     try {
-      await ddb.send(
+      await sendCrmWrite(ddb.send(
         new UpdateCommand({
           TableName: loanTable,
           Key: { id: loan.id },
@@ -354,7 +355,7 @@ export const handler = async () => {
             ":now": new Date().toISOString(),
           },
         })
-      );
+      ));
     } catch (err) {
       // The webhook may already have cleared it (an instant failure event).
       console.error(`pf-autopay: could not record intent ${intentId} on ${loan.id}`, err);

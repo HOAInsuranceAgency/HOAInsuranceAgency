@@ -1,3 +1,6 @@
+import { isAuthorizationError } from "../lib/authorizationError";
+import { LiveStatus } from "../components/LiveStatus";
+import { useLiveUpdateBlock } from "../lib/useLiveUpdates";
 import { Button } from "../components/ui/Button";
 import { Table } from "../components/ui/Table";
 import { Select } from "../components/ui/Select";
@@ -24,10 +27,13 @@ const dollars = (cents: number | null) => cents == null ? null : cents / 100;
 const basis = "Estimated carrier commission plus broker fees less recorded fee refunds, by policy effective date and current account salesperson. The estimated producer share applies to both revenue sources; prorated annual salary is deducted. Cancelled carrier commission and other operating costs are excluded; retained broker fees remain included.";
 
 function response<T>(result: { data?: unknown; errors?: readonly { message?: string }[] }): T {
-  if (result.errors?.length) throw new Error(result.errors.map(error => error.message || "Request failed").join("; "));
+  if (result.errors?.length) {
+    const denied = result.errors.find(isAuthorizationError);
+    throw Object.assign(new Error(result.errors.map(error => error.message || "Request failed").join("; ")), denied ? { name: "Unauthorized" } : {});
+  }
   const data = typeof result.data === "string" ? JSON.parse(result.data) : result.data;
   if (!data || typeof data !== "object" || !("ok" in data) || data.ok !== true) {
-    throw new Error(data && typeof data === "object" && "error" in data && typeof data.error === "string" ? data.error : "Could not load owner profitability.");
+    throw Object.assign(new Error(data && typeof data === "object" && "error" in data && typeof data.error === "string" ? data.error : "Could not load owner profitability."), isAuthorizationError(data) ? { name: "Unauthorized" } : {});
   }
   return data as T;
 }
@@ -77,14 +83,15 @@ function ProfitabilitySnapshot({ from, to, onEditingChange }: { from: string; to
       latestPay.current = compensations;
       return { ...snapshot, compensations, reportStale };
     } catch (error) {
-      // The same fail-closed policy applies to this version memory as to the
-      // rendered snapshot, including transient read failures.
-      if (active.current && reading === readVersion.current) latestPay.current = {};
+      // Confirmed pay versions survive temporary read failures. Revocation
+      // clears both the rendered snapshot and this private version memory.
+      if (active.current && reading === readVersion.current && isAuthorizationError(error)) latestPay.current = {};
       throw error;
     }
-  }, [from, to], { errorMessage: "Could not load employee profitability.", clearDataOnError: () => true });
+  }, [from, to], { errorMessage: "Could not load employee profitability.", clearDataOnError: () => true, live: { topics: ['OWNER', 'CRM'] } });
   const [payOpen, setPayOpen] = useState(false), [employeeId, setEmployeeId] = useState(""), [paySaved, setPaySaved] = useState(false);
   const [payBusy, setPayBusy] = useState(false);
+  useLiveUpdateBlock(payOpen || payBusy);
   useEffect(() => { onEditingChange(!!resource.data && (payOpen || payBusy)); }, [resource.data, payOpen, payBusy, onEditingChange]);
   const payPanel = useRef<HTMLElement>(null);
   useEffect(() => { if (payOpen) payPanel.current?.focus(); }, [payOpen, employeeId]);
@@ -97,9 +104,10 @@ function ProfitabilitySnapshot({ from, to, onEditingChange }: { from: string; to
   return <>
     <div className="owner-profitability-toolbar">
       <p className="muted small">{report.from} through {report.to} · USD · Estimated</p>
-      <div className="owner-profitability-actions"><Button variant="secondary"  disabled={resource.loading || payOpen} onClick={() => void resource.refetch()}>{resource.loading ? "Refreshing…" : "Refresh"}</Button><Button variant="secondary"  disabled={payBusy || resource.loading} aria-expanded={payOpen} onClick={() => setPayOpen(!payOpen)}>Manage pay settings</Button><ReportDownload disabled={resource.loading || snapshot.reportStale} report={exportReport(report)} /></div>
+      <div className="owner-profitability-actions"><Button variant="secondary"  disabled={payBusy || resource.loading} aria-expanded={payOpen} onClick={() => setPayOpen(!payOpen)}>Manage pay settings</Button><ReportDownload disabled={resource.loading || !!resource.refreshing || !!resource.refreshError || snapshot.reportStale} report={exportReport(report)} /></div>
     </div>
-    {snapshot.reportStale && <p className="owner-profitability-notice" role="status">Pay settings are saved, but the report is still catching up. {payOpen ? 'Close pay settings and refresh the report to update its totals.' : 'Refresh the report to update its totals.'}</p>}
+    <LiveStatus resource={resource} />
+    {snapshot.reportStale && <p className="owner-profitability-notice" role="status">Pay settings are saved, but the report is still catching up. {payOpen ? 'Close pay settings to allow the report to update.' : 'The report updates automatically.'}</p>}
     <div className="stat-row owner-profitability-summary">
       <Summary label="Agency commission" amount={totals.grossCommissionCents} known={totals.knownGrossCommissionCents} />
       <Summary label="Booked broker fees" amount={totals.brokerFeeCents} known={totals.knownBrokerFeeCents} />

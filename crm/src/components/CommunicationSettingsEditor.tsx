@@ -1,3 +1,4 @@
+import { useLiveUpdateBlock } from "../lib/useLiveUpdates";
 import { Textarea } from "./ui/Textarea";
 import { Input } from "./ui/Input";
 import { Select } from "./ui/Select";
@@ -21,6 +22,7 @@ export default function CommunicationSettingsEditor({ config, team, teamError, c
   const [keys, setKeys] = useState<Record<string, string>>({});
   const candidate = { ...draft, ...Object.fromEntries(listFields.map(key => [key, parseList(lists[key])])) } as IntegrationConfig;
   const dirty = JSON.stringify(candidate) !== JSON.stringify(config) || Object.values(keys).some(value => value.trim());
+  useLiveUpdateBlock(!!dirty || busy);
   const edit = <K extends keyof IntegrationConfig>(key: K, value: IntegrationConfig[K]) => setDraft(previous => ({ ...previous, [key]: value }));
   function listInput(key: ListField, label: string, hint?: string) {
     return <label className="field">{label}<Textarea value={lists[key]} onChange={event => setLists(previous => ({ ...previous, [key]: event.target.value }))} rows={3} />{hint && <small className="muted">{hint}</small>}</label>;

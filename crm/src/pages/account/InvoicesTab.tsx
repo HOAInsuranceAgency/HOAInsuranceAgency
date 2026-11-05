@@ -132,7 +132,7 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
       };
     },
     [accountId],
-    { initialData: null, errorMessage: "Failed to load invoices", clearDataOnError: isAuthorizationError }
+    { initialData: null, errorMessage: "Failed to load invoices", clearDataOnError: isAuthorizationError , live: true }
   );
 
   const createStatus = useSaveStatus();

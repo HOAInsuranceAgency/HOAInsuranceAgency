@@ -1,3 +1,4 @@
+import { batchLiveChanges } from "../live-write";
 import { monitorHandler } from "../monitoring";
 import { handler as originalHandler } from "./handler";
-export const handler = monitorHandler(originalHandler, "stripe-webhook.handler");
+export const handler = monitorHandler(batchLiveChanges(originalHandler), "stripe-webhook.handler");

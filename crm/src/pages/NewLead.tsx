@@ -69,7 +69,7 @@ export default function NewLead() {
   const [salespersonId, setSalesperson] = useState("");
   const initialSalesperson = useRef("");
   const salespersonEdited = useRef(false);
-  const members = useAsyncResource(() => communicationRequest<{ team: TeamEligibility[]; actorId?: string }>("team"), [], { initialData: { team: [] } });
+  const members = useAsyncResource(() => communicationRequest<{ team: TeamEligibility[]; actorId?: string }>("team"), [], { initialData: { team: [] } , live: true });
   useEffect(() => {
     const self = members.data.team.find(t => t.userId === members.data.actorId && isAssignableSalesperson(t));
     if (self && !salespersonEdited.current) { initialSalesperson.current = self.userId; setSalesperson(s => s || self.userId); }

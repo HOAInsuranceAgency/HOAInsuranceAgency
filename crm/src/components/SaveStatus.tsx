@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useLiveUpdateBlock } from "../lib/useLiveUpdates";
+import { liveUpdates } from "../lib/liveUpdates";
 import { friendlyError } from "../lib/client";
 
 /**
@@ -199,6 +201,7 @@ export function useSaveStatus(options: SaveStatusOptions = {}): SaveStatusApi {
   const { autoClearMs = 0 } = options;
 
   const [status, setStatus] = useState<SaveStatusValue>(IDLE);
+  useLiveUpdateBlock(status.state === "saving", "write");
 
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoClearRef = useRef(autoClearMs);
@@ -278,6 +281,7 @@ export function useSaveStatus(options: SaveStatusOptions = {}): SaveStatusApi {
       if (!mounted.current) return;
       const id = ++ticket.current;
       const submittedEdit = edits.current;
+      const releaseLive = liveUpdates.acquireBlock("write");
       apply(SAVING);
       try {
         const warning = await task();
@@ -297,6 +301,8 @@ export function useSaveStatus(options: SaveStatusOptions = {}): SaveStatusApi {
             runOptions.errorMessage ?? "Save failed — please try again."
           ),
         });
+      } finally {
+        releaseLive();
       }
     },
     [apply]

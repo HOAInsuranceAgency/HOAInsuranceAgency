@@ -1,3 +1,4 @@
+import { invalidateLiveUpdates } from "../../test/liveUpdates";
 import { beforeEach, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { emptyCommercialPlan } from "../../../../shared/quotePackages";
@@ -144,12 +145,12 @@ it('retains performance data for transient failures but clears denied data throu
   render(<PerformanceTab />);
   await screen.findByRole('group', { name: 'Estimated commission per person' });
   h.assignments.mockRejectedValueOnce(new Error('Report temporarily unavailable'));
-  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+  await invalidateLiveUpdates();
   await screen.findByText(/Report temporarily unavailable/);
   expect(screen.getByRole('group', { name: 'Estimated commission per person' })).toBeVisible();
   expect(screen.getByRole('combobox', { name: 'Download Estimated commission per person' })).toBeDisabled();
   h.assignments.mockRejectedValueOnce(Object.assign(new Error('Credentials changed'), { name: 'Unauthorized' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+  await invalidateLiveUpdates();
   expect(await screen.findByRole('alert')).toHaveTextContent('Credentials changed');
   expect(screen.queryByRole('group', { name: 'Estimated commission per person' })).toBeNull();
   expect(screen.queryByRole('combobox', { name: /^Download / })).toBeNull();

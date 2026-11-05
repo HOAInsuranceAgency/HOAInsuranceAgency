@@ -1,3 +1,5 @@
+import { invalidateLiveUpdates } from "./test/liveUpdates";
+import { liveUpdates } from "./lib/liveUpdates";
 import { createContext, StrictMode, useContext, useState, type ReactNode } from "react";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { createMemoryRouter, MemoryRouter, RouterProvider } from "react-router-dom";
@@ -545,5 +547,65 @@ describe("producer onboarding gate", () => {
 
     expect(await screen.findByRole("heading", { name: "Agency dashboard" })).toBeInTheDocument();
     expect(listLicenses).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('live membership refresh', () => {
+  it('preserves the exact mounted draft through PERSONAL and focus checks when group sets are unchanged', async () => {
+    renderProtectedApp();
+    const note = await screen.findByRole('textbox', { name: 'Page note' });
+    fireEvent.change(note, { target: { value: 'Keep this admin draft' } });
+    const reads = listProfiles.mock.calls.length;
+    fetchUserGroups.mockResolvedValue(['PRODUCER', 'ADMIN', 'ADMIN']);
+    await invalidateLiveUpdates(['PERSONAL']);
+    expect(fetchUserGroups).toHaveBeenCalledTimes(2);
+    expect(listProfiles).toHaveBeenCalledTimes(reads);
+    expect(screen.getByRole('textbox', { name: 'Page note' })).toBe(note);
+    expect(note).toHaveValue('Keep this admin draft');
+    await act(async () => {
+      window.dispatchEvent(new Event('focus'));
+      await new Promise(resolve => setTimeout(resolve, 1_100));
+    });
+    expect(fetchUserGroups).toHaveBeenCalledTimes(3);
+    expect(listProfiles).toHaveBeenCalledTimes(reads);
+    expect(screen.getByRole('textbox', { name: 'Page note' })).toBe(note);
+    expect(note).toHaveValue('Keep this admin draft');
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('applies actual remote role removal through a dirty lock and unmounts the old authorized shell', async () => {
+    renderProtectedApp();
+    const note = await screen.findByRole('textbox', { name: 'Page note' });
+    fireEvent.change(note, { target: { value: 'Private admin draft' } });
+    const unlock = liveUpdates.acquireBlock();
+    try {
+      fetchUserGroups.mockResolvedValue(['PRODUCER']);
+      await invalidateLiveUpdates(['PERSONAL']);
+      expect(await screen.findByRole('heading', { name: 'My leads' })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Admin control' })).toBeNull();
+      expect(note).not.toBeInTheDocument();
+      expect(screen.getByRole('textbox', { name: 'Page note' })).toHaveValue('');
+      expect(screen.queryByRole('dialog')).toBeNull();
+      expect(await activeRoleHeaders()).toMatchObject({ 'x-crm-role': 'PRODUCER' });
+      expect(listProfiles).toHaveBeenCalledTimes(2);
+    } finally { unlock(); }
+  });
+
+  it('keeps drafts during a transient token outage but closes the profile on actual authorization denial', async () => {
+    renderProtectedApp();
+    const note = await screen.findByRole('textbox', { name: 'Page note' });
+    fireEvent.change(note, { target: { value: 'Unsaved work' } });
+    fetchUserGroups.mockRejectedValueOnce(new Error('Temporary token refresh outage'));
+    await invalidateLiveUpdates(['PERSONAL']);
+    expect(screen.getByRole('textbox', { name: 'Page note' })).toBe(note);
+    expect(note).toHaveValue('Unsaved work');
+    expect(listProfiles).toHaveBeenCalledTimes(1);
+    fetchUserGroups.mockRejectedValueOnce(Object.assign(new Error('Your account is inactive'), { name: 'NotAuthorizedException' }));
+    await invalidateLiveUpdates(['PERSONAL']);
+    expect(await screen.findByText('Your account is inactive')).toBeInTheDocument();
+    expect(screen.queryByRole('complementary')).toBeNull();
+    expect(screen.queryByRole('textbox', { name: 'Page note' })).toBeNull();
+    expect(await activeRoleHeaders()).toEqual({});
   });
 });

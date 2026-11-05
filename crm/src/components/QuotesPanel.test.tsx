@@ -1,3 +1,4 @@
+import { invalidateLiveUpdates } from "../test/liveUpdates";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { listAllPages } from "../lib/pagination";
@@ -256,4 +257,30 @@ describe("binding recovery", () => {
     await act(async () => finish({ data: { ok: true, policy: { id: "policy-a" }, account: { ...account, stage: "CLIENT" } } }));
     expect(changed).not.toHaveBeenCalled();
   });
+});
+
+it('updates verified broker fee status through an open bind draft without repeating financial actions', async () => {
+  const feeQuote = { ...quote, brokerFee: 500, billType: 'AGENCY' as const };
+  const fee = { quoteId: quote.id, amountCents: 50000, collectedCents: 0, submittedCents: 0,
+    signedAt: '2026-09-30T12:00:00Z', terms: authorizedQuoteTerms(feeQuote) };
+  h.quotes.mockResolvedValue({ data: [feeQuote] });
+  h.fee.mockResolvedValue({ data: { ok: true, fees: [fee] } });
+  render(<QuotesPanel account={account} onAccountChange={vi.fn()} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Bind' }));
+  await screen.findByText('Disclosure signed · fee payment is still needed.');
+  fireEvent.change(screen.getByLabelText('Policy number (can be added later)'), { target: { value: 'MY-BIND-DRAFT' } });
+  fireEvent.click(screen.getByLabelText('I confirmed the exact premium and agency commission percentage.'));
+  h.fee.mockResolvedValue({ data: { ok: true, fees: [{ ...fee, submittedCents: 50000, collectedCents: 50000 }] } });
+  await invalidateLiveUpdates(['CRM']);
+  expect(screen.getByText('Disclosure signed · payment received.')).toBeVisible();
+  expect(screen.getByLabelText('Policy number (can be added later)')).toHaveValue('MY-BIND-DRAFT');
+  expect(screen.getByLabelText('I confirmed the exact premium and agency commission percentage.')).toBeChecked();
+  expect(h.quotes).toHaveBeenCalledTimes(1);
+  expect(h.bind).not.toHaveBeenCalled();
+  expect(h.fee.mock.calls.every(([request]) => JSON.parse(request.input).op === 'status')).toBe(true);
+  h.bind.mockImplementationOnce(() => new Promise(() => {}));
+  const confirmBind = screen.getByRole('button', { name: 'Confirm bind' });
+  fireEvent.click(confirmBind);
+  fireEvent.click(confirmBind);
+  await waitFor(() => expect(h.bind).toHaveBeenCalledTimes(1));
 });

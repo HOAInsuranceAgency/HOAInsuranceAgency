@@ -86,7 +86,7 @@ export default function SearchResults() {
   const index = useAsyncResource(fetchSearchIndexRows, [q], {
     initialData: [],
     errorMessage: "Couldn't load records to search",
-  });
+   live: true });
   const groups = useMemo(
     () => (runnable ? searchRows(index.data, q, Infinity) : []),
     [index.data, q, runnable]
@@ -109,7 +109,7 @@ export default function SearchResults() {
           )
         : Promise.resolve(NO_RESULTS),
     [q],
-    { initialData: NO_RESULTS, errorMessage: "Document search failed" }
+    { initialData: NO_RESULTS, errorMessage: "Document search failed" , live: true }
   );
 
   // Most recently uploaded first, as the old page ordered the hits.

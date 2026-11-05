@@ -1,3 +1,5 @@
+import { LiveStatus } from "../components/LiveStatus";
+import { useLiveUpdateBlock } from "../lib/useLiveUpdates";
 import { Input } from "../components/ui/Input";
 import { Button } from "../components/ui/Button";
 import { Table } from "../components/ui/Table";
@@ -136,6 +138,7 @@ function LeadTextCell({
     setDraft(current => current === previous ? phone : current);
     previousPhone.current = phone;
   }, [profile.mobilePhone]);
+  useLiveUpdateBlock(draft.trim() !== (profile.mobilePhone ?? "").trim());
   const on = !!profile.leadTextAlerts;
   const reachable = toE164(draft) !== null;
 
@@ -230,6 +233,7 @@ export default function Team({ profile }: { profile: UserProfile }) {
   const [moreError, setMoreError] = useState("");
   const morePending = useRef(false);
   const pageVersion = useRef(0);
+  const loadedPages = useRef(1);
   useEffect(() => () => { pageVersion.current++; }, []);
 
   // `client.queries.*` reports failure by *resolving* with an `errors` array,
@@ -237,16 +241,26 @@ export default function Team({ profile }: { profile: UserProfile }) {
   // a rejection otherwise.
   const team = useAsyncResource(
     async () => {
-      // Refresh starts a new sequence. An older Load more response cannot
-      // append stale rows or replace the refreshed continuation token.
-      pageVersion.current++;
-      morePending.current = false;
-      setMoreLoading(false);
-      setMoreError("");
-      return fetchTeamPage();
+      // Revalidate the depth already opened, without resetting paging or edits.
+      const depth = loadedPages.current;
+      if (depth > 100) throw new Error('Too many team pages to update safely.');
+      const users = new Map<string, TeamUser>(), profiles = new Map<string, UserProfile>();
+      const seen = new Set<string>();
+      let nextToken: string | undefined;
+      let cursor: string | null = null;
+      for (let pageNumber = 0; pageNumber < depth; pageNumber++) {
+        const page = await fetchTeamPage(nextToken);
+        for (const member of page.users) if (!users.has(member.userId)) users.set(member.userId, member);
+        for (const member of page.profiles) if (!profiles.has(member.id)) profiles.set(member.id, member);
+        cursor = page.nextToken;
+        if (!cursor) break;
+        if (seen.has(cursor)) throw new Error('The team page could not be refreshed completely.');
+        seen.add(cursor); nextToken = cursor;
+      }
+      return { users: [...users.values()], profiles: [...profiles.values()], nextToken: cursor };
     },
     [],
-    { initialData: EMPTY_TEAM, errorMessage: "Failed to load team" }
+    { initialData: EMPTY_TEAM, errorMessage: "Failed to load team" , live: true }
   );
   const { users, profiles } = team.data;
   const eligibilityMembers = useMemo(() => users.map(user => {
@@ -255,6 +269,7 @@ export default function Team({ profile }: { profile: UserProfile }) {
       name: memberProfile ? `${memberProfile.firstName} ${memberProfile.lastName}` : user.email, hasProfile: !!memberProfile };
   }), [users, profiles]);
   const eligibility = useLeadEligibilitySettings(eligibilityMembers, team.loading || moreLoading || inviteStatus.busy || alertStatus.busy || !!editingRoles || !!editingAccess);
+  useLiveUpdateBlock(!!editingRoles || !!editingAccess || moreLoading || eligibility.busy || !!eligibility.editing || inviteStatus.busy || alertStatus.busy);
   const setProfiles = (update: (profiles: UserProfile[]) => UserProfile[]) =>
     team.setData(previous => ({ ...previous, profiles: update(previous.profiles) }));
 
@@ -268,6 +283,7 @@ export default function Team({ profile }: { profile: UserProfile }) {
     try {
       const page = await fetchTeamPage(nextToken);
       if (version !== pageVersion.current) return;
+      loadedPages.current++;
       // Cognito pagination can repeat a member if the pool changes between
       // reads. Keep existing rows (and any edits) instead of duplicating them.
       team.setData(previous => ({
@@ -287,6 +303,7 @@ export default function Team({ profile }: { profile: UserProfile }) {
 
   // An invite adds a Cognito user, so restart the roster and its decorations.
   function reload() {
+    pageVersion.current++; morePending.current = false; setMoreLoading(false); setMoreError("");
     void team.refetch();
     eligibility.refresh();
   }
@@ -441,6 +458,7 @@ export default function Team({ profile }: { profile: UserProfile }) {
         </p>
       </div>
 
+      <LiveStatus resource={team} />
       <section className="card team-eligibility" aria-labelledby="team-members-title">
         <div className="toolbar" style={{ marginTop: 0, alignItems: "flex-start" }}>
           <div>
@@ -453,9 +471,7 @@ export default function Team({ profile }: { profile: UserProfile }) {
             </p>
           </div>
           <div className="grow" />
-          <Button variant="secondary" type="button"  disabled={team.loading || moreLoading || alertStatus.busy || eligibility.disabled || !!editingRoles || !!editingAccess} onClick={reload}>
-            Refresh team
-          </Button>
+
           {/* Toggles are per-row with no per-row place to report; this is
               the card's one status line. */}
           <SaveStatus {...alertStatus.status} />

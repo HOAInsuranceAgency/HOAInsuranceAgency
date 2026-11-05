@@ -71,7 +71,7 @@ function FormsTabContent({
       // regenerates a form that already exists and gets a duplicate row plus
       // a duplicate S3 object.
       errorMessage: "Failed to load generated forms",
-    }
+     live: true }
   );
   const generated = genRes.data;
   const waitingForGenerated = !genRes.loaded || (genRes.loading && generated.length === 0);

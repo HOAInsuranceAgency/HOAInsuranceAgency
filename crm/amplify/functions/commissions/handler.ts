@@ -772,6 +772,9 @@ export async function handler(event: Event) {
     }
     throw new Error('Unknown commission action.');
   } catch (error) {
+    if (error instanceof Error && error.name === 'Unauthorized') return {
+      ok: false, error: 'Unauthorized: these commission records are no longer available to your account.', errorType: 'Unauthorized',
+    };
     const conflict = ['TransactionCanceledException', 'ConditionalCheckFailedException'].includes(
       (error as Error).name,
     );

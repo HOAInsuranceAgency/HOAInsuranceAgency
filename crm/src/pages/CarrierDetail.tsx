@@ -23,7 +23,7 @@ export default function CarrierDetail() {
       return result.data;
     },
     [id],
-    { initialData: null as Carrier | null, errorMessage: "Failed to load carrier" }
+    { initialData: null as Carrier | null, errorMessage: "Failed to load carrier" , live: true }
   );
   const carrier = res.data;
 

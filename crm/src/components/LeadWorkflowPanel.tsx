@@ -1,3 +1,5 @@
+import { LiveStatus } from "./LiveStatus";
+import { useLiveUpdateBlock } from "../lib/useLiveUpdates";
 import { Select } from "./ui/Select";
 import { Button } from "./ui/Button";
 import { Textarea } from "./ui/Textarea";
@@ -48,7 +50,8 @@ export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }:
   const noteId = useRef(crypto.randomUUID());
   const [channel, setChannel] = useState("ALL");
   const [note, setNote] = useState(""), [publish, setPublish] = useState(false);
-  const resource = useAsyncResource(() => request<WorkflowContext>("context", { accountId, conversationId }), [accountId, conversationId], { initialData: EMPTY, errorMessage: "Could not load account communications", clearDataOnError: isAuthorizationError });
+  useLiveUpdateBlock(busy || editingTeam || !!note.trim() || snoozeInteracting || loadingOlder);
+  const resource = useAsyncResource(() => request<WorkflowContext>("context", { accountId, conversationId }), [accountId, conversationId], { initialData: EMPTY, errorMessage: "Could not load account communications", clearDataOnError: isAuthorizationError, live: { intervalMs: 15_000 } });
   const { workflow, communications, team, issues } = resource.data;
   const currentData = useRef(resource.data);
   currentData.current = resource.data;
@@ -58,13 +61,6 @@ export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }:
     setSavedSnooze(undefined); setEditingTeam(false); setSalesperson('');
     noteId.current = crypto.randomUUID();
   }, [resource.data, resource.error]);
-  useEffect(() => {
-    if (!compact || busy || editingTeam || note.trim() || resource.loading || snoozeInteracting || loadingOlder) return;
-    const refresh = () => { if (document.visibilityState === "visible") void resource.refetch(); };
-    const timer = window.setInterval(refresh, 15_000);
-    document.addEventListener("visibilitychange", refresh);
-    return () => { window.clearInterval(timer); document.removeEventListener("visibilitychange", refresh); };
-  }, [compact, busy, editingTeam, note, resource.loading, resource.refetch, snoozeInteracting, loadingOlder]);
   useEffect(() => { if (!editingTeam) setSalesperson(workflow?.salespersonId ?? ""); }, [workflow?.salespersonId, editingTeam]);
   useEffect(() => { if (!isAdmin) { setEditingTeam(false); setSalesperson(workflow?.salespersonId ?? ""); } }, [isAdmin, workflow?.salespersonId]);
   // The parent keys the panel by conversation/account, so unsaved edits never
@@ -160,9 +156,10 @@ export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }:
       {resource.data.frontContext && <p className="muted small front-handler">In Front: {team.find(t => t.frontId === resource.data.frontContext?.assigneeId)?.name ?? (resource.data.frontContext.assigneeId ? "Unmapped teammate" : "Unassigned")}<span>{resource.data.frontContext.routing === "MANUAL" ? "Manually assigned" : "Follows the account salesperson"}</span></p>}
     </section>;
   return <section className={`card lead-workflow${compact ? "" : " activity-workspace"}`} aria-label="Account communications">
-    <div className="toolbar workflow-heading"><div><h2>{clientWork ? "Client workspace" : "Account communications"}</h2>{!compact && <p className="muted small">Communication history, team notes, and account controls.</p>}</div><div className="grow" /><Button variant="secondary"  disabled={resource.loading} onClick={() => void resource.refetch()}>{resource.loading ? "Refreshing…" : "Refresh"}</Button></div>
+    <div className="toolbar workflow-heading"><div><h2>{clientWork ? "Client workspace" : "Account communications"}</h2>{!compact && <p className="muted small">Communication history, team notes, and account controls.</p>}</div><div className="grow" /></div>
     {onOpen && <CommunicationAccountSummary accountId={workflow.accountId} open={open} />}
     {notice && <p className="workflow-notice" role="status">{notice}</p>}
+    <LiveStatus resource={resource} />
     {resource.error && <p className="error-text workflow-notice" role="alert">{resource.error} <Button variant="link"  onClick={() => void resource.refetch()}>Retry refresh</Button></p>}
     {error && <p className="error-text workflow-notice" role="alert">{error}</p>}
     {workflow.assignmentIssue && <p className="error-text workflow-notice">{workflow.assignmentIssue}</p>}

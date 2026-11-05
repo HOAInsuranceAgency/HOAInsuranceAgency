@@ -1,3 +1,4 @@
+import { sendCrmWrite } from '../live-write';
 import { captureHandledFailure } from "../monitoring";
 import { randomUUID } from "node:crypto";
 import { Amplify } from "aws-amplify";
@@ -67,7 +68,7 @@ async function logRow(row: {
   if (!table) return;
   const now = new Date().toISOString();
   try {
-    await ddb.send(
+    await sendCrmWrite(ddb.send(
       new PutCommand({
         TableName: table,
         Item: {
@@ -82,7 +83,7 @@ async function logRow(row: {
           occurredAt: now,
         },
       })
-    );
+    ));
   } catch (err) {
     console.error(`[pf-servicing] log write failed for ${row.rule}`, err);
   }
@@ -155,7 +156,7 @@ export const handler = async (event: {
         const rollLoanTable = process.env.PF_LOAN_TABLE;
         if (!rollLoanTable) throw new Error("PF_LOAN_TABLE unset");
         try {
-          await ddb.send(
+          await sendCrmWrite(ddb.send(
             new UpdateCommand({
               TableName: rollLoanTable,
               Key: { id: loan.id },
@@ -173,7 +174,7 @@ export const handler = async (event: {
                 ":live4": "DEFAULTED",
               },
             })
-          );
+          ));
         } catch (err) {
           if ((err as { name?: string }).name === "ConditionalCheckFailedException") {
             // A concurrent roll may have landed the same answer; re-read
@@ -351,7 +352,7 @@ export const handler = async (event: {
           CARRIER_REFUND_DAYS
         ).slice(0, 10);
         try {
-          await ddb.send(
+          await sendCrmWrite(ddb.send(
             new TransactWriteCommand({
               /**
                * Stable across the SDK's own transport retries, fresh for a
@@ -410,7 +411,7 @@ export const handler = async (event: {
                 },
               ],
             })
-          );
+          ));
         } catch (err) {
           const canceled = err as { name?: string; CancellationReasons?: { Code?: string }[] };
           if (canceled.name === "TransactionCanceledException") {

@@ -1,5 +1,6 @@
 import { CfnResource } from 'aws-cdk-lib';
 import { configureSentry } from "./sentry";
+import { installLiveChanges } from './live-changes';
 import { brokerFees } from './functions/broker-fees/resource';
 import { installBrokerFees } from './broker-fees';
 import { migrationProbeScopes } from "./migration-probe-scopes";
@@ -1130,6 +1131,7 @@ installDashboardReads(backend);
 installOwnerProfitability(backend, communicationTable);
 const commissionStorage = installCommissions(backend, communicationTable);
 installBrokerFees(backend, communicationTable, commissionStorage.table, siteBaseUrl);
+installLiveChanges(backend);
 
 // Generated data resolvers approach CloudFormation's template-size limit.
 // Drop diagnostic construct paths, preserving all resource identities and behavior.

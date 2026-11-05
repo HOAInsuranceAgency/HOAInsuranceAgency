@@ -9,11 +9,13 @@ import { downloadContentDisposition, fileClient, fileSigningOptions } from "./fi
 import { listAssigned } from "./listing";
 import { isActiveOwner, type RoleRequest } from "./active-role";
 import { assertUserSession } from "./user-status";
+import { publishCrmChange } from "../live-changes";
 const s3 = fileClient();
-type Event = { identity?: Identity; request?: RoleRequest; fieldName?: string; info?: { fieldName?: string }; arguments?: RecordData; nativeConditions?: unknown; nativeAuthFilter?: unknown; mode?: "quote-financial" | "session" | "read" | "write" | "list" | "admin" | "owner" | "custom-pre" | "custom-post"; model?: string; field?: string; operation?: string; previous?: unknown };
+type Event = { identity?: Identity; request?: RoleRequest; fieldName?: string; info?: { fieldName?: string }; arguments?: RecordData; nativeConditions?: unknown; nativeAuthFilter?: unknown; mode?: "notify" | "quote-financial" | "session" | "read" | "write" | "list" | "admin" | "owner" | "custom-pre" | "custom-post"; model?: string; field?: string; operation?: string; previous?: unknown };
 export async function handler(event: Event) {
   assertPreviewRead(!["write", "quote-financial"].includes(event.mode ?? "") && (event.mode !== undefined || (event.fieldName ?? event.info?.fieldName) === "crmAccess"));
   if (event.mode === "session") { await assertUserSession(event.identity); return event.previous; }
+  if (event.mode === 'notify') { if (event.previous != null) await publishCrmChange(); return event.previous; }
   const access = new AccountAccess(event.identity, undefined, event.request), args = object(event.arguments);
   // These custom entry points are also guarded when invoked directly, before
   // signing files or looking up any assignment records.

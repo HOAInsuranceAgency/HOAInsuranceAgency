@@ -1,3 +1,4 @@
+import { invalidateLiveUpdates } from "../test/liveUpdates";
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { appendEntry } from '../../../shared/commissions';
@@ -27,7 +28,7 @@ vi.mock('../lib/client', () => ({
 vi.mock('../lib/communications', () => ({
   communicationRequest: h.communications,
 }));
-vi.mock('../components/ReportDownload', () => ({ ReportDownload: () => null }));
+vi.mock('../components/ReportDownload', async () => ({ ReportDownload: () => null, ReportContext: (await import('react')).createContext({ disabled: false }) }));
 import Commissions from './Commissions';
 const snapshot = () => ({
   plans: [],
@@ -100,8 +101,8 @@ it('unmounts owner forms and clears old data immediately when switching roles', 
 it('clears all financial data after a failed refresh', async () => {
   render(<Commissions />);
   await screen.findByText('Producer earned');
-  h.read.mockRejectedValueOnce(new Error('Access inactive'));
-  fireEvent.click(screen.getByRole('button', { name: 'Refresh commissions' }));
+  h.read.mockRejectedValueOnce(Object.assign(new Error('Access inactive'), { name: 'Unauthorized' }));
+  await invalidateLiveUpdates();
   await screen.findByRole('alert');
   expect(screen.queryByText('Producer earned')).toBeNull();
 });
@@ -587,4 +588,33 @@ it('shows the safe producer receipt summary without private carrier terms or for
   expect(screen.queryByText('Manage expected receipts')).toBeNull();
   expect(screen.queryByLabelText('Receipt reconciliation as of')).toBeNull();
   expect(h.action).not.toHaveBeenCalled();
+});
+
+it('defers external agreement changes through a dirty draft and failed save without repeating a write', async () => {
+  h.owner = true;
+  render(<Commissions />);
+  await screen.findByText('Producer earned');
+  fireEvent.click(screen.getByRole('tab', { name: 'Agreements & carriers' }));
+  fireEvent.change(await screen.findByLabelText('Producer'), { target: { value: 'producer' } });
+  fireEvent.change(screen.getByLabelText('Effective from 1'), { target: { value: '2026-01-01' } });
+  fireEvent.change(screen.getByLabelText('New business % 1'), { target: { value: '20' } });
+  fireEvent.change(screen.getByLabelText('Renewal % 1'), { target: { value: '10' } });
+  fireEvent.change(screen.getByLabelText('Agreement reference 1'), { target: { value: 'Draft schedule' } });
+  h.read.mockResolvedValue({ ...snapshot(), plans: [{ id: 'producer', producerId: 'producer', version: 2, name: 'Brian Cole',
+    terms: [{ from: '2026-01-01', newBps: 3000, renewalBps: 1500, agreement: 'New server schedule' }] }] });
+  await invalidateLiveUpdates(['OWNER']);
+  expect(h.read).toHaveBeenCalledTimes(1);
+  expect(screen.getByLabelText('New business % 1')).toHaveValue('20');
+  h.action.mockRejectedValueOnce(new Error('Agreement save unavailable'));
+  fireEvent.click(screen.getByRole('button', { name: 'Save producer agreement' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Agreement save unavailable');
+  await invalidateLiveUpdates(['OWNER']);
+  expect(h.action).toHaveBeenCalledTimes(1);
+  expect(h.read).toHaveBeenCalledTimes(1);
+  expect(screen.getByLabelText('Agreement reference 1')).toHaveValue('Draft schedule');
+  fireEvent.change(screen.getByLabelText('Producer'), { target: { value: '' } });
+  await waitFor(() => expect(h.read).toHaveBeenCalledTimes(2));
+  fireEvent.change(screen.getByLabelText('Producer'), { target: { value: 'producer' } });
+  expect(screen.getByLabelText('New business % 1')).toHaveValue('30');
+  expect(h.action).toHaveBeenCalledTimes(1);
 });

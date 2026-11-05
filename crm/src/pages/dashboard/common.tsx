@@ -1,3 +1,4 @@
+import { LiveStatus } from "../../components/LiveStatus";
 import { MetricButton } from "../../components/ui/MetricButton";
 import { Button } from "../../components/ui/Button";
 import { ReportContext } from "../../components/ReportDownload";
@@ -49,6 +50,9 @@ interface TabResource {
   loaded: boolean;
   error: string;
   refetch: () => Promise<void>;
+  refreshing?: boolean;
+  refreshError?: string;
+  updatedAt?: number;
 }
 
 /**
@@ -80,7 +84,7 @@ export function TabFrame({
 }) {
   const succeeded = useRef(false);
   const [asOf, setAsOf] = useState<Date | null>(null);
-  useEffect(() => { if (res.loaded && !res.loading && !res.error) setAsOf(new Date()); }, [res.loaded, res.loading, res.error]);
+  useEffect(() => { if (res.loaded && !res.loading && !res.error) setAsOf(new Date()); }, [res.loaded, res.loading, res.error, res.updatedAt]);
   // A settled, error-free fetch — not merely `loaded`, which is also true
   // while a retry after a failed first load is in flight (loaded stuck from
   // the failed settle, error just cleared). Latching there would render the
@@ -103,8 +107,9 @@ export function TabFrame({
   }
 
   return (
-    <ReportContext.Provider value={{ disabled: res.loading || !!res.error, asOf }}>
+    <ReportContext.Provider value={{ disabled: res.loading || !!res.refreshing || !!res.error || !!res.refreshError, asOf }}>
       <RefreshStamp res={res} />
+      <LiveStatus resource={res} />
       {res.error && (
         <p className="error-text">
           {res.error} — showing the last numbers that loaded.
@@ -131,25 +136,19 @@ export function TabFrame({
 function RefreshStamp({ res }: { res: TabResource }) {
   const [stamp, setStamp] = useState<Date | null>(null);
   useEffect(() => {
-    if (res.loaded && !res.loading && !res.error) setStamp(new Date());
-  }, [res.loaded, res.loading, res.error]);
+    if (res.loaded && !res.loading && !res.error) setStamp(new Date(res.updatedAt || Date.now()));
+  }, [res.loaded, res.loading, res.error, res.updatedAt]);
 
   return (
     <div className="tab-updated muted small">
       <span>
-        {res.loading
+        {res.loading || res.refreshing
           ? "Refreshing…"
           : stamp
             ? `Updated ${stamp.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
             : ""}
       </span>
-      <Button variant="link"
 
-        onClick={() => void res.refetch()}
-        disabled={res.loading}
-      >
-        Refresh
-      </Button>
     </div>
   );
 }

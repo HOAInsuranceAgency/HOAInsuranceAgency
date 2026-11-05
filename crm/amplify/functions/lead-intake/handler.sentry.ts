@@ -1,3 +1,4 @@
+import { batchLiveChanges } from "../live-write";
 import { monitorHandler } from "../monitoring";
 import { handler as originalHandler } from "./handler";
-export const handler = monitorHandler(originalHandler, "lead-intake.handler");
+export const handler = monitorHandler(batchLiveChanges(originalHandler), "lead-intake.handler");

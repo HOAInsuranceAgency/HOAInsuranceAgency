@@ -4,6 +4,22 @@ import { readFileSync, readdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import type { Context } from "aws-lambda";
 import { configureSentry } from "../../amplify/sentry";
+import ts from 'typescript';
+
+function monitoredEntrypoint(text: string): boolean {
+  const source = ts.createSourceFile('entry.ts', text, ts.ScriptTarget.Latest, true);
+  return source.statements.some(statement => ts.isVariableStatement(statement)
+    && statement.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.ExportKeyword)
+    && statement.declarationList.declarations.some(declaration => {
+      if (!ts.isIdentifier(declaration.name) || declaration.name.text !== 'handler') return false;
+      const call = declaration.initializer;
+      if (!call || !ts.isCallExpression(call) || !ts.isIdentifier(call.expression) || call.expression.text !== 'monitorHandler') return false;
+      const business = call.arguments[0];
+      return !!business && (ts.isIdentifier(business) && business.text === 'originalHandler'
+        || ts.isCallExpression(business) && ts.isIdentifier(business.expression) && business.expression.text === 'batchLiveChanges'
+          && business.arguments.length === 1 && ts.isIdentifier(business.arguments[0]) && business.arguments[0].text === 'originalHandler');
+    }));
+}
 
 const transport = vi.hoisted(() => ({ envelopes: [] as unknown[], initOptions: undefined as any }));
 vi.mock("@sentry/aws-serverless", async (importOriginal) => {
@@ -146,11 +162,16 @@ describe("Lambda deployment coverage", () => {
       expect(entries.length, `${resource}: implicit unwrapped entrypoint`).toBe([...text.matchAll(/defineFunction\s*\(/g)].length);
       for (const match of entries) {
         expect(match[1], String(resource)).toMatch(/\.sentry\.ts$/);
-        expect(readFileSync(resolve(dirname(path), match[1]), "utf8"), match[1]).toContain("monitorHandler(originalHandler,");
+        expect(monitoredEntrypoint(readFileSync(resolve(dirname(path), match[1]), "utf8")), match[1]).toBe(true);
         checked++;
       }
     }
     expect(checked).toBeGreaterThan(40);
+  });
+  it('checks the exported monitored handler rather than a matching comment or unrelated wrapper', () => {
+    expect(monitoredEntrypoint('export const handler = monitorHandler(batchLiveChanges(originalHandler), "worker");')).toBe(true);
+    expect(monitoredEntrypoint('// monitorHandler(originalHandler,\nexport const handler = originalHandler;')).toBe(false);
+    expect(monitoredEntrypoint('const monitored = monitorHandler(originalHandler, "worker"); export const handler = originalHandler;')).toBe(false);
   });
 
   it("configures only registered Lambda resources and keeps previews disconnected", () => {

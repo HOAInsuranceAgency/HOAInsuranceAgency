@@ -13,6 +13,8 @@ vi.mock('./client', async () => ({
 vi.mock('./commercial', () => ({ loadCommercial: h.commercial }));
 vi.mock('./auth', () => ({ useIsAdmin: () => h.isAdmin }));
 import { AccountsListDataProvider, useAccountsListData } from './accountsListData';
+import { invalidateLiveUpdates } from '../test/liveUpdates';
+import { liveUpdates } from './liveUpdates';
 
 const account = (id: string, name = id, stage = 'LEAD') => ({ id, name, stage }) as Account;
 const commercial = (ids: string[], version = 1): CommercialData => ({ team: [], entries: Object.fromEntries(ids.map(id => [id, {
@@ -40,6 +42,41 @@ beforeEach(() => {
   h.policies.mockResolvedValue({ data: [] });
   h.quotes.mockResolvedValue({ data: [] });
   h.commercial.mockImplementation(async (ids: string[]) => commercial(ids));
+});
+
+it('does not publish a background account snapshot after an editor opens mid-request', async () => {
+  render(<App />);
+  await settled();
+  h.accounts.mockResolvedValue({ data: [account('a', 'Updated name')] });
+  const details = deferred<CommercialData>();
+  h.commercial.mockReturnValueOnce(details.promise);
+  await invalidateLiveUpdates();
+  expect(latest.loading).toBe(false);
+  expect(latest.data.accounts[0].name).toBe('a');
+  let release!: () => void;
+  act(() => { release = liveUpdates.acquireBlock(); });
+  await act(async () => details.resolve(commercial(['a'], 2)));
+  expect(latest.data.accounts[0].name).toBe('a');
+  expect(latest.data.commercial.entries.a.workflowVersion).toBe(1);
+  h.commercial.mockResolvedValue(commercial(['a'], 3));
+  act(() => release());
+  await waitFor(() => expect(latest.data.accounts[0].name).toBe('Updated name'));
+  expect(latest.data.commercial.entries.a.workflowVersion).toBe(3);
+});
+
+it('clears background-denied account data even if an editor opened while its read was pending', async () => {
+  render(<App />);
+  await settled();
+  let reject!: (error: Error) => void;
+  h.commercial.mockReturnValueOnce(new Promise((_, fail) => { reject = fail; }));
+  await invalidateLiveUpdates();
+  let release!: () => void;
+  act(() => { release = liveUpdates.acquireBlock(); });
+  await act(async () => reject(Object.assign(new Error('Access denied'), { name: 'Unauthorized' })));
+  expect(latest.data.accounts).toEqual([]);
+  expect(latest.data.commercial.entries).toEqual({});
+  expect(latest.error).toBe('Access denied');
+  act(() => release());
 });
 
 it('shows admin cache immediately while revalidating details on route return', async () => {

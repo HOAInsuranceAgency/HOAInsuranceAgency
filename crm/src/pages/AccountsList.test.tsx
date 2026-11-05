@@ -10,6 +10,7 @@ vi.mock('../lib/reportDownload', async original => ({ ...await original<typeof i
 import { AdminContext } from '../lib/auth';
 import AccountsList from './AccountsList';
 import { AccountsListDataProvider } from '../lib/accountsListData';
+import { enableLiveUpdates, invalidateLiveUpdates } from '../test/liveUpdates';
 
 const team = [
   { userId: 'alice', name: 'Alice', enabled: true, salesperson: true, available: true },
@@ -22,6 +23,7 @@ const team = [
 let owner: string | undefined;
 let version: number;
 beforeEach(() => {
+  enableLiveUpdates();
   vi.resetAllMocks();
   owner = 'alice'; version = 7;
   h.request.mockImplementation(async (operation, input) => {
@@ -239,7 +241,7 @@ it.each(['LEAD', 'CLIENT'] as const)('lists only configured producers in the %s 
   expect(filter.queryByRole('option', { name: 'Office staff' })).not.toBeInTheDocument();
 });
 
-it('keeps the saved list and controls visible while revalidating on return, and supports explicit refresh', async () => {
+it('keeps the saved list and controls visible while revalidating on return and receiving live changes', async () => {
   render(<AdminContext.Provider value={true}><AccountsListDataProvider><MemoryRouter initialEntries={['/leads']}>
     <Routes>
       <Route path="/leads" element={<AccountsList stage="LEAD" />} />
@@ -262,17 +264,17 @@ it('keeps the saved list and controls visible while revalidating on return, and 
   expect(screen.queryByText('Loading…')).not.toBeInTheDocument();
   await waitFor(() => expect(finishRefresh).toBeTypeOf('function'));
   expect(h.request.mock.calls.filter(([op]) => op === 'commercialTable')).toHaveLength(readsBefore + 1);
-  expect(screen.getByRole('button', { name: 'Refresh leads' })).toBeDisabled();
+  expect(screen.queryByRole('button', { name: 'Refresh leads' })).not.toBeInTheDocument();
   expect(screen.getByRole('combobox', { name: 'Download Leads' })).toBeDisabled();
   expect(cached).toBeEnabled();
   // A response from before the save must not undo the confirmed assignment.
   await act(async () => finishRefresh(await initial('commercialTable', { accountIds: ['willow', 'pine', 'cedar'] })));
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh leads' })).toBeEnabled());
+  await waitFor(() => expect(screen.getByRole('combobox', { name: 'Download Leads' })).toBeEnabled());
   expect(await salespersonPicker()).toBe(cached);
   expect(cached).toHaveValue('bob');
   h.request.mockImplementation(initial);
   version = 9;
-  fireEvent.click(screen.getByRole('button', { name: 'Refresh leads' }));
+  await invalidateLiveUpdates();
   await waitFor(() => expect(cached).toHaveValue('alice'));
   expect(h.request.mock.calls.filter(([op]) => op === 'commercialTable')).toHaveLength(readsBefore + 2);
 });
@@ -283,7 +285,7 @@ it.each(['LEAD', 'CLIENT'] as const)('keeps the %s table on transient refresh fa
   const table = screen.getByRole('table');
   const original = h.request.getMockImplementation()!;
   h.request.mockImplementation((op, input) => op === 'commercialTable' ? Promise.reject(new Error('Temporary details outage')) : original(op, input));
-  fireEvent.click(screen.getByRole('button', { name: stage === 'LEAD' ? 'Refresh leads' : 'Refresh clients' }));
+  await invalidateLiveUpdates();
   expect(await screen.findByRole('alert')).toHaveTextContent('Some details may be out of date.');
   expect(screen.getByRole('table')).toBe(table);
   expect(screen.getByRole('combobox', { name: `Download ${stage === 'LEAD' ? 'Leads' : 'Clients'}` })).toBeDisabled();
@@ -302,7 +304,7 @@ it('clears a selected filter when that teammate is no longer a configured produc
   h.request.mockImplementation((op, input) => op === 'team'
     ? { team: team.map(teammate => teammate.userId === 'alice' ? { ...teammate, salesperson: false } : teammate) }
     : original(op, input));
-  fireEvent.click(screen.getByRole('button', { name: 'Refresh leads' }));
+  await invalidateLiveUpdates();
   await waitFor(() => expect(screen.getByRole('combobox', { name: 'Salesperson' })).toHaveValue(''));
   expect(within(screen.getByRole('combobox', { name: 'Salesperson' })).queryByRole('option', { name: 'Alice' })).not.toBeInTheDocument();
   expect(screen.getByText('Willow Court Condominium')).toBeInTheDocument();

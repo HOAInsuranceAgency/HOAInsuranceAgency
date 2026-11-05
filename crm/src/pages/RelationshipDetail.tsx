@@ -1,3 +1,4 @@
+import { LiveStatus } from "../components/LiveStatus";
 import { Button } from "../components/ui/Button";
 import { Table } from "../components/ui/Table";
 import { Input } from "../components/ui/Input";
@@ -32,7 +33,7 @@ function RelationshipProfile({ id }: { id: string }) {
   const resource = useAsyncResource(() => loadPartyProfile(id), [id], {
     initialData: null,
     clearDataOnError: isAuthorizationError,
-  });
+   live: true });
   const [editing, setEditing] = useState(false),
     [linking, setLinking] = useState(false),
     [affiliation, setAffiliation] = useState<AffiliationRecord | 'new' | null>(null);
@@ -112,11 +113,10 @@ function RelationshipProfile({ id }: { id: string }) {
               Edit profile
             </Button>
           )}
-          <Button variant="secondary"  onClick={refresh}>
-            Refresh
-          </Button>
+
         </div>
       </div>
+      <LiveStatus resource={resource} />
       <div className="relationship-grid">
         <div>
           <section className="card">

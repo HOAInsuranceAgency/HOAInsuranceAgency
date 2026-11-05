@@ -158,6 +158,13 @@ it('rejects disabled and revoked sessions even for an Owner', async () => {
   });
   expect(h.get).not.toHaveBeenCalled();
 });
+it('preserves the access-denial type for live commission refreshes after revocation', async () => {
+  h.session.mockRejectedValue(Object.assign(new Error('Your access is inactive.'), { name: 'Unauthorized' }));
+  expect(await handler(request('postStatement', { id: 's' }))).toMatchObject({
+    ok: false, errorType: 'Unauthorized', error: expect.stringContaining('Unauthorized:'),
+  });
+  expect(h.get).not.toHaveBeenCalled(); expect(h.commit).not.toHaveBeenCalled();
+});
 it('posts a statement atomically with source deduplication and safely retries', async () => {
   const s = { ...statement(), lines: [line()] };
   records.set('STATEMENT:s', s);

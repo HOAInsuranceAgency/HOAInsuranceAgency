@@ -1,3 +1,4 @@
+import { useLiveUpdateBlock } from "../../lib/useLiveUpdates";
 import { Button } from "../../components/ui/Button";
 import { Table } from "../../components/ui/Table";
 import { Select } from "../../components/ui/Select";
@@ -26,6 +27,7 @@ export function PoliciesTab({ accountId }: { accountId: string }) {
 
 function AccountPolicies({ accountId }: { accountId: string }) {
   const [editing, setEditing] = useState<Policy | null>(null);
+  useLiveUpdateBlock(!!editing);
   const updates = useRef(new Set<string>());
   const [rowStatus, setRowStatus] = useState<Record<string, SaveStatusValue>>({});
   const saving = Object.values(rowStatus).some(status => status.state === "saving");
@@ -39,7 +41,7 @@ function AccountPolicies({ accountId }: { accountId: string }) {
         })
       ),
     [accountId],
-    { initialData: [] as Policy[], errorMessage: "Failed to load policies", clearDataOnError: isAuthorizationError }
+    { initialData: [] as Policy[], errorMessage: "Failed to load policies", clearDataOnError: isAuthorizationError , live: true }
   );
   const policies = policyRes.data;
   const setPolicies = policyRes.setData;
@@ -51,7 +53,7 @@ function AccountPolicies({ accountId }: { accountId: string }) {
   const carrierRes = useAsyncResource(
     () => listAllPages(nextToken => client.models.Carrier.list({ nextToken })),
     [],
-    { initialData: [] as Carrier[], errorMessage: "Failed to load carriers", clearDataOnError: isAuthorizationError }
+    { initialData: [] as Carrier[], errorMessage: "Failed to load carriers", clearDataOnError: isAuthorizationError , live: true }
   );
   const carrierRows = carrierRes.data;
 

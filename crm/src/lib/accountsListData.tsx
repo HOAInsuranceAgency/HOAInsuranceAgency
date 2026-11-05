@@ -13,6 +13,8 @@ import { client, friendlyError, listAllPages, type Account, type Contact, type P
 import { loadCommercial, type CommercialData, type CommercialEntry } from './commercial';
 import { isAuthorizationError } from './authorizationError';
 import { useIsAdmin } from './auth';
+import { liveUpdates } from './liveUpdates';
+import { useLiveRefresh } from './useLiveUpdates';
 
 type Stage = 'LEAD' | 'CLIENT';
 export interface AccountsListData {
@@ -161,28 +163,39 @@ export function useAccountsListData(stage: Stage) {
     setState(next);
   }, []);
 
-  const run = useCallback(async (mode: 'all' | 'commercial'): Promise<void> => {
-    if (!mounted.current) return;
+  const run = useCallback(async (mode: 'all' | 'commercial', background = false): Promise<boolean> => {
+    if (!mounted.current) return true;
+    const fence = liveUpdates.getSnapshot();
+    if (background && !liveUpdates.canPublish(fence)) return false;
     const id = ++ticket.current;
     const previous = current.current.stage === stage && current.current.isAdmin === isAdmin ? current.current : initialState(stage, cache, isAdmin);
     const cached = cache.get(key);
-    publish({ ...previous, loaded: previous.loaded && !previous.error, loading: true, error: '', refreshError: '' });
+    if (!background) publish({ ...previous, loaded: previous.loaded && !previous.error, loading: true, error: '', refreshError: '' });
     const stillCurrent = () => mounted.current && ticket.current === id && scope.current.key === key && scope.current.cache === cache;
+    const applicable = () => !background || liveUpdates.canPublish(fence);
     // Only a snapshot authorized in this mounted view can survive a failed
     // account read. A non-admin route entry has no such snapshot yet.
     let fallback = previous.loaded && !previous.error ? previous.data : undefined;
     try {
       const accounts = await checkedList<Account>(nextToken => client.models.Account.list({ nextToken }));
-      if (!stillCurrent()) return;
+      if (!stillCurrent()) return true;
       const latest = current.current.loaded && !current.current.error ? current.current.data : fallback ?? cache.get(key)?.data;
       fallback = latest ? surviving(latest, accounts) : undefined;
       // Revoke immediately, before optional reads or commercial hydration can
       // fail. Both stage caches contain the same authorized account universe.
       for (const [otherKey, entry] of cache) {
         if (!otherKey.endsWith(isAdmin ? ':admin' : ':scoped')) continue;
-        cache.set(otherKey, { data: surviving(entry.data, accounts), detailsComplete: covered(entry, accounts) && entry.detailsComplete });
+        const allowed = new Set(accounts.map(account => account.id));
+        const retained = background ? restrict(entry.data, entry.data.accounts.filter(account => allowed.has(account.id))) : surviving(entry.data, accounts);
+        cache.set(otherKey, { data: retained, detailsComplete: covered(entry, accounts) && entry.detailsComplete });
       }
-      if (fallback) publish({ stage, isAdmin, data: fallback, loaded: true, loading: true, error: '', refreshError: '' });
+      if (background && latest) {
+        const allowed = new Set(accounts.map(account => account.id));
+        const retained = restrict(latest, latest.accounts.filter(account => allowed.has(account.id)));
+        if (retained.accounts.length !== latest.accounts.length) publish({ ...current.current, data: retained });
+      }
+      if (!applicable()) return false;
+      if (fallback && !background) publish({ stage, isAdmin, data: fallback, loaded: true, loading: true, error: '', refreshError: '' });
       // Related records change independently of Account.updatedAt. On every
       // route entry, keep authorized cached rows visible while revalidating
       // their contacts, quotes/policies, assignments and follow-up details.
@@ -191,17 +204,19 @@ export function useAccountsListData(stage: Stage) {
       const commercialOnly = mode === 'commercial' && !!fallback &&
         !!cache.get(key)?.detailsComplete && !previous.refreshError;
       const next = await loadDetails(stage, accounts, fallback, commercialOnly);
-      if (!stillCurrent()) return;
+      if (!stillCurrent()) return true;
+      if (!applicable()) return false;
       const data = { ...next.data, commercial: mergeCommercial(next.data.commercial, current.current.data.commercial, next.data.accounts) };
       cache.set(key, { data, detailsComplete: !next.refreshError });
       publish({ stage, isAdmin, data, loaded: true, loading: false, error: '', refreshError: next.refreshError });
     } catch (error) {
-      if (!stillCurrent()) return;
+      if (!stillCurrent()) return true;
       const message = friendlyError(error, 'Could not load accounts and follow-up dates');
       if (isAuthorizationError(error)) {
         cache.clear();
         publish({ stage, isAdmin, data: emptyData(), loaded: true, loading: false, error: message, refreshError: '' });
-      } else if (fallback) {
+      } else if (!applicable()) return false;
+      else if (fallback) {
         // Include inline saves confirmed while this read was pending.
         const data = { ...fallback, commercial: mergeCommercial(fallback.commercial, current.current.data.commercial, fallback.accounts) };
         cache.set(key, { data, detailsComplete: false });
@@ -211,10 +226,17 @@ export function useAccountsListData(stage: Stage) {
         publish({ stage, isAdmin, data: emptyData(), loaded: true, loading: false, error: message, refreshError: '' });
       }
     }
+    return true;
   }, [stage, cache, key, isAdmin, publish]);
 
-  const refetch = useCallback(() => run('all'), [run]);
-  const refreshCommercial = useCallback(() => run('commercial'), [run]);
+  const refetch = useCallback(async () => { await run('all'); }, [run]);
+  const refreshCommercial = useCallback(async () => { await run('commercial'); }, [run]);
+  useLiveRefresh(() => run('all', true), { paused: state.loading || !state.loaded,
+    onDenied: error => {
+      ticket.current++; cache.clear();
+      publish({ stage, isAdmin, data: emptyData(), loaded: true, loading: false, error: friendlyError(error, 'Account access changed.'), refreshError: '' });
+    },
+  });
   const setCommercial: Dispatch<SetStateAction<CommercialData>> = useCallback(action => {
     if (!mounted.current || scope.current.key !== key || scope.current.cache !== cache) return;
     const previous = current.current;

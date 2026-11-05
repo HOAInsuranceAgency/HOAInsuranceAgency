@@ -39,7 +39,7 @@ export function FinancingAdmin({ onChanged }: { onChanged: () => Promise<void> }
   const rows = useAsyncResource(() => loadOpinionHistory(), [], {
     initialData: { items: [] } as OpinionPage,
     errorMessage: "Couldn't load counsel opinions.",
-  });
+   live: true });
   const today = new Date().toISOString().slice(0, 10);
   const history = [...rows.data.items].sort((a, b) =>
     a.jurisdiction.localeCompare(b.jurisdiction) || b.effectiveAt.localeCompare(a.effectiveAt)

@@ -1,3 +1,4 @@
+import { invalidateLiveUpdates } from "../test/liveUpdates";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -248,7 +249,7 @@ describe("DocumentsPanel authorized reads", () => {
     renderPanel();
     await screen.findByText("scan_0043.pdf");
     models.Document.listDocumentByEntityId.mockResolvedValue({ data: null, errors: [{ message: "Not authorized" }] });
-    await act(async () => window.dispatchEvent(new Event("focus")));
+    await invalidateLiveUpdates();
     await waitFor(() => expect(screen.queryByText("scan_0043.pdf")).toBeNull());
     expect(screen.getByRole("alert")).toBeTruthy();
   });
@@ -269,17 +270,24 @@ describe("document recovery", () => {
     expect(models.Document.update.mock.calls.filter(([arg]) => arg.name === "Reviewed budget.pdf")).toHaveLength(2);
   });
 
-  it("retains a rename draft through a transient background read failure", async () => {
+  it("fences an in-flight background failure when renaming begins and reconciles after cancel", async () => {
     const user = userEvent.setup();
     renderPanel();
+    await screen.findByText("scan_0043.pdf");
+    let reject!: (error: Error) => void;
+    models.Document.listDocumentByEntityId.mockImplementationOnce(() => new Promise((_resolve, fail) => { reject = fail; }));
+    await invalidateLiveUpdates();
     await typeName(user, "Keep my title");
-    models.Document.listDocumentByEntityId.mockRejectedValueOnce(new Error("Network unavailable"));
-    await act(async () => window.dispatchEvent(new Event("focus")));
-    await screen.findByRole("alert");
+    await act(async () => reject(new Error("Network unavailable")));
     expect(screen.getByRole("textbox", { name: "Document name" })).toHaveValue("Keep my title");
-    await user.click(screen.getByRole("button", { name: "Retry" }));
-    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
-    expect(screen.getByRole("textbox", { name: "Document name" })).toHaveValue("Keep my title");
+    const reads = models.Document.listDocumentByEntityId.mock.calls.length;
+    await invalidateLiveUpdates();
+    expect(models.Document.listDocumentByEntityId).toHaveBeenCalledTimes(reads);
+    expect(screen.queryByRole("alert")).toBeNull();
+    models.Document.listDocumentByEntityId.mockResolvedValue({ data: [{ ...DOC, name: "Current title.pdf" }] });
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(await screen.findByText("Current title.pdf")).toBeVisible();
+    expect(models.Document.update).not.toHaveBeenCalled();
   });
 
   it("does not upload an object when saving its document path failed", async () => {

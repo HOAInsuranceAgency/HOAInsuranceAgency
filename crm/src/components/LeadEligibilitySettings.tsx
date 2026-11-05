@@ -6,6 +6,9 @@ import { communicationRequest as request, type TeamEligibility } from "../lib/co
 import { useAsyncResource } from "../lib/useAsyncResource";
 import { isAuthorizationError } from "../lib/authorizationError";
 import Modal from "./Modal";
+import { liveUpdates } from '../lib/liveUpdates';
+import { useLiveRefresh, useLiveUpdateBlock } from '../lib/useLiveUpdates';
+import { LiveStatus } from './LiveStatus';
 
 type ConnectionIds = Pick<TeamEligibility, "frontId" | "dialpadId" | "frontChannelId" | "frontSignatureId">;
 
@@ -21,25 +24,38 @@ export function useLeadEligibilitySettings(members: readonly EligibilityRosterMe
   const [editing, setEditing] = useState<TeamEligibility | null>(null);
   const inFlight = useRef(false), readPending = useRef(false), refreshPending = useRef(false);
   const saved = useRef(new Map<string, TeamEligibility>()), loaded = useRef(new Set<string>());
+  const generation = useRef(0);
+  const [refreshError, setRefreshError] = useState('');
   const readIds = useRef<string[]>([]);
   const current = useRef({ members, paused, editing });
   current.current = { members, paused, editing };
+  useLiveUpdateBlock(!!editing);
+  useLiveUpdateBlock(busy, 'write');
+  async function fetchSettings(ids: string[]) {
+    const rows: TeamEligibility[] = [];
+    for (let offset = 0; offset < ids.length; offset += 20) {
+      const page = await request<{ team: TeamEligibility[] }>("teamSettings", { userIds: ids.slice(offset, offset + 20) });
+      if (!Array.isArray(page.team)) throw new Error('Could not load assignment settings.');
+      rows.push(...page.team);
+    }
+    return rows;
+  }
+  function mergeSettings(ids: string[], rows: TeamEligibility[]) {
+    for (const id of ids) loaded.current.add(id);
+    for (const row of rows) {
+      const previous = saved.current.get(row.userId);
+      if (ids.includes(row.userId) && (!previous || (row.version ?? 0) >= (previous.version ?? 0))) saved.current.set(row.userId, row);
+    }
+    return { team: [...saved.current.values()] };
+  }
   const resource = useAsyncResource(async () => {
     const ids = [...readIds.current];
+    const ticket = generation.current;
     try {
-      const rows: TeamEligibility[] = [];
-      for (let offset = 0; offset < ids.length; offset += 20) {
-        const page = await request<{ team: TeamEligibility[] }>("teamSettings", { userIds: ids.slice(offset, offset + 20) });
-        rows.push(...page.team);
-      }
+      const rows = await fetchSettings(ids);
       // Do not replace a newer committed version with an older response. Missing
       // rows mean defaults, rather than needing a broad roster/profile lookup.
-      for (const id of ids) loaded.current.add(id);
-      for (const row of rows) {
-        const previous = saved.current.get(row.userId);
-        if (ids.includes(row.userId) && (!previous || (row.version ?? 0) >= (previous.version ?? 0))) saved.current.set(row.userId, row);
-      }
-      return { team: [...saved.current.values()] };
+      return ticket === generation.current ? mergeSettings(ids, rows) : { team: [] };
     } finally {
       // Release before the resource publishes loading=false, so newly visible
       // IDs can start their read in that render's effect without a timing gap.
@@ -51,12 +67,37 @@ export function useLeadEligibilitySettings(members: readonly EligibilityRosterMe
       saved.current.clear(); loaded.current.clear();
       return true;
     },
-  });
+   });
   const idsKey = JSON.stringify(members.map(member => member.userId));
+
+  function deny(failure: unknown) {
+    generation.current++; saved.current.clear(); loaded.current.clear();
+    readIds.current = []; readPending.current = false; refreshPending.current = false;
+    setEditing(null); setError(''); setMessage(''); setRefreshError('');
+    resource.invalidate(failure);
+  }
+  useLiveRefresh(async () => {
+    const ids = [...new Set(current.current.members.map(member => member.userId))];
+    if (!ids.length || readPending.current || inFlight.current || current.current.editing || current.current.paused) return false;
+    const fence = liveUpdates.getSnapshot(), ticket = generation.current;
+    if (!liveUpdates.canPublish(fence)) return false;
+    try {
+      const rows = await fetchSettings(ids);
+      if (ticket !== generation.current) return true;
+      if (!liveUpdates.canPublish(fence) || JSON.stringify(current.current.members.map(member => member.userId)) !== idsKey) return false;
+      resource.setData(mergeSettings(ids, rows)); setRefreshError('');
+    } catch (failure) {
+      if (isAuthorizationError(failure)) deny(failure);
+      else if (ticket === generation.current && liveUpdates.canPublish(fence)) setRefreshError(failure instanceof Error ? failure.message : 'Could not refresh assignment settings.');
+      else if (ticket === generation.current) return false;
+    }
+    return true;
+  }, { enabled: resource.loaded && !!members.length, paused: paused || busy || !!editing || resource.loading, onDenied: deny });
 
   function read(ids: string[]) {
     if (!ids.length || readPending.current || inFlight.current || current.current.editing || current.current.paused) return;
     readIds.current = [...new Set(ids)];
+    generation.current++; setRefreshError('');
     readPending.current = true;
     void resource.refetch();
   }
@@ -82,14 +123,16 @@ export function useLeadEligibilitySettings(members: readonly EligibilityRosterMe
   async function save(member: TeamEligibility, patch: Partial<TeamEligibility>) {
     if (inFlight.current || readPending.current || current.current.paused) return false;
     inFlight.current = true; setBusy(true); setError(""); setMessage("");
+    const ticket = ++generation.current;
     try {
       const result = await request<{ member: TeamEligibility }>("saveEligibility", { userId: member.userId, version: member.version ?? 0, ...patch }, true);
+      if (ticket !== generation.current) return false;
       saved.current.set(member.userId, result.member);
       loaded.current.add(member.userId);
       resource.setData({ team: [...saved.current.values()] });
       setMessage(`Settings saved for ${member.name}.`);
       return true;
-    } catch(e) { setError(e instanceof Error ? e.message : "Could not save teammate settings"); return false; }
+    } catch(e) { if (isAuthorizationError(e)) deny(e); else if (ticket === generation.current) setError(e instanceof Error ? e.message : "Could not save teammate settings"); return false; }
     finally { inFlight.current = false; setBusy(false); }
   }
   function closeEditor() { if (!inFlight.current) { setEditing(null); setError(""); } }
@@ -100,7 +143,7 @@ export function useLeadEligibilitySettings(members: readonly EligibilityRosterMe
     if (current.current.paused) { refreshPending.current = true; return; }
     setError(""); read(current.current.members.map(member => member.userId));
   }
-  return { resource: { ...resource, data: { team } }, busy, error, message, editing, disabled, save, closeEditor, editMember, refresh, setEditing };
+  return { resource: { ...resource, data: { team }, refreshError }, busy, error, message, editing, disabled, save, closeEditor, editMember, refresh, setEditing };
 }
 type EligibilitySettings = ReturnType<typeof useLeadEligibilitySettings>;
 
@@ -109,6 +152,7 @@ export function LeadEligibilityFeedback({ settings }: { settings: EligibilitySet
   return <>
     {!editing && (error || resource.error) && <div role="alert"><p className="error-text">{error || resource.error}</p><Button variant="secondary" type="button"  disabled={disabled} onClick={refresh}>Refresh assignment settings</Button></div>}
     <p className="small muted" role="status">{busy ? "Saving teammate settings…" : resource.loading ? "Loading assignment settings…" : message}</p>
+    <LiveStatus resource={resource} />
   </>;
 }
 

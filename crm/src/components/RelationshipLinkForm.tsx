@@ -1,3 +1,4 @@
+import { useLiveUpdateBlock } from "../lib/useLiveUpdates";
 import { Select } from "./ui/Select";
 import { Input } from "./ui/Input";
 import { Textarea } from "./ui/Textarea";
@@ -26,6 +27,7 @@ export default function RelationshipLinkForm({
   onSaved: () => void;
 }) {
   const navigate = useNavigate();
+  useLiveUpdateBlock(true);
   const [account, setAccount] = useState(accountId ?? ''),
     [party, setParty] = useState(partyId ?? ''),
     [role, setRole] = useState<RelationshipRole>('MANAGER'),

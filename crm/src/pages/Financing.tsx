@@ -1,3 +1,5 @@
+import { useLiveUpdateBlock } from "../lib/useLiveUpdates";
+import { LiveStatus } from "../components/LiveStatus";
 import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
 import { SegmentedControl } from "../components/ui/SegmentedControl";
@@ -44,25 +46,26 @@ export default function Financing() {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
   const [administrationOpen, setAdministrationOpen] = useState(false);
+  useLiveUpdateBlock(administrationOpen);
   const opinions = useAsyncResource(async () => {
     const conditional = PF_JURISDICTIONS.filter(j => j.status === "conditional");
     const today = new Date().toISOString().slice(0, 10);
     const checks = await Promise.allSettled(conditional.map(j => checkCurrentOpinion(j.code, today)));
     return Object.fromEntries(checks.map((check, index) => [conditional[index].code,
       check.status === "fulfilled" ? { opinion: check.value, failed: false } : { opinion: null, failed: true }])) as OpinionChecks;
-  }, [], { initialData: {} as OpinionChecks, errorMessage: "Couldn't check all states. Please try again." });
+  }, [], { initialData: {} as OpinionChecks, errorMessage: "Couldn't check all states. Please try again." , live: true });
 
   const today = new Date().toISOString().slice(0, 10);
   const rows = PF_JURISDICTIONS.map(j => {
     const check = opinions.data[j.code];
-    const pending = j.status === "conditional" && (opinions.loading || !opinions.loaded || !!opinions.error || !check || check.failed);
+    const pending = j.status === "conditional" && (opinions.loading || opinions.refreshing || !opinions.loaded || !!opinions.error || !!opinions.refreshError || !check || check.failed);
     const gate = originationGate(j.code, {
       hasCurrentCounselOpinion: !pending && !!check?.opinion && isOpinionCurrent(check.opinion, today),
     });
     const availability: Availability = pending ? "unknown" : gate.open ? "available" : "unavailable";
-    return { ...j, availability, label: availability === "unknown" ? opinions.loading ? "Checking…" : "Retry check" : availability === "available" ? "Available" : "Unavailable" };
+    return { ...j, availability, label: availability === "unknown" ? opinions.loading || opinions.refreshing ? "Checking…" : "Retry check" : availability === "available" ? "Available" : "Unavailable" };
   });
-  const checkFailed = !!opinions.error || !opinions.loading && Object.values(opinions.data).some(check => check.failed);
+  const checkFailed = !!opinions.error || !!opinions.refreshError || !opinions.loading && Object.values(opinions.data).some(check => check.failed);
   const query = search.trim().toLocaleLowerCase();
   const exactCode = rows.find(j => j.code.toLocaleLowerCase() === query)?.code;
   const visible = rows.filter(j =>
@@ -82,12 +85,11 @@ export default function Financing() {
         <h1>Financing</h1>
         <p className="sub">Find out where we can finance commercial policies.</p>
       </header>
+      <LiveStatus resource={opinions} />
       <div className="card financing-lookup">
         <div className="financing-lookup-heading">
           <div><h2>Can we finance here?</h2><p>Check the property's state.</p></div>
-          <Button variant="secondary" type="button"  disabled={opinions.loading} onClick={() => void opinions.refetch()}>
-            {opinions.loading ? "Checking…" : "Refresh availability"}
-          </Button>
+
         </div>
         <div className="financing-search">
           <label htmlFor="financing-state-search">Find a state</label>

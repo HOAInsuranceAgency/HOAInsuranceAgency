@@ -1,5 +1,6 @@
 import type { DynamoDBStreamHandler } from "aws-lambda";
 import { holdMigrationStream } from "../migration-stream-hold";
+import { publishCrmChange } from "../live-changes";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { estimate, type CarrierResult } from "./client";
@@ -38,6 +39,7 @@ export async function processEstimate(id: string) {
 }
 export const handler: DynamoDBStreamHandler = async event => {
   if (holdMigrationStream(event, "honeycombWorker")) return { batchItemFailures: [] };
+  if (event.Records.length) await publishCrmChange();
   const batchItemFailures: { itemIdentifier: string }[] = [];
   for (const record of event.Records) {
     if (record.eventName !== "INSERT" || !record.dynamodb?.Keys?.id?.S) continue;

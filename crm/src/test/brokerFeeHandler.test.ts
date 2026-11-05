@@ -15,6 +15,12 @@ it('does not let an anonymous caller read account fee status', async () => {
   h.session.mockRejectedValue(new Error('Sign in to access the CRM.'));
   expect(await handler({ fieldName: 'brokerFeeAction', arguments: { input: { op: 'status', accountId: 'a1' } } })).toMatchObject({ ok: false }); expect(h.fees).not.toHaveBeenCalled();
 });
+it('preserves a recognizable denial after a formerly authorized fee-status session is revoked', async () => {
+  h.session.mockRejectedValue(Object.assign(new Error('Your access is inactive.'), { name: 'Unauthorized' }));
+  expect(await handler({ fieldName: 'brokerFeeAction', identity: { sub: 'former-user' }, arguments: { input: { op: 'status', accountId: 'a1' } } }))
+    .toMatchObject({ ok: false, errorType: 'Unauthorized', error: expect.stringContaining('Unauthorized:') });
+  expect(h.account).not.toHaveBeenCalled(); expect(h.fees).not.toHaveBeenCalled();
+});
 it('checks account authorization before selecting fee rows and filters foreign rows', async () => {
   h.fee.mockImplementation(async (quoteId: string) => ({ id: `fee:${quoteId}`, quoteId, accountId: quoteId === 'own' ? 'a1' : 'foreign' }));
   const result = await handler({ fieldName: 'brokerFeeAction', identity: { sub: 'actor' }, arguments: { input: JSON.stringify({ op: 'status', accountId: 'a1', quoteIds: ['own', 'foreign'] }) } });

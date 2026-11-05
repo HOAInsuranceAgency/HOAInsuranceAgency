@@ -1,4 +1,5 @@
 import { tasksRemoved } from "./retiredTasks";
+import { sendCrmWrite } from '../live-write';
 import { createHash, randomUUID } from "node:crypto";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, GetCommand, BatchGetCommand, QueryCommand, TransactWriteCommand, type TransactWriteCommandInput } from "@aws-sdk/lib-dynamodb";
@@ -64,7 +65,15 @@ export function check(record: Row<unknown>): Write {
 }
 export async function commit(writes: Write[]) {
   if (writes.length > 100) throw new Error("Too many changes in one operation");
-  if (writes.length) await db.send(new TransactWriteCommand({ TransactItems: writes }));
+  if (writes.length) {
+    const internalKinds = new Set(['BUDGET', 'AUTH_HOLD', 'QUEUE_CURSOR', 'MIGRATION', 'CONTACT_FENCE']);
+    const visible = writes.some(write => {
+      if (write.Put) return write.Put.TableName !== table() || !internalKinds.has(String(write.Put.Item?.kind));
+      return !!write.Update || !!write.Delete;
+    });
+    const result = db.send(new TransactWriteCommand({ TransactItems: writes }));
+    if (visible) await sendCrmWrite(result); else await result;
+  }
 }
 export async function save<T>(next: Row<T>, previous?: Row<unknown>) { await commit([put(next, previous)]); return next; }
 export async function query<T = Record<string, unknown>>(index: "kind" | "account" | "due" | "work", key: string, nextToken?: string, limit = 100, prefix?: string, dueAfter?: string, dueThrough?: string) {

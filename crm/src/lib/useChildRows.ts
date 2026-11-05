@@ -3,6 +3,7 @@ import { assertNoErrors, listAllPages, unwrap } from "./client";
 import { useAsyncResource } from "./useAsyncResource";
 import { useFormState, type FormState } from "./useFormState";
 import { useSaveStatus, type SaveStatusApi } from "../components/SaveStatus";
+import { useLiveUpdateBlock } from './useLiveUpdates';
 
 /**
  * One account, one table of child rows, add / edit / delete.
@@ -168,6 +169,7 @@ export function useChildRows<T extends { id: string }, F extends object>(
     {
       initialData: [] as T[],
       errorMessage: `Failed to load ${nounPlural}`,
+      live: true,
     }
   );
 
@@ -181,6 +183,7 @@ export function useChildRows<T extends { id: string }, F extends object>(
   const editForm = useFormState<F>(initialForm, { onEdit: editStatus.markDirty });
 
   const [editingId, setEditingId] = useState<string | null>(null);
+  useLiveUpdateBlock(!!editingId);
 
   const setRows = res.setData;
   const rows = res.data;
@@ -227,6 +230,7 @@ export function useChildRows<T extends { id: string }, F extends object>(
 
   function cancelEdit() {
     setEditingId(null);
+    editForm.reset(initialForm);
   }
 
   async function saveEdit() {
@@ -244,6 +248,7 @@ export function useChildRows<T extends { id: string }, F extends object>(
           await model.update({ id: editingId, ...toUpdate(form) })
         );
         setRows((current) => current.map((r) => (r.id === editingId ? saved : r)));
+        editForm.markSaved(form);
         // Closed on success only: a failed save leaves the form open with the
         // user's values in it and the error beside them, which is the only
         // state from which they can fix it and try again.
@@ -267,7 +272,10 @@ export function useChildRows<T extends { id: string }, F extends object>(
         assertNoErrors(await model.delete({ id }));
         setRows((current) => current.filter((r) => r.id !== id));
         // The row under the open editor just stopped existing.
-        setEditingId((current) => (current === id ? null : current));
+        if (editingId === id) {
+          setEditingId(null);
+          editForm.reset(initialForm);
+        }
       },
       {
         savedMessage: `${name} removed.`,

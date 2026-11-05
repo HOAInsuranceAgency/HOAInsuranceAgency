@@ -54,7 +54,7 @@ function CertificatesTabContent({
         })
       ),
     [account.id],
-    { initialData: [] as Certificate[], errorMessage: "Failed to load certificates", clearDataOnError: isAuthorizationError }
+    { initialData: [] as Certificate[], errorMessage: "Failed to load certificates", clearDataOnError: isAuthorizationError , live: true }
   );
   const certs = certRes.data;
   const setCerts = certRes.setData;
@@ -68,7 +68,7 @@ function CertificatesTabContent({
         })
       ),
     [account.id],
-    { initialData: [] as Policy[], errorMessage: "Failed to load policies", clearDataOnError: isAuthorizationError }
+    { initialData: [] as Policy[], errorMessage: "Failed to load policies", clearDataOnError: isAuthorizationError , live: true }
   );
   const policies = policyRes.data;
 
@@ -80,7 +80,7 @@ function CertificatesTabContent({
   const carrierRes = useAsyncResource(
     () => listAllPages(nextToken => client.models.Carrier.list({ nextToken })),
     [],
-    { initialData: [] as Carrier[], errorMessage: "Failed to load carriers", clearDataOnError: isAuthorizationError }
+    { initialData: [] as Carrier[], errorMessage: "Failed to load carriers", clearDataOnError: isAuthorizationError , live: true }
   );
   const carriers = carrierRes.data;
 

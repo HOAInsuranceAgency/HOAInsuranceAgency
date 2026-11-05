@@ -1,3 +1,4 @@
+import { useLiveUpdateBlock } from "../lib/useLiveUpdates";
 import { Select } from "./ui/Select";
 import { Input } from "./ui/Input";
 import { Button } from "./ui/Button";
@@ -61,11 +62,11 @@ export default function CoverageForm({
   const savingNow = useRef(false), mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const isPolicy = kind === "policy";
-  const policies = useAsyncResource(() => isPolicy ? Promise.resolve([]) : listAllPages(token => client.models.Policy.list({ filter: { accountId: { eq: accountId } }, nextToken: token })), [accountId, isPolicy], { initialData: [] });
+  const policies = useAsyncResource(() => isPolicy ? Promise.resolve([]) : listAllPages(token => client.models.Policy.list({ filter: { accountId: { eq: accountId } }, nextToken: token })), [accountId, isPolicy], { initialData: [] , live: true });
   const editing = !!existing;
   const asPolicy = existing as Policy | null;
 
-  const { form, setF, patch } = useFormState({
+  const { form, setF, patch, markSaved } = useFormState({
     carrierId: existing?.carrierId ?? "",
     renewalPolicyId: (existing as Quote | null)?.renewalPolicyId ?? "",
     offerExpiresAt: (existing as Quote | null)?.offerExpiresAt ?? "",
@@ -108,6 +109,7 @@ export default function CoverageForm({
   // autofill the moment someone typed the standard rate back by hand.
   const [commissionTouched, setCommissionTouched] = useState(editing);
   const [saving, setSaving] = useState(false);
+  useLiveUpdateBlock(saving);
   const [error, setError] = useState("");
 
   function toggleLine(line: string) {
@@ -126,6 +128,7 @@ export default function CoverageForm({
   }
 
   async function save() {
+    const submitted = form;
     if (savingNow.current) return;
     let brokerFee: number, passThroughCharges: PassThroughCharge[], clientConditions: string;
     try {
@@ -217,6 +220,7 @@ export default function CoverageForm({
         });
         if (errors?.length) throw new Error(errors[0].message);
       }
+      markSaved(submitted);
       if (mounted.current) onSaved();
     } catch (err) {
       if (mounted.current) setError(friendlyError(err, "Save failed"));

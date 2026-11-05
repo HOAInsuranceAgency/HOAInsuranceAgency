@@ -128,7 +128,7 @@ export default function BuildingsCard({ accountId }: { accountId: string }) {
         })
       ),
     [accountId],
-    { initialData: [] as Blanket[] }
+    { initialData: [] as Blanket[] , live: true }
   );
 
   const child = useChildRows<Building, BuildingForm>(client.models.Building, {

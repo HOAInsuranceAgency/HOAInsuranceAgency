@@ -114,7 +114,7 @@ function TemplatesPanel() {
     {
       initialData: {} as Record<string, boolean>,
       errorMessage: "Couldn't check which templates are uploaded",
-    }
+     live: true }
   );
   const uploaded = uploadedRes.data;
   const setUploaded = uploadedRes.setData;
@@ -314,7 +314,7 @@ function AgencyPanel({ profile }: { profile: UserProfile }) {
   }, [], {
     initialData: null as AgencyIdentifiers | null,
     errorMessage: "Couldn't load the agency identifiers",
-  });
+   live: true });
 
   // Seeded from the read rather than initialised from it: the fetch resolves
   // after first paint, so the inputs have to be told about it.

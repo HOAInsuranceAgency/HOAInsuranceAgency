@@ -1,3 +1,4 @@
+import { LiveStatus } from "../components/LiveStatus";
 import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
 import { Select } from "../components/ui/Select";
@@ -46,6 +47,7 @@ export default function Relationships() {
           + New relationship
         </Button>
       </div>
+      <LiveStatus resource={resource} />
       <div className="toolbar relationship-toolbar">
         <label className="field">
           Find a relationship
@@ -68,9 +70,7 @@ export default function Relationships() {
           <Input type="checkbox" checked={archived} onChange={(e) => setArchived(e.target.checked)} /> Include
           archived
         </label>
-        <Button variant="secondary"  disabled={resource.loading} onClick={() => void resource.reload()}>
-          Refresh
-        </Button>
+
       </div>
       <div className="card">
         {resource.error ? (

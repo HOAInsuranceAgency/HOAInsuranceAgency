@@ -1,3 +1,4 @@
+import { sendCrmWrite } from '../live-write';
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, GetCommand, TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
 import { GetSecretValueCommand, SecretsManagerClient } from "@aws-sdk/client-secrets-manager";
@@ -17,7 +18,7 @@ export const handler = createFeedbackHandler({
     cached = { arn, value: parsed.webhookSecret, expiresAt: Date.now() + 60_000 };
     return parsed.webhookSecret;
   },
-  transact: async (input) => { await db.send(new TransactWriteCommand(input)); },
+  transact: async (input) => { await sendCrmWrite(db.send(new TransactWriteCommand(input))); },
   getEvent: async (table, pk) => (await db.send(new GetCommand({ TableName: table, Key: { pk }, ConsistentRead: true }))).Item,
   alert: (eventType, environment) => {
     // Only after a new signed event commits. No addresses, links, or payloads.

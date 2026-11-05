@@ -1,3 +1,4 @@
+import { useLiveUpdateBlock } from "../lib/useLiveUpdates";
 import { Button } from "./ui/Button";
 import { Table } from "./ui/Table";
 import { Select } from "./ui/Select";
@@ -97,6 +98,7 @@ function QuotesPanelContent({
   // and retire the confirmation, so a timer is what retires it.
   const statusSave = useSaveStatus({ autoClearMs: 4000 });
   const statusLock = useRef(false);
+  useLiveUpdateBlock(showForm || !!editing || !!binding || !!authorization || authorizing);
 
   const quoteRes = useAsyncResource(
     () =>
@@ -107,7 +109,7 @@ function QuotesPanelContent({
         })
       ),
     [account.id],
-    { initialData: [] as Quote[], errorMessage: "Failed to load quotes", clearDataOnError: isAuthorizationError }
+    { initialData: [] as Quote[], errorMessage: "Failed to load quotes", clearDataOnError: isAuthorizationError , live: true }
   );
   const quotes = quoteRes.data;
   // Identity-stable, so passing it to CoverageForm/BindForm no longer
@@ -120,7 +122,7 @@ function QuotesPanelContent({
   const carrierRes = useAsyncResource(
     () => listAllPages(nextToken => client.models.Carrier.list({ nextToken })),
     [],
-    { initialData: [] as Carrier[], clearDataOnError: isAuthorizationError }
+    { initialData: [] as Carrier[], clearDataOnError: isAuthorizationError , live: true }
   );
   const carrierRows = carrierRes.data;
 
@@ -505,12 +507,13 @@ function BindForm({
   const paymentPreview = useAsyncResource(
     () => readCarrierPaymentPreview(quote.id, billType),
     [quote.id, quote.updatedAt, billType],
-    { manual: !billType || (hasBrokerFee && billType !== "AGENCY"), clearDataOnError: () => true },
+    { manual: !billType || (hasBrokerFee && billType !== "AGENCY"), clearDataOnError: () => true , live: true },
   );
   const paymentKey = JSON.stringify({ billType, preview: paymentPreview.data });
   const paymentReady = !!paymentPreview.data && !paymentPreview.loading && !paymentPreview.error &&
     (!paymentPreview.data.payment || paymentConfirmation === paymentKey);
   const [saving, setSaving] = useState(false);
+  useLiveUpdateBlock(saving);
   const feeStatus = useAsyncResource(async () => {
     if (!(quote.brokerFee && quote.brokerFee > 0)) return null;
     const response = await client.mutations.brokerFeeAction({ input: JSON.stringify({ op: "status", accountId: account.id, quoteIds: [quote.id] }) });
@@ -518,7 +521,7 @@ function BindForm({
     const result = (typeof response.data === "string" ? JSON.parse(response.data) : response.data) as { ok?: boolean; error?: string; fees?: BrokerFeeRecord[] };
     if (result?.ok === false || !Array.isArray(result?.fees)) throw new Error(result?.error || "Could not load broker fee status.");
     return result.fees.find(fee => fee.quoteId === quote.id) ?? null;
-  }, [quote.id, quote.brokerFee, account.id], { initialData: null as BrokerFeeRecord | null, errorMessage: "Could not load broker fee status" });
+  }, [quote.id, quote.brokerFee, account.id], { initialData: null as BrokerFeeRecord | null, errorMessage: "Could not load broker fee status", live: { protectEdits: false, intervalMs: 15_000 } });
   const currentFeeSigned = Boolean(feeStatus.data?.signedAt && feeStatus.data.amountCents === brokerFeeCents(quote.brokerFee) && feeStatus.data.terms === authorizedQuoteTerms(quote));
   const bindLock = useRef(false);
   const live = useRef(true);
@@ -671,7 +674,7 @@ function BindForm({
       ) : (
         <>
           <p className="small muted">Confirm the exact commissionable premium and agency percentage from the accepted quote. To change either amount, edit the quote first. Producer earnings follow receipts and the agreement saved by the Owner. Broker fees use the same producer share, separately from carrier commission.</p>
-          {(quote.brokerFee ?? 0) > 0 && <div className="small" role="status"><strong>Broker fee: {fmtMoney(quote.brokerFee)}</strong><p>{feeStatus.loading ? "Checking signed disclosure and payment…" : feeStatus.error || (!currentFeeSigned ? "Client signature is needed on the current broker fee disclosure." : feeStatus.data!.collectedCents >= feeStatus.data!.amountCents ? "Disclosure signed · payment received." : feeStatus.data!.submittedCents >= feeStatus.data!.amountCents ? "Disclosure signed · payment submitted and clearing." : "Disclosure signed · fee payment is still needed.")}</p><Button variant="link"  disabled={feeStatus.loading || saving} onClick={() => void feeStatus.refetch()}>Refresh fee status</Button></div>}
+          {(quote.brokerFee ?? 0) > 0 && <div className="small" role="status"><strong>Broker fee: {fmtMoney(quote.brokerFee)}</strong><p>{feeStatus.loading ? "Checking signed disclosure and payment…" : feeStatus.error || (!currentFeeSigned ? "Client signature is needed on the current broker fee disclosure." : feeStatus.data!.collectedCents >= feeStatus.data!.amountCents ? "Disclosure signed · payment received." : feeStatus.data!.submittedCents >= feeStatus.data!.amountCents ? "Disclosure signed · payment submitted and clearing." : "Disclosure signed · fee payment is still needed.")}</p>{feeStatus.error && <Button variant="link" disabled={feeStatus.loading || saving} onClick={() => void feeStatus.refetch()}>Retry fee status</Button>}</div>}
           <div className="form-grid">
             <label className="field">Exact policy premium ($)<Input aria-label="Exact policy premium" inputMode="decimal" value={premium} disabled={saving} onChange={e => { setPremium(e.target.value); setConfirmed(false); }} /></label>
             <label className="field">Agency commission (%)<Input aria-label="Agency commission percentage" inputMode="decimal" value={agencyRate} disabled={saving} onChange={e => { setAgencyRate(e.target.value); setConfirmed(false); }} /></label>
