@@ -13,6 +13,7 @@ export default defineConfig({
     project: process.env.SENTRY_PROJECT,
     authToken: process.env.SENTRY_AUTH_TOKEN,
     telemetry: false,
+    errorHandler: (error) => { throw error; },
     release: { name: sentryRelease, inject: false },
     sourcemaps: {
       assets: "./dist/**/*.{js,map}",
