@@ -1,3 +1,4 @@
+import { num } from "../lib/formCodec";
 import { LiveStatus } from "../components/LiveStatus";
 import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
@@ -369,7 +370,6 @@ function AppetiteFinder({
     setLossIncurred("");
   }
 
-  const num = (v: string) => (v.trim() === "" ? null : Number(v));
   const risk: AppetiteRisk = {
     state: state || null,
     totalInsuredValue: num(tiv),

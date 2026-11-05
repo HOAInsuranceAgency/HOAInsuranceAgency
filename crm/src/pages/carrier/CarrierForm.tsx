@@ -1,3 +1,4 @@
+import { str } from "../../lib/formCodec";
 import { Input } from "../../components/ui/Input";
 import { Select } from "../../components/ui/Select";
 import { Button } from "../../components/ui/Button";
@@ -59,14 +60,14 @@ export function CarrierForm({
           // spells it — an empty string would fail enum validation.
           marketType: (form.marketType as MarketType) || null,
           dateAppointed: form.dateAppointed || null,
-          primaryContactName: form.primaryContactName.trim() || null,
-          primaryContactEmail: form.primaryContactEmail.trim() || null,
-          primaryContactPhone: form.primaryContactPhone.trim() || null,
-          primaryUnderwriterName: form.primaryUnderwriterName.trim() || null,
-          primaryUnderwriterEmail: form.primaryUnderwriterEmail.trim() || null,
-          primaryUnderwriterPhone: form.primaryUnderwriterPhone.trim() || null,
+          primaryContactName: str(form.primaryContactName),
+          primaryContactEmail: str(form.primaryContactEmail),
+          primaryContactPhone: str(form.primaryContactPhone),
+          primaryUnderwriterName: str(form.primaryUnderwriterName),
+          primaryUnderwriterEmail: str(form.primaryUnderwriterEmail),
+          primaryUnderwriterPhone: str(form.primaryUnderwriterPhone),
           states: form.states,
-          naicCode: form.naicCode.trim() || null,
+          naicCode: str(form.naicCode),
           standardCommissionPct: form.standardCommissionPct
             ? Number(form.standardCommissionPct)
             : null,
@@ -81,7 +82,7 @@ export function CarrierForm({
             : null,
           commercialLines: form.commercialLines,
           personalLines: form.personalLines,
-          notes: form.notes.trim() || null,
+          notes: str(form.notes),
         });
         if (errors?.length || !data) throw new Error(errors?.[0]?.message);
         markSaved(submitted);

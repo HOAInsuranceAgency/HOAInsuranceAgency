@@ -7,20 +7,16 @@ import { fmtProviderPhone } from "../lib/client";
 import { communicationRequest as request, type Communication } from "../lib/communications";
 import { useAsyncResource } from "../lib/useAsyncResource";
 import { isAuthorizationError } from "../lib/authorizationError";
+import { useSaveStatus } from "./SaveStatus";
 
 function useReviewMutation() {
-  const [busy, setBusy] = useState(false), [error, setError] = useState("");
-  useLiveUpdateBlock(busy);
-  const pending = useRef(false), mounted = useRef(true);
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
-  async function run(action: () => Promise<unknown>, onSaved: () => void) {
-    if (pending.current) return;
-    pending.current = true; setBusy(true); setError("");
-    try { await action(); if (mounted.current) onSaved(); }
-    catch (e) { if (mounted.current) setError(String(e)); }
-    finally { pending.current = false; if (mounted.current) setBusy(false); }
-  }
-  return { busy, error, run };
+  const mutation = useSaveStatus({ singleFlight: true });
+  const error = mutation.status.state === 'error' ? mutation.status.message : '';
+  const run = (action: () => Promise<unknown>, onSaved: () => void) => mutation.run(async current => {
+    await action();
+    if (current()) onSaved();
+  });
+  return { busy: mutation.busy, error, run };
 }
 
 type ActivityProps = { id: string; onSaved: () => void; accountId?: string; conversationId?: string };

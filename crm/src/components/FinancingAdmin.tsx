@@ -1,3 +1,4 @@
+import { str } from "../lib/formCodec";
 import { Button } from "./ui/Button";
 import { Table } from "./ui/Table";
 import { Select } from "./ui/Select";
@@ -90,7 +91,7 @@ export function FinancingAdmin({ onChanged }: { onChanged: () => Promise<void> }
         jurisdiction: code,
         effectiveAt,
         reviewBy: reviewBy || defaultReviewBy(effectiveAt),
-        notes: notes.trim() || null,
+        notes: str(notes),
         occurredAt: new Date().toISOString(),
       });
       if (errors?.length) throw new Error(errors[0].message);

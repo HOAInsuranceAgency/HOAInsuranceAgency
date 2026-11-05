@@ -5,8 +5,9 @@ import { Textarea } from "./ui/Textarea";
 import { Button } from "./ui/Button";
 import PartyPicker from './PartyPicker';
 import AccountPicker from './AccountPicker';
-import { useMounted } from '../lib/useMounted';
-import { useRef, useState } from 'react';
+import { useRef } from 'react';
+import { useFormState } from '../lib/useFormState';
+import { useSaveStatus } from './SaveStatus';
 import { useNavigate } from 'react-router-dom';
 import Modal from './Modal';
 import { communicationRequest } from '../lib/communications';
@@ -28,30 +29,25 @@ export default function RelationshipLinkForm({
 }) {
   const navigate = useNavigate();
   useLiveUpdateBlock(true);
-  const [account, setAccount] = useState(accountId ?? ''),
-    [party, setParty] = useState(partyId ?? ''),
-    [role, setRole] = useState<RelationshipRole>('MANAGER'),
-    [from, setFrom] = useState(''),
-    [notes, setNotes] = useState(''),
-    [busy, setBusy] = useState(false),
-    [error, setError] = useState('');
-  const mounted = useMounted();
-  const pending = useRef(false),
-    requestId = useRef(crypto.randomUUID());
-  function changed() {
+  const saveStatus = useSaveStatus({ singleFlight: true });
+  const { busy } = saveStatus;
+  const error = saveStatus.status.state === 'error' ? saveStatus.status.message : '';
+  const requestId = useRef(crypto.randomUUID());
+  const { form, setF } = useFormState(() => ({ account: accountId ?? '', party: partyId ?? '',
+    role: 'MANAGER' as RelationshipRole, from: '', notes: '' }), { onEdit: saveStatus.markDirty });
+  const { account, party, role, from, notes } = form;
+  function change<K extends keyof typeof form>(key: K, value: (typeof form)[K]) {
+    setF(key, value);
     requestId.current = crypto.randomUUID();
   }
   async function save() {
-    if (pending.current || !account || !party) return;
+    if (saveStatus.isPending() || !account || !party) return;
     if (role === 'MANAGER') {
       onClose();
       navigate(`/accounts/${account}?management=1&partyId=${encodeURIComponent(party)}`);
       return;
     }
-    pending.current = true;
-    setBusy(true);
-    setError('');
-    try {
+    await saveStatus.run(async current => {
       await communicationRequest(
         'relationshipLink',
         {
@@ -64,19 +60,14 @@ export default function RelationshipLinkForm({
         },
         true,
       );
-      if (mounted.current) onSaved();
-    } catch (e) {
-      if (mounted.current) setError(e instanceof Error ? e.message : 'Could not link this relationship.');
-    } finally {
-      pending.current = false;
-      if (mounted.current) setBusy(false);
-    }
+      if (current()) onSaved();
+    }, { errorMessage: 'Could not link this relationship.' });
   }
   return (
     <Modal
       title="Link an account relationship"
       onClose={() => {
-        if (!busy) onClose();
+        if (!saveStatus.isPending()) onClose();
       }}
     >
       <form
@@ -91,8 +82,7 @@ export default function RelationshipLinkForm({
               value={account}
               disabled={busy}
               onChange={(id) => {
-                setAccount(id);
-                changed();
+                change('account', id);
               }}
             />
           )}
@@ -103,8 +93,7 @@ export default function RelationshipLinkForm({
               required
               disabled={busy}
               onChange={(id) => {
-                setParty(id);
-                changed();
+                change('party', id);
               }}
             />
           )}
@@ -113,8 +102,7 @@ export default function RelationshipLinkForm({
             <Select
               value={role}
               onChange={(e) => {
-                setRole(e.target.value as RelationshipRole);
-                changed();
+                change('role', e.target.value as RelationshipRole);
               }}
             >
               {RELATIONSHIP_ROLES.map((r) => (
@@ -136,8 +124,7 @@ export default function RelationshipLinkForm({
                   type="date"
                   value={from}
                   onChange={(e) => {
-                    setFrom(e.target.value);
-                    changed();
+                    change('from', e.target.value);
                   }}
                 />
               </label>
@@ -147,8 +134,7 @@ export default function RelationshipLinkForm({
                   maxLength={2000}
                   value={notes}
                   onChange={(e) => {
-                    setNotes(e.target.value);
-                    changed();
+                    change('notes', e.target.value);
                   }}
                 />
               </label>

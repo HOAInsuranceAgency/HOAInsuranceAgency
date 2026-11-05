@@ -4,8 +4,9 @@ import { Input } from "./ui/Input";
 import { Button } from "./ui/Button";
 import { Textarea } from "./ui/Textarea";
 import { usePagedList } from '../lib/usePagedList';
-import { useMounted } from '../lib/useMounted';
-import { useRef, useState } from 'react';
+import { useRef } from 'react';
+import { useFormState } from '../lib/useFormState';
+import { useSaveStatus } from './SaveStatus';
 import Modal from './Modal';
 import { communicationRequest } from '../lib/communications';
 import { searchParties, type PartyRecord } from '../lib/relationships';
@@ -26,7 +27,10 @@ export default function PartyForm({
 }) {
   const seed = party ?? initial;
   useLiveUpdateBlock(true);
-  const [form, setForm] = useState({
+  const saveStatus = useSaveStatus({ singleFlight: true });
+  const { busy } = saveStatus;
+  const error = saveStatus.status.state === 'error' ? saveStatus.status.message : '';
+  const { form, setF } = useFormState(() => ({
     kind: seed?.kind ?? 'ORGANIZATION',
     name: seed?.name ?? '',
     category: seed?.category ?? 'Property management',
@@ -36,12 +40,8 @@ export default function PartyForm({
     notes: seed?.notes ?? '',
     ownerId: seed?.ownerId ?? '',
     archived: seed?.archived ?? false,
-  });
-  const [busy, setBusy] = useState(false),
-    [error, setError] = useState('');
-  const mounted = useMounted();
-  const pending = useRef(false),
-    requestId = useRef(crypto.randomUUID());
+  }), { onEdit: saveStatus.markDirty });
+  const requestId = useRef(crypto.randomUUID());
   const admin = useIsAdmin();
   const team = useAsyncResource(
     async () => (admin ? (await communicationRequest<{ team: TeamEligibility[] }>('team')).team : []),
@@ -61,34 +61,25 @@ export default function PartyForm({
     !party && emailQuery.includes('@'),
   );
   const matches = [...new Map([...nameMatches.items, ...emailMatches.items].map((p) => [p.id, p])).values()];
-  function change(key: string, value: string | boolean) {
-    setForm((old) => ({ ...old, [key]: value }));
+  function change<K extends keyof typeof form>(key: K, value: (typeof form)[K]) {
+    setF(key, value);
     requestId.current = crypto.randomUUID();
   }
   async function save() {
-    if (pending.current) return;
-    pending.current = true;
-    setBusy(true);
-    setError('');
-    try {
+    await saveStatus.run(async current => {
       const result = await communicationRequest<{ party: PartyRecord }>(
         'relationshipSaveParty',
         { ...form, id: party?.id, revision: party?.revision ?? 0, requestId: requestId.current },
         true,
       );
-      if (mounted.current) onSaved(result.party);
-    } catch (e) {
-      if (mounted.current) setError(e instanceof Error ? e.message : 'Could not save this profile.');
-    } finally {
-      pending.current = false;
-      if (mounted.current) setBusy(false);
-    }
+      if (current()) onSaved(result.party);
+    }, { errorMessage: 'Could not save this profile.' });
   }
   return (
     <Modal
       title={party ? `Edit ${party.name}` : 'New relationship'}
       onClose={() => {
-        if (!busy) onClose();
+        if (!saveStatus.isPending()) onClose();
       }}
     >
       <form
@@ -104,7 +95,7 @@ export default function PartyForm({
         <fieldset disabled={busy} className="relationship-fields">
           <label className="field">
             Record type
-            <Select value={form.kind} disabled={!!party} onChange={(e) => change('kind', e.target.value)}>
+            <Select value={form.kind} disabled={!!party} onChange={(e) => change('kind', e.target.value as PartyRecord['kind'])}>
               <option value="ORGANIZATION">Organization</option>
               <option value="PERSON">Person</option>
             </Select>
