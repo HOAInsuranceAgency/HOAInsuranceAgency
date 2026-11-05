@@ -115,8 +115,34 @@ npx ampx sandbox     # personal cloud backend; writes amplify_outputs.json
 npm run dev          # second terminal
 ```
 
-`amplify_outputs.json` is generated (gitignored). The checked-in placeholder
-only exists so `npm run build` typechecks before a sandbox has run.
+`amplify_outputs.json` is generated and gitignored. Development and deployment
+builds require the real configuration from their backend.
+
+### Offline validation and nightly audits
+
+After installing the locked dependencies in both `crm/` and `web/`, use this
+command in a clean checkout or an audit worktree:
+
+```sh
+npm run test:verification
+npm run verify:offline
+```
+
+The offline verifier runs the CRM tests, frontend and backend type checks, the
+complete CRM build, and local synth checks for both `main` and `staging`. Use it
+for audit validation when generated backend configuration is absent; running
+`typecheck` or `build` directly still requires that configuration.
+
+The verifier creates a minimal, temporary compile fixture only when
+`amplify_outputs.json` is missing. It preserves an existing configuration and
+restores previous build artifacts, removing its own fixture and build afterward,
+including when a check fails. Its build is for validation only. Never deploy it
+or use the fixture to run the app, backfills, migrations, or live integrations.
+It does not retrieve cloud credentials, run a sandbox, or deploy a backend.
+
+The staging CI workflow runs these checks on Node 22 and Node 24, covering both
+the deployed toolchain and the nightly audit runner. Audit reports should cite
+the verifier's actual results and defer a candidate if a required check fails.
 
 ## Deployment
 
