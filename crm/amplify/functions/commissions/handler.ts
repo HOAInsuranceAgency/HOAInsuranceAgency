@@ -1,5 +1,6 @@
 import { assertPreviewRead } from "../migration-readonly";
 import { QueryCommand } from '@aws-sdk/lib-dynamodb';
+import { collectCompletePages } from '../storage/pages';
 import { bindDay, firstBindDate } from './account-history';
 import { createHash, randomUUID } from 'node:crypto';
 import { PutObjectCommand, GetObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
@@ -291,11 +292,9 @@ export async function handler(event: Event) {
         throw new Error('Configure the original producer agreement and carrier terms first.');
       const rateDate = input.transaction === 'RENEWAL' ? effectiveDate : boundOn;
       const commissionAccount = await store.get<CommissionAccount>('ACCOUNT', String(account.id));
-      let cursor: store.Data | undefined;
       let earliestKnown: string | undefined;
       if (commissionAccount?.firstBoundOn) {
-        for (let page = 0; ; page++) {
-          if (page === 100) throw new Error('Could not finish checking account policy history.');
+        await collectCompletePages<never>(async cursor => {
           const found = await store.db.send(
             new QueryCommand({
               TableName: tableName('Policy'),
@@ -309,9 +308,8 @@ export async function handler(event: Event) {
             const bound = bindDay(priorPolicy.datePolicyBound);
             if (bound && (!earliestKnown || bound < earliestKnown)) earliestKnown = bound;
           }
-          cursor = found.LastEvaluatedKey;
-          if (!cursor) break;
-        }
+          return { items: [], next: found.LastEvaluatedKey };
+        }, { maxPages: 100, error: () => new Error('Could not finish checking account policy history.') });
       }
       const accountFirstBoundOn = firstBindDate(commissionAccount, boundOn, true, earliestKnown);
       const selectedTerms = selectCommissionTerms(

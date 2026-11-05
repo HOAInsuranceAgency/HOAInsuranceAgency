@@ -1,5 +1,6 @@
 import Stripe from 'stripe';
 import { QueryCommand } from '@aws-sdk/lib-dynamodb';
+import { collectCompletePages } from '../storage/pages';
 import { AccountAccess } from '../crm-access/access';
 import { assertUserSession, activeTeamUserCheck } from '../crm-access/user-status';
 import { id, type Identity } from '../crm-access/policy';
@@ -31,14 +32,12 @@ export async function confirmInvoicePayment(event:{identity?:Identity;request?:R
   if(adjustmentProof)source=adjustmentProof.policy;
   const index=(JSON.parse(process.env.ACCESS_INDEXES??'{}') as Record<string,string>)['InvoiceLine.invoiceId'];
   if(!index)throw new Error('Invoice line access is not configured.');
-  let cursor:Record<string,unknown>|undefined;
-  const lines:Record<string,unknown>[]=[];
-  do {
+  const lines = await collectCompletePages<Record<string, unknown>>(async cursor => {
     const result=await db.send(new QueryCommand({TableName:modelTable('InvoiceLine'),IndexName:index,KeyConditionExpression:'invoiceId = :invoice',ExpressionAttributeValues:{':invoice':invoice.id},ExclusiveStartKey:cursor,Limit:100}));
-    for(const item of result.Items??[]){const current=await getModel<Record<string,unknown>>('InvoiceLine',String(item.id));if(current&&current.invoiceId===invoice.id)lines.push(current);}
-    cursor=result.LastEvaluatedKey;
-    if(lines.length>70)throw new Error('This invoice needs a smaller reviewed payment allocation.');
-  }while(cursor);
+    const items: Record<string, unknown>[] = [];
+    for(const item of result.Items??[]){const current=await getModel<Record<string,unknown>>('InvoiceLine',String(item.id));if(current&&current.invoiceId===invoice.id)items.push(current);}
+    return { items, next: result.LastEvaluatedKey };
+  }, { maxPages: 100, maxRows: 70, error: () => new Error('This invoice needs a smaller reviewed payment allocation.') });
   const fee=quoteId?await getFee(quoteId):undefined;
   validateInvoiceSourceCharges({invoice:{accountId:String(invoice.accountId),policyId:invoice.policyId as string|undefined,status:invoice.status as string|undefined,sourcePricingVersion:invoice.sourcePricingVersion as number|undefined},source:source?{id:String(source.id),accountId:String(source.accountId),premium:source.premium as number|undefined,billType:source.billType as string|undefined,passThroughCharges:source.passThroughCharges}:null,lines});
   if(invoice.sourcePricingVersion===2&&invoiceTotals(lines).retail<=0)throw new Error('A zero or credit adjustment is not an incoming payment and cannot be marked paid.');

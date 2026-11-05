@@ -1,5 +1,6 @@
 import { QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { isOpenQuoteStatus } from '../../../src/lib/quoteStatus';
+import { resolveModelTable, type StoredModel } from '../storage/models';
 import { db } from './store';
 import { reportBatchGet, reportIds } from './dashboardStore';
 import { reportDatePage } from './reportDatePage';
@@ -18,8 +19,8 @@ const QUOTE_TERM_FIELDS = [
   'renewalPolicyId', 'notes',
 ];
 function configured(name: string): string {
-  const model = ({ DASHBOARD_QUOTE_TABLE: 'Quote', DASHBOARD_POLICY_TABLE: 'Policy' } as Record<string, string>)[name];
-  const value = process.env[name] || (model && process.env.ACCESS_API_ID ? `${model}-${process.env.ACCESS_API_ID}-NONE` : undefined);
+  const model = ({ DASHBOARD_QUOTE_TABLE: 'Quote', DASHBOARD_POLICY_TABLE: 'Policy' } as Record<string, StoredModel>)[name];
+  const value = model ? resolveModelTable(model, { envNames: [name], useTableMap: false, error: () => new Error('Dashboard lead storage is not configured') }) : process.env[name];
   if (!value) throw new Error('Dashboard lead storage is not configured');
   return value;
 }

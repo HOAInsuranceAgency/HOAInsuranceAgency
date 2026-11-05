@@ -1,21 +1,21 @@
 import { isPaidOriginalPremium, type AdjustmentPolicy, type OriginalInvoice, type OriginalPremiumLine } from '../../../../shared/invoiceAdjustments';
 import { QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { accountModels, db, getModel, modelTable, versionCheck, type Write } from '../broker-fees/store';
+import { collectCompletePages } from '../storage/pages';
 type Row = Record<string, unknown>;
 type Reader = (model: string, id: string) => Promise<Row | undefined>;
 const key = (value: unknown) => typeof value === 'string' && value.length > 0 && value.length <= 512 ? value : '';
 async function premiumCandidateIds(invoiceId:string):Promise<string[]> {
   const index=(JSON.parse(process.env.ACCESS_INDEXES??'{}') as Record<string,string>)['InvoiceLine.invoiceId'];
   if(!index)throw new Error('Original invoice line access is not configured.');
-  const ids:string[]=[];let cursor:Row|undefined;const seen=new Set<string>();
-  for(let page=0;page<20;page++) {
+  const ids = await collectCompletePages<string>(async cursor => {
     const result=await db.send(new QueryCommand({TableName:modelTable('InvoiceLine'),IndexName:index,KeyConditionExpression:'invoiceId = :invoice',ExpressionAttributeValues:{':invoice':invoiceId},ProjectionExpression:'id',ExclusiveStartKey:cursor,Limit:100}));
-    for(const row of result.Items??[]) {const id=key(row.id);if(!id)throw new Error('An original invoice line could not be identified.');ids.push(id);}
-    if(ids.length>500)throw new Error('The original invoice has too many lines to verify safely.');
-    cursor=result.LastEvaluatedKey;if(!cursor)return [...new Set(ids)];
-    const token=JSON.stringify(cursor);if(seen.has(token))throw new Error('The original invoice line history could not be loaded completely.');seen.add(token);
-  }
-  throw new Error('The original invoice line history could not be loaded completely.');
+    const items = (result.Items ?? []).map(row => { const id = key(row.id); if (!id) throw new Error('An original invoice line could not be identified.'); return id; });
+    return { items, next: result.LastEvaluatedKey };
+  }, { maxPages: 20, maxRows: 500,
+    sizeError: () => new Error('The original invoice has too many lines to verify safely.'),
+    error: () => new Error('The original invoice line history could not be loaded completely.') });
+  return [...new Set(ids)];
 }
 async function readBatches(model:string,ids:string[],reader:Reader):Promise<Row[]> {
   const rows:Row[]=[];

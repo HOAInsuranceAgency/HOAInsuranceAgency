@@ -6,6 +6,7 @@ import { reconcileQuotePayments } from '../broker-fees/payments';
 import { bindDay, firstBindDate } from './account-history';
 import { createHash } from 'node:crypto';
 import { QueryCommand } from '@aws-sdk/lib-dynamodb';
+import { collectCompletePages } from '../storage/pages';
 import { AccountAccess, tableName } from '../crm-access/access';
 import { activeTeamUserCheck } from '../crm-access/user-status';
 import { object } from '../crm-access/policy';
@@ -141,11 +142,9 @@ export async function bindPolicy(event: Event, input: Data) {
 
   // Catch pre-feature policies whose quote status was never updated. Follow all
   // pages; do not turn a filtered empty first page into permission to rebind.
-  let cursor: Data | undefined;
   let hasPolicies = false,
     earliestKnown: string | undefined;
-  for (let page = 0; ; page++) {
-    if (page === 100) throw new Error('Could not finish checking existing policies.');
+  await collectCompletePages<never>(async cursor => {
     const found = await db.send(
       new QueryCommand({
         TableName: tableName('Policy'),
@@ -164,9 +163,8 @@ export async function bindPolicy(event: Event, input: Data) {
       const bound = bindDay(priorPolicy.datePolicyBound);
       if (bound && (!earliestKnown || bound < earliestKnown)) earliestKnown = bound;
     }
-    cursor = found.LastEvaluatedKey;
-    if (!cursor) break;
-  }
+    return { items: [], next: found.LastEvaluatedKey };
+  }, { maxPages: 100, error: () => new Error('Could not finish checking existing policies.') });
   const accountFirstBoundOn = firstBindDate(commissionAccount, today, hasPolicies, earliestKnown);
   const selectedTerms = selectCommissionTerms(
     plan,

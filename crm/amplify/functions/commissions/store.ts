@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { sendCommissionWrite } from '../live-write';
-import { setTimeout } from 'node:timers/promises';
+import { batchGetComplete } from '../storage/batchGet';
+import { collectCompletePages } from '../storage/pages';
+import { assertTransactionEnvelope } from '../storage/transactions';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import {
   DynamoDBDocumentClient,
   GetCommand,
-  BatchGetCommand,
   QueryCommand,
   TransactWriteCommand,
   type TransactWriteCommandInput,
@@ -37,32 +38,12 @@ export async function getMany<T>(refs: { kind: string; id: string }[]): Promise<
     ).values(),
   ];
   if (keys.length > 5000) throw new Error('Too many commission records for one request.');
-  const name = table(),
-    rows: T[] = [];
-  for (let start = 0; start < keys.length; start += 100) {
-    let pending: Data[] = keys.slice(start, start + 100);
-    for (let attempt = 0; pending.length && attempt < 5; attempt++) {
-      if (attempt) await setTimeout(25 * 2 ** (attempt - 1));
-      const response = await db.send(
-        new BatchGetCommand({
-          RequestItems: { [name]: { Keys: pending, ConsistentRead: true } },
-        }),
-      );
-      rows.push(...((response.Responses?.[name] as T[]) ?? []));
-      pending = response.UnprocessedKeys?.[name]?.Keys ?? [];
-    }
-    if (pending.length)
-      throw new Error(
-        'Commission records could not be completely loaded. Retry before proceeding.',
-      );
-  }
-  return rows;
+  return batchGetComplete<T>({ send: command => db.send(command), table: table(), keys, maxKeys: 5000, attempts: 5,
+    read: { ConsistentRead: true }, sizeError: () => new Error('Too many commission records for one request.'),
+    incompleteError: () => new Error('Commission records could not be completely loaded. Retry before proceeding.') });
 }
 export async function list<T>(kind: string, producer = false, recordKind?: string): Promise<T[]> {
-  let cursor: Data | undefined;
-  const result: T[] = [],
-    seen = new Set<string>();
-  for (let page = 0; page < 100; page++) {
+  return collectCompletePages<T>(async cursor => {
     const response = await db.send(
       new QueryCommand({
         TableName: table(),
@@ -81,20 +62,10 @@ export async function list<T>(kind: string, producer = false, recordKind?: strin
         Limit: 100,
       }),
     );
-    result.push(...((response.Items as T[]) ?? []));
-    if (result.length > 5000)
-      throw new Error(
-        'Commission history exceeds this view’s limit. Narrow or archive the reporting scope before proceeding.',
-      );
-    cursor = response.LastEvaluatedKey;
-    if (!cursor) return result;
-    const token = JSON.stringify(cursor);
-    if (seen.has(token)) break;
-    seen.add(token);
-  }
-  throw new Error(
-    'Commission history could not be completely loaded. No partial totals are available.',
-  );
+    return { items: (response.Items ?? []) as T[], next: response.LastEvaluatedKey };
+  }, { maxPages: 100, maxRows: 5000,
+    sizeError: () => new Error('Commission history exceeds this view’s limit. Narrow or archive the reporting scope before proceeding.'),
+    error: () => new Error('Commission history could not be completely loaded. No partial totals are available.') });
 }
 export async function commit(changes: Change[], actor: string, extras: Transaction = []) {
   const at = new Date().toISOString();
@@ -145,12 +116,8 @@ export async function commit(changes: Change[], actor: string, extras: Transacti
     },
     ...extras,
   );
-  if (
-    items.length > 100 ||
-    JSON.stringify(items).length > 3_500_000 ||
-    items.some((item) => Buffer.byteLength(JSON.stringify(item), 'utf8') > 300_000)
-  )
-    throw new Error('This operation is too large. Use a smaller statement or payroll batch.');
+  assertTransactionEnvelope(items, { maxBytes: 3_500_000, maxItemBytes: 300_000, keyFields: name => name === table() ? ['kind', 'id'] : undefined,
+    error: () => new Error('This operation is too large. Use a smaller statement or payroll batch.') });
   const producers = changes.flatMap(change => [change.value.producerId, change.previous?.producerId])
     .filter((id): id is string => typeof id === 'string' && !!id);
   await sendCommissionWrite(db.send(new TransactWriteCommand({ TransactItems: items })), producers);

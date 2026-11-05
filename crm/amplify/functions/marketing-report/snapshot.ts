@@ -1,30 +1,19 @@
 import { ScanCommand, type ScanCommandInput } from "@aws-sdk/lib-dynamodb";
 import type { ReportRecord, ReportSnapshot } from "../../../../shared/marketingLeadReport";
 import { db, table } from "../communications/store";
+import { collectCompletePages } from '../storage/pages';
 
 // Exhaust every page or fail the whole run. A bounded failure is preferable to
 // attaching a plausible workbook silently missing the rest of a large table.
 interface Budget { deadline: number; rows: number; bytes: number; pages: number }
 export async function scanComplete(input: Omit<ScanCommandInput, "ExclusiveStartKey">, budget: Budget): Promise<ReportRecord[]> {
-  const rows: ReportRecord[] = [];
-  let cursor: Record<string, unknown> | undefined;
-  const cursors = new Set<string>();
-  do {
-    if (Date.now() > budget.deadline || ++budget.pages > 2_000) throw new Error("The report exceeded its collection limit. No incomplete report was sent.");
+  return collectCompletePages<ReportRecord>(async cursor => {
     const result = await db.send(new ScanCommand({ ...input, ConsistentRead: true, Limit: 250, ExclusiveStartKey: cursor }));
-    const items = (result.Items ?? []) as ReportRecord[];
-    budget.rows += items.length;
-    budget.bytes += Buffer.byteLength(JSON.stringify(items));
-    if (budget.rows > 100_000 || budget.bytes > 48 * 1024 * 1024) throw new Error("The report exceeded its size limit. No incomplete report was sent.");
-    rows.push(...items);
-    cursor = result.LastEvaluatedKey;
-    if (cursor) {
-      const key = JSON.stringify(cursor);
-      if (cursors.has(key)) throw new Error("Report pagination did not advance. No incomplete report was sent.");
-      cursors.add(key);
-    }
-  } while (cursor);
-  return rows;
+    return { items: (result.Items ?? []) as ReportRecord[], next: result.LastEvaluatedKey };
+  }, { budget, maxPages: 2000, maxRows: 100000, maxBytes: 48 * 1024 * 1024,
+    sizeError: () => new Error('The report exceeded its size limit. No incomplete report was sent.'),
+    cursorError: () => new Error('Report pagination did not advance. No incomplete report was sent.'),
+    error: () => new Error('The report exceeded its collection limit. No incomplete report was sent.') });
 }
 const sources = { accounts: "ACCOUNT_TABLE", quotes: "QUOTE_TABLE", policies: "POLICY_TABLE", priorCarriers: "PRIOR_CARRIER_TABLE", carriers: "CARRIER_TABLE", documents: "DOCUMENT_TABLE", activities: "ACTIVITY_TABLE" } as const;
 const modelFields: Record<keyof typeof sources, string[]> = {
