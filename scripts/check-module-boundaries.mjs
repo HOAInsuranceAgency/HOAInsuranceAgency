@@ -12,27 +12,27 @@ const normalized = value => value.replaceAll('\\', '/');
 const within = (path, directory) => path === directory || path.startsWith(`${directory}/`);
 
 export function inspectSource(source, filename, repository = root) {
-  const file = ts.createSourceFile(filename, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const file = ts.createSourceFile(filename, source, ts.ScriptTarget.Latest, true, filename.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
   const local = normalized(relative(repository, filename));
   const shared = within(local, 'shared');
   const browser = within(local, 'crm/src') || within(local, 'web/src');
   const primitive = within(local, 'crm/src/components/ui');
-  const server = within(local, 'crm/amplify/functions');
+  const server = within(local, 'crm/amplify');
   const errors = [];
   const report = (node, message) => errors.push(`${local}:${file.getLineAndCharacterOfPosition(node.getStart(file)).line + 1} ${message}`);
   function dependency(node, specifier, typeOnly = false) {
-    if (!ts.isStringLiteralLike(specifier)) {
-      if (shared) report(node, 'Shared modules require statically declared dependencies.');
+    const literal = ts.isStringLiteralLike(specifier);
+    const prefix = !shared && ts.isTemplateExpression(specifier) ? specifier.head.text : undefined;
+    if (!literal && !prefix) {
+      if (shared || browser || server) report(node, 'Use statically declared module paths or an explicit import map.');
       return;
     }
-    const name = specifier.text;
+    const name = literal ? specifier.text : prefix;
     const target = name.startsWith('.') ? normalized(relative(repository, resolve(dirname(filename), name))) : name;
     if (shared && (!name.startsWith('.') || !within(target, 'shared'))) report(node, 'Shared business rules may depend only on other shared modules.');
-    const executableServer = /^crm\/amplify\/(?:backend|(?:data|auth|storage)\/resource)(?:\.[cm]?[jt]s)?$/.test(target)
-      || /^crm\/amplify\/functions\/.+\/handler(?:\.sentry)?(?:\.[cm]?[jt]s)?$/.test(target);
-    if (browser && !typeOnly && executableServer) report(node, 'Browser code must not load server entrypoints; use a shared contract or type-only schema import.');
+    if (browser && !typeOnly && within(target, 'crm/amplify')) report(node, 'Browser code must not load server runtime modules; use a shared contract or type-only schema import.');
     if (primitive && name.startsWith('.') && !within(target, 'crm/src/components/ui')) report(node, 'UI primitives must not depend on feature or data modules.');
-    if (server && /^crm\/src\/lib\/client(?:\.[cm]?[jt]sx?)?$/.test(target)) report(node, 'Server code must not import the browser SDK client.');
+    if (server && within(target, 'crm/src')) report(node, 'Server code must not import frontend modules; use shared business rules.');
   }
   function visit(node) {
     if (ts.isImportDeclaration(node)) {
@@ -50,8 +50,13 @@ export function inspectSource(source, filename, repository = root) {
     } else if (ts.isCallExpression(node) && (node.expression.kind === ts.SyntaxKind.ImportKeyword || ts.isIdentifier(node.expression) && node.expression.text === 'require')) {
       if (node.arguments[0]) dependency(node, node.arguments[0]);
     }
-    if (shared && ts.isIdentifier(node) && ['window', 'localStorage', 'sessionStorage'].includes(node.text)) report(node, 'Shared business rules must not depend on browser state.');
-    if (shared && ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === 'process' && node.name.text === 'env') report(node, 'Pass configuration into shared rules instead of reading process.env.');
+    if (shared && ts.isIdentifier(node) && ['process', 'globalThis', 'window', 'document', 'localStorage', 'sessionStorage', 'fetch', 'navigator', 'Buffer', 'require'].includes(node.text)) {
+      const parent = node.parent;
+      const property = ts.isPropertyAccessExpression(parent) && parent.name === node
+        || ts.isPropertyAssignment(parent) && parent.name === node
+        || ts.isPropertySignature(parent) && parent.name === node;
+      if (!property) report(node, 'Shared business rules must not read platform state or perform platform IO.');
+    }
     ts.forEachChild(node, visit);
   }
   visit(file);
@@ -96,7 +101,7 @@ export function moduleBoundaryViolations(repository = root) {
         ? inspectFile(readFileSync(path, 'utf8'), path, repository) : [];
     });
   }
-  return ['shared', 'crm/src', 'crm/amplify/functions', 'web/src'].flatMap(path => walk(join(repository, path)));
+  return ['shared', 'crm/src', 'crm/amplify', 'web/src'].flatMap(path => walk(join(repository, path)));
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {

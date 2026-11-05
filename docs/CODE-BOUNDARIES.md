@@ -25,14 +25,17 @@ Architecture rules enforced by `scripts/check-module-boundaries.mjs`:
   data into these rules instead of accessing browser storage or process.env.
 - UI primitives depend on other primitives and UI libraries, rather than feature
   components, pages, or API/data helpers.
-- Browser code cannot load deployment resources or executable Lambda entrypoints.
+- Browser code cannot load server runtime modules, including pure-looking helpers.
   Generated schema imports are type-only.
-- Lambda handlers cannot import the browser SDK-initializing client module.
+- Server code imports shared business rules instead of frontend source, including
+  type dependencies. Deployment-time imports remain inside Amplify's loader boundary.
 
 The checker inspects TypeScript syntax, including re-exports, require and dynamic
 imports, plus executable browser scripts in Astro pages. Build-time frontmatter
 and JSON-LD are handled separately. Its tests introduce forbidden dependencies and
-verify they are caught, including deployed Lambda monitoring wrappers.
+verify they are caught, including deployed Lambda monitoring wrappers and static
+script sources. This is the single source-boundary checker; the shared enum/schema
+compile proofs remain in the CRM's `schemaContracts.test.ts`.
 The existing control architecture suite additionally checks native controls,
 inline styling, CSS recipes and component usage.
 

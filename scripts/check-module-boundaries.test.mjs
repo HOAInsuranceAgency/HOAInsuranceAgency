@@ -49,7 +49,7 @@ test('file-level scanning checks Astro browser scripts without treating frontmat
       writeFileSync(path, `---\nimport buildOnly from "../../../crm/amplify/data/resource";\n---\n<script type="application/ld+json">{"text":"import server"}</script>\n<script>\nimport server from "../../../crm/amplify/functions/example/${suffix}";\n</script>`);
       const errors = moduleBoundaryViolations(fixture);
       assert.equal(errors.length, 1);
-      assert.match(errors[0], /web\/src\/pages\/example.astro:6 .*server entrypoints/);
+      assert.match(errors[0], /web\/src\/pages\/example.astro:6 .*server runtime modules/);
     }
     writeFileSync(path, '---\nimport buildOnly from "../../../crm/amplify/data/resource";\n---\n<script type="application/ld+json">{"text":"import server"}</script>');
     assert.deepEqual(moduleBoundaryViolations(fixture), []);
@@ -58,6 +58,33 @@ test('file-level scanning checks Astro browser scripts without treating frontmat
       assert.equal(moduleBoundaryViolations(fixture).length, 1);
     }
   } finally { rmSync(fixture, { recursive: true, force: true }); }
+});
+
+test('all server source must use shared rules instead of frontend modules, including type imports', () => {
+  for (const [file, dependency] of [
+    ['crm/amplify/functions/example/handler.ts', '../../../src/lib/contacts'],
+    ['crm/amplify/data/resource.ts', '../../src/lib/enums'],
+  ]) {
+    for (const declaration of [`import { rule as renamed } from "${dependency}";`, `export * from "${dependency}";`, `import type { Rule } from "${dependency}";`, `import("${dependency}");`]) assert.equal(inspect(declaration, file).length, 1, declaration);
+  }
+});
+
+test('browser code cannot bypass shared contracts by importing a pure-looking server helper', () => {
+  const file = 'crm/src/lib/example.ts';
+  for (const declaration of ['import { object as renamed } from "../../amplify/functions/honeycomb/submission-contract";', 'export * from "../../amplify/functions/example/contract";', 'import("../../amplify/functions/example/contract");', 'import { type Schema, data } from "../../amplify/data/resource";']) assert.equal(inspect(declaration, file).length, 1, declaration);
+  assert.deepEqual(inspect('import { object } from "../../../shared/honeycomb/submission";', file), []);
+});
+
+test('dynamic imports cannot hide a forbidden layer behind a template suffix or variable', () => {
+  assert.equal(inspect('import(`../../amplify/functions/${name}`);', 'crm/src/lib/example.ts').length, 1);
+  assert.equal(inspect('import(`../../../src/lib/${name}`);', 'crm/amplify/functions/example/handler.ts').length, 1);
+  assert.equal(inspect('import(modulePath);', 'crm/src/lib/example.ts').length, 1);
+  assert.deepEqual(inspect('import(`./pages/${name}.ts`);', 'crm/src/example.ts'), []);
+});
+
+test('shared platform dependencies cannot hide behind element access, globalThis or a network function', () => {
+  for (const source of ['process["env"].FLAG', 'globalThis.process.env.FLAG', 'globalThis["sessionStorage"].clear()', 'fetch("/api")', 'document.cookie', 'navigator.language']) assert.ok(inspect(source).length, source);
+  assert.deepEqual(inspect('const source = { window: "coverage window", process: "renewal process" }; export const result = source.window;', 'shared/example.ts'), []);
 });
 
 test('current production modules satisfy the enforced boundaries', () => assert.deepEqual(moduleBoundaryViolations(), []));
