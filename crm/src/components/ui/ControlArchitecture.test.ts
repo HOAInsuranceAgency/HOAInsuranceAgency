@@ -66,9 +66,8 @@ function staticClasses(node: ts.Node): string[] {
   return [];
 }
 
-function controlClasses(source: string, filename: string): ControlClasses {
-  const file = ts.createSourceFile(filename, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-  const imports = new Map<string, readonly string[]>(), namespaces = new Set<string>(), classes: ControlClasses = [];
+function sharedImports(file:ts.SourceFile) {
+  const imports = new Map<string, readonly string[]>(), namespaces = new Set<string>();
   for (const statement of file.statements) {
     if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier) || !/(?:^|\/)ui(?:\/|$)/.test(statement.moduleSpecifier.text)) continue;
     const bindings=statement.importClause?.namedBindings;
@@ -80,10 +79,16 @@ function controlClasses(source: string, filename: string): ControlClasses {
     const defaultName=statement.importClause?.name, moduleName=statement.moduleSpecifier.text.split('/').at(-1)!;
     if(defaultName&&componentTags[moduleName])imports.set(defaultName.text,componentTags[moduleName]);
   }
+  return (tag:ts.JsxTagNameExpression)=>ts.isIdentifier(tag)?imports.get(tag.text)
+    :ts.isPropertyAccessExpression(tag)&&ts.isIdentifier(tag.expression)&&namespaces.has(tag.expression.text)?componentTags[tag.name.text]:undefined;
+}
+
+function controlClasses(source: string, filename: string): ControlClasses {
+  const file = ts.createSourceFile(filename, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const imported=sharedImports(file), classes:ControlClasses=[];
   function visit(node: ts.Node) {
     if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
-      const tags=ts.isIdentifier(node.tagName)?imports.get(node.tagName.text)
-        :ts.isPropertyAccessExpression(node.tagName)&&ts.isIdentifier(node.tagName.expression)&&namespaces.has(node.tagName.expression.text)?componentTags[node.tagName.name.text]:undefined;
+      const tags=imported(node.tagName);
       if(tags)for(const attribute of node.attributes.properties) {
         if(ts.isJsxAttribute(attribute)&&attribute.name.getText(file)==='className'&&attribute.initializer) {
           const names=new Set(staticClasses(attribute.initializer).filter(name=>/^[a-zA-Z_-][\w-]*$/.test(name)));
@@ -95,6 +100,41 @@ function controlClasses(source: string, filename: string): ControlClasses {
   }
   visit(file);
   return classes;
+}
+
+const layoutProperty=/^(?:width|min-width|max-width|margin(?:-.+)?|position|inset(?:-.+)?|top|right|bottom|left|display|visibility|flex(?:-.+)?|align(?:-.+)?|justify(?:-.+)?|gap|row-gap|column-gap|order|grid(?:-.+)?|vertical-align|text-align|white-space|box-sizing|overflow(?:-.+)?|z-index|transform(?:-origin)?|--control-padding-inline-(?:start|end))$/;
+const cssProperty=(name:string)=>name.startsWith('--')?name:name.replace(/[A-Z]/g,letter=>`-${letter.toLowerCase()}`).replace(/^ms-/,'-ms-');
+
+/** Style values can vary; every property key must be explicit and layout-only. */
+function inlineControlStyles(source:string,filename:string):string[] {
+  const file=ts.createSourceFile(filename,source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX), imported=sharedImports(file), found:string[]=[];
+  const report=(node:ts.Node,detail:string)=>found.push(`${filename}:${file.getLineAndCharacterOfPosition(node.getStart(file)).line+1} ${detail}`);
+  function inspect(node:ts.Expression) {
+    if(ts.isParenthesizedExpression(node)||ts.isAsExpression(node)||ts.isSatisfiesExpression(node)||ts.isNonNullExpression(node))return inspect(node.expression);
+    if(node.kind===ts.SyntaxKind.NullKeyword||node.kind===ts.SyntaxKind.FalseKeyword||ts.isIdentifier(node)&&node.text==='undefined')return;
+    if(ts.isConditionalExpression(node)){inspect(node.whenTrue);inspect(node.whenFalse);return;}
+    if(ts.isBinaryExpression(node)&&node.operatorToken.kind===ts.SyntaxKind.AmpersandAmpersandToken){inspect(node.right);return;}
+    if(!ts.isObjectLiteralExpression(node)){report(node,'style keys must be explicit; use a layout class or shared variant instead of an unknown style expression');return;}
+    for(const property of node.properties) {
+      if(ts.isSpreadAssignment(property)){inspect(property.expression);continue;}
+      const key=property.name;
+      const name=ts.isIdentifier(key)||ts.isStringLiteral(key)||ts.isNumericLiteral(key)?key.text
+        :ts.isComputedPropertyName(key)&&(ts.isStringLiteral(key.expression)||ts.isNoSubstitutionTemplateLiteral(key.expression))?key.expression.text:undefined;
+      if(name===undefined){report(property,'computed style keys must be explicit; use a layout class or shared variant');continue;}
+      const normalized=cssProperty(name);
+      if(chrome.test(normalized)||!layoutProperty.test(normalized))report(property,`style ${name} (${normalized}) belongs in a shared component/variant; inline feature styles must be layout-only`);
+    }
+  }
+  function visit(node:ts.Node) {
+    if((ts.isJsxOpeningElement(node)||ts.isJsxSelfClosingElement(node))&&imported(node.tagName))for(const attribute of node.attributes.properties) {
+      if(ts.isJsxAttribute(attribute)&&attribute.name.getText(file)==='style') {
+        if(attribute.initializer&&ts.isJsxExpression(attribute.initializer)&&attribute.initializer.expression)inspect(attribute.initializer.expression);
+        else report(attribute,'style must be an explicit layout-only object');
+      }
+    }
+    ts.forEachChild(node,visit);
+  }
+  visit(file);return found;
 }
 
 /** Split selector lists/combinators only outside strings, attributes and functions. */
@@ -240,11 +280,35 @@ describe('shared control architecture', () => {
     expect(controlChrome('.filter-option.on, :is(.filter-option).on { background: blue; }','sample.css',classes)).toHaveLength(1);
   });
 
+  it('rejects inline visual styles on aliased, default and namespaced shared controls while leaving content styles alone', () => {
+    const source=`import { Button as Save } from './ui/Button'; import Select from './ui/Select'; import * as Fields from './ui/Input';
+      const view=<><Save style={{backgroundColor:'red',color:'white',borderRadius:0,padding:1}} />
+      <Select style={{fontSize:11,height:20}} /><Fields.Input style={{WebkitAppearance:'none'}} />
+      <span style={{color:'red',fontWeight:700}}>Status content</span></>;`;
+    const violations=inlineControlStyles(source,'sample.tsx');
+    expect(violations).toHaveLength(7);
+    expect(violations.join('\n')).toContain('background-color');expect(violations.join('\n')).toContain('-webkit-appearance');
+    expect(violations.join('\n')).not.toContain('fontWeight');
+  });
+
+  it('allows explicit layout keys with dynamic values, but rejects opaque, spread and computed style bypasses', () => {
+    const prefix=`import { Button } from './ui/Button';`;
+    expect(inlineControlStyles(`${prefix} const view=<Button style={active?{minWidth:width,marginTop:12}:{width:'100%',alignSelf:'start',...{marginInline:2}}} />;`,'sample.tsx')).toEqual([]);
+    expect(inlineControlStyles(`${prefix} const view=<><Button style={unknownStyle}/><Button style={{...unknownStyle}}/><Button style={{[property]:'red'}}/><Button style={getStyle()}/><Button style={{['color']:'red'}}/></>;`,'sample.tsx')).toHaveLength(5);
+  });
+
   it('routes every production native control through a shared primitive', () => {
     const violations = productionFiles().filter(path => /\.[cm]?[jt]sx?$/.test(path)).flatMap(path =>
       nativeJsx(readFileSync(path, 'utf8'), relative(sourceRoot, path)),
     );
     expect(violations.length, `Use shared controls from components/ui:\n${violations.join('\n')}`).toBe(0);
+  });
+
+  it('keeps inline shared-control styles explicit and layout-only in production feature code', () => {
+    const violations=productionFiles().filter(path=>/\.[cm]?[jt]sx?$/.test(path)).flatMap(path=>
+      inlineControlStyles(readFileSync(path,'utf8'),relative(sourceRoot,path)),
+    );
+    expect(violations.length,`Use shared variants or explicit layout classes:\n${violations.join('\n')}`).toBe(0);
   });
 
   it('keeps control visual recipes inside components/ui while allowing consumer layout and content styling', () => {

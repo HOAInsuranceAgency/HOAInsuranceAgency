@@ -33,6 +33,11 @@ import { Table } from './ui/Table';
   background, height, focus, hover and disabled states, belong here. Add a
   shared variant when needed. Keep content/status and icon styling on their
   own descendants rather than overriding the control root.
+- Inline `style` on shared controls must contain explicit layout-only keys,
+  such as `minWidth` or `marginTop`. Property values may be dynamic. Visual
+  properties and unknown style objects, spreads or computed keys are rejected by
+  the guard; use a shared variant or an explicit layout class instead.
+  The primitives still forward native `style` props unchanged at runtime.
 
 Run the architecture checks from `crm`:
 
