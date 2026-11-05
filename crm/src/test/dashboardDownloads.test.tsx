@@ -76,7 +76,6 @@ describe("dashboard report controls", () => {
     ];
     h.data.carriers = [{ id: "c1", name: "Test carrier" }];
     render(<MemoryRouter><PerformanceTab /></MemoryRouter>);
-    fireEvent.click(screen.getByRole("button", { name: "Custom…" }));
     const dates = document.querySelectorAll('input[type="date"]');
     fireEvent.change(dates[0], { target: { value: "2026-01-01" } }); fireEvent.change(dates[1], { target: { value: "2026-12-31" } });
     fireEvent.change(screen.getByRole("combobox", { name: "Download Commission by lead source" }), { target: { value: "csv" } });

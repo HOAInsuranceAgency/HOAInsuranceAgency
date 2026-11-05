@@ -1,5 +1,7 @@
 import { useMemo, useState } from "react";
 import { ReportDownload } from "../../components/ReportDownload";
+import { DateRangeFilter } from "../../components/DateRangeFilter";
+import { dateRangeError, type DateRange } from "../../lib/dateRange";
 import { StackedBars, type ChartRow, type ChartSeries } from "../../components/StackedBars";
 import { client, fmtMoney, listAllPages, type Carrier, type Policy, type Quote } from "../../lib/client";
 import { loadAssignments, type AssignmentData } from "../../lib/dashboardAssignments";
@@ -8,7 +10,7 @@ import { effectiveInWindow, performanceBySalesperson, type PerformanceMoneyRow }
 import { useAsyncResource } from "../../lib/useAsyncResource";
 import { isAuthorizationError } from "../../lib/authorizationError";
 import { allWithAuthorizationPriority } from "../../lib/allWithAuthorizationPriority";
-import { localToday, TabFrame } from "./common";
+import { TabFrame } from "./common";
 
 type PerformancePolicy = Pick<Policy, "id" | "accountId" | "carrierId" | "effectiveDate" | "premium" | "commissionPct" | "brokerFee" | "brokerFeeRefunded" | "status">;
 type PerformanceQuote = Pick<Quote, "id" | "accountId" | "effectiveDate" | "status">;
@@ -20,44 +22,21 @@ interface PerformanceData {
   commercial: AssignmentData;
 }
 const EMPTY: PerformanceData = { policies: [], carriers: [], accounts: [], quotes: [], commercial: { entries: {}, team: [], accounts: [] } };
-type Preset = "all" | "ytd" | "12mo" | "custom";
 const DECIDED_STATUSES = ["BOUND", "LOST", "DECLINED"] as const;
 
 export default function PerformanceTab() {
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
-  const [preset, setPreset] = useState<Preset>("all");
+  const [range, setRange] = useState<DateRange>({ from: '', to: '' });
+  const { from, to } = range;
   const [excludeCancelled, setExcludeCancelled] = useState(true);
-  const invalidRange = Boolean(from && to && from > to);
-
-  function applyPreset(value: Exclude<Preset, "custom">) {
-    setPreset(value);
-    const today = localToday();
-    if (value === "all") { setFrom(""); setTo(""); }
-    else if (value === "ytd") { setFrom(`${today.slice(0, 4)}-01-01`); setTo(today); }
-    else {
-      // Clamp Feb 29 to Feb 28 when the preceding year is not a leap year.
-      const year = Number(today.slice(0, 4)) - 1;
-      const month = Number(today.slice(5, 7));
-      const day = Math.min(Number(today.slice(8, 10)), new Date(year, month, 0).getDate());
-      setFrom(`${year}-${today.slice(5, 7)}-${String(day).padStart(2, "0")}`);
-      setTo(today);
-    }
-  }
+  const invalidRange = !!dateRangeError(range, { allowOpenEnded: true });
 
   return <>
+    <DateRangeFilter label="Policy effective dates" value={range} onChange={setRange} allowOpenEnded />
     <div className="chip-row" style={{ marginBottom: 12, flexWrap: "wrap" }}>
-      {([["all", "All time"], ["ytd", "YTD"], ["12mo", "Last 12 mo"]] as const).map(([value, label]) => <button key={value} className={preset === value ? "on" : ""} onClick={() => applyPreset(value)}>{label}</button>)}
-      <button className={preset === "custom" ? "on" : ""} onClick={() => setPreset("custom")}>Custom…</button>
       <button aria-pressed={excludeCancelled} className={excludeCancelled ? "on" : ""} onClick={() => setExcludeCancelled(value => !value)}>Exclude cancelled</button>
     </div>
     <p className="muted small">Policy and quote effective dates · current account salesperson. Unassigned records stay in the totals. Earned broker fees remain after cancellation; recorded refunds reduce fee revenue.</p>
-    {preset === "custom" && <div className="card"><div className="filter-row">
-      <div className="field"><label htmlFor="dashboard-effective-from">Effective from</label><input id="dashboard-effective-from" type="date" value={from} onChange={event => setFrom(event.target.value)} /></div>
-      <div className="field"><label htmlFor="dashboard-effective-to">Effective to</label><input id="dashboard-effective-to" type="date" value={to} onChange={event => setTo(event.target.value)} /></div>
-    </div></div>}
-    {invalidRange ? <p className="error-text" role="alert">The start date must be on or before the end date.</p> :
-      <PerformanceSnapshot key={`${from}|${to}|${excludeCancelled}`} from={from} to={to} excludeCancelled={excludeCancelled} />}
+    {!invalidRange && <PerformanceSnapshot key={`${from}|${to}|${excludeCancelled}`} from={from} to={to} excludeCancelled={excludeCancelled} />}
   </>;
 }
 

@@ -33,13 +33,16 @@ describe("owner profitability privacy and report", () => {
     expect(screen.queryByText("-$58,500.00")).toBeNull();
     expect(h.query).toHaveBeenCalledTimes(1);
   });
-  it("shows negative contribution and identifies the calculation basis", async () => {
+  it("shows negative contribution without the introductory and calculation explanation blocks", async () => {
     render(<OwnerProfitability />);
     const table = await screen.findByRole("table");
     const row = within(table).getByRole("row", { name: /Jake Greasley/ });
     expect(within(row).getByText("-$58,500.00")).toHaveClass("owner-profitability-negative");
-    expect(screen.getByLabelText("Report calculation basis")).toHaveTextContent("policy effective date and current account salesperson");
-    expect(screen.getByLabelText("Report calculation basis")).toHaveTextContent("other operating costs are excluded");
+    expect(screen.queryByLabelText("Report calculation basis")).toBeNull();
+    expect(screen.queryByText("Owner only")).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Employee profitability" })).toBeNull();
+    expect(screen.queryByText("How this estimate works")).toBeNull();
+    expect(screen.queryByRole("link", { name: "Commissions" })).toBeNull();
     expect(screen.getByLabelText("Net revenue compared with salary by employee")).toHaveTextContent("$1,500.00");
     expect(h.query).toHaveBeenCalledWith({ from: expect.stringMatching(/^\d{4}-01-01$/), to: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/) });
   });
@@ -74,13 +77,30 @@ describe("owner profitability privacy and report", () => {
     render(<OwnerProfitability />); await screen.findByRole("table");
     let finish!: (value: unknown) => void;
     h.query.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
-    fireEvent.change(screen.getByLabelText("Report from"), { target: { value: "2025-01-01" } });
-    fireEvent.change(screen.getByLabelText("Report through"), { target: { value: "2025-12-31" } });
-    fireEvent.click(screen.getByRole("button", { name: "Apply dates" }));
+    fireEvent.change(screen.getByLabelText("From date"), { target: { value: "2025-01-01" } });
+    fireEvent.change(screen.getByLabelText("Through date"), { target: { value: "2025-12-31" } });
+    expect(screen.queryByRole("button", { name: /Apply/ })).toBeNull();
     expect(screen.queryByRole("table")).toBeNull(); expect(screen.queryByRole("combobox", { name: /Download/ })).toBeNull();
     await waitFor(() => expect(h.query).toHaveBeenLastCalledWith({ from: "2025-01-01", to: "2025-12-31" }));
     await act(async () => finish({ data: { ...snapshot(), report: { ...snapshot().report, from: "2025-01-01", to: "2025-12-31" } } }));
     expect(screen.getByText("2025-01-01 through 2025-12-31 · USD · Estimated")).toBeVisible();
+  });
+  it("automatically loads corrected dates while blocking incomplete, reversed, and over-five-year periods", async () => {
+    render(<OwnerProfitability />); await screen.findByRole("table");
+    fireEvent.change(screen.getByLabelText("From date"), { target: { value: "" } });
+    expect(screen.getByRole("alert")).toHaveTextContent("Choose a valid start and end date.");
+    expect(screen.queryByRole("table")).toBeNull();
+    fireEvent.change(screen.getByLabelText("Through date"), { target: { value: "2026-12-31" } });
+    fireEvent.change(screen.getByLabelText("From date"), { target: { value: "2027-01-01" } });
+    expect(screen.getByRole("alert")).toHaveTextContent("The start date must be on or before the end date.");
+    fireEvent.change(screen.getByLabelText("From date"), { target: { value: "2020-01-01" } });
+    expect(screen.getByRole("alert")).toHaveTextContent("five years or less");
+    expect(h.query).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("combobox", { name: /Download/ })).toBeNull();
+    fireEvent.change(screen.getByLabelText("From date"), { target: { value: "2026-01-01" } });
+    await screen.findByRole("table");
+    expect(h.query).toHaveBeenLastCalledWith({ from: "2026-01-01", to: "2026-12-31" });
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 });
 
@@ -132,15 +152,22 @@ describe("private employee compensation editor", () => {
   });
 });
 
-it('blocks manual refresh while pay settings are open and keeps a dirty draft intact', async () => {
+it('blocks refresh and date presets while pay settings are open and keeps a dirty draft intact', async () => {
   render(<OwnerProfitability />); await openPay();
   fireEvent.change(screen.getByLabelText('Annual salary 1'), { target: { value: '71000' } });
   h.query.mockRejectedValue(new Error('Report temporarily unavailable'));
   expect(screen.getByRole('button', { name: 'Refresh' })).toBeDisabled();
+  expect(screen.getByLabelText('From date')).toBeDisabled();
+  expect(screen.getByLabelText('Through date')).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Year to date' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Last 12 months' })).toBeDisabled();
+  fireEvent.click(screen.getByRole('button', { name: 'Last 12 months' }));
   fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
   expect(h.query).toHaveBeenCalledTimes(1);
   expect(screen.getByLabelText('Annual salary 1')).toHaveValue('71000');
   fireEvent.click(screen.getByRole('button', { name: 'Manage pay settings' }));
+  expect(screen.getByLabelText('From date')).toBeEnabled();
+  expect(screen.getByLabelText('Through date')).toBeEnabled();
   expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled();
   fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
   expect(await screen.findByRole('alert')).toHaveTextContent('Report temporarily unavailable');
