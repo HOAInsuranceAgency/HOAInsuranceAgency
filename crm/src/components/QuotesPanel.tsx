@@ -10,7 +10,7 @@ import { useEffect, useRef, useState } from "react";
 import QuotePackages from "./QuotePackages";
 import "./QuotesPanel.css";
 import { packageTerms } from '../../../shared/quotePackages';
-import { client, fmtDate, fmtMoney, friendlyError, type Account, type Carrier, type Quote, type Policy } from "../lib/client";
+import { client, fmtDate, fmtMoney, friendlyError, type Account, type Carrier, type Quote } from "../lib/client";
 import { listAllPages } from "../../../shared/pagination";
 import { Badge, statusBadge, QUOTE_STATUS_BADGE } from "../lib/badges";
 import { useAsyncResource } from "../lib/useAsyncResource";

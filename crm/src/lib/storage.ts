@@ -159,7 +159,8 @@ export async function uploadDocument(opts: {
     sizeBytes: file.size,
     ocrStatus: "PENDING",
   });
-  if (errors?.length || !doc) {
+  assertGraphqlErrors({ errors });
+  if (!doc) {
     throw new Error(errors?.[0]?.message ?? `Couldn't record "${file.name}".`);
   }
 

@@ -1,4 +1,5 @@
 import { isAuthorizationError } from './authorizationError';
+import { assertApiErrors } from './apiResponse';
 
 /**
  * Page through a filtered list until it's exhausted.
@@ -33,12 +34,10 @@ export async function listAllPages<T>(
     const page = await fetchPage(token);
     // Amplify resolves GraphQL failures instead of rejecting. Never turn a
     // failed page into a successful empty/partial list or report.
-    if (page.errors?.length) {
-      const denied = page.errors.find(isAuthorizationError);
-      const cause = denied ?? page.errors[0];
-      const message = cause && typeof cause === 'object' && 'message' in cause
-        ? String(cause.message) : typeof cause === 'string' ? cause : 'Could not load all records. Please try again.';
-      throw Object.assign(new Error(message), denied ? { name: 'Unauthorized' } : {});
+    try { assertApiErrors(page, 'Could not load all records. Please try again.'); }
+    catch (error) {
+      if (error instanceof Error && isAuthorizationError(error)) error.name = 'Unauthorized';
+      throw error;
     }
     out.push(...page.data);
     token = page.nextToken ?? undefined;

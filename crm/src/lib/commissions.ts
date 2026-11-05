@@ -25,7 +25,7 @@ export const readCarrierPaymentPreview = async (quoteId: string, billType: strin
   );
 export function commissionAction(operation: 'file', input: CommissionFileUpload): Promise<{ key: string; url: string }>;
 export function commissionAction(operation: 'file', input: CommissionFileRead): Promise<{ url: string }>;
-export function commissionAction<K extends CommissionOperation>(operation: K, input: CommissionInput<K>): Promise<CommissionResult<K>>;
+export function commissionAction<K extends CommissionOperation>(operation: K, input: NoInfer<CommissionInput<K>>): Promise<CommissionResult<K>>;
 export async function commissionAction(operation: CommissionOperation | 'file', input: CommissionInput<CommissionOperation> | CommissionFileUpload | CommissionFileRead): Promise<unknown> {
   if (!isCommissionOperationName(operation)) throw new ApiResponseError('Unknown commission operation.', { code: 'INVALID_API_OPERATION' });
   return commissionResponse(await client.mutations.commissionAction({ operation, input: JSON.stringify(input) }).catch(privateApiError));

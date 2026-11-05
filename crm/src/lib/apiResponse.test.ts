@@ -26,8 +26,19 @@ describe('API wire contracts', () => {
     expect(() => privateApiRecord({ data: JSON.stringify({ ok: false, error: 'Review the changed quote', code: 'BUSINESS_DRAFT_NOT_DISPATCHED' }) }, { fallback: 'Failed' })).toThrow(expect.objectContaining({ code: 'BUSINESS_DRAFT_NOT_DISPATCHED' }));
     expect(() => privateApiRecord({ data: { ok: false, error: 'Inactive account', errorType: 'Unauthorized' } }, { fallback: 'Failed' })).toThrow(expect.objectContaining({ name: 'Unauthorized' }));
   });
+  it.each([undefined, null, 0, 'false'])('does not accept a malformed ok flag as proof of nondispatch: %j', ok => {
+    expect(() => privateApiRecord({ data: { ok, error: 'Unknown outcome', code: 'BUSINESS_DRAFT_NOT_DISPATCHED' } }, { fallback: 'Could not confirm the response' }))
+      .toThrow(expect.objectContaining({ code: 'INVALID_API_RESPONSE', origin: 'protocol' }));
+  });
   it('normalizes rejected GraphQL envelopes without losing their error evidence', () => {
     expect(() => privateApiError({ errors: [{ message: 'First error' }, { message: 'Inactive', errorType: 'Unauthorized' }] })).toThrow(expect.objectContaining({ name: 'Unauthorized', errors: [{ message: 'First error' }, { message: 'Inactive', errorType: 'Unauthorized' }] }));
+  });
+  it('does not trust application-looking codes on an SDK rejection', () => {
+    const rejected = new ApiResponseError('Unknown delivery outcome', { origin: 'application', code: 'BUSINESS_DRAFT_NOT_DISPATCHED' });
+    try { privateApiError(rejected); } catch (error) {
+      expect(error).toMatchObject({ origin: 'transport', errors: [{ message: 'Unknown delivery outcome', code: 'BUSINESS_DRAFT_NOT_DISPATCHED' }] });
+      expect(error).not.toHaveProperty('code');
+    }
   });
   it('supports no-ok file contracts while refusing an explicit failed response', () => {
     expect(decodeApiRecord({ data: { url: 'https://example.test/file', expiresAt: '2030-01-01' } }, { requireOk: false, fallback: 'File failed' })).toHaveProperty('url');

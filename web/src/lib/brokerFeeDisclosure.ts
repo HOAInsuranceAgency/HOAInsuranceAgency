@@ -15,8 +15,8 @@ function isDisclosure(value: ApiRecord): value is ApiRecord & BrokerFeePublicTer
     || !Array.isArray(value.quotes) || !value.quotes.length || !Array.isArray(value.stateForms)) return false;
   let total = 0;
   for (const quote of value.quotes) {
-    if (!isRecord(quote) || !text(quote.id) || !textList(quote.lines) || !Array.isArray(quote.lines) || !quote.lines.length
-      || !text(quote.carrierName) || !amount(quote.premium) || !amount(quote.brokerFee)
+    if (!isRecord(quote) || !text(quote.id) || !Array.isArray(quote.lines) || !quote.lines.some(text) || !quote.lines.every(line => line === null || text(line))
+      || !text(quote.carrierName) || !amount(quote.premium) || quote.brokerFee != null && !amount(quote.brokerFee)
       || !text(quote.effectiveDate) || !text(quote.expirationDate) || !optionalText(quote.billType)) return false;
     if (quote.agencyCommissionPct != null || quote.agencyCommissionCents != null) {
       if (!amount(quote.agencyCommissionPct) || quote.agencyCommissionPct > 100 || !Number.isSafeInteger(quote.agencyCommissionCents) || Number(quote.agencyCommissionCents) < 0) return false;

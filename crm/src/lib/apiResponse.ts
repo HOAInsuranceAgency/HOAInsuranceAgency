@@ -13,8 +13,8 @@ export function privateApiError(error: unknown): never {
   throw normalized;
 }
 
-export function assertGraphqlErrors(response: Pick<ApiResponse, 'errors'>): void {
-  try { assertApiErrors(response); } catch (error) { decodedApiError(error); }
+export function assertGraphqlErrors(response: Pick<ApiResponse, 'errors'>, fallback?: string): void {
+  try { assertApiErrors(response, fallback); } catch (error) { decodedApiError(error); }
 }
 
 /** Preserve origin only after this boundary has decoded the returned response. */

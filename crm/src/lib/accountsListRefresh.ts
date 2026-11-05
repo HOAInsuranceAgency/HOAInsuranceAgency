@@ -2,6 +2,7 @@ import type { Account, Contact, Policy, Quote } from './client';
 import type { CommercialData } from './commercial';
 import type { AccountsListData } from './accountsListData';
 import { isAuthorizationError } from '../../../shared/authorizationError';
+import { assertGraphqlErrors } from './apiResponse';
 
 export const ACCOUNT_REFRESH_PAGE_SIZE = 100;
 export const ACCOUNT_REFRESH_COMMERCIAL_SIZE = 25;
@@ -35,11 +36,7 @@ export function createAccountListRefreshCycle(stage: 'LEAD' | 'CLIENT', previous
     if (state.complete) return;
     if (state.count >= 1_000) throw new Error('The account update could not finish safely. Retry the complete list.');
     const result = await load(state.token);
-    if (result.errors?.length) {
-      const denied = result.errors.find(isAuthorizationError), raw = denied ?? result.errors[0];
-      const text = raw && typeof raw === 'object' && 'message' in raw ? String(raw.message) : message(raw);
-      throw Object.assign(new Error(text), denied ? { name: 'Unauthorized' } : {});
-    }
+    assertGraphqlErrors(result, 'Could not update the complete account list.');
     if (!Array.isArray(result.data) || result.data.length > ACCOUNT_REFRESH_PAGE_SIZE ||
       result.data.some(row => !row || typeof row.id !== 'string' || !row.id) ||
       result.nextToken != null && (typeof result.nextToken !== 'string' || !result.nextToken || result.nextToken.length > 32_768))

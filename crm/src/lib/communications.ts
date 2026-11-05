@@ -4,9 +4,9 @@ import { communicationOperationMode } from '../../../shared/apiOperations';
 import type { CommunicationReadOperation, CommunicationWriteOperation, CommunicationOperation, CommunicationInput, CommunicationResult } from './communicationContracts';
 export type { CommunicationWriteOperation, CommunicationOperation, CommunicationInput, CommunicationResult } from './communicationContracts';
 type OptionalRead = { [K in CommunicationReadOperation]: {} extends CommunicationInput<K> ? K : never }[CommunicationReadOperation];
-export function communicationRequest<K extends OptionalRead>(operation: K, input?: CommunicationInput<K>, write?: false): Promise<CommunicationResult<K>>;
-export function communicationRequest<K extends Exclude<CommunicationReadOperation, OptionalRead>>(operation: K, input: CommunicationInput<K>, write?: false): Promise<CommunicationResult<K>>;
-export function communicationRequest<K extends CommunicationWriteOperation>(operation: K, input: CommunicationInput<K>, write: true): Promise<CommunicationResult<K>>;
+export function communicationRequest<K extends OptionalRead>(operation: K, input?: NoInfer<CommunicationInput<K>>, write?: false): Promise<CommunicationResult<K>>;
+export function communicationRequest<K extends Exclude<CommunicationReadOperation, OptionalRead>>(operation: K, input: NoInfer<CommunicationInput<K>>, write?: false): Promise<CommunicationResult<K>>;
+export function communicationRequest<K extends CommunicationWriteOperation>(operation: K, input: NoInfer<CommunicationInput<K>>, write: true): Promise<CommunicationResult<K>>;
 export async function communicationRequest(operation: CommunicationOperation, input: CommunicationInput<CommunicationOperation> = {}, write = false): Promise<unknown> {
   if (communicationOperationMode(operation) !== (write ? 'write' : 'read')) throw new ApiResponseError('Unknown operation or incorrect API transport.', { code: 'INVALID_API_OPERATION' });
   const response = await (write

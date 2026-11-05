@@ -1,3 +1,4 @@
+import { decodeAwsJson, isRecord } from '../../../../shared/apiResponse';
 /** Every model must be classified; synth fails when a new model is not listed. */
 export const ACCOUNT_MODELS = ["Account", "AccountRelationship", "Contact", "PriorCarrier", "Activity", "Loss", "Blanket", "GlApplication", "GlClassCode", "DoCoveragePart", "DoApplication", "Building", "Quote", "Policy", "Invoice", "InvoiceLine", "PfComplianceLog", "PfLoan", "PfLoanPayment", "PfNotice", "PfOverride", "Document", "MarketingTask", "Certificate", "LeadReply", "UploadPortal", "HoneycombEstimate", "HoneycombSubmission"] as const;
 /** Storage remains for history; no signed-in browser can use the retired feature. */
@@ -35,8 +36,7 @@ export type RecordData = Record<string, unknown>;
 export type Identity = { sub?: string; groups?: string[]; claims?: Record<string, unknown> };
 export class AccessDenied extends Error { constructor() { super("This record is not available to your account. Contact an administrator if it needs to be assigned to you."); this.name = "Unauthorized"; } }
 export const object = (value: unknown): RecordData => {
-  const parsed = typeof value === "string" ? JSON.parse(value) : value;
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
-  return parsed as RecordData;
+  const parsed = decodeAwsJson(value);
+  return isRecord(parsed) ? parsed : {};
 };
 export const id = (value: unknown): string => typeof value === "string" && value.length > 0 && value.length <= 500 ? value : "";

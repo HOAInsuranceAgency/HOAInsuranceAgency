@@ -1,5 +1,5 @@
 import { assertPreviewRead } from "../migration-readonly";
-import { apiFailure } from '../../../../shared/apiResponse';
+import { apiFailure, decodeAwsJson, isRecord } from '../../../../shared/apiResponse';
 import { communicationOperationMode } from '../../../../shared/apiOperations';
 import { currentContacts } from "../../../../shared/contacts";
 import { RELATIONSHIP_READS, RELATIONSHIP_WRITES, relationshipOperation } from "./relationships";
@@ -34,10 +34,10 @@ import { activeTeamUserCheck } from "../crm-access/user-status";
 
 type Input = Record<string, unknown>;
 function object(value: unknown): Input {
-  const parsed = typeof value === "string" ? JSON.parse(value) : value;
+  const parsed = decodeAwsJson(value);
   if (parsed == null) return {};
-  if (typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Invalid request");
-  return parsed as Input;
+  if (!isRecord(parsed)) throw new Error("Invalid request");
+  return parsed;
 }
 const text = (input: Input, key: string, max = 500) => typeof input[key] === "string" ? (input[key] as string).trim().slice(0, max) : "";
 function version(input: Input) { if (!Number.isInteger(input.version)) throw new Error("Refresh this record before saving"); return Number(input.version); }

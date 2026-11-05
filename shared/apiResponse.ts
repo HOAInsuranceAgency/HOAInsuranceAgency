@@ -77,7 +77,7 @@ export function decodeApiRecord(response: ApiResponse, options: DecodeOptions): 
   try { value = decodeAwsJson(response.data); }
   catch { throw new ApiResponseError(options.invalid ?? options.fallback, { code: 'INVALID_API_RESPONSE' }); }
   if (!isRecord(value)) throw new ApiResponseError(options.invalid ?? options.fallback, { code: 'INVALID_API_RESPONSE' });
-  if (value.ok === false || options.requireOk !== false && value.ok !== true) {
+  if (value.ok === false) {
     throw new ApiResponseError(typeof value.error === 'string' && value.error ? value.error : options.fallback, {
       origin: 'application',
       code: typeof value.code === 'string' ? value.code : undefined,
@@ -85,6 +85,7 @@ export function decodeApiRecord(response: ApiResponse, options: DecodeOptions): 
       errors: [apiIssue({ ...value, message: value.error }, options.fallback)],
     });
   }
+  if (options.requireOk !== false && value.ok !== true) throw new ApiResponseError(options.invalid ?? options.fallback, { code: 'INVALID_API_RESPONSE' });
   return value;
 }
 

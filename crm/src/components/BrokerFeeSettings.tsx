@@ -1,4 +1,4 @@
-import { privateApiRecord } from '../lib/apiResponse';
+import { assertGraphqlErrors, privateApiRecord } from '../lib/apiResponse';
 import { useLiveUpdateBlock } from "../lib/useLiveUpdates";
 import { Button } from "./ui/Button";
 import { Select } from "./ui/Select";
@@ -16,7 +16,7 @@ export default function BrokerFeeSettings() {
   const [saving,setSaving]=useState(false);
   const data=useAsyncResource(async()=>{
     const result=await client.models.AgencySettings.get({id:'AGENCY'});
-    if(result.errors?.length)throw new Error(result.errors[0].message);
+    assertGraphqlErrors(result);
     const raw=result.data?.brokerFeeJurisdictions;
     return {version:result.data?.brokerFeeJurisdictionsVersion??0,rules:(typeof raw==='string'?JSON.parse(raw):raw??{}) as Record<string,BrokerFeeJurisdictionRule>};
   },[], { live: true });

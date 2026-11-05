@@ -89,17 +89,7 @@ const covered = (entry: CacheEntry, accounts: Account[]) => {
 
 interface ModelPage<T> { data: T[]; nextToken?: string | null; errors?: readonly unknown[] }
 async function checkedList<T>(fetchPage: (nextToken?: string) => Promise<ModelPage<T>>): Promise<T[]> {
-  return listAllPages(async nextToken => {
-    const page = await fetchPage(nextToken);
-    if (page.errors?.length) {
-      // Keep access failures recognizable even if another field failed first.
-      const denied = page.errors.find(isAuthorizationError);
-      const raw = denied ?? page.errors[0];
-      const message = raw && typeof raw === 'object' && 'message' in raw ? String(raw.message) : String(raw);
-      throw Object.assign(new Error(message), denied ? { name: 'Unauthorized' } : {});
-    }
-    return page;
-  });
+  return listAllPages(fetchPage);
 }
 
 /** Access is validated first. Details can fail independently, but any access
