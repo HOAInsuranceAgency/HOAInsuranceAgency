@@ -1,3 +1,6 @@
+import { Input } from "./ui/Input";
+import { Button } from "./ui/Button";
+import { Select } from "./ui/Select";
 import { useEffect, useId, useRef, useState } from "react";
 import type { BusinessDeliveryAttempt, BusinessDeliveryContext, BusinessDeliveryKind, BusinessDeliveryPreview, PrepareBusinessDraftInput, PublicProposalQuote } from "../../../shared/frontBusinessDelivery";
 import { isBusinessDeliveryFile } from "../../../shared/frontBusinessDelivery";
@@ -236,13 +239,13 @@ function BusinessDeliveryComposerContent({ accountId, conversationId, kind, reco
       {["PREPARING", "UNKNOWN"].includes(item.state) && !item.frontDraftId && <form className="business-delivery-recovery" aria-label="Recover unconfirmed Front draft" onSubmit={event => { event.preventDefault(); recover(item); }}>
         {item.reference && <p className="small">Search Front for the email reference shown above to find this draft.</p>}
         <p className="small">Find the exact draft or sent message in Front. Check this account, sender, recipients and attachments, then paste its message ID or direct message link. The CRM will verify it before linking it to this attempt.</p>
-        <label className="field" htmlFor={`${id}-recover-${item.id}`}>Front draft/message ID or message link<input id={`${id}-recover-${item.id}`} type="text" autoComplete="off" placeholder="msg_… or https://app.frontapp.com/open/msg_…" value={recoveryValues[item.id] ?? ""} disabled={!!busy} aria-invalid={!!recoveryErrors[item.id]} onChange={event => { setRecoveryValues(values => ({ ...values, [item.id]: event.target.value })); setRecoveryErrors(values => ({ ...values, [item.id]: "" })); }} /></label>
+        <label className="field" htmlFor={`${id}-recover-${item.id}`}>Front draft/message ID or message link<Input id={`${id}-recover-${item.id}`} type="text" autoComplete="off" placeholder="msg_… or https://app.frontapp.com/open/msg_…" value={recoveryValues[item.id] ?? ""} disabled={!!busy} aria-invalid={!!recoveryErrors[item.id]} onChange={event => { setRecoveryValues(values => ({ ...values, [item.id]: event.target.value })); setRecoveryErrors(values => ({ ...values, [item.id]: "" })); }} /></label>
         {recoveryErrors[item.id] && <p className="error-text" role="alert">{recoveryErrors[item.id]}</p>}
-        <button type="submit" className="secondary" disabled={!!busy || !recoveryValues[item.id]?.trim()}>Verify and link existing Front message</button>
+        <Button variant="secondary" type="submit"  disabled={!!busy || !recoveryValues[item.id]?.trim()}>Verify and link existing Front message</Button>
         <p className="muted small">If you cannot find it, keep this attempt in Needs review. This action does not create or send another draft.</p>
       </form>}
       <div className="toolbar">{url && <a href={url} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer">Open in Front ↗</a>}
-        <button type="button" className="link" disabled={!!busy} onClick={() => void reconcile(item)}>Check Front status</button></div>
+        <Button variant="link" type="button"  disabled={!!busy} onClick={() => void reconcile(item)}>Check Front status</Button></div>
     </li>;
   }
 
@@ -252,55 +255,55 @@ function BusinessDeliveryComposerContent({ accountId, conversationId, kind, reco
       <p className="muted small">Prepare a draft here, then review and send it in Front. Preparing a draft does not send email, record client approval, or bind coverage.</p>
       {busy && <p role="status" aria-live="polite">{busy}</p>}
       {error && <p className="error-text" role="alert">{error}</p>}
-      {context.error && <p className="error-text" role="alert">{context.error} <button type="button" className="link" disabled={!!busy || context.loading} onClick={() => void context.refetch()}>Retry choices</button></p>}
+      {context.error && <p className="error-text" role="alert">{context.error} <Button variant="link" type="button"  disabled={!!busy || context.loading} onClick={() => void context.refetch()}>Retry choices</Button></p>}
       {context.loading && !data && <p role="status">Loading delivery choices…</p>}
       {data && !attempt && <>
         <p className="business-delivery-from"><strong>From:</strong> {preview?.sender.senderEmail ?? data.sender?.senderEmail ?? "Mailbox unavailable"}</p>
         {data.senderError && <p className="error-text" role="alert">{data.senderError}</p>}
-        <label className="field" htmlFor={`${id}-choice`}>What to send<select id={`${id}-choice`} value={choiceKey} disabled={frozen} onChange={event => { setChoiceKey(event.target.value); setDocumentIds([]); invalidatePreview(); }}>
+        <label className="field" htmlFor={`${id}-choice`}>What to send<Select id={`${id}-choice`} value={choiceKey} disabled={frozen} onChange={event => { setChoiceKey(event.target.value); setDocumentIds([]); invalidatePreview(); }}>
           <option value="">Choose a proposal, certificate or document</option>
           {choiceKey && !choice && <option value={choiceKey} disabled>Selected item is unavailable</option>}
           {(["PACKAGE", "CERTIFICATE", "DOCUMENT"] as const).map(group => <optgroup key={group} label={KIND_LABELS[group]}>{data.choices.filter(item => item.kind === group).map(item => <option key={`${item.kind}:${item.recordId}`} value={`${item.kind}:${item.recordId}`} disabled={!!item.disabledReason}>{item.label}{item.disabledReason ? " — needs review" : ""}</option>)}</optgroup>)}
-        </select></label>
+        </Select></label>
         {choice?.disabledReason && <p role="alert" className="error-text">{choice.disabledReason}</p>}
         {choiceKey && !choice && <p role="alert" className="error-text">This item is no longer available. Refresh its CRM record before preparing email.</p>}
-        <label className="field" htmlFor={`${id}-thread`}>Front conversation<select id={`${id}-thread`} value={thread} disabled={frozen} onChange={event => { setThread(event.target.value); invalidatePreview(); }}>
+        <label className="field" htmlFor={`${id}-thread`}>Front conversation<Select id={`${id}-thread`} value={thread} disabled={frozen} onChange={event => { setThread(event.target.value); invalidatePreview(); }}>
           <option value="NEW">New conversation — no quoted client history</option>
           {!validThread && <option value={thread} disabled>Selected conversation is unavailable</option>}
           {data.conversations.filter(item => item.id !== "NEW").map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
-        </select></label>
+        </Select></label>
         <p className="muted small">An existing conversation can only use its current participants. For a new certificate holder or another recipient, choose a new conversation.</p>
         {choice?.kind === "CERTIFICATE" && <p className="business-delivery-notice">Choose the certificate holder or requester for To. Add the client in CC only when appropriate.</p>}
         <div className="business-delivery-recipients">
-          <label className="field" htmlFor={`${id}-to`}>To<input id={`${id}-to`} type="text" inputMode="email" autoComplete="off" value={to} disabled={frozen} onChange={event => { setTo(event.target.value); setReviewed(false); }} placeholder="recipient@example.com" /></label>
-          <label className="field" htmlFor={`${id}-cc`}>CC (optional)<input id={`${id}-cc`} type="text" inputMode="email" autoComplete="off" value={cc} disabled={frozen} onChange={event => { setCc(event.target.value); setReviewed(false); }} /></label>
+          <label className="field" htmlFor={`${id}-to`}>To<Input id={`${id}-to`} type="text" inputMode="email" autoComplete="off" value={to} disabled={frozen} onChange={event => { setTo(event.target.value); setReviewed(false); }} placeholder="recipient@example.com" /></label>
+          <label className="field" htmlFor={`${id}-cc`}>CC (optional)<Input id={`${id}-cc`} type="text" inputMode="email" autoComplete="off" value={cc} disabled={frozen} onChange={event => { setCc(event.target.value); setReviewed(false); }} /></label>
         </div>
         <p className="muted small">Separate email addresses with commas. No recipient is added automatically.</p>
-        {!!data.recipientSuggestions.length && <details><summary>Account contact suggestions</summary><ul className="business-delivery-contacts">{data.recipientSuggestions.map(contact => <li key={contact.email}><span>{contact.label} · {contact.email}</span><button type="button" className="link" disabled={frozen} onClick={() => { setTo(value => value ? `${value}, ${contact.email}` : contact.email); setReviewed(false); }}>Add to To</button><button type="button" className="link" disabled={frozen} onClick={() => { setCc(value => value ? `${value}, ${contact.email}` : contact.email); setReviewed(false); }}>Add to CC</button></li>)}</ul></details>}
+        {!!data.recipientSuggestions.length && <details><summary>Account contact suggestions</summary><ul className="business-delivery-contacts">{data.recipientSuggestions.map(contact => <li key={contact.email}><span>{contact.label} · {contact.email}</span><Button variant="link" type="button"  disabled={frozen} onClick={() => { setTo(value => value ? `${value}, ${contact.email}` : contact.email); setReviewed(false); }}>Add to To</Button><Button variant="link" type="button"  disabled={frozen} onClick={() => { setCc(value => value ? `${value}, ${contact.email}` : contact.email); setReviewed(false); }}>Add to CC</Button></li>)}</ul></details>}
         {choice?.kind === "PACKAGE" && <fieldset className="business-delivery-documents" disabled={frozen}><legend>Carrier PDFs to include</legend><p className="muted small">Choose up to 10 account PDFs. The reviewed proposal is included separately. Maximum total attachment size: 25 MB.</p>
-          {packageDocuments.length ? packageDocuments.map(document => <label key={document.id}><input type="checkbox" checked={documentIds.includes(document.id)} disabled={!documentIds.includes(document.id) && documentIds.length >= 10} onChange={event => { setDocumentIds(values => event.target.checked ? [...values, document.id] : values.filter(value => value !== document.id)); invalidatePreview(); }} /> {document.name}{document.size != null ? ` · ${Math.ceil(document.size / 1024)} KB` : ""}</label>) : <p>No eligible account PDFs. Upload carrier PDFs in the CRM Documents tab.</p>}
+          {packageDocuments.length ? packageDocuments.map(document => <label key={document.id}><Input type="checkbox" checked={documentIds.includes(document.id)} disabled={!documentIds.includes(document.id) && documentIds.length >= 10} onChange={event => { setDocumentIds(values => event.target.checked ? [...values, document.id] : values.filter(value => value !== document.id)); invalidatePreview(); }} /> {document.name}{document.size != null ? ` · ${Math.ceil(document.size / 1024)} KB` : ""}</label>) : <p>No eligible account PDFs. Upload carrier PDFs in the CRM Documents tab.</p>}
         </fieldset>}
-        <button type="button" className="secondary" disabled={frozen || !choice || !!choice.disabledReason || !data.sender || !validThread} onClick={() => void showPreview()}>{preview ? "Refresh preview" : "Review email preview"}</button>
+        <Button variant="secondary" type="button"  disabled={frozen || !choice || !!choice.disabledReason || !data.sender || !validThread} onClick={() => void showPreview()}>{preview ? "Refresh preview" : "Review email preview"}</Button>
         {preview && <section className="business-delivery-preview" aria-label="Email preview"><h3>Email preview</h3><p><strong>Conversation:</strong> {preview.conversationLabel}</p><p><strong>Subject:</strong> {preview.subject}</p><pre>{plainBody(preview.body)}</pre>
           {preview.quotes.map(quote => <ProposalTerms key={quote.id} quote={quote} />)}
           <h4>Attachments</h4><ul>{preview.attachments.map(file => <li key={file.id}>{file.name}{file.size != null ? ` · ${Math.ceil(file.size / 1024)} KB` : ""}</li>)}</ul>
           {preview.warnings.map((warning, index) => <p className="business-delivery-notice" key={index}>{warning}</p>)}
           <p className="muted small">Preview valid until {fmtDateTime(preview.expiresAt)}. Review every attachment in Front before sending.</p>
           {expired && <p className="error-text" role="alert">This preview has expired. Refresh it before preparing the draft.</p>}
-          <label className="business-delivery-confirm"><input type="checkbox" checked={reviewed} disabled={frozen || expired} onChange={event => setReviewed(event.target.checked)} /> I checked the sender, conversation, recipients and selected documents. I will review the message and attachments in Front before sending.</label>
+          <label className="business-delivery-confirm"><Input type="checkbox" checked={reviewed} disabled={frozen || expired} onChange={event => setReviewed(event.target.checked)} /> I checked the sender, conversation, recipients and selected documents. I will review the message and attachments in Front before sending.</label>
           {pending && <p className="business-delivery-notice">An earlier draft for this item needs review. Check its Front status below before preparing another.</p>}
-          <button type="button" className="primary" disabled={frozen || expired || !reviewed || !!pending || history.loading || !!history.error} onClick={() => void createDraft()}>Prepare Front draft</button>
+          <Button variant="primary" type="button"  disabled={frozen || expired || !reviewed || !!pending || history.loading || !!history.error} onClick={() => void createDraft()}>Prepare Front draft</Button>
         </section>}
       </>}
-      {uncertain && <section className="business-delivery-notice" aria-label="Unconfirmed draft"><h3>Check before trying again</h3><p>The draft result could not be confirmed. Check the history and Front first. Retrying below uses the same request and recipients.</p><button type="button" className="secondary" disabled={!!busy || !lastInput.current} onClick={() => void createDraft(lastInput.current ?? undefined)}>Retry same draft request</button> <button type="button" className="secondary" disabled={!!busy || history.loading} onClick={() => void history.refetch()}>Refresh history</button></section>}
-      {attempt && <section aria-label="Prepared draft result"><ul className="business-delivery-history">{attemptRow(attempt)}</ul>{!["UNKNOWN", "PREPARING"].includes(attempt.state) && <button type="button" className="secondary" disabled={!!busy} onClick={() => { setAttempt(null); invalidatePreview(); }}>Prepare another email</button>}</section>}
-      <section aria-label="Front email history" className="business-delivery-history-section"><div className="toolbar"><h3>Front email history</h3><button type="button" className="link" disabled={!!busy || history.loading} onClick={() => void history.refetch()}>Refresh history</button></div>
+      {uncertain && <section className="business-delivery-notice" aria-label="Unconfirmed draft"><h3>Check before trying again</h3><p>The draft result could not be confirmed. Check the history and Front first. Retrying below uses the same request and recipients.</p><Button variant="secondary" type="button"  disabled={!!busy || !lastInput.current} onClick={() => void createDraft(lastInput.current ?? undefined)}>Retry same draft request</Button> <Button variant="secondary" type="button"  disabled={!!busy || history.loading} onClick={() => void history.refetch()}>Refresh history</Button></section>}
+      {attempt && <section aria-label="Prepared draft result"><ul className="business-delivery-history">{attemptRow(attempt)}</ul>{!["UNKNOWN", "PREPARING"].includes(attempt.state) && <Button variant="secondary" type="button"  disabled={!!busy} onClick={() => { setAttempt(null); invalidatePreview(); }}>Prepare another email</Button>}</section>}
+      <section aria-label="Front email history" className="business-delivery-history-section"><div className="toolbar"><h3>Front email history</h3><Button variant="link" type="button"  disabled={!!busy || history.loading} onClick={() => void history.refetch()}>Refresh history</Button></div>
         <p className="muted small">Prepared means a draft exists. Sent means Front recorded an outbound message; neither confirms receipt.</p>
         {history.error && <p role="alert" className="error-text">{history.error}</p>}
         {history.loading && !history.loaded && <p role="status">Loading draft history…</p>}
         {history.loaded && !history.error && !history.data.items.length && <p className="muted small">No Front drafts recorded for this account.</p>}
         <ul className="business-delivery-history">{history.data.items.filter(item => item.id !== attempt?.id).map(attemptRow)}</ul>
-        {history.data.nextToken && <button type="button" className="secondary" disabled={loadingMore || !!busy || history.loading} onClick={() => void loadMore()}>{loadingMore ? "Loading older drafts…" : "Load older drafts"}</button>}
+        {history.data.nextToken && <Button variant="secondary" type="button"  disabled={loadingMore || !!busy || history.loading} onClick={() => void loadMore()}>{loadingMore ? "Loading older drafts…" : "Load older drafts"}</Button>}
       </section>
     </div>
   </Modal>;

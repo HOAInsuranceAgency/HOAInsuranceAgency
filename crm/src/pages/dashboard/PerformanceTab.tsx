@@ -1,3 +1,4 @@
+import { SegmentedControl } from "../../components/ui/SegmentedControl";
 import { useMemo, useState } from "react";
 import { ReportDownload } from "../../components/ReportDownload";
 import { DateRangeFilter } from "../../components/DateRangeFilter";
@@ -33,8 +34,9 @@ export default function PerformanceTab() {
 
   return <>
     <DateRangeFilter label="Policy effective dates" value={range} onChange={setRange} allowOpenEnded />
-    <div className="chip-row" style={{ marginBottom: 12, flexWrap: "wrap" }}>
-      <button aria-pressed={excludeCancelled} className={excludeCancelled ? "on" : ""} onClick={() => setExcludeCancelled(value => !value)}>Exclude cancelled</button>
+    <div style={{ marginBottom: 12 }}>
+      <SegmentedControl label="Policy status" value={excludeCancelled ? 'exclude' : undefined} onChange={() => setExcludeCancelled(value => !value)}
+        items={[{ value: 'exclude', label: 'Exclude cancelled' }]} />
     </div>
     <p className="muted small">Policy and quote effective dates · current account salesperson. Unassigned records stay in the totals. Earned broker fees remain after cancellation; recorded refunds reduce fee revenue.</p>
     {applied ? <PerformanceSnapshot key={`${applied.from}|${applied.to}|${excludeCancelled}`} {...applied} excludeCancelled={excludeCancelled} /> : !invalidRange && <p className="muted small">Loading…</p>}

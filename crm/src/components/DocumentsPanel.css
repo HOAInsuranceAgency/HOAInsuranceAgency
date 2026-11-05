@@ -66,39 +66,8 @@
 
 .documents-panel--account .file-btn {
   position: relative;
-  border: 1px solid var(--accent);
-  background: var(--accent);
-  color: white;
-  min-height: 36px;
   justify-content: center;
   box-sizing: border-box;
-}
-
-.documents-panel--account .file-btn:hover {
-  background: var(--accent-dark);
-}
-
-.documents-panel--account .file-btn:focus-within {
-  outline: 2px solid var(--accent);
-  outline-offset: 3px;
-}
-
-.documents-panel--account .file-btn input[type="file"] {
-  display: block;
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  clip-path: inset(50%);
-  overflow: hidden;
-  white-space: nowrap;
-}
-
-.documents-toolbar .field select {
-  padding-right: 30px;
-  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5 6 6.5 11 1.5' fill='none' stroke='%2364748b' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 10px center;
 }
 
 .documents-filter-note,
@@ -148,14 +117,7 @@
 
 .documents-table td {
   vertical-align: middle;
-  padding-top: 14px;
-  padding-bottom: 14px;
   overflow-wrap: anywhere;
-  line-height: 1.5;
-}
-
-.documents-table tbody tr:last-child td {
-  border-bottom: 0;
 }
 
 .documents-table .document-name > span {
@@ -180,22 +142,7 @@
 }
 
 .document-actions button {
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 5px 8px;
-  background: var(--card);
-  font: inherit;
-  font-size: 12px;
-  line-height: 1.3;
   white-space: nowrap;
-}
-
-.document-actions button:hover {
-  background: var(--blue-bg);
-}
-
-.document-actions button.danger:hover {
-  background: var(--red-bg);
 }
 
 .document-text-viewer {

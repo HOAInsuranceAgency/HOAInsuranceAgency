@@ -1,3 +1,4 @@
+import { Table } from "../../components/ui/Table";
 import { ReportDownload } from "../../components/ReportDownload";
 import { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
@@ -165,7 +166,7 @@ export default function FinanceTab() {
               </p>
             )}
             <div className="table-wrap">
-              <table>
+              <Table>
                 <thead>
                   <tr>
                     <SortTh label="Invoice" colKey="number" sortKey={sortKey} dir={dir} onToggle={toggle} />
@@ -203,7 +204,7 @@ export default function FinanceTab() {
                     </tr>
                   ))}
                 </tbody>
-              </table>
+              </Table>
             </div>
           </>
         )}
@@ -279,7 +280,7 @@ function PortfolioCard({
         <p className="muted small">No outstanding financing.</p>
       ) : (
         <div className="table-wrap">
-          <table>
+          <Table>
             <thead>
               <tr>
                 <th>Account</th>
@@ -312,7 +313,7 @@ function PortfolioCard({
                 </tr>
               ))}
             </tbody>
-          </table>
+          </Table>
         </div>
       )}
     </div>

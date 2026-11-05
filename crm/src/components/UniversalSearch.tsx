@@ -1,3 +1,6 @@
+import { Input } from "./ui/Input";
+import { SuggestionList, SuggestionOption } from "./ui/SuggestionList";
+import './UniversalSearch.css';
 import { searchParties, type PartyRecord } from '../lib/relationships';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -266,7 +269,7 @@ export default function UniversalSearch() {
         <span className="usearch-glass" aria-hidden>
           <IconGlass />
         </span>
-        <input
+        <Input
           ref={inputRef}
           role="combobox"
           aria-expanded={showPop}
@@ -293,7 +296,7 @@ export default function UniversalSearch() {
         <span className="kbd" aria-hidden>/</span>
 
         {showPop && (
-          <div className="usearch-pop" id="usearch-listbox" role="listbox">
+          <SuggestionList className="usearch-pop" id="usearch-listbox">
             {qt.length < MIN_QUERY_LENGTH ? (
               <div className="usearch-note">Keep typing — two characters minimum.</div>
             ) : (
@@ -323,12 +326,11 @@ export default function UniversalSearch() {
                       flatIndex += 1;
                       const i = flatIndex;
                       return (
-                        <div
+                        <SuggestionOption
                           key={item.key}
                           id={`usearch-opt-${i}`}
-                          role="option"
                           aria-selected={i === activeIdx}
-                          className={`usearch-hit${i === activeIdx ? " on" : ""}`}
+                          className="usearch-hit"
                           // mousedown, not click: click fires after the
                           // input's blur has already closed the dropdown.
                           // Left button only — a right-click wants the
@@ -351,16 +353,16 @@ export default function UniversalSearch() {
                               </span>
                             )}
                           </span>
-                        </div>
+                        </SuggestionOption>
                       );
                     })}
                   </div>
                 ))}
-                <div
+                <SuggestionOption
                   id={`usearch-opt-${flat.length}`}
-                  role="option"
                   aria-selected={activeIdx === flat.length}
-                  className={`usearch-foot${activeIdx === flat.length ? " on" : ""}`}
+                  className="usearch-foot"
+                  variant="footer"
                   onMouseDown={(e) => {
                     if (e.button !== 0) return;
                     e.preventDefault();
@@ -373,10 +375,10 @@ export default function UniversalSearch() {
                     <kbd>↑</kbd>
                     <kbd>↓</kbd> move · <kbd>↵</kbd> open · <kbd>esc</kbd> close
                   </span>
-                </div>
+                </SuggestionOption>
               </>
             )}
-          </div>
+          </SuggestionList>
         )}
       </div>
     </div>

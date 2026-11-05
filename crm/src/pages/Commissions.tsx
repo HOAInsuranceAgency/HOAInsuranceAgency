@@ -1,3 +1,9 @@
+import { Button } from "../components/ui/Button";
+import { Input } from "../components/ui/Input";
+import { Table } from "../components/ui/Table";
+import { Select } from "../components/ui/Select";
+import { Textarea } from "../components/ui/Textarea";
+import { Tabs } from "../components/ui/Tabs";
 import { useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { useIsOwner } from '../lib/auth';
 import { useAsyncResource } from '../lib/useAsyncResource';
@@ -61,37 +67,26 @@ function CommissionView({ owner }: { owner: boolean }) {
         </p>
       </header>
       {owner && (
-        <div className="commission-tabs" role="tablist" aria-label="Commission views">
-          {[
-            ['ledger', 'Ledger'],
-            ['statements', 'Reconciliation'],
-            ['payroll', 'Payroll'],
-            ['settings', 'Agreements & carriers'],
-          ].map(([id, label]) => (
-            <button
-              key={id}
-              role="tab"
-              aria-selected={tab === id}
-              className={tab === id ? 'primary' : 'secondary'}
-              onClick={() => setTab(id)}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+        <Tabs id="commissions" label="Commission views" value={tab} onChange={setTab} items={[
+          { value: 'ledger', label: 'Ledger' },
+          { value: 'statements', label: 'Reconciliation' },
+          { value: 'payroll', label: 'Payroll' },
+          { value: 'settings', label: 'Agreements & carriers' },
+        ]} />
       )}
-      <button
-        className="secondary"
+      <Button variant="secondary"
+
         disabled={resource.loading}
         onClick={() => void resource.refetch()}
       >
         Refresh commissions
-      </button>
+      </Button>
       {resource.error && (
         <p className="error-text" role="alert">
           {resource.error}
         </p>
       )}
+      <div id={owner ? 'commissions-panel' : undefined} role={owner ? 'tabpanel' : undefined} aria-labelledby={owner ? `commissions-tab-${tab}` : undefined} tabIndex={owner ? 0 : undefined}>
       {!snapshot ? (
         !resource.error && <p>Loading commissions…</p>
       ) : (
@@ -105,6 +100,7 @@ function CommissionView({ owner }: { owner: boolean }) {
           {!owner && <BatchList batches={snapshot.batches} />}
         </>
       )}
+      </div>
     </div>
   );
 }
@@ -194,7 +190,7 @@ function Ledger({
       {owner && (
         <label className="field commission-asof">
           Receipt reconciliation as of
-          <input
+          <Input
             type="date"
             required
             value={asOf}
@@ -255,7 +251,7 @@ function Ledger({
             ) : null}
             {p.entries.length ? (
               <div className="commission-scroll">
-                <table>
+                <Table>
                   <thead>
                     <tr>
                       <th>Date</th>
@@ -291,7 +287,7 @@ function Ledger({
                       </tr>
                     ))}
                   </tbody>
-                </table>
+                </Table>
               </div>
             ) : (
               <p className="muted">
@@ -347,9 +343,9 @@ function ActionForm({
       <fieldset disabled={busy}>
         {children}
         <div className="form-actions">
-          <button className="primary" type="submit" disabled={disabled}>
+          <Button variant="primary"  type="submit" disabled={disabled}>
             {busy ? 'Saving…' : button}
-          </button>
+          </Button>
         </div>
       </fieldset>
       {error && (
@@ -375,7 +371,7 @@ function Field({
   return (
     <label className="field">
       {label}
-      <input required type={type} value={value} onChange={(e) => change(e.target.value)} />
+      <Input required type={type} value={value} onChange={(e) => change(e.target.value)} />
     </label>
   );
 }
@@ -407,14 +403,14 @@ function Settings({ data, refresh }: { data: CommissionOverview; refresh: () => 
       </p>
       <label className="field">
         Producer
-        <select value={producer} onChange={(e) => setProducer(e.target.value)}>
+        <Select value={producer} onChange={(e) => setProducer(e.target.value)}>
           <option value="">Choose a producer…</option>
           {references.data.team.map((t) => (
             <option key={t.userId} value={t.userId}>
               {t.name}
             </option>
           ))}
-        </select>
+        </Select>
       </label>
       {producer && (
         <PlanEditor
@@ -427,14 +423,14 @@ function Settings({ data, refresh }: { data: CommissionOverview; refresh: () => 
       )}
       <label className="field">
         Carrier
-        <select value={carrier} onChange={(e) => setCarrier(e.target.value)}>
+        <Select value={carrier} onChange={(e) => setCarrier(e.target.value)}>
           <option value="">Choose a carrier…</option>
           {references.data.carriers.map((c) => (
             <option key={c.id} value={c.id}>
               {c.name}
             </option>
           ))}
-        </select>
+        </Select>
       </label>
       {carrier && (
         <CarrierEditor
@@ -520,7 +516,7 @@ function PlanEditor({
       <div className="form-grid">
         <label className="field">
           Account first-bind cutoff (optional)
-          <input
+          <Input
             type="date"
             value={accountBoundFrom}
             onChange={(e) => setAccountBoundFrom(e.target.value)}
@@ -528,7 +524,7 @@ function PlanEditor({
         </label>
         <label className="field">
           Agency receipt eligibility begins (optional)
-          <input
+          <Input
             type="date"
             value={receiptsFrom}
             onChange={(e) => setReceiptsFrom(e.target.value)}
@@ -552,7 +548,7 @@ function PlanEditor({
             />
             <label className="field">
               Through (optional)
-              <input
+              <Input
                 type="date"
                 value={t.to}
                 onChange={(e) =>
@@ -580,7 +576,7 @@ function PlanEditor({
           />
           <h3>GIM Property Management · house-account rates</h3>
           <label className="checkbox-field">
-            <input
+            <Input
               type="checkbox"
               checked={t.gimEnabled}
               onChange={(e) =>
@@ -626,19 +622,19 @@ function PlanEditor({
               the agreement reference are configured.
             </p>
           )}
-          <button
+          <Button variant="secondary"
             type="button"
-            className="secondary"
+
             disabled={terms.length === 1}
             onClick={() => setTerms(terms.filter((_, j) => j !== i))}
           >
             Remove period
-          </button>
+          </Button>
         </div>
       ))}
-      <button
+      <Button variant="secondary"
         type="button"
-        className="secondary"
+
         onClick={() =>
           setTerms([
             ...terms,
@@ -657,7 +653,7 @@ function PlanEditor({
         }
       >
         Add rate period
-      </button>
+      </Button>
       <p className="small muted">
         Both rates are percentages of agency commission received. Explicit 0% means no commission;
         blank is not zero. Salary remains in private pay settings.
@@ -694,9 +690,9 @@ function AccountClassificationResource({ id }: { id: string }) {
     return (
       <div role="alert">
         <p>{resource.error}</p>
-        <button type="button" className="secondary" onClick={() => void resource.refetch()}>
+        <Button variant="secondary" type="button"  onClick={() => void resource.refetch()}>
           Retry account classification
-        </button>
+        </Button>
       </div>
     );
   if (!resource.data || resource.loading) return <p>Loading account classification…</p>;
@@ -762,11 +758,11 @@ function AccountClassificationEditor({
       </p>
       <label className="field">
         Original account binding history
-        <select required value={history} onChange={(e) => setHistory(e.target.value)}>
+        <Select required value={history} onChange={(e) => setHistory(e.target.value)}>
           <option value="">Confirm the account’s history…</option>
           <option value="NEW">Never bound with this agency</option>
           <option value="BOUND">Previously bound with this agency</option>
-        </select>
+        </Select>
       </label>
       {history === 'BOUND' && (
         <Field
@@ -797,7 +793,7 @@ function AccountClassificationEditor({
             />
             <label className="field">
               {`Classification through ${i + 1} (optional)`}
-              <input
+              <Input
                 type="date"
                 value={p.to}
                 onChange={(e) =>
@@ -807,7 +803,7 @@ function AccountClassificationEditor({
             </label>
             <label className="field">
               {`Account classification ${i + 1}`}
-              <select
+              <Select
                 required
                 value={p.classification}
                 onChange={(e) =>
@@ -829,7 +825,7 @@ function AccountClassificationEditor({
                     {label}
                   </option>
                 ))}
-              </select>
+              </Select>
             </label>
           </div>
           <Field
@@ -837,25 +833,25 @@ function AccountClassificationEditor({
             value={p.evidence}
             change={(v) => setPeriods(periods.map((r, j) => (i === j ? { ...r, evidence: v } : r)))}
           />
-          <button
+          <Button variant="secondary"
             type="button"
-            className="secondary"
+
             disabled={periods.length === 1}
             onClick={() => setPeriods(periods.filter((_, j) => i !== j))}
           >
             Remove classification period
-          </button>
+          </Button>
         </div>
       ))}
-      <button
+      <Button variant="secondary"
         type="button"
-        className="secondary"
+
         onClick={() =>
           setPeriods([...periods, { from: '', to: '', classification: '', evidence: '' }])
         }
       >
         Add classification period
-      </button>
+      </Button>
     </ActionForm>
   );
 }
@@ -992,11 +988,11 @@ function CarrierEditor({
             />
             <label className="field">
               {`Carrier terms through ${i + 1} (optional)`}
-              <input type="date" value={a.to} onChange={(e) => update(i, { to: e.target.value })} />
+              <Input type="date" value={a.to} onChange={(e) => update(i, { to: e.target.value })} />
             </label>
             <label className="field">
               {`Lines of business ${i + 1} (blank = all)`}
-              <input
+              <Input
                 value={a.lines}
                 placeholder="Use the policy coverage line names"
                 onChange={(e) => update(i, { lines: e.target.value })}
@@ -1004,7 +1000,7 @@ function CarrierEditor({
             </label>
             <label className="field">
               {`Business type ${i + 1}`}
-              <select
+              <Select
                 value={a.transaction}
                 onChange={(e) =>
                   update(i, {
@@ -1015,11 +1011,11 @@ function CarrierEditor({
                 <option value="">All business types</option>
                 <option value="NEW">New business</option>
                 <option value="RENEWAL">Renewal</option>
-              </select>
+              </Select>
             </label>
             <label className="field">
               {`Billing scope ${i + 1}`}
-              <select
+              <Select
                 value={a.billType}
                 onChange={(e) =>
                   update(i, {
@@ -1030,11 +1026,11 @@ function CarrierEditor({
                 <option value="">Agency and direct bill</option>
                 <option value="AGENCY">Agency bill</option>
                 <option value="DIRECT">Direct bill</option>
-              </select>
+              </Select>
             </label>
             <label className="field">
               {`Commission basis ${i + 1}`}
-              <select
+              <Select
                 required
                 value={a.basis}
                 onChange={(e) =>
@@ -1051,7 +1047,7 @@ function CarrierEditor({
                     {label}
                   </option>
                 ))}
-              </select>
+              </Select>
             </label>
             <Field
               label={`Commission payor ${i + 1}`}
@@ -1060,7 +1056,7 @@ function CarrierEditor({
             />
             <label className="field">
               {`Receipt trigger ${i + 1}`}
-              <select
+              <Select
                 required
                 value={a.trigger}
                 onChange={(e) =>
@@ -1078,11 +1074,11 @@ function CarrierEditor({
                 )}
                 {a.basis === 'COLLECTED' && <option value="COLLECTION">Premium collected</option>}
                 {a.basis === 'EARNED' && <option value="EARNED">Coverage earned</option>}
-              </select>
+              </Select>
             </label>
             <label className="field">
               {`Remittance frequency ${i + 1}`}
-              <select
+              <Select
                 required
                 value={a.cadence}
                 onChange={(e) =>
@@ -1096,11 +1092,11 @@ function CarrierEditor({
                 <option value="ONCE">Once per trigger</option>
                 <option value="MONTHLY">Monthly statement cycle</option>
                 <option value="QUARTERLY">Quarterly statement cycle</option>
-              </select>
+              </Select>
             </label>
             <label className="field">
               {`Additional lag days ${i + 1}`}
-              <input
+              <Input
                 required
                 type="number"
                 min="0"
@@ -1112,7 +1108,7 @@ function CarrierEditor({
             </label>
             <label className="field">
               {`Statement cutoff day ${i + 1} (optional)`}
-              <input
+              <Input
                 type="number"
                 min="1"
                 max="31"
@@ -1124,7 +1120,7 @@ function CarrierEditor({
             </label>
             <label className="field">
               {`Remittance day ${i + 1} (optional)`}
-              <input
+              <Input
                 type="number"
                 min="1"
                 max="31"
@@ -1136,7 +1132,7 @@ function CarrierEditor({
             {a.basis === 'EARNED' && (
               <label className="field">
                 {`Earned premium method ${i + 1}`}
-                <select
+                <Select
                   required
                   value={a.earningMethod}
                   onChange={(e) =>
@@ -1148,7 +1144,7 @@ function CarrierEditor({
                   <option value="">Confirm the method…</option>
                   <option value="DAILY_PRORATA">Daily pro rata forecast</option>
                   <option value="MANUAL">Carrier schedule entered manually</option>
-                </select>
+                </Select>
               </label>
             )}
           </div>
@@ -1159,25 +1155,25 @@ function CarrierEditor({
           />
           <label className="field">
             {`Original carrier wording / notes ${i + 1} (optional)`}
-            <textarea value={a.notes} onChange={(e) => update(i, { notes: e.target.value })} />
+            <Textarea value={a.notes} onChange={(e) => update(i, { notes: e.target.value })} />
           </label>
-          <button
+          <Button variant="secondary"
             type="button"
-            className="secondary"
+
             onClick={() => setArrangements(arrangements.filter((_, j) => i !== j))}
           >
             Remove payment arrangement {i + 1}
-          </button>
+          </Button>
         </div>
       ))}
-      <button
+      <Button variant="secondary"
         type="button"
-        className="secondary"
+
         disabled={arrangements.length >= 100}
         onClick={() => setArrangements([...arrangements, blankArrangement()])}
       >
         Add payment arrangement
-      </button>
+      </Button>
       <p className="small muted">
         Dates are inclusive. Separate lines of business with commas. Monthly cycles close each
         month; quarterly cycles close in March, June, September, and December. Triggers after the
@@ -1316,19 +1312,19 @@ function ReceiptForecastEditor({
       <div className="form-grid">
         <label className="field">
           Receipt forecast certainty
-          <select required value={confirmed} onChange={(e) => setConfirmed(e.target.value)}>
+          <Select required value={confirmed} onChange={(e) => setConfirmed(e.target.value)}>
             <option value="">Choose…</option>
             <option value="false">Estimate — timing or amounts not confirmed</option>
             <option value="true">Confirmed by carrier evidence</option>
-          </select>
+          </Select>
         </label>
         <label className="field">
           Receipt schedule coverage
-          <select required value={complete} onChange={(e) => setComplete(e.target.value)}>
+          <Select required value={complete} onChange={(e) => setComplete(e.target.value)}>
             <option value="">Choose…</option>
             <option value="false">Partial — remaining dates or amounts unknown</option>
             <option value="true">Complete — all expected receipts included</option>
-          </select>
+          </Select>
         </label>
       </div>
       {items.map((item, i) => (
@@ -1344,23 +1340,23 @@ function ReceiptForecastEditor({
             value={item.amount}
             change={(v) => setItems(items.map((r, j) => (i === j ? { ...r, amount: v } : r)))}
           />
-          <button
+          <Button variant="secondary"
             type="button"
-            className="secondary"
+
             onClick={() => setItems(items.filter((_, j) => i !== j))}
           >
             Remove expected receipt {i + 1}
-          </button>
+          </Button>
         </div>
       ))}
-      <button
+      <Button variant="secondary"
         type="button"
-        className="secondary"
+
         disabled={items.length >= 100}
         onClick={() => setItems([...items, { dueOn: '', amount: '' }])}
       >
         Add expected receipt
-      </button>
+      </Button>
       <Field label="Receipt forecast evidence" value={evidence} change={setEvidence} />
     </ActionForm>
   );
@@ -1373,9 +1369,9 @@ function Statements({ data, refresh }: { data: CommissionOverview; refresh: () =
         Only Owners can upload, match, review, and post carrier statements. Posting requires a
         verified settlement and reviewed eligibility for every line.
       </p>
-      <button className="primary" onClick={() => setEditing(null)}>
+      <Button variant="primary"  onClick={() => setEditing(null)}>
         New reconciliation
-      </button>
+      </Button>
       {editing !== undefined && (
         <StatementEditor
           key={editing?.id ?? 'new'}
@@ -1506,7 +1502,7 @@ function StatementEditor({
       <div className="form-grid">
         <label className="field">
           Carrier
-          <select
+          <Select
             required
             value={carrierId}
             disabled={!!statement}
@@ -1521,7 +1517,7 @@ function StatementEditor({
                 {c.name}
               </option>
             ))}
-          </select>
+          </Select>
         </label>
         <Field label="Statement reference" value={reference} change={setReference} />
         <Field
@@ -1538,19 +1534,19 @@ function StatementEditor({
         />
         <label className="field">
           Settlement type
-          <select
+          <Select
             value={settlementType}
             onChange={(e) => setType(e.target.value as typeof settlementType)}
           >
             <option value="DEPOSIT">Carrier deposit</option>
             <option value="RETAINED">Agency-bill retained commission</option>
             <option value="NET_SETTLEMENT">Net settlement / offset</option>
-          </select>
+          </Select>
         </label>
       </div>
       <label className="field">
         Original carrier statement
-        <input
+        <Input
           type="file"
           accept=".pdf,.csv,.xlsx,.png,.jpg,.jpeg"
           disabled={uploading}
@@ -1579,7 +1575,7 @@ function StatementEditor({
             <div className="form-grid">
               <label className="field">
                 Policy term
-                <select
+                <Select
                   required
                   value={l.policyId}
                   onChange={(e) =>
@@ -1597,7 +1593,7 @@ function StatementEditor({
                         {p.accountName} · {p.policyNumber} · {p.effectiveDate}
                       </option>
                     ))}
-                </select>
+                </Select>
               </label>
               <Field
                 label={`Carrier transaction reference ${i + 1}`}
@@ -1606,7 +1602,7 @@ function StatementEditor({
               />
               <label className="field">
                 Transaction
-                <select
+                <Select
                   value={l.kind}
                   onChange={(e) =>
                     update(i, {
@@ -1618,7 +1614,7 @@ function StatementEditor({
                   <option value="RECEIPT">Commission receipt</option>
                   <option value="REVERSAL">Carrier reversal (negative)</option>
                   <option value="RESTORATION">Restore reversed commission</option>
-                </select>
+                </Select>
               </label>
               <Field
                 label={`Agency commission received / reversed ($) ${i + 1}`}
@@ -1643,7 +1639,7 @@ function StatementEditor({
             <div className="form-grid">
               <label className="field">
                 Carrier premium basis for this line ($, optional)
-                <input
+                <Input
                   inputMode="decimal"
                   value={l.reportedPremium ?? ''}
                   onChange={(e) => update(i, { reportedPremium: e.target.value })}
@@ -1651,7 +1647,7 @@ function StatementEditor({
               </label>
               <label className="field">
                 Carrier commission rate (%, optional)
-                <input
+                <Input
                   inputMode="decimal"
                   value={l.reportedRate ?? ''}
                   onChange={(e) => update(i, { reportedRate: e.target.value })}
@@ -1662,7 +1658,7 @@ function StatementEditor({
             {l.kind !== 'RECEIPT' && (
               <label className="field">
                 Original transaction
-                <select
+                <Select
                   required
                   value={l.originalId ?? ''}
                   onChange={(e) => update(i, { originalId: e.target.value })}
@@ -1679,12 +1675,12 @@ function StatementEditor({
                         {e.receivedOn} · {e.lineRef} · {money(e.agencyCents)}
                       </option>
                     ))}
-                </select>
+                </Select>
               </label>
             )}
             {l.kind === 'RECEIPT' && (
               <label>
-                <input
+                <Input
                   type="checkbox"
                   checked={l.eligible}
                   onChange={(e) => update(i, { eligible: e.target.checked })}
@@ -1698,25 +1694,25 @@ function StatementEditor({
               value={l.eligibilityNote}
               change={(v) => update(i, { eligibilityNote: v })}
             />
-            <button
-              className="secondary"
+            <Button variant="secondary"
+
               type="button"
               disabled={lines.length === 1}
               onClick={() => setLines(lines.filter((_, j) => j !== i))}
             >
               Remove line
-            </button>
+            </Button>
           </div>
         );
       })}
-      <button
-        className="secondary"
+      <Button variant="secondary"
+
         type="button"
         disabled={lines.length >= 20}
         onClick={() => setLines([...lines, blankLine()])}
       >
         Add statement line
-      </button>
+      </Button>
     </ActionForm>
   );
 }
@@ -1738,9 +1734,9 @@ function StatementCard({
       <p>
         {s.receivedOn} · {s.status} · Settlement {s.settlementRef} · {money(s.totalCents)}
       </p>
-      <button
+      <Button variant="secondary"
         type="button"
-        className="secondary"
+
         onClick={async () => {
           try {
             const r = await commissionAction<{ url: string }>('file', {
@@ -1753,10 +1749,10 @@ function StatementCard({
         }}
       >
         Download original statement
-      </button>
+      </Button>
       {fileError && <p role="alert">{fileError}</p>}
       <div className="commission-scroll">
-        <table>
+        <Table>
           <thead>
             <tr>
               <th>Policy</th>
@@ -1787,7 +1783,7 @@ function StatementCard({
               </tr>
             ))}
           </tbody>
-        </table>
+        </Table>
       </div>
     </>
   );
@@ -1813,11 +1809,11 @@ function StatementCard({
       }
     >
       {body}
-      <button className="secondary" type="button" onClick={edit}>
+      <Button variant="secondary"  type="button" onClick={edit}>
         Edit draft
-      </button>
+      </Button>
       <label className="commission-confirm">
-        <input
+        <Input
           type="checkbox"
           checked={confirmed}
           onChange={(e) => setConfirmed(e.target.checked)}
@@ -1858,7 +1854,7 @@ function Payroll({ data, refresh }: { data: CommissionOverview; refresh: () => P
         <div className="form-grid">
           <label className="field">
             Producer
-            <select required value={producerId} onChange={(e) => setProducer(e.target.value)}>
+            <Select required value={producerId} onChange={(e) => setProducer(e.target.value)}>
               <option value="">Choose…</option>
               {[...new Map(data.policies.map((p) => [p.producerId, p.producerName])).entries()].map(
                 ([id, name]) => (
@@ -1867,7 +1863,7 @@ function Payroll({ data, refresh }: { data: CommissionOverview; refresh: () => P
                   </option>
                 ),
               )}
-            </select>
+            </Select>
           </label>
           <Field
             label="Include receipts through (inclusive)"
@@ -1965,10 +1961,10 @@ function BatchCard({
       {body}
       <label className="field">
         Outcome
-        <select value={action} onChange={(e) => setAction(e.target.value)}>
+        <Select value={action} onChange={(e) => setAction(e.target.value)}>
           <option value="payPayroll">Confirm the full batch was paid</option>
           <option value="cancelPayroll">Cancel an unpaid batch</option>
-        </select>
+        </Select>
       </label>
       <Field
         label="Payment confirmation reference / cancellation reason"
@@ -2055,11 +2051,11 @@ function LegacyPolicies({
       </p>
       <label className="field">
         Find historical policy number
-        <input value={search} onChange={(e) => setSearch(e.target.value)} />
+        <Input value={search} onChange={(e) => setSearch(e.target.value)} />
       </label>
-      <button
+      <Button variant="secondary"
         type="button"
-        className="secondary"
+
         disabled={resource.loading || search.trim().length < 2}
         onClick={() => {
           setPolicy('');
@@ -2071,7 +2067,7 @@ function LegacyPolicies({
         }}
       >
         Search historical policies
-      </button>
+      </Button>
       {resource.error && <p role="alert">{resource.error}</p>}
       {resource.loading && <p>Loading matching policies…</p>}
       {query && !resource.loading && !resource.error && !options.length && (
@@ -2081,9 +2077,9 @@ function LegacyPolicies({
         </p>
       )}
       {resource.data?.nextToken && (
-        <button
+        <Button variant="secondary"
           type="button"
-          className="secondary"
+
           disabled={resource.loading}
           onClick={() => {
             setPolicy('');
@@ -2091,7 +2087,7 @@ function LegacyPolicies({
           }}
         >
           Next policies
-        </button>
+        </Button>
       )}
       <p className="small muted">
         Search by policy number (at least two characters). Results are paged; only policies without
@@ -2099,7 +2095,7 @@ function LegacyPolicies({
       </p>
       <label className="field">
         Existing policy
-        <select
+        <Select
           required
           value={policyId}
           onChange={(e) => {
@@ -2120,7 +2116,7 @@ function LegacyPolicies({
               {p.policyNumber || p.id} · {p.effectiveDate}
             </option>
           ))}
-        </select>
+        </Select>
       </label>
       {selected && (
         <p>
@@ -2131,23 +2127,23 @@ function LegacyPolicies({
       <div className="form-grid">
         <label className="field">
           Original producer
-          <select required value={producerId} onChange={(e) => setProducer(e.target.value)}>
+          <Select required value={producerId} onChange={(e) => setProducer(e.target.value)}>
             <option value="">Choose…</option>
             {data.plans.map((p) => (
               <option key={p.id} value={p.producerId}>
                 {p.name}
               </option>
             ))}
-          </select>
+          </Select>
         </label>
         <Field label="Original bind date" type="date" value={boundOn} change={setBound} />
         <label className="field">
           Original transaction
-          <select required value={transaction} onChange={(e) => setTransaction(e.target.value)}>
+          <Select required value={transaction} onChange={(e) => setTransaction(e.target.value)}>
             <option value="">Choose…</option>
             <option value="NEW">New business</option>
             <option value="RENEWAL">Renewal</option>
-          </select>
+          </Select>
         </label>
       </div>
       <div className="form-grid">

@@ -1,3 +1,4 @@
+import { Tabs, TabPanel } from "../components/ui/Tabs";
 import { useSearchParams } from "react-router-dom";
 import {
   DASHBOARD_TABS,
@@ -39,38 +40,12 @@ export default function Dashboard() {
       <h1>Dashboard</h1>
       <p className="sub">Sales performance, pipeline, and receivables</p>
 
-      {/* One control, two renderings: the strip on desktop, a native select
-          on phones. CSS does
-          the swap, so both stay wired to the same selectTab. */}
-      <div className="tabs dash-tabs">
-        {DASHBOARD_TABS.map(([t, label]) => (
-          <button
-            key={t}
-            className={tab === t ? "active" : ""}
-            aria-pressed={tab === t}
-            onClick={() => selectTab(t)}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-      <div className="dash-tab-select">
-        <select
-          aria-label="Dashboard view"
-          value={tab}
-          onChange={(e) => selectTab(e.target.value as DashboardTab)}
-        >
-          {DASHBOARD_TABS.map(([t, label]) => (
-            <option key={t} value={t}>
-              {label}
-            </option>
-          ))}
-        </select>
-      </div>
-
+      <Tabs id="dashboard" label="Dashboard views" items={DASHBOARD_TABS.map(([value, label]) => ({ value, label }))} value={tab} onChange={selectTab} />
+      <TabPanel tabsId="dashboard" value={tab}>
       {tab === "dashboard" && <PerformanceTab />}
       {tab === "leads" && <LeadsTab />}
       {tab === "finance" && <FinanceTab />}
+      </TabPanel>
     </>
   );
 }

@@ -1,3 +1,6 @@
+import { Input } from "./ui/Input";
+import { Button } from "./ui/Button";
+import { Select } from "./ui/Select";
 import { useId, useState } from 'react';
 import { searchParties, type PartyRecord } from '../lib/relationships';
 import { usePagedList } from '../lib/usePagedList';
@@ -37,7 +40,7 @@ export default function PartyPicker({
       <label className="field" htmlFor={`${id}-search`}>
         Find {label.toLowerCase()}
         <div className="toolbar">
-          <input
+          <Input
             id={`${id}-search`}
             value={text}
             maxLength={200}
@@ -51,9 +54,9 @@ export default function PartyPicker({
               }
             }}
           />
-          <button
+          <Button variant="secondary"
             type="button"
-            className="secondary"
+
             disabled={disabled || !text.trim() || page.loading}
             onClick={() => {
               if (query === text.trim()) void page.reload();
@@ -61,12 +64,12 @@ export default function PartyPicker({
             }}
           >
             Search
-          </button>
+          </Button>
         </div>
       </label>
       <label className="field" htmlFor={`${id}-select`}>
         {label}
-        <select
+        <Select
           id={`${id}-select`}
           value={value}
           required={required}
@@ -87,7 +90,7 @@ export default function PartyPicker({
               {p.email ? ` · ${p.email}` : ''}
             </option>
           ))}
-        </select>
+        </Select>
       </label>
       {page.loading && <p className="muted small">Searching…</p>}
       {query && !page.loading && !page.items.length && (
@@ -98,20 +101,20 @@ export default function PartyPicker({
       {page.error && (
         <p role="alert" className="error-text">
           {page.error}{' '}
-          <button type="button" onClick={() => void page.more()}>
+          <Button type="button" onClick={() => void page.more()}>
             Retry
-          </button>
+          </Button>
         </p>
       )}
       {page.nextToken && (
-        <button
+        <Button variant="secondary"
           type="button"
-          className="secondary"
+
           disabled={disabled || page.loading}
           onClick={() => void page.more()}
         >
           Continue searching
-        </button>
+        </Button>
       )}
     </div>
   );

@@ -1,3 +1,7 @@
+import { Select } from "./ui/Select";
+import { Input } from "./ui/Input";
+import { Button } from "./ui/Button";
+import { Textarea } from "./ui/Textarea";
 import { usePagedList } from '../lib/usePagedList';
 import { useMounted } from '../lib/useMounted';
 import { useRef, useState } from 'react';
@@ -98,14 +102,14 @@ export default function PartyForm({
         <fieldset disabled={busy} className="relationship-fields">
           <label className="field">
             Record type
-            <select value={form.kind} disabled={!!party} onChange={(e) => change('kind', e.target.value)}>
+            <Select value={form.kind} disabled={!!party} onChange={(e) => change('kind', e.target.value)}>
               <option value="ORGANIZATION">Organization</option>
               <option value="PERSON">Person</option>
-            </select>
+            </Select>
           </label>
           <label className="field">
             Name
-            <input
+            <Input
               required
               maxLength={200}
               value={form.name}
@@ -127,57 +131,57 @@ export default function PartyForm({
               {nameMatches.error && (
                 <p role="alert">
                   {nameMatches.error}{' '}
-                  <button type="button" onClick={() => void nameMatches.more()}>
+                  <Button type="button" onClick={() => void nameMatches.more()}>
                     Retry name check
-                  </button>
+                  </Button>
                 </p>
               )}
               {emailMatches.error && (
                 <p role="alert">
                   {emailMatches.error}{' '}
-                  <button type="button" onClick={() => void emailMatches.more()}>
+                  <Button type="button" onClick={() => void emailMatches.more()}>
                     Retry email check
-                  </button>
+                  </Button>
                 </p>
               )}
               {nameMatches.nextToken && (
                 <p>
-                  <button
+                  <Button variant="secondary"
                     type="button"
-                    className="secondary"
+
                     disabled={nameMatches.loading}
                     onClick={() => void nameMatches.more()}
                   >
                     Continue checking name matches
-                  </button>
+                  </Button>
                 </p>
               )}
               {emailMatches.nextToken && (
                 <p>
-                  <button
+                  <Button variant="secondary"
                     type="button"
-                    className="secondary"
+
                     disabled={emailMatches.loading}
                     onClick={() => void emailMatches.more()}
                   >
                     Continue checking email matches
-                  </button>
+                  </Button>
                 </p>
               )}
               {matches.map((p) => (
                 <p key={p.id}>
                   {p.name}
                   {p.email ? ` · ${p.email}` : ''}{' '}
-                  <button className="secondary" type="button" onClick={() => onSaved(p)}>
+                  <Button variant="secondary"  type="button" onClick={() => onSaved(p)}>
                     Use existing profile
-                  </button>
+                  </Button>
                 </p>
               ))}
             </div>
           )}
           <label className="field">
             Category
-            <input
+            <Input
               list="relationship-categories"
               maxLength={100}
               value={form.category}
@@ -193,7 +197,7 @@ export default function PartyForm({
           </label>
           <label className="field">
             Email
-            <input
+            <Input
               type="email"
               maxLength={320}
               value={form.email}
@@ -202,7 +206,7 @@ export default function PartyForm({
           </label>
           <label className="field">
             Phone
-            <input
+            <Input
               type="tel"
               maxLength={80}
               value={form.phone}
@@ -211,7 +215,7 @@ export default function PartyForm({
           </label>
           <label className="field">
             Website
-            <input
+            <Input
               type="url"
               maxLength={1000}
               placeholder="https://"
@@ -222,7 +226,7 @@ export default function PartyForm({
           {admin && (
             <label className="field">
               Relationship owner
-              <select value={form.ownerId} onChange={(e) => change('ownerId', e.target.value)}>
+              <Select value={form.ownerId} onChange={(e) => change('ownerId', e.target.value)}>
                 <option value="">Me</option>
                 {party?.ownerId && !team.data.some((t) => t.userId === party.ownerId) && (
                   <option value={party.ownerId}>Current owner</option>
@@ -234,12 +238,12 @@ export default function PartyForm({
                       {t.name}
                     </option>
                   ))}
-              </select>
+              </Select>
             </label>
           )}
           <label className="field">
             Relationship notes
-            <textarea
+            <Textarea
               rows={4}
               maxLength={5000}
               value={form.notes}
@@ -248,7 +252,7 @@ export default function PartyForm({
           </label>
           {party && (
             <label>
-              <input
+              <Input
                 type="checkbox"
                 checked={form.archived}
                 onChange={(e) => change('archived', e.target.checked)}
@@ -257,12 +261,12 @@ export default function PartyForm({
             </label>
           )}
           <div className="form-actions">
-            <button className="primary" type="submit">
+            <Button variant="primary"  type="submit">
               {busy ? 'Saving…' : 'Save relationship'}
-            </button>
-            <button className="secondary" type="button" onClick={onClose}>
+            </Button>
+            <Button variant="secondary"  type="button" onClick={onClose}>
               Cancel
-            </button>
+            </Button>
           </div>
         </fieldset>
         {error && (

@@ -1,3 +1,6 @@
+import { Input } from "../ui/Input";
+import { Select } from "../ui/Select";
+import { Textarea } from "../ui/Textarea";
 import { type KeyboardEvent as ReactKeyboardEvent } from "react";
 import {
   client,
@@ -348,7 +351,7 @@ function AddFields({
     <>
       <div className="field">
         <label>Label</label>
-        <input
+        <Input
           placeholder={labelPlaceholder}
           value={form.form.label}
           onChange={(e) => form.setF("label", e.target.value)}
@@ -356,7 +359,7 @@ function AddFields({
       </div>
       <div className="field">
         <label>Street address</label>
-        <input
+        <Input
           placeholder="2 John Hancock Dr"
           value={form.form.streetAddress}
           onChange={(e) => form.setF("streetAddress", e.target.value)}
@@ -372,7 +375,7 @@ function AddFields({
       </div>
       <div className="field" style={{ flex: "1 1 260px" }}>
         <label>Description (prints on ACORD 125)</label>
-        <input
+        <Input
           placeholder="2, 4, 10, 12 John Hancock. Two-story wood frame…"
           value={form.form.description}
           onChange={(e) => form.setF("description", e.target.value)}
@@ -397,7 +400,7 @@ function EditFields({
   const text = (key: keyof BuildingForm, label: string, placeholder?: string) => (
     <div className="field" key={key}>
       <label>{label}</label>
-      <input
+      <Input
         placeholder={placeholder}
         value={f[key]}
         onChange={(e) => set(key, e.target.value)}
@@ -435,14 +438,14 @@ function EditFields({
   ) => (
     <div className="field" key={key}>
       <label>{label}</label>
-      <select value={f[key]} onChange={(e) => set(key, e.target.value)}>
+      <Select value={f[key]} onChange={(e) => set(key, e.target.value)}>
         <option value="">—</option>
         {options.map((o) => (
           <option key={o.value} value={o.value}>
             {o.label}
           </option>
         ))}
-      </select>
+      </Select>
     </div>
   );
   const yesNo = (key: keyof BuildingForm, label: string) => (
@@ -459,7 +462,7 @@ function EditFields({
       {text("streetAddress", "Street address", "2 John Hancock Dr")}
       <div className="field full">
         <label>Description (prints on ACORD 125)</label>
-        <input
+        <Input
           value={f.description}
           onChange={(e) => set("description", e.target.value)}
         />
@@ -483,7 +486,7 @@ function EditFields({
         <label>Distance to fire station (mi)</label>
         {/* Fractional miles, like `milesToCoast` — none of the formatted
             inputs is a fractional non-money quantity. */}
-        <input
+        <Input
           type="number"
           min={0}
           step="0.1"
@@ -505,7 +508,7 @@ function EditFields({
         {/* Free text with suggestions, not a foreign key: the form prints the
             number an underwriter wrote, and a number with no Blanket row is
             legal. */}
-        <input
+        <Input
           list="account-blanket-numbers"
           value={f.blanketNumber}
           onChange={(e) => set("blanketNumber", e.target.value)}
@@ -526,7 +529,7 @@ function EditFields({
       {yesNo("mineSubsidenceCoverage", "Mine subsidence coverage?")}
       <div className="field full">
         <label>Remarks (ACORD 101 overflow)</label>
-        <textarea
+        <Textarea
           rows={2}
           value={f.remarks}
           onChange={(e) => set("remarks", e.target.value)}

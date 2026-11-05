@@ -1,3 +1,6 @@
+import { Input } from "../components/ui/Input";
+import { Button } from "../components/ui/Button";
+import { Table } from "../components/ui/Table";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useIsOwner } from "../lib/auth";
 import { LeadEligibilityCells, LeadEligibilityEditor, LeadEligibilityFeedback, useLeadEligibilitySettings } from "../components/LeadEligibilitySettings";
@@ -34,7 +37,7 @@ function RoleChoices({ roles, onChange, disabled = false, keepRole, canManageOwn
       {USER_ROLE_OPTIONS.filter(option => option.value !== "OWNER" || canManageOwners || roles.includes("OWNER")).map(option => {
         const checked = roles.includes(option.value);
         return <label key={option.value} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <input type="checkbox" checked={checked}
+          <Input type="checkbox" checked={checked}
             disabled={(option.value === "OWNER" && !canManageOwners) || (checked ? roles.length === 1 || keepRole === option.value : roles.length >= 2)}
             onChange={() => onChange(checked ? roles.filter(role => role !== option.value) : [...roles, option.value])} />
           {option.label}
@@ -64,11 +67,11 @@ function RoleEditor({ user, name, currentUser, onSave, onClose }: {
       keepRole={currentUser ? initialRoles.includes("OWNER") ? "OWNER" : initialRoles.includes("ADMIN") ? "ADMIN" : undefined : undefined}
       onChange={next => { setRoles(next); status.markDirty(); }} />
     <div className="form-actions">
-      <button className="primary" disabled={status.busy || !dirty || roles.length < 1 || roles.length > 2}
+      <Button variant="primary"  disabled={status.busy || !dirty || roles.length < 1 || roles.length > 2}
         onClick={() => void status.run(async () => { await onSave(roles); onClose(); }, { errorMessage: "Couldn't save roles." })}>
         {status.busy ? "Saving…" : "Save roles"}
-      </button>
-      <button className="secondary" disabled={status.busy} onClick={close}>Cancel</button>
+      </Button>
+      <Button variant="secondary"  disabled={status.busy} onClick={close}>Cancel</Button>
       <SaveStatus {...status.status} />
     </div>
   </Modal>;
@@ -95,10 +98,10 @@ function AccessEditor({ user, name, onSave, onClose }: {
     <p>{enable ? "Restore this team member’s access to the CRM. They’ll need to sign in again."
       : "Block this team member’s CRM access and sign them out. They won’t be eligible for new assignments. You can reactivate them later."}</p>
     <div className="form-actions">
-      <button type="button" className={enable ? "primary" : "danger"} disabled={status.busy} onClick={() => void save()}>
+      <Button type="button" variant={enable ? "primary" : "danger"} disabled={status.busy} onClick={() => void save()}>
         {status.busy ? "Updating access…" : enable ? "Reactivate user" : "Deactivate user"}
-      </button>
-      <button type="button" className="secondary" disabled={status.busy} onClick={close}>Cancel</button>
+      </Button>
+      <Button variant="secondary" type="button"  disabled={status.busy} onClick={close}>Cancel</Button>
       <SaveStatus {...status.status} />
     </div>
   </Modal>;
@@ -139,7 +142,7 @@ function LeadTextCell({
   return (
     <div className="lead-text-cell">
       <label className="lead-text-switch">
-        <input
+        <Input
           type="checkbox"
           disabled={disabled}
           checked={on}
@@ -148,7 +151,7 @@ function LeadTextCell({
         />
         <span>{on ? "On" : "Off"}</span>
       </label>
-      <input
+      <Input
         disabled={disabled}
         className="lead-text-phone"
         type="tel"
@@ -408,7 +411,7 @@ export default function Team({ profile }: { profile: UserProfile }) {
         <div className="form-grid" style={{ maxWidth: 640 }}>
           <div className="field">
             <label htmlFor="team-invite-email">Email</label>
-            <input
+            <Input
               id="team-invite-email"
               disabled={inviteStatus.busy}
               type="email"
@@ -422,13 +425,13 @@ export default function Team({ profile }: { profile: UserProfile }) {
           </div>
         </div>
         <div className="form-actions">
-          <button
-            className="primary"
+          <Button variant="primary"
+
             disabled={inviteStatus.busy || !form.email.trim()}
             onClick={invite}
           >
             {inviteStatus.busy ? "Inviting…" : "Send invite"}
-          </button>
+          </Button>
           <SaveStatus {...inviteStatus.status} />
         </div>
         <p className="muted small" style={{ marginBottom: 0 }}>
@@ -450,9 +453,9 @@ export default function Team({ profile }: { profile: UserProfile }) {
             </p>
           </div>
           <div className="grow" />
-          <button type="button" className="secondary" disabled={team.loading || moreLoading || alertStatus.busy || eligibility.disabled || !!editingRoles || !!editingAccess} onClick={reload}>
+          <Button variant="secondary" type="button"  disabled={team.loading || moreLoading || alertStatus.busy || eligibility.disabled || !!editingRoles || !!editingAccess} onClick={reload}>
             Refresh team
-          </button>
+          </Button>
           {/* Toggles are per-row with no per-row place to report; this is
               the card's one status line. */}
           <SaveStatus {...alertStatus.status} />
@@ -466,7 +469,7 @@ export default function Team({ profile }: { profile: UserProfile }) {
           !team.error && <p className="muted small">No users found.</p>
         ) : (
           <div className="table-wrap">
-            <table>
+            <Table>
               <thead>
                 <tr>
                   <SortTh label="Team member" colKey="email" sortKey={sortKey} dir={dir} onToggle={toggle} />
@@ -501,15 +504,15 @@ export default function Team({ profile }: { profile: UserProfile }) {
                           {(u.groups.filter(isUserRole).length ? u.groups.filter(isUserRole) : [p?.role ?? "—"]).map(role =>
                             <span key={role} className="badge gray">{role}</span>)}
                         </div>
-                        <button type="button" className="secondary" disabled={team.loading || moreLoading || eligibility.busy || !!eligibility.editing || !!editingRoles || !!editingAccess || (u.groups.includes("OWNER") && !canManageOwners)} aria-label={`Edit roles for ${name || u.email}`}
-                          onClick={() => { roleStatus.markDirty(); setEditingRoles(u); }}>Edit roles</button>
+                        <Button variant="secondary" type="button"  disabled={team.loading || moreLoading || eligibility.busy || !!eligibility.editing || !!editingRoles || !!editingAccess || (u.groups.includes("OWNER") && !canManageOwners)} aria-label={`Edit roles for ${name || u.email}`}
+                          onClick={() => { roleStatus.markDirty(); setEditingRoles(u); }}>Edit roles</Button>
                       </td>
                       <td>
                         <div style={{ marginBottom: 6 }}><span className={`badge ${u.enabled === false ? "gray" : "green"}`}>{u.enabled === false ? "Inactive" : "Active"}</span></div>
-                        {canManageOwners && <button type="button" className="secondary"
+                        {canManageOwners && <Button variant="secondary" type="button"
                           disabled={u.userId === profile.userId || team.loading || moreLoading || eligibility.busy || !!eligibility.editing || !!editingRoles || !!editingAccess}
                           aria-label={`${u.enabled === false ? "Reactivate" : "Deactivate"} ${name || u.email}`}
-                          onClick={() => { accessStatus.markDirty(); setEditingAccess(u); }}>{u.enabled === false ? "Reactivate" : "Deactivate"}</button>}
+                          onClick={() => { accessStatus.markDirty(); setEditingAccess(u); }}>{u.enabled === false ? "Reactivate" : "Deactivate"}</Button>}
                       </td>
                       <td>
                         {/* One-off pair — onboarding state is badged here and
@@ -551,18 +554,18 @@ export default function Team({ profile }: { profile: UserProfile }) {
                   );
                 })}
               </tbody>
-            </table>
+            </Table>
           </div>
         )}
         {team.error && <div role="alert">
           <p className="error-text">{team.error}</p>
-          <button type="button" className="secondary" disabled={team.loading} onClick={() => void team.refetch()}>Retry team</button>
+          <Button variant="secondary" type="button"  disabled={team.loading} onClick={() => void team.refetch()}>Retry team</Button>
         </div>}
         {moreError && <p className="error-text" role="alert">{moreError}</p>}
         {team.data.nextToken && <div className="form-actions">
-          <button type="button" className="secondary" disabled={team.loading || moreLoading || alertStatus.busy || eligibility.disabled || !!editingRoles || !!editingAccess} onClick={() => void loadMore()}>
+          <Button variant="secondary" type="button"  disabled={team.loading || moreLoading || alertStatus.busy || eligibility.disabled || !!editingRoles || !!editingAccess} onClick={() => void loadMore()}>
             {moreLoading ? "Loading more…" : moreError ? "Retry loading more" : "Load more team members"}
-          </button>
+          </Button>
         </div>}
         <LeadEligibilityEditor settings={eligibility} />
         {editingRoles && <RoleEditor user={editingRoles}

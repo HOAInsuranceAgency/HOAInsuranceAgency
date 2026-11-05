@@ -1,3 +1,4 @@
+import { Table } from "./ui/Table";
 export interface ChartSeries { key: string; label: string; color?: string }
 export interface ChartRow { key: string; label: string; values: Record<string, number> }
 
@@ -49,9 +50,9 @@ export function StackedBars({ label, rows, series, formatValue = value => value.
         {series.map(item => <span key={item.key}><i style={{ backgroundColor: seriesColor(item) }} aria-hidden="true" />{item.label}</span>)}
       </div>
       <details className="sales-chart-details"><summary>View chart values</summary>
-        <div className="table-wrap"><table><caption className="sr-only">{label}</caption><thead><tr><th scope="col">Category</th>{series.map(item => <th scope="col" key={item.key}>{item.label}</th>)}<th scope="col">Total</th></tr></thead>
+        <div className="table-wrap"><Table><caption className="sr-only">{label}</caption><thead><tr><th scope="col">Category</th>{series.map(item => <th scope="col" key={item.key}>{item.label}</th>)}<th scope="col">Total</th></tr></thead>
           <tbody>{rows.map((row, index) => <tr key={row.key}><th scope="row">{row.label}</th>{series.map(item => <td key={item.key}>{formatValue(row.values[item.key] ?? 0)}</td>)}<td>{formatValue(totals[index])}</td></tr>)}</tbody>
-        </table></div>
+        </Table></div>
       </details>
     </>}
   </div>;

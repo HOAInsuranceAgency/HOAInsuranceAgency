@@ -85,7 +85,7 @@ it('does not show a template as missing after its presence check fails, and retr
 
 it('keeps agency identifiers unavailable after a failed read instead of offering a blank save', async () => {
   h.loadAgency.mockResolvedValueOnce(null).mockResolvedValueOnce({ agencyNpn: '123', drlpNpn: '456', agencyEin: '123456789' });
-  renderSettings(true); fireEvent.click(screen.getByRole('button', { name: 'Agency' }));
+  renderSettings(true); fireEvent.click(screen.getByRole('tab', { name: 'Agency' }));
   expect(await screen.findByRole('alert')).toHaveTextContent('load the agency identifiers');
   expect(screen.queryByLabelText('Agency NPN')).toBeNull();
   expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
@@ -97,7 +97,7 @@ it('keeps agency edits unchanged after save failure and prevents typing into an 
   h.loadAgency.mockResolvedValue({ agencyNpn: '123', drlpNpn: '456', agencyEin: '123456789' });
   let reject!: (reason: Error) => void;
   h.saveAgency.mockImplementationOnce(() => new Promise((_resolve, fail) => { reject = fail; }));
-  renderSettings(true); fireEvent.click(screen.getByRole('button', { name: 'Agency' }));
+  renderSettings(true); fireEvent.click(screen.getByRole('tab', { name: 'Agency' }));
   const field = await screen.findByLabelText('Agency NPN');
   fireEvent.change(field, { target: { value: '999' } });
   fireEvent.click(screen.getByRole('button', { name: 'Save' }));

@@ -1,3 +1,6 @@
+import { Input } from "../components/ui/Input";
+import { Select } from "../components/ui/Select";
+import { Button } from "../components/ui/Button";
 import { useRef, useState } from "react";
 import { fetchAuthSession, type AuthUser } from "aws-amplify/auth";
 import { client, friendlyError, US_STATES, type UserProfile } from "../lib/client";
@@ -192,15 +195,15 @@ export default function Onboarding({
         <div className="form-grid">
           <div className="field">
             <label>First name *</label>
-            <input disabled={saving} value={form.firstName} onChange={(e) => setF("firstName", e.target.value)} />
+            <Input disabled={saving} value={form.firstName} onChange={(e) => setF("firstName", e.target.value)} />
           </div>
           <div className="field">
             <label>Last name *</label>
-            <input disabled={saving} value={form.lastName} onChange={(e) => setF("lastName", e.target.value)} />
+            <Input disabled={saving} value={form.lastName} onChange={(e) => setF("lastName", e.target.value)} />
           </div>
           <div className="field">
             <label>Assigned roles</label>
-            <input value={(roles.length ? roles : [role]).map(value => USER_ROLE_LABELS[value]).join(" + ")} disabled />
+            <Input value={(roles.length ? roles : [role]).map(value => USER_ROLE_LABELS[value]).join(" + ")} disabled />
             <span className="muted small">
               Set by whoever invited you — ask an admin to change it.
             </span>
@@ -208,7 +211,7 @@ export default function Onboarding({
           {isProducer && (
             <div className="field">
               <label>NPN (National Producer Number) *</label>
-              <input disabled={saving} value={form.npn} onChange={(e) => setF("npn", e.target.value)} />
+              <Input disabled={saving} value={form.npn} onChange={(e) => setF("npn", e.target.value)} />
             </div>
           )}
         </div>
@@ -223,7 +226,7 @@ export default function Onboarding({
               <div className="form-grid" key={i} style={{ marginBottom: 8 }}>
                 <div className="field">
                   <label>State</label>
-                  <select
+                  <Select
                     disabled={saving}
                     value={l.state}
                     onChange={(e) => setLicense(i, { state: e.target.value })}
@@ -232,11 +235,11 @@ export default function Onboarding({
                     {US_STATES.map((s) => (
                       <option key={s}>{s}</option>
                     ))}
-                  </select>
+                  </Select>
                 </div>
                 <div className="field">
                   <label>License number</label>
-                  <input
+                  <Input
                     disabled={saving}
                     value={l.licenseNumber}
                     onChange={(e) => setLicense(i, { licenseNumber: e.target.value })}
@@ -244,7 +247,7 @@ export default function Onboarding({
                 </div>
                 <div className="field">
                   <label>Residency</label>
-                  <select
+                  <Select
                     disabled={saving}
                     value={l.residency}
                     onChange={(e) =>
@@ -258,11 +261,11 @@ export default function Onboarding({
                         {o.label}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </div>
                 <div className="field">
                   <label>Expiration</label>
-                  <input
+                  <Input
                     disabled={saving}
                     type="date"
                     value={l.expirationDate}
@@ -271,8 +274,8 @@ export default function Onboarding({
                 </div>
               </div>
             ))}
-            <button
-              className="secondary"
+            <Button variant="secondary"
+
               disabled={saving}
               onClick={() =>
                 setF("licenses", (ls) => [
@@ -284,14 +287,14 @@ export default function Onboarding({
               }
             >
               + Add another license
-            </button>
+            </Button>
           </>
         )}
 
         <div className="form-actions">
-          <button className="primary" disabled={saving} onClick={submit}>
+          <Button variant="primary"  disabled={saving} onClick={submit}>
             {saving ? "Saving…" : "Complete setup"}
-          </button>
+          </Button>
           {error && <span className="error-text">{error}</span>}
         </div>
       </div>

@@ -1,3 +1,4 @@
+import { Button } from "../components/ui/Button";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useBlocker } from "react-router-dom";
 import Modal from "../components/Modal";
@@ -81,8 +82,8 @@ export function EditProtectionProvider({ children }: { children: ReactNode }) {
     {(blocker.state === "blocked" || action) && <Modal title={saving ? "Saving is still in progress" : attention ? "Lead created — review missing details" : "Leave with unsaved changes?"} onClose={keepEditing} closeLabel={attention && !saving ? "Stay here" : "Keep editing"}>
       <p>{saving ? "Wait for this save to finish before leaving this page." : attention?.message ?? "Your changes have not been saved. Stay here to finish, or discard them and continue."}</p>
       {!saving && <div className="form-actions">
-        {attention && <button type="button" className="primary" onClick={() => { cancelPending(); attention.review(); }}>Review the lead</button>}
-        <button type="button" className="secondary" onClick={discard}>{attention?.continueLabel ?? (attention ? "Continue without fixing" : "Discard changes and continue")}</button>
+        {attention && <Button variant="primary" type="button"  onClick={() => { cancelPending(); attention.review(); }}>Review the lead</Button>}
+        <Button variant="secondary" type="button"  onClick={discard}>{attention?.continueLabel ?? (attention ? "Continue without fixing" : "Discard changes and continue")}</Button>
       </div>}
     </Modal>}
   </Context.Provider>;

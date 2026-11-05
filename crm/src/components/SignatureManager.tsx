@@ -1,3 +1,4 @@
+import { Button } from "./ui/Button";
 import { useEffect, useRef, useState } from "react";
 import { uploadData, getUrl, remove } from "../lib/scopedStorage";
 import { client, friendlyError, type UserProfile } from "../lib/client";
@@ -152,13 +153,13 @@ function SignatureEditor({
       }}
     >
       {preview}
-      <button
-        className="secondary"
+      <Button variant="secondary"
+
         disabled={busy}
         onClick={() => setDrawing(true)}
       >
         {key ? "Draw new" : "Draw"}
-      </button>
+      </Button>
       <FileButton
         label={key ? "Upload new" : "Upload"}
         accept="image/*"
@@ -166,12 +167,12 @@ function SignatureEditor({
         onFiles={(files) => uploadFile(files?.[0])}
       />
       {key && (
-        <button className="link" disabled={busy} onClick={clear}>
+        <Button variant="link"  disabled={busy} onClick={clear}>
           Remove
-        </button>
+        </Button>
       )}
       <SaveStatus {...saveStatus.status} />
-      {error && <span role="alert" className="error-text small">{error} <button className="link" disabled={busy} onClick={() => setRevision(value => value + 1)}>Retry signature</button></span>}
+      {error && <span role="alert" className="error-text small">{error} <Button variant="link"  disabled={busy} onClick={() => setRevision(value => value + 1)}>Retry signature</Button></span>}
     </div>
   );
 }

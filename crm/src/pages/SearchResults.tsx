@@ -1,3 +1,5 @@
+import { Table } from "../components/ui/Table";
+import { Button } from "../components/ui/Button";
 import { useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
@@ -41,7 +43,7 @@ function RecordResults({ group }: { group: SearchGroup }) {
         Showing {visible.length} of {group.hits.length}
       </p>
       <div className="table-wrap">
-        <table aria-label={label}>
+        <Table aria-label={label}>
           <tbody>
             {visible.map((h) => (
               <tr key={h.id} className="clickable" onClick={() => navigate(h.target)}>
@@ -50,15 +52,15 @@ function RecordResults({ group }: { group: SearchGroup }) {
               </tr>
             ))}
           </tbody>
-        </table>
+        </Table>
       </div>
       {remaining > 0 && (
-        <button
+        <Button
           style={{ marginTop: 12 }}
           onClick={() => setVisibleCount(count => count + RECORD_PAGE_SIZE)}
         >
           Show more {label.toLowerCase()}
-        </button>
+        </Button>
       )}
     </section>
   );
@@ -153,7 +155,7 @@ export default function SearchResults() {
 
       {runnable && (
         <>
-          {index.error && <p className="error-text" role="alert">{index.error} <button disabled={index.loading} onClick={() => void index.refetch()}>Retry records</button></p>}
+          {index.error && <p className="error-text" role="alert">{index.error} <Button disabled={index.loading} onClick={() => void index.refetch()}>Retry records</Button></p>}
           {index.loading && !index.loaded && (
             <p className="muted small">Searching records…</p>
           )}
@@ -170,12 +172,12 @@ export default function SearchResults() {
             {!docs.loaded ? (
               <p className="muted small">Searching document text…</p>
             ) : docs.error ? (
-              <p className="error-text" role="alert">{docs.error} <button disabled={docs.loading} onClick={() => void docs.refetch()}>Retry document search</button></p>
+              <p className="error-text" role="alert">{docs.error} <Button disabled={docs.loading} onClick={() => void docs.refetch()}>Retry document search</Button></p>
             ) : sorted.length === 0 ? (
               <p className="muted small">No documents match “{q}”.</p>
             ) : (
               <div className="table-wrap">
-                <table>
+                <Table>
                   <thead>
                     <tr>
                       <SortTh label="Document" colKey="document" sortKey={sortKey} dir={dir} onToggle={toggle} />
@@ -203,18 +205,18 @@ export default function SearchResults() {
                         <td className="small">{fmtDate(d.createdAt?.slice(0, 10))}</td>
                         <td style={{ whiteSpace: "nowrap" }}>
                           {canPreview(d.name) && (
-                            <button className="link" onClick={() => setPreviewDoc(d)}>
+                            <Button variant="link"  onClick={() => setPreviewDoc(d)}>
                               Preview
-                            </button>
+                            </Button>
                           )}
-                          <button className="link" onClick={() => download(d)}>
+                          <Button variant="link"  onClick={() => download(d)}>
                             Download
-                          </button>
+                          </Button>
                         </td>
                       </tr>
                     ))}
                   </tbody>
-                </table>
+                </Table>
               </div>
             )}
           </div>

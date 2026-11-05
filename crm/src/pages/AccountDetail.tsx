@@ -1,3 +1,5 @@
+import { Button } from "../components/ui/Button";
+import { Tabs, TabPanel } from "../components/ui/Tabs";
 import AccountRelationships from "../components/AccountRelationships";
 import SubmissionsPanel from "../components/SubmissionsPanel";
 import HoneycombEstimates from "../components/HoneycombEstimates";
@@ -254,18 +256,8 @@ function AccountDetailPage({ profile }: { profile: UserProfile }) {
         {account.convertedAt && ` · client since ${fmtDate(account.convertedAt.slice(0, 10))}`}
       </p>
 
-      <div className="tabs">
-        {tabs.map(([t, label]) => (
-          <button
-            key={t}
-            className={activeTab === t ? "active" : ""}
-            onClick={() => selectTab(t)}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-
+      <Tabs id="account-detail" label="Account views" items={tabs.map(([value, label]) => ({ value, label }))} value={activeTab} onChange={selectTab} />
+      <TabPanel tabsId="account-detail" value={activeTab}>
       {activeTab === "overview" && (
         <div className="account-overview">
           {isAdmin && account.stage === "LEAD" && <LeadAssignment key={account.id} account={account} />}
@@ -308,6 +300,7 @@ function AccountDetailPage({ profile }: { profile: UserProfile }) {
         <CertificatesTab account={account} profile={profile} sourceCommunicationId={searchParams.get("request") ?? undefined} />
       )}
       {activeTab === "activity" && <ActivityTab key={account.id} accountId={account.id} />}
+      </TabPanel>
     </>
   );
 }
@@ -337,6 +330,6 @@ function LeadAssignment({ account }: { account: Account }) {
           resource.setData(current => current && workflow.version > (current.workflow?.version ?? 0) ? { ...current, workflow } : current);
         }}
       />}
-    {resource.error && <p className="error-text small" role="alert">{resource.error} <button className="link" onClick={() => void resource.refetch()}>Retry salesperson</button></p>}
+    {resource.error && <p className="error-text small" role="alert">{resource.error} <Button variant="link"  onClick={() => void resource.refetch()}>Retry salesperson</Button></p>}
   </section>;
 }

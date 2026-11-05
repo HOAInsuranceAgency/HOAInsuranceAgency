@@ -1,3 +1,7 @@
+import { Textarea } from "./ui/Textarea";
+import { Input } from "./ui/Input";
+import { Select } from "./ui/Select";
+import { Button } from "./ui/Button";
 import { useState } from "react";
 import type { IntegrationConfig, TeamEligibility } from "../lib/communications";
 import { isAssignableSalesperson } from "../../../shared/salespersonOwnership";
@@ -19,7 +23,7 @@ export default function CommunicationSettingsEditor({ config, team, teamError, c
   const dirty = JSON.stringify(candidate) !== JSON.stringify(config) || Object.values(keys).some(value => value.trim());
   const edit = <K extends keyof IntegrationConfig>(key: K, value: IntegrationConfig[K]) => setDraft(previous => ({ ...previous, [key]: value }));
   function listInput(key: ListField, label: string, hint?: string) {
-    return <label className="field">{label}<textarea value={lists[key]} onChange={event => setLists(previous => ({ ...previous, [key]: event.target.value }))} rows={3} />{hint && <small className="muted">{hint}</small>}</label>;
+    return <label className="field">{label}<Textarea value={lists[key]} onChange={event => setLists(previous => ({ ...previous, [key]: event.target.value }))} rows={3} />{hint && <small className="muted">{hint}</small>}</label>;
   }
   return <section className="card communication-editor" aria-labelledby="communication-edit-title">
     <h2 id="communication-edit-title">Edit settings</h2>
@@ -27,8 +31,8 @@ export default function CommunicationSettingsEditor({ config, team, teamError, c
     <form aria-label="Communication settings" onSubmit={event => { event.preventDefault(); if (!busy && dirty) onSave(candidate, keys); }}>
       <fieldset disabled={busy} className="communication-controls">
         <div className="communication-fields">
-          <label className="field">Email sender<input type="email" value={draft.frontSender} onChange={event => edit("frontSender", event.target.value)} /><small className="muted">The mailbox Front sends from. Test recipients are listed separately.</small></label>
-          {([['defaultSalespersonId', 'Default salesperson']] as const).map(([key, label]) => <label className="field" key={key}>{label}<select value={draft[key] ?? draft.defaultUserId ?? ""} onChange={event => edit(key, event.target.value || undefined)}><option value="">Choose teammate</option>{(draft[key] ?? draft.defaultUserId) && !team.some(m => m.userId === (draft[key] ?? draft.defaultUserId) && isAssignableSalesperson(m)) && <option disabled value={draft[key] ?? draft.defaultUserId}>{team.find(m => m.userId === (draft[key] ?? draft.defaultUserId))?.name ?? "Saved teammate"} (unavailable)</option>}{team.filter(isAssignableSalesperson).map(m => <option key={m.userId} value={m.userId}>{m.name}</option>)}</select>{teamError && <span className="error-text small">{teamError}</span>}</label>)}
+          <label className="field">Email sender<Input type="email" value={draft.frontSender} onChange={event => edit("frontSender", event.target.value)} /><small className="muted">The mailbox Front sends from. Test recipients are listed separately.</small></label>
+          {([['defaultSalespersonId', 'Default salesperson']] as const).map(([key, label]) => <label className="field" key={key}>{label}<Select value={draft[key] ?? draft.defaultUserId ?? ""} onChange={event => edit(key, event.target.value || undefined)}><option value="">Choose teammate</option>{(draft[key] ?? draft.defaultUserId) && !team.some(m => m.userId === (draft[key] ?? draft.defaultUserId) && isAssignableSalesperson(m)) && <option disabled value={draft[key] ?? draft.defaultUserId}>{team.find(m => m.userId === (draft[key] ?? draft.defaultUserId))?.name ?? "Saved teammate"} (unavailable)</option>}{team.filter(isAssignableSalesperson).map(m => <option key={m.userId} value={m.userId}>{m.name}</option>)}</Select>{teamError && <span className="error-text small">{teamError}</span>}</label>)}
         </div>
         {config.environment !== "main" && listInput("testRecipients", "Test email recipients", "Only these addresses can receive staging emails. Enter one per line.")}
         <details className="communication-edit-section"><summary>Connection setup</summary>
@@ -37,7 +41,7 @@ export default function CommunicationSettingsEditor({ config, team, teamError, c
             {([
               ["frontCompanyId", "Front company ID"], ["frontInboxId", "Sales inbox ID"], ["frontChannelId", "Sales email channel ID"],
               ["frontSmsChannelId", "Shared texting channel ID"], ["dialpadCompanyId", "Dialpad company ID"], ["dialpadOfficeId", "Dialpad office ID"],
-            ] as const).map(([key, label]) => <label className="field" key={key}>{label}<input value={draft[key] ?? ""} onChange={event => edit(key, event.target.value)} /></label>)}
+            ] as const).map(([key, label]) => <label className="field" key={key}>{label}<Input value={draft[key] ?? ""} onChange={event => edit(key, event.target.value)} /></label>)}
             {listInput("allowedInboxIds", "Additional Front inbox IDs")}
             {listInput("dialpadNumbers", "Monitored business numbers", "Include the shared main line and individual business numbers.")}
           </div>
@@ -47,11 +51,11 @@ export default function CommunicationSettingsEditor({ config, team, teamError, c
           <div className="communication-fields">{([
             ["frontToken", "Front API token"], ["frontSigningKey", "Front application signing key"],
             ["dialpadToken", "Dialpad API token"], ["dialpadSigningKey", "Dialpad webhook signing secret"],
-          ] as const).map(([key, label]) => <label key={key} className="field">{label}<input autoComplete="new-password" type="password" value={keys[key] ?? ""} onChange={event => setKeys(previous => ({ ...previous, [key]: event.target.value }))} placeholder={credentialStatus[key] ? "Saved" : "Not configured"} /></label>)}</div>
+          ] as const).map(([key, label]) => <label key={key} className="field">{label}<Input autoComplete="new-password" type="password" value={keys[key] ?? ""} onChange={event => setKeys(previous => ({ ...previous, [key]: event.target.value }))} placeholder={credentialStatus[key] ? "Saved" : "Not configured"} /></label>)}</div>
         </details>
         <div className="communication-actions">
-          <button type="submit" disabled={!dirty}>{busy ? "Saving…" : "Save changes"}</button>
-          <button type="button" className="secondary" onClick={onCancel}>Cancel</button>
+          <Button type="submit" disabled={!dirty}>{busy ? "Saving…" : "Save changes"}</Button>
+          <Button variant="secondary" type="button"  onClick={onCancel}>Cancel</Button>
           <span className="muted small">{dirty ? "Unsaved changes" : "No changes yet"}</span>
         </div>
       </fieldset>

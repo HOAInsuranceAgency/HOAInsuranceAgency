@@ -1,3 +1,7 @@
+import { Button } from "../components/ui/Button";
+import { Input } from "../components/ui/Input";
+import { Select } from "../components/ui/Select";
+import { Table } from "../components/ui/Table";
 import LegacyManagerReview from '../components/LegacyManagerReview';
 import { useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
@@ -38,14 +42,14 @@ export default function Relationships() {
             People and organizations you work with, whether or not they have insurance with us.
           </p>
         </div>
-        <button className="primary" onClick={() => setAdding(true)}>
+        <Button variant="primary"  onClick={() => setAdding(true)}>
           + New relationship
-        </button>
+        </Button>
       </div>
       <div className="toolbar relationship-toolbar">
         <label className="field">
           Find a relationship
-          <input
+          <Input
             type="search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -54,19 +58,19 @@ export default function Relationships() {
         </label>
         <label className="field">
           Type
-          <select value={kind} onChange={(e) => setKind(e.target.value)}>
+          <Select value={kind} onChange={(e) => setKind(e.target.value)}>
             <option value="">All</option>
             <option value="ORGANIZATION">Organizations</option>
             <option value="PERSON">People</option>
-          </select>
+          </Select>
         </label>
         <label>
-          <input type="checkbox" checked={archived} onChange={(e) => setArchived(e.target.checked)} /> Include
+          <Input type="checkbox" checked={archived} onChange={(e) => setArchived(e.target.checked)} /> Include
           archived
         </label>
-        <button className="secondary" disabled={resource.loading} onClick={() => void resource.reload()}>
+        <Button variant="secondary"  disabled={resource.loading} onClick={() => void resource.reload()}>
           Refresh
-        </button>
+        </Button>
       </div>
       <div className="card">
         {resource.error ? (
@@ -83,7 +87,7 @@ export default function Relationships() {
           </p>
         ) : (
           <div className="table-wrap">
-            <table>
+            <Table>
               <thead>
                 <tr>
                   <th>Name</th>
@@ -108,19 +112,19 @@ export default function Relationships() {
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </Table>
           </div>
         )}
       </div>
       {resource.nextToken && (
-        <button className="secondary" disabled={resource.loading} onClick={() => void resource.more()}>
+        <Button variant="secondary"  disabled={resource.loading} onClick={() => void resource.more()}>
           Load more relationships
-        </button>
+        </Button>
       )}
       <p>
-        <button className="link" onClick={() => setReviewing((v) => !v)}>
+        <Button variant="link"  onClick={() => setReviewing((v) => !v)}>
           {reviewing ? 'Hide manager review' : 'Review existing manager contacts'}
-        </button>
+        </Button>
       </p>
       {reviewing && <LegacyManagerReview />}
       {adding && (

@@ -51,7 +51,7 @@ function page(stage: 'LEAD' | 'CLIENT' = 'LEAD', admin = false) {
   </MemoryRouter></AdminContext.Provider>;
 }
 function row(name: string) { return within(screen.getByText(name).closest('tr')!); }
-function chooseView(name: string) { fireEvent.click(within(screen.getByRole('tablist', { name: 'Lead views' })).getByRole('tab', { name })); }
+function chooseView(name: string) { fireEvent.click(within(screen.getByRole('group', { name: 'Lead views' })).getByRole('button', { name })); }
 function fillFollowUp(name: string, date: string, note = '') {
   const scope = row(name);
   fireEvent.change(scope.getByLabelText('Follow-up date'), { target: { value: date } });
@@ -71,7 +71,7 @@ it('lets an owned producer snooze, find, export, and bring back a lead without n
   render(page());
   fireEvent.click(await screen.findByRole('button', { name: `Snooze ${willow}` }));
   expect(screen.queryByRole('combobox', { name: 'Salesperson' })).not.toBeInTheDocument();
-  expect(screen.getByRole('tab', { name: 'Active' })).toHaveAttribute('aria-selected', 'true');
+  expect(screen.getByRole('button', { name: 'Active' })).toHaveAttribute('aria-pressed', 'true');
   fillFollowUp(willow, '2026-10-09', '  Check with the board  ');
   await waitFor(() => expect(screen.queryByText(willow)).not.toBeInTheDocument());
   expect(h.request).toHaveBeenCalledWith('saveLeadSnooze', {
@@ -246,7 +246,7 @@ it('cancels a draft without saving and leaves Clients free of follow-up controls
   view.unmount();
   render(page('CLIENT'));
   await screen.findByText(cedar);
-  expect(screen.queryByRole('tablist', { name: 'Lead views' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('group', { name: 'Lead views' })).not.toBeInTheDocument();
   expect(screen.queryByRole('columnheader', { name: 'Follow-up' })).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: /Snooze|Edit follow-up|Bring back now|Mark followed up/ })).not.toBeInTheDocument();
   const clientRead = h.request.mock.calls.filter(([op]) => op === 'commercialTable').at(-1)![1];
@@ -402,7 +402,7 @@ it('defers return refresh while an admin changes a snoozed lead owner and retain
   await allowReturnRefresh();
   expect(h.listAccounts).toHaveBeenCalledTimes(2);
   expect(h.request.mock.calls.filter(([operation]) => operation === 'commercialTable')).toHaveLength(2);
-  expect(screen.getByRole('tab', { name: 'Snoozed' })).toHaveAttribute('aria-selected', 'true');
+  expect(screen.getByRole('button', { name: 'Snoozed' })).toHaveAttribute('aria-pressed', 'true');
   const refreshedPicker = screen.getByRole('combobox', { name: `Salesperson for ${willow}` });
   expect(refreshedPicker).toBeEnabled();
   expect(refreshedPicker).toHaveValue('bob');

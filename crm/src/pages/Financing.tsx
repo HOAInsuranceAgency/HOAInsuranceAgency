@@ -1,3 +1,6 @@
+import { Button } from "../components/ui/Button";
+import { Input } from "../components/ui/Input";
+import { SegmentedControl } from "../components/ui/SegmentedControl";
 import { useState } from "react";
 import { useIsAdmin } from "../lib/auth";
 import { client } from "../lib/client";
@@ -82,28 +85,23 @@ export default function Financing() {
       <div className="card financing-lookup">
         <div className="financing-lookup-heading">
           <div><h2>Can we finance here?</h2><p>Check the property's state.</p></div>
-          <button type="button" className="secondary" disabled={opinions.loading} onClick={() => void opinions.refetch()}>
+          <Button variant="secondary" type="button"  disabled={opinions.loading} onClick={() => void opinions.refetch()}>
             {opinions.loading ? "Checking…" : "Refresh availability"}
-          </button>
+          </Button>
         </div>
         <div className="financing-search">
           <label htmlFor="financing-state-search">Find a state</label>
           <div className="financing-search-input">
             <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 4.5 4.5" /></svg>
-            <input id="financing-state-search" type="search" autoComplete="off" value={search} onChange={e => setSearch(e.target.value)} placeholder="State name or abbreviation" />
+            <Input id="financing-state-search" type="search" autoComplete="off" value={search} onChange={e => setSearch(e.target.value)} placeholder="State name or abbreviation" />
           </div>
         </div>
         <div className="financing-filter-bar">
-          <div className="financing-filters" role="group" aria-label="Filter by availability">
-            {filters.map(item => (
-              <button key={item.key} type="button" aria-label={item.label} aria-pressed={filter === item.key} onClick={() => setFilter(item.key)}>
-                {item.label} <span>{item.count}</span>
-              </button>
-            ))}
-          </div>
+          <SegmentedControl label="Filter by availability" value={filter} onChange={setFilter}
+            items={filters.map(item => ({ value: item.key, label: item.label, ariaLabel: item.label, count: item.count }))} />
           <span className="financing-result-count" role="status">{visible.length} {visible.length === 1 ? "result" : "results"}</span>
         </div>
-        {checkFailed && <div className="financing-check-error" role="alert">Some states couldn't be checked. <button type="button" className="link" onClick={() => void opinions.refetch()}>Try again</button></div>}
+        {checkFailed && <div className="financing-check-error" role="alert">Some states couldn't be checked. <Button variant="link" type="button"  onClick={() => void opinions.refetch()}>Try again</Button></div>}
         {visible.length ? (
           <ul className="financing-state-grid" aria-label="State availability">
             {visible.map(j => (
@@ -122,7 +120,7 @@ export default function Financing() {
           <div className="financing-empty">
             <strong>{search.trim() ? `No states found for “${search.trim()}”` : "No states in this view"}</strong>
             <p>Try a state name or two-letter abbreviation.</p>
-            <button type="button" className="secondary" onClick={reset}>Reset filters</button>
+            <Button variant="secondary" type="button"  onClick={reset}>Reset filters</Button>
           </div>
         )}
       </div>

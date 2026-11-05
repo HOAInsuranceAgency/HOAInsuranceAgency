@@ -1,3 +1,6 @@
+import { SegmentedControl } from "../ui/SegmentedControl";
+import { Button } from "../ui/Button";
+import { Table } from "../ui/Table";
 import { useMemo, useState } from "react";
 import {
   licenseHealth,
@@ -81,20 +84,17 @@ export default function StateCoverage({
           </p>
         </div>
         <div className="grow" />
-        <button
-          className={`lic-chip${gapsOnly ? " on" : ""}`}
-          onClick={() => setGapsOnly((v) => !v)}
-        >
-          {gapsOnly ? "Showing gaps only" : "Show gaps only"}
-        </button>
-        <button className="link" onClick={() => setOpen((v) => !v)}>
+        <SegmentedControl label="State coverage filter" value={gapsOnly ? 'gaps' : undefined}
+          items={[{ value: 'gaps', label: gapsOnly ? 'Showing gaps only' : 'Show gaps only' }]}
+          onChange={() => setGapsOnly(v => !v)} />
+        <Button variant="link"  onClick={() => setOpen((v) => !v)}>
           {open ? "Hide" : "Show"}
-        </button>
+        </Button>
       </div>
 
       {open && (
       <div className="table-wrap">
-        <table>
+        <Table>
           <thead>
             <tr>
               <SortTh label="State" colKey="state" sortKey={sortKey} dir={dir} onToggle={toggle} />
@@ -135,7 +135,7 @@ export default function StateCoverage({
               );
             })}
           </tbody>
-        </table>
+        </Table>
         {shown.length === 0 && (
           <p className="muted small">
             No gaps — every state with a license on file is writable.

@@ -1,3 +1,6 @@
+import { Select } from "../ui/Select";
+import { Button } from "../ui/Button";
+import { Table } from "../ui/Table";
 import { useEffect, useRef } from "react";
 import {
   assertNoErrors,
@@ -135,7 +138,7 @@ export default function DirectorsOfficersCard({
             </div>
             <div className="field">
               <label>Defence costs</label>
-              <select
+              <Select
                 value={app.form.form.defenseLimitPosition}
                 onChange={(e) => app.form.setF("defenseLimitPosition", e.target.value)}
               >
@@ -145,7 +148,7 @@ export default function DirectorsOfficersCard({
                     {o.label}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
             <div className="field">
               <label>Pending / prior litigation date</label>
@@ -157,9 +160,9 @@ export default function DirectorsOfficersCard({
           </div>
 
           <div className="form-actions">
-            <button className="primary" disabled={app.status.busy} onClick={app.save}>
+            <Button variant="primary"  disabled={app.status.busy} onClick={app.save}>
               {app.status.busy ? "Saving…" : "Save D&O terms"}
-            </button>
+            </Button>
             <SaveStatus {...app.status.status} />
           </div>
 
@@ -283,13 +286,13 @@ function CoverageParts({ accountId }: { accountId: string }) {
   }
 
   if (!res.loaded) return <p className="muted small">Loading…</p>;
-  if (res.error) return <p className="error-text">{res.error} <button className="secondary" disabled={res.loading} onClick={() => void res.refetch()}>Retry coverage parts</button></p>;
+  if (res.error) return <p className="error-text">{res.error} <Button variant="secondary"  disabled={res.loading} onClick={() => void res.refetch()}>Retry coverage parts</Button></p>;
 
   return (
     <>
       <h3>Coverage parts</h3>
       <div className="table-wrap">
-        <table>
+        <Table>
           <thead>
             <tr>
               <th>Part</th>
@@ -311,7 +314,7 @@ function CoverageParts({ accountId }: { accountId: string }) {
                     <strong>{DO_PART_LABELS[part]}</strong>
                   </td>
                   <td>
-                    <select
+                    <Select
                       value={values.coverageType}
                       onChange={(e) => set("coverageType", e.target.value)}
                     >
@@ -321,7 +324,7 @@ function CoverageParts({ accountId }: { accountId: string }) {
                           {o.label}
                         </option>
                       ))}
-                    </select>
+                    </Select>
                   </td>
                   {(
                     [
@@ -339,12 +342,12 @@ function CoverageParts({ accountId }: { accountId: string }) {
               );
             })}
           </tbody>
-        </table>
+        </Table>
       </div>
       <div className="form-actions">
-        <button className="primary" disabled={status.busy} onClick={save}>
+        <Button variant="primary"  disabled={status.busy} onClick={save}>
           {status.busy ? "Saving…" : "Save coverage parts"}
-        </button>
+        </Button>
         <SaveStatus {...status.status} />
       </div>
     </>

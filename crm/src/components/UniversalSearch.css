@@ -1,0 +1,101 @@
+/* Sticky against the document scroll; negative margins span .main's padding.
+   Above chart tooltips (50), below every modal (100). */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 60;
+  background: var(--bg);
+  margin: -24px -32px 18px;
+  padding: 10px 32px;
+  border-bottom: 1px solid var(--border);
+}
+
+.usearch { position: relative; max-width: 640px; }
+.usearch input {
+  width: 100%;
+  --control-padding-inline-start: 34px;
+  --control-padding-inline-end: 34px;
+}
+.usearch-glass {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--muted);
+  display: flex;
+  pointer-events: none;
+}
+.usearch .kbd,
+.usearch kbd {
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  padding: 0 5px;
+  color: var(--muted);
+  font-size: 10.5px;
+  background: var(--bg);
+  font-family: inherit;
+}
+.usearch .kbd {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+.usearch-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 60;
+}
+.usearch-section + .usearch-section { border-top: 1px solid var(--border); margin-top: 4px; }
+.usearch-group {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  padding: 9px 12px 3px;
+}
+.usearch-group .note { text-transform: none; letter-spacing: 0; font-style: italic; }
+.usearch-hit {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.usearch-hit .ico { color: var(--muted); flex: none; display: flex; margin-top: 3px; }
+.usearch-hit .hit-body { min-width: 0; }
+.usearch-hit .hit-label { display: block; font-weight: 600; line-height: 1.3; }
+.usearch-hit .sub {
+  display: block;
+  color: var(--muted);
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* A match is underlined; the shared option owns selection highlighting. */
+.usearch-pop mark {
+  background: transparent;
+  color: var(--accent-dark);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.usearch-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.usearch-foot .foot-label { color: var(--accent-dark); font-weight: 600; font-size: 13.5px; }
+.usearch-foot .keys { color: var(--muted); font-size: 11.5px; white-space: nowrap; }
+.usearch-note { padding: 8px 12px; color: var(--muted); font-size: 12.5px; }
+
+@media (max-width: 800px) {
+  .topbar { margin: -16px -16px 14px; padding: 8px 16px; }
+}

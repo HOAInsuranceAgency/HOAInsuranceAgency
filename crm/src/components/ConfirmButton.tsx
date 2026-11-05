@@ -1,3 +1,4 @@
+import { Button, type ButtonVariant } from "./ui/Button";
 import { useEffect, useId, useRef, useState } from "react";
 import { friendlyError } from '../lib/client';
 
@@ -33,6 +34,9 @@ export interface ConfirmButtonProps {
   message?: string;
   /** Disables the idle trigger. */
   disabled?: boolean;
+  variant?: ButtonVariant;
+  confirmVariant?: ButtonVariant;
+  cancelVariant?: ButtonVariant;
   className?: string;
   confirmClassName?: string;
   cancelClassName?: string;
@@ -51,9 +55,12 @@ export default function ConfirmButton({
   busyLabel = "Deleting…",
   message,
   disabled = false,
-  className = "danger",
-  confirmClassName = "danger",
-  cancelClassName = "link",
+  variant = "danger",
+  confirmVariant = "danger",
+  cancelVariant = "link",
+  className,
+  confirmClassName,
+  cancelClassName,
   onError,
 }: ConfirmButtonProps) {
   const [armed, setArmed] = useState(false);
@@ -113,34 +120,37 @@ export default function ConfirmButton({
               {message}
             </span>
           ) : null}{" "}
-          <button
+          <Button
             type="button"
+            variant={confirmVariant}
             className={confirmClassName}
             disabled={busy || disabled}
             aria-describedby={message ? messageId : undefined}
             onClick={confirm}
           >
             {busy ? busyLabel : confirmLabel}
-          </button>{" "}
-          <button
+          </Button>{" "}
+          <Button
             type="button"
             ref={cancelRef}
+            variant={cancelVariant}
             className={cancelClassName}
             disabled={busy}
             onClick={() => { setArmed(false); setError(''); }}
           >
             {cancelLabel}
-          </button>
+          </Button>
         </>
       ) : (
-        <button
+        <Button
           type="button"
+          variant={variant}
           className={className}
           disabled={disabled}
           onClick={() => setArmed(true)}
         >
           {label}
-        </button>
+        </Button>
       )}
       {error && !onError && <span className="error-text" role="alert">{error}</span>}
     </span>

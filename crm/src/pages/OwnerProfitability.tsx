@@ -1,3 +1,7 @@
+import { Button } from "../components/ui/Button";
+import { Table } from "../components/ui/Table";
+import { Select } from "../components/ui/Select";
+import { Input } from "../components/ui/Input";
 import { useEffect, useRef, useState } from "react";
 import { ReportDownload } from "../components/ReportDownload";
 import { DateRangeFilter } from "../components/DateRangeFilter";
@@ -85,7 +89,7 @@ function ProfitabilitySnapshot({ from, to, onEditingChange }: { from: string; to
   const payPanel = useRef<HTMLElement>(null);
   useEffect(() => { if (payOpen) payPanel.current?.focus(); }, [payOpen, employeeId]);
   const snapshot = resource.data;
-  if (!snapshot) return <div className="card" aria-live="polite">{resource.error ? <><p role="alert" className="error-text">{resource.error}</p><button className="secondary" onClick={() => void resource.refetch()} disabled={resource.loading}>Try again</button></> : <p className="muted">Loading employee profitability…</p>}</div>;
+  if (!snapshot) return <div className="card" aria-live="polite">{resource.error ? <><p role="alert" className="error-text">{resource.error}</p><Button variant="secondary"  onClick={() => void resource.refetch()} disabled={resource.loading}>Try again</Button></> : <p className="muted">Loading employee profitability…</p>}</div>;
   const { report, employees, compensations } = snapshot;
   const selected = employees.find(employee => employee.userId === employeeId) ?? employees[0];
   const setup = (userId: string) => { setEmployeeId(userId); setPaySaved(false); setPayOpen(true); };
@@ -93,7 +97,7 @@ function ProfitabilitySnapshot({ from, to, onEditingChange }: { from: string; to
   return <>
     <div className="owner-profitability-toolbar">
       <p className="muted small">{report.from} through {report.to} · USD · Estimated</p>
-      <div className="owner-profitability-actions"><button className="secondary" disabled={resource.loading || payOpen} onClick={() => void resource.refetch()}>{resource.loading ? "Refreshing…" : "Refresh"}</button><button className="secondary" disabled={payBusy || resource.loading} aria-expanded={payOpen} onClick={() => setPayOpen(!payOpen)}>Manage pay settings</button><ReportDownload disabled={resource.loading || snapshot.reportStale} report={exportReport(report)} /></div>
+      <div className="owner-profitability-actions"><Button variant="secondary"  disabled={resource.loading || payOpen} onClick={() => void resource.refetch()}>{resource.loading ? "Refreshing…" : "Refresh"}</Button><Button variant="secondary"  disabled={payBusy || resource.loading} aria-expanded={payOpen} onClick={() => setPayOpen(!payOpen)}>Manage pay settings</Button><ReportDownload disabled={resource.loading || snapshot.reportStale} report={exportReport(report)} /></div>
     </div>
     {snapshot.reportStale && <p className="owner-profitability-notice" role="status">Pay settings are saved, but the report is still catching up. {payOpen ? 'Close pay settings and refresh the report to update its totals.' : 'Refresh the report to update its totals.'}</p>}
     <div className="stat-row owner-profitability-summary">
@@ -108,10 +112,10 @@ function ProfitabilitySnapshot({ from, to, onEditingChange }: { from: string; to
     <div className="card"><div className="card-head"><h2>Revenue and salary by employee</h2></div><p className="muted small">Revenue includes carrier commission and net broker fees after the estimated producer’s share. Compare it with salary for the selected period.</p><ComparisonChart rows={report.rows} /></div>
     <div className="card">
       <div className="card-head"><h2>Employee breakdown</h2><span className="muted small">{totals.policyCount} policies</span></div>
-      {report.rows.length ? <div className="owner-profitability-table"><table><thead><tr><th>Employee</th><th>Agency commission</th><th>Broker fees</th><th>Fee refunds</th><th>Total agency revenue</th><th>Producer share</th><th>Net revenue</th><th>Salary</th><th>Est. contribution</th><th>Policies</th><th>Data status</th></tr></thead><tbody>{report.rows.map(row => <tr key={row.userId ?? "unassigned"}>
+      {report.rows.length ? <div className="owner-profitability-table"><Table><thead><tr><th>Employee</th><th>Agency commission</th><th>Broker fees</th><th>Fee refunds</th><th>Total agency revenue</th><th>Producer share</th><th>Net revenue</th><th>Salary</th><th>Est. contribution</th><th>Policies</th><th>Data status</th></tr></thead><tbody>{report.rows.map(row => <tr key={row.userId ?? "unassigned"}>
         <th scope="row">{row.name}</th><td>{money(row.grossCommissionCents)}</td><td>{money(row.brokerFeeCents)}</td><td>{money(row.brokerFeeRefundedCents)}</td><td>{money(row.totalAgencyRevenueCents)}</td><td>{money(row.producerShareCents)}</td><td>{money(row.netRevenueCents)}</td><td>{money(row.salaryCents)}</td><td className={row.contributionCents != null && row.contributionCents < 0 ? "owner-profitability-negative" : "owner-profitability-contribution"}>{money(row.contributionCents)}</td><td>{row.policyCount}</td>
-        <td className="owner-profitability-data-status">{row.complete ? <span>Complete</span> : <><strong>{row.userId && !compensations[row.userId]?.terms.length ? "Needs pay setup" : "Incomplete"}</strong>{row.warnings.length > 0 && <ul>{row.warnings.map((warning, i) => <li key={i}>{warning}</li>)}</ul>}{row.userId && employees.some(employee => employee.userId === row.userId) && <button className="secondary" disabled={payBusy || resource.loading} onClick={() => setup(row.userId!)} aria-label={`Edit pay settings for ${row.name}`}>Edit pay settings</button>}</>}</td>
-      </tr>)}</tbody></table></div> : <p className="muted">No employees or policies found for this report.</p>}
+        <td className="owner-profitability-data-status">{row.complete ? <span>Complete</span> : <><strong>{row.userId && !compensations[row.userId]?.terms.length ? "Needs pay setup" : "Incomplete"}</strong>{row.warnings.length > 0 && <ul>{row.warnings.map((warning, i) => <li key={i}>{warning}</li>)}</ul>}{row.userId && employees.some(employee => employee.userId === row.userId) && <Button variant="secondary"  disabled={payBusy || resource.loading} onClick={() => setup(row.userId!)} aria-label={`Edit pay settings for ${row.name}`}>Edit pay settings</Button>}</>}</td>
+      </tr>)}</tbody></Table></div> : <p className="muted">No employees or policies found for this report.</p>}
     </div>
     {payOpen && <section className="card owner-profitability-pay-panel" ref={payPanel} tabIndex={-1} aria-label="Private pay settings"><h2>Private pay settings</h2><p className="muted small">Only owners can see or change these amounts. Add a dated period for each pay change. Use 0 for unpaid salary or no commission share.</p>
       {selected ? <CompensationEditor key={selected.userId} employee={selected} employees={employees} compensation={compensations[selected.userId]} defaultFrom={from} onBusyChange={setPayBusy} onSelect={id => { setEmployeeId(id); setPaySaved(false); }} onChange={() => setPaySaved(false)} onSaved={async saved => {
@@ -192,16 +196,16 @@ function CompensationEditor({ employee, employees, compensation, defaultFrom, on
   }
   return <form aria-label={`Pay settings for ${employee.name}`} onSubmit={event => { event.preventDefault(); void save(); }}>
     <fieldset className="owner-profitability-pay-fields" disabled={busy}>
-      <label className="field owner-profitability-employee-select">Employee<select value={employee.userId} onChange={event => onSelect(event.target.value)}>{employees.map(item => <option key={item.userId} value={item.userId}>{item.name}</option>)}</select></label>
+      <label className="field owner-profitability-employee-select">Employee<Select value={employee.userId} onChange={event => onSelect(event.target.value)}>{employees.map(item => <option key={item.userId} value={item.userId}>{item.name}</option>)}</Select></label>
       {terms.map((term, index) => <fieldset className="owner-profitability-pay-period" key={index}><legend>Pay period {index + 1}</legend><div className="owner-profitability-pay-grid">
-        <label className="field">Start date<input aria-label={`Start date ${index + 1}`} type="date" required value={term.from} onChange={event => update(index, { from: event.target.value })} /></label>
-        <label className="field">Last day (optional)<input aria-label={`Last day ${index + 1}`} type="date" value={term.to} onChange={event => update(index, { to: event.target.value })} /></label>
-        <label className="field">Annual salary ($)<input aria-label={`Annual salary ${index + 1}`} inputMode="decimal" required value={term.salary} onChange={event => update(index, { salary: event.target.value })} /></label>
-        <label className="field">Commission share (%)<input aria-label={`Commission share ${index + 1}`} inputMode="decimal" required value={term.share} onChange={event => update(index, { share: event.target.value })} /></label>
-        <button type="button" className="secondary" aria-label={`Remove pay period ${index + 1}`} onClick={() => { setTerms(previous => previous.filter((_, i) => i !== index)); onChange(); }}>Remove</button>
+        <label className="field">Start date<Input aria-label={`Start date ${index + 1}`} type="date" required value={term.from} onChange={event => update(index, { from: event.target.value })} /></label>
+        <label className="field">Last day (optional)<Input aria-label={`Last day ${index + 1}`} type="date" value={term.to} onChange={event => update(index, { to: event.target.value })} /></label>
+        <label className="field">Annual salary ($)<Input aria-label={`Annual salary ${index + 1}`} inputMode="decimal" required value={term.salary} onChange={event => update(index, { salary: event.target.value })} /></label>
+        <label className="field">Commission share (%)<Input aria-label={`Commission share ${index + 1}`} inputMode="decimal" required value={term.share} onChange={event => update(index, { share: event.target.value })} /></label>
+        <Button variant="secondary" type="button"  aria-label={`Remove pay period ${index + 1}`} onClick={() => { setTerms(previous => previous.filter((_, i) => i !== index)); onChange(); }}>Remove</Button>
       </div></fieldset>)}
       {!terms.length && <p className="muted small">No pay periods. Saving will remove this employee’s compensation setup.</p>}
-      <div className="form-actions"><button type="button" className="secondary" onClick={() => { setTerms(previous => [...previous, { from: "", to: "", salary: "", share: "" }]); onChange(); }}>Add pay period</button><button type="submit" className="primary">{busy ? "Saving…" : "Save pay settings"}</button>{dirty && <button type="button" className="secondary" onClick={() => { setBaseline(compensation); setTerms(initialTerms(compensation)); setError(""); onChange(); }}>Discard pay changes</button>}</div>
+      <div className="form-actions"><Button variant="secondary" type="button"  onClick={() => { setTerms(previous => [...previous, { from: "", to: "", salary: "", share: "" }]); onChange(); }}>Add pay period</Button><Button variant="primary" type="submit" >{busy ? "Saving…" : "Save pay settings"}</Button>{dirty && <Button variant="secondary" type="button"  onClick={() => { setBaseline(compensation); setTerms(initialTerms(compensation)); setError(""); onChange(); }}>Discard pay changes</Button>}</div>
     </fieldset>
     <p className="muted small">The last day is included. Leave it blank for ongoing employment. Close the prior period before adding a new pay rate.</p>
     {error && <p role="alert" className="error-text">{error}</p>}

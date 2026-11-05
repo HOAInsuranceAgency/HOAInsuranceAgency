@@ -1,3 +1,5 @@
+import { MetricButton } from "../../components/ui/MetricButton";
+import { Button } from "../../components/ui/Button";
 import { ReportContext } from "../../components/ReportDownload";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
@@ -35,23 +37,10 @@ export function Tile({
     );
   }
   return (
-    <div
-      className={hot ? "stat clickable hot" : "stat clickable"}
-      role="button"
-      tabIndex={0}
-      onClick={onClick}
-      // Space as well as Enter: role="button" promises both, and a div gets
-      // neither natively. preventDefault so Space doesn't also scroll.
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          onClick();
-        }
-      }}
-    >
+    <MetricButton hot={hot} onClick={onClick}>
       <div className="n">{n}</div>
       <div className="l">{label}</div>
-    </div>
+    </MetricButton>
   );
 }
 
@@ -104,9 +93,9 @@ export function TabFrame({
       return (
         <>
           <p className="error-text" role="alert">{res.error}</p>
-          <button className="secondary" onClick={() => void res.refetch()}>
+          <Button variant="secondary"  onClick={() => void res.refetch()}>
             Try again
-          </button>
+          </Button>
         </>
       );
     }
@@ -154,13 +143,13 @@ function RefreshStamp({ res }: { res: TabResource }) {
             ? `Updated ${stamp.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
             : ""}
       </span>
-      <button
-        className="link"
+      <Button variant="link"
+
         onClick={() => void res.refetch()}
         disabled={res.loading}
       >
         Refresh
-      </button>
+      </Button>
     </div>
   );
 }

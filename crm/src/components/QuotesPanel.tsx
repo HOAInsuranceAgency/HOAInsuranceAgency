@@ -1,3 +1,7 @@
+import { Button } from "./ui/Button";
+import { Table } from "./ui/Table";
+import { Select } from "./ui/Select";
+import { Input } from "./ui/Input";
 import { useEffect, useRef, useState } from "react";
 import QuotePackages from "./QuotePackages";
 import "./QuotesPanel.css";
@@ -179,15 +183,15 @@ function QuotesPanelContent({
             <h2>Quotes</h2>
             <p>Manage carrier quotes and confirmed bindings.</p>
           </div>
-          <button
-            className={showForm ? "secondary" : "primary"}
+          <Button
+            variant={showForm ? "secondary" : "primary"}
             onClick={() => {
               setEditing(null);
               setShowForm(!showForm);
             }}
           >
             {showForm ? "Cancel" : "+ New quote"}
-          </button>
+          </Button>
         </div>
 
         <div className="quotes-save-status">
@@ -221,7 +225,7 @@ function QuotesPanelContent({
           having no carrier set. */}
         {carrierRes.error && (
           <p className="error-text quotes-feedback" role="alert">
-            {carrierRes.error} <button className="secondary" disabled={carrierRes.loading} onClick={() => void carrierRes.refetch()}>Retry carriers</button>
+            {carrierRes.error} <Button variant="secondary"  disabled={carrierRes.loading} onClick={() => void carrierRes.refetch()}>Retry carriers</Button>
           </p>
         )}
 
@@ -232,9 +236,9 @@ function QuotesPanelContent({
         ) : quoteRes.error ? (
           <div className="quotes-state quotes-state--error" role="alert">
             <p>{quoteRes.error}</p>
-            <button className="secondary" onClick={() => void refresh()}>
+            <Button variant="secondary"  onClick={() => void refresh()}>
               Retry quotes
-            </button>
+            </Button>
           </div>
         ) : quotes.length === 0 ? (
           !showForm && !editing && (
@@ -245,7 +249,7 @@ function QuotesPanelContent({
           )
         ) : (
           <div className="table-wrap quotes-table" aria-busy={quoteRes.loading}>
-            <table aria-label="Carrier quotes">
+            <Table aria-label="Carrier quotes">
               <thead>
                 <tr>
                   <SortTh
@@ -318,18 +322,18 @@ function QuotesPanelContent({
                     </td>
                     <td>
                       <div className="quotes-row-actions">
-                        <button
-                          className="link quote-action"
+                        <Button variant="link"
+                          className="quote-action"
                           onClick={() => {
                             setShowForm(false);
                             setEditing(qt);
                           }}
                         >
                           Edit
-                        </button>
+                        </Button>
                         {isOpenQuoteStatus(qt.status) && (
                           <>
-                            <select
+                            <Select
                               className="quote-status-select"
                               aria-label="Quote status"
                               disabled={statusSave.busy || !!binding}
@@ -343,27 +347,27 @@ function QuotesPanelContent({
                                 .map((s) => (
                                   <option key={s}>{s}</option>
                                 ))}
-                            </select>{" "}
-                            <button
-                              className="link quote-action"
+                            </Select>{" "}
+                            <Button variant="link"
+                              className="quote-action"
                               disabled={statusSave.busy || !!binding}
                               onClick={() => setBinding(qt)}
                             >
                               Bind
-                            </button>
+                            </Button>
                             {["QUOTED", "PRESENTED"].includes(qt.status) &&
                               (!qt.bindAuthorizedAt ||
                                 qt.bindAuthorizedTerms !==
                                   authorizedQuoteTerms(qt)) && (
-                                <button
-                                  className="link quote-action"
+                                <Button variant="link"
+                                  className="quote-action"
                                   onClick={() => {
                                     setAuthorization(qt);
                                     setClientAuthorized(false);
                                   }}
                                 >
                                   Request binding
-                                </button>
+                                </Button>
                               )}
                             {qt.bindAuthorizedAt && (
                               <span className="small muted quote-confirmation">
@@ -377,7 +381,7 @@ function QuotesPanelContent({
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </Table>
           </div>
         )}
 
@@ -399,7 +403,7 @@ function QuotesPanelContent({
               confirmation is still required before recording coverage as bound.
             </p>
             <label className="quote-authorization-check">
-              <input
+              <Input
                 type="checkbox"
                 checked={clientAuthorized}
                 disabled={authorizing}
@@ -408,8 +412,8 @@ function QuotesPanelContent({
               The client has authorized binding these terms.
             </label>
             <div className="form-actions quote-flow-actions">
-              <button
-                className="primary"
+              <Button variant="primary"
+
                 disabled={!clientAuthorized || authorizing}
                 onClick={async () => {
                   if (authorizationLock.current) return;
@@ -439,14 +443,14 @@ function QuotesPanelContent({
                 }}
               >
                 Record binding authorization
-              </button>
-              <button
-                className="secondary"
+              </Button>
+              <Button variant="secondary"
+
                 disabled={authorizing}
                 onClick={() => setAuthorization(null)}
               >
                 Cancel
-              </button>
+              </Button>
             </div>
           </section>
         )}
@@ -659,21 +663,21 @@ function BindForm({
             the quote details first.
           </p>
           <div className="form-actions quote-flow-actions">
-            <button className="secondary" onClick={() => onDone(null)}>
+            <Button variant="secondary"  onClick={() => onDone(null)}>
               Close
-            </button>
+            </Button>
           </div>
         </>
       ) : (
         <>
           <p className="small muted">Confirm the exact commissionable premium and agency percentage from the accepted quote. To change either amount, edit the quote first. Producer earnings follow receipts and the agreement saved by the Owner. Broker fees use the same producer share, separately from carrier commission.</p>
-          {(quote.brokerFee ?? 0) > 0 && <div className="small" role="status"><strong>Broker fee: {fmtMoney(quote.brokerFee)}</strong><p>{feeStatus.loading ? "Checking signed disclosure and payment…" : feeStatus.error || (!currentFeeSigned ? "Client signature is needed on the current broker fee disclosure." : feeStatus.data!.collectedCents >= feeStatus.data!.amountCents ? "Disclosure signed · payment received." : feeStatus.data!.submittedCents >= feeStatus.data!.amountCents ? "Disclosure signed · payment submitted and clearing." : "Disclosure signed · fee payment is still needed.")}</p><button className="link" disabled={feeStatus.loading || saving} onClick={() => void feeStatus.refetch()}>Refresh fee status</button></div>}
+          {(quote.brokerFee ?? 0) > 0 && <div className="small" role="status"><strong>Broker fee: {fmtMoney(quote.brokerFee)}</strong><p>{feeStatus.loading ? "Checking signed disclosure and payment…" : feeStatus.error || (!currentFeeSigned ? "Client signature is needed on the current broker fee disclosure." : feeStatus.data!.collectedCents >= feeStatus.data!.amountCents ? "Disclosure signed · payment received." : feeStatus.data!.submittedCents >= feeStatus.data!.amountCents ? "Disclosure signed · payment submitted and clearing." : "Disclosure signed · fee payment is still needed.")}</p><Button variant="link"  disabled={feeStatus.loading || saving} onClick={() => void feeStatus.refetch()}>Refresh fee status</Button></div>}
           <div className="form-grid">
-            <label className="field">Exact policy premium ($)<input aria-label="Exact policy premium" inputMode="decimal" value={premium} disabled={saving} onChange={e => { setPremium(e.target.value); setConfirmed(false); }} /></label>
-            <label className="field">Agency commission (%)<input aria-label="Agency commission percentage" inputMode="decimal" value={agencyRate} disabled={saving} onChange={e => { setAgencyRate(e.target.value); setConfirmed(false); }} /></label>
+            <label className="field">Exact policy premium ($)<Input aria-label="Exact policy premium" inputMode="decimal" value={premium} disabled={saving} onChange={e => { setPremium(e.target.value); setConfirmed(false); }} /></label>
+            <label className="field">Agency commission (%)<Input aria-label="Agency commission percentage" inputMode="decimal" value={agencyRate} disabled={saving} onChange={e => { setAgencyRate(e.target.value); setConfirmed(false); }} /></label>
             <div className="field">
               <label htmlFor="bind-bill-type">Bill type (required)</label>
-              <select
+              <Select
                 id="bind-bill-type"
                 value={billType}
                 disabled={saving || (quote.brokerFee ?? 0) > 0}
@@ -685,14 +689,14 @@ function BindForm({
                     {o.label}
                   </option>
                 ))}
-              </select>
+              </Select>
               {hasBrokerFee && <p className="small muted">Broker fees require agency billing, as set on the accepted quote.</p>}
             </div>
             <div className="field">
               <label htmlFor="bind-policy-number">
                 Policy number (can be added later)
               </label>
-              <input
+              <Input
                 id="bind-policy-number"
                 value={policyNumber}
                 disabled={saving}
@@ -723,26 +727,26 @@ function BindForm({
                         {paymentPreview.data.payment.paymentDay !== undefined && ` Payment day: ${paymentPreview.data.payment.paymentDay} (clamped to month end).`}
                       </p>
                       {paymentPreview.data.basis === 'COLLECTED' && <p className="small muted">Expected receipt amounts require collection information or an Owner-entered schedule.</p>}
-                      <label><input type="checkbox" checked={paymentConfirmation === paymentKey} disabled={saving} onChange={e => setPaymentConfirmation(e.target.checked ? paymentKey : '')} /> I reviewed the carrier commission payment arrangement.</label>
+                      <label><Input type="checkbox" checked={paymentConfirmation === paymentKey} disabled={saving} onChange={e => setPaymentConfirmation(e.target.checked ? paymentKey : '')} /> I reviewed the carrier commission payment arrangement.</label>
                     </>
                   ) : <p className="small muted">Legacy carrier terms: receipt timing is unconfirmed. An Owner can add structured terms; producer earnings continue to follow actual receipts.</p>}
                 </>
               )}
-              <button type="button" className="secondary" disabled={saving || paymentPreview.loading} onClick={() => { setPaymentConfirmation(''); void paymentPreview.refetch(); }}>Refresh carrier payment terms</button>
+              <Button variant="secondary" type="button"  disabled={saving || paymentPreview.loading} onClick={() => { setPaymentConfirmation(''); void paymentPreview.refetch(); }}>Refresh carrier payment terms</Button>
             </div>
           )}
-          <label><input type="checkbox" checked={confirmed} disabled={saving} onChange={e => setConfirmed(e.target.checked)} /> I confirmed the exact premium and agency commission percentage.</label>
+          <label><Input type="checkbox" checked={confirmed} disabled={saving} onChange={e => setConfirmed(e.target.checked)} /> I confirmed the exact premium and agency commission percentage.</label>
           <div className="form-actions quote-flow-actions">
-            <button
-              className="primary"
+            <Button variant="primary"
+
               disabled={saving || !billType || (hasBrokerFee && billType !== "AGENCY") || !confirmed || !paymentReady || !premium || !agencyRate}
               onClick={bind}
             >
               {saving ? "Binding…" : "Confirm bind"}
-            </button>
-            <button className="secondary" disabled={saving} onClick={() => onDone(null)}>
+            </Button>
+            <Button variant="secondary"  disabled={saving} onClick={() => onDone(null)}>
               Cancel
-            </button>
+            </Button>
           </div>
         </>
       )}

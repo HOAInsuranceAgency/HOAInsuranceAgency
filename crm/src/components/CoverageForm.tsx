@@ -1,3 +1,7 @@
+import { Select } from "./ui/Select";
+import { Input } from "./ui/Input";
+import { Button } from "./ui/Button";
+import { Textarea } from "./ui/Textarea";
 import { listAllPages } from "../lib/pagination";
 import { useAsyncResource } from "../lib/useAsyncResource";
 import { useEffect, useRef, useState } from "react";
@@ -239,19 +243,19 @@ export default function CoverageForm({
       <div className="form-grid">
         <div className="field">
           <label>Carrier</label>
-          <select value={form.carrierId} onChange={(e) => pickCarrier(e.target.value)}>
+          <Select value={form.carrierId} onChange={(e) => pickCarrier(e.target.value)}>
             <option value="">—</option>
             {carriers.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
         {isPolicy && (
           <div className="field">
             <label htmlFor="coverage-policy-number">Policy number</label>
-            <input
+            <Input
               id="coverage-policy-number"
               disabled={!!asPolicy?.commissionSnapshotId}
               value={form.policyNumber}
@@ -279,7 +283,7 @@ export default function CoverageForm({
         {(isPolicy || Number(form.brokerFee) > 0) && (
           <div className="field">
             <label htmlFor="coverage-bill-type">Bill type</label>
-            <select
+            <Select
               id="coverage-bill-type"
               disabled={!isPolicy && existing?.status === "BOUND"}
               value={form.billType}
@@ -291,15 +295,15 @@ export default function CoverageForm({
                   {o.label}
                 </option>
               ))}
-            </select>
+            </Select>
             {!isPolicy && <p className="small muted">{Number(form.brokerFee) > 0 ? "HOA broker fees require agency billing." : "Choose who collects the premium so the client’s payment request includes only the amount the agency collects."}</p>}
           </div>
         )}
-        {!isPolicy && policies.data.length > 0 && <label className="field">Renewal of<select value={form.renewalPolicyId} onChange={e => { const p = policies.data.find(p => p.id === e.target.value); setF("renewalPolicyId", e.target.value); if (p?.expirationDate && !form.effectiveDate) setF("effectiveDate", p.expirationDate); }}><option value="">New business</option>{policies.data.map(p => <option value={p.id} key={p.id}>{p.policyNumber || "Policy"} · {p.lines?.join(", ")} · expires {p.expirationDate}</option>)}</select></label>}
+        {!isPolicy && policies.data.length > 0 && <label className="field">Renewal of<Select value={form.renewalPolicyId} onChange={e => { const p = policies.data.find(p => p.id === e.target.value); setF("renewalPolicyId", e.target.value); if (p?.expirationDate && !form.effectiveDate) setF("effectiveDate", p.expirationDate); }}><option value="">New business</option>{policies.data.map(p => <option value={p.id} key={p.id}>{p.policyNumber || "Policy"} · {p.lines?.join(", ")} · expires {p.expirationDate}</option>)}</Select></label>}
         {!isPolicy && <label className="field">Offer valid through (if specified by carrier)<DateInput value={form.offerExpiresAt} onChange={v => setF("offerExpiresAt", v)} /></label>}
         <div className="field">
           <label>Status</label>
-          <select
+          <Select
             value={form.status}
             onChange={(e) => setF("status", e.target.value)}
             disabled={statusOptions.length === 1}
@@ -307,7 +311,7 @@ export default function CoverageForm({
             {[...statusOptions].sort((a, b) => a.localeCompare(b)).map((s) => (
               <option key={s}>{s}</option>
             ))}
-          </select>
+          </Select>
         </div>
         <div className="field">
           <label htmlFor="coverage-premium">Premium ($)</label>
@@ -339,15 +343,15 @@ export default function CoverageForm({
           {form.passThroughCharges.map((charge, index) => <fieldset key={charge.id} disabled={isPolicy || existing?.status === "BOUND"} style={{ border: 0, padding: "8px 0", margin: 0 }}>
             <legend className="small">Charge {index + 1}</legend>
             <div className="form-grid">
-              <label className="field">Charge type<select aria-label={`Charge ${index + 1} type`} value={charge.kind} onChange={e => setF("passThroughCharges", rows => rows.map(row => row.id === charge.id ? { ...row, kind: e.target.value as PassThroughCharge["kind"] } : row))}>{CHARGE_KINDS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-              <label className="field">Description<input aria-label={`Charge ${index + 1} description`} maxLength={160} value={charge.description} onChange={e => setF("passThroughCharges", rows => rows.map(row => row.id === charge.id ? { ...row, description: e.target.value } : row))} /></label>
+              <label className="field">Charge type<Select aria-label={`Charge ${index + 1} type`} value={charge.kind} onChange={e => setF("passThroughCharges", rows => rows.map(row => row.id === charge.id ? { ...row, kind: e.target.value as PassThroughCharge["kind"] } : row))}>{CHARGE_KINDS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</Select></label>
+              <label className="field">Description<Input aria-label={`Charge ${index + 1} description`} maxLength={160} value={charge.description} onChange={e => setF("passThroughCharges", rows => rows.map(row => row.id === charge.id ? { ...row, description: e.target.value } : row))} /></label>
               <label className="field" htmlFor={`charge-amount-${charge.id}`}>Charge {index + 1} amount<MoneyInput id={`charge-amount-${charge.id}`} value={charge.amount} onChange={amount => setF("passThroughCharges", rows => rows.map(row => row.id === charge.id ? { ...row, amount } : row))} /></label>
             </div>
-            <button type="button" className="link danger" onClick={() => setF("passThroughCharges", rows => rows.filter(row => row.id !== charge.id))}>Remove charge {index + 1}</button>
+            <Button variant="danger" type="button"  onClick={() => setF("passThroughCharges", rows => rows.filter(row => row.id !== charge.id))}>Remove charge {index + 1}</Button>
           </fieldset>)}
-          {!isPolicy && existing?.status !== "BOUND" && <button type="button" className="secondary" disabled={form.passThroughCharges.length >= 30} onClick={() => setF("passThroughCharges", rows => [...rows, { id: `charge-${crypto.randomUUID()}`, kind: "WHOLESALER_FEE", description: "", amountCents: 0, amount: "" }])}>Add supplier charge or tax</button>}
+          {!isPolicy && existing?.status !== "BOUND" && <Button variant="secondary" type="button"  disabled={form.passThroughCharges.length >= 30} onClick={() => setF("passThroughCharges", rows => [...rows, { id: `charge-${crypto.randomUUID()}`, kind: "WHOLESALER_FEE", description: "", amountCents: 0, amount: "" }])}>Add supplier charge or tax</Button>}
           <p className="small"><strong>Client policy total: {formatMoney((Number(form.premium) || 0) + form.passThroughCharges.reduce((sum, charge) => sum + (Number(charge.amount) || 0), 0) + (Number(form.brokerFee) || 0))}</strong> · Premium + supplier charges and taxes + HOA broker fee</p>
-          <label className="field">Client conditions<textarea aria-label="Client conditions" maxLength={6000} rows={3} disabled={isPolicy || existing?.status === "BOUND"} value={form.clientConditions} onChange={e => setF("clientConditions", e.target.value)} /></label>
+          <label className="field">Client conditions<Textarea aria-label="Client conditions" maxLength={6000} rows={3} disabled={isPolicy || existing?.status === "BOUND"} value={form.clientConditions} onChange={e => setF("clientConditions", e.target.value)} /></label>
           <p className="small muted">Reviewed wording shown to the client with the quote, such as minimum earned premium, cancellation terms or coverage conditions. Keep internal notes below.</p>
         </div>
         <div className="field">
@@ -394,14 +398,14 @@ export default function CoverageForm({
         </div>
         <div className="field">
           <label>Replacement cost</label>
-          <select value={form.rcType} onChange={(e) => setF("rcType", e.target.value)}>
+          <Select value={form.rcType} onChange={(e) => setF("rcType", e.target.value)}>
             <option value="">—</option>
             {REPLACEMENT_COST_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>
                 {o.label}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
         <div className="field full">
           <h4 style={{ margin: "6px 0 0" }}>General liability limits</h4>
@@ -436,18 +440,18 @@ export default function CoverageForm({
         </div>
         <div className="field">
           <label>Aggregate applies per</label>
-          <select value={form.glAggApplies} onChange={(e) => setF("glAggApplies", e.target.value as typeof form.glAggApplies)}>
+          <Select value={form.glAggApplies} onChange={(e) => setF("glAggApplies", e.target.value as typeof form.glAggApplies)}>
             {AGGREGATE_APPLIES_TO_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>
                 {o.label}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
         <div className="field">
           <label>Coverage form</label>
           <label className="small" style={{ display: "flex", gap: 6, alignItems: "center", height: 38 }}>
-            <input
+            <Input
               type="checkbox"
               checked={form.glClaimsMade}
               onChange={(e) => setF("glClaimsMade", e.target.checked)}
@@ -468,7 +472,7 @@ export default function CoverageForm({
                 className="small"
                 style={{ display: "flex", gap: 4, alignItems: "center" }}
               >
-                <input
+                <Input
                   type="checkbox"
                   checked={form.lines.includes(l)}
                   onChange={() => toggleLine(l)}
@@ -480,16 +484,16 @@ export default function CoverageForm({
         </div>
         <div className="field full">
           <label>Notes</label>
-          <textarea rows={2} value={form.notes} onChange={(e) => setF("notes", e.target.value)} />
+          <Textarea rows={2} value={form.notes} onChange={(e) => setF("notes", e.target.value)} />
         </div>
       </div>
       <div className="form-actions">
-        <button className="primary" disabled={saving} onClick={save}>
+        <Button variant="primary"  disabled={saving} onClick={save}>
           {saving ? "Saving…" : editing ? "Save changes" : "Save quote"}
-        </button>
-        <button className="link" disabled={saving} onClick={() => { if (!savingNow.current) onCancel(); }}>
+        </Button>
+        <Button variant="link"  disabled={saving} onClick={() => { if (!savingNow.current) onCancel(); }}>
           Cancel
-        </button>
+        </Button>
         {error && <span className="error-text">{error}</span>}
       </div>
       </fieldset>

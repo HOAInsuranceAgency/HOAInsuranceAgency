@@ -1,3 +1,7 @@
+import { Select } from "../ui/Select";
+import { Textarea } from "../ui/Textarea";
+import { Button } from "../ui/Button";
+import { Input } from "../ui/Input";
 import {
   client,
   fmtNum,
@@ -164,7 +168,7 @@ function GlApplicationCard({ accountId }: { accountId: string }) {
             {money("generalAggregate", "General aggregate ($)")}
             <div className="field">
               <label>General aggregate applies per</label>
-              <select
+              <Select
                 value={form.limitAppliesPer}
                 onChange={(e) => setF("limitAppliesPer", e.target.value)}
               >
@@ -174,7 +178,7 @@ function GlApplicationCard({ accountId }: { accountId: string }) {
                     {o.label}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
             {money("productsCompletedOpsAggregate", "Products / completed ops ($)")}
             {money("personalAdvInjury", "Personal & advertising injury ($)")}
@@ -186,7 +190,7 @@ function GlApplicationCard({ accountId }: { accountId: string }) {
           <div className="form-grid">
             <div className="field">
               <label>Applies</label>
-              <select
+              <Select
                 value={form.deductibleType}
                 onChange={(e) => setF("deductibleType", e.target.value)}
               >
@@ -196,7 +200,7 @@ function GlApplicationCard({ accountId }: { accountId: string }) {
                     {o.label}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
             {money("propertyDamageDeductible", "Property damage ($)")}
             {money("bodilyInjuryDeductible", "Bodily injury ($)")}
@@ -246,7 +250,7 @@ function GlApplicationCard({ accountId }: { accountId: string }) {
             </div>
             <div className="field full">
               <label>Description of work sub-contracted</label>
-              <textarea
+              <Textarea
                 rows={2}
                 value={form.subcontractedWorkDescription}
                 onChange={(e) => setF("subcontractedWorkDescription", e.target.value)}
@@ -255,9 +259,9 @@ function GlApplicationCard({ accountId }: { accountId: string }) {
           </div>
 
           <div className="form-actions">
-            <button className="primary" disabled={gl.status.busy} onClick={gl.save}>
+            <Button variant="primary"  disabled={gl.status.busy} onClick={gl.save}>
               {gl.status.busy ? "Saving…" : "Save general liability"}
-            </button>
+            </Button>
             <SaveStatus {...gl.status.status} />
           </div>
         </>
@@ -381,7 +385,7 @@ function ClassCodeFields({
     <>
       <div className="field">
         <label>Class code</label>
-        <input
+        <Input
           placeholder="62003"
           value={form.form.classCode}
           onChange={(e) => form.setF("classCode", e.target.value)}
@@ -390,7 +394,7 @@ function ClassCodeFields({
       </div>
       <div className="field">
         <label>Hazard #</label>
-        <input
+        <Input
           value={form.form.hazardNumber}
           onChange={(e) => form.setF("hazardNumber", e.target.value)}
           onKeyDown={enter}
@@ -398,7 +402,7 @@ function ClassCodeFields({
       </div>
       <div className="field">
         <label>Premium basis</label>
-        <select
+        <Select
           value={form.form.premiumBasis}
           onChange={(e) => form.setF("premiumBasis", e.target.value)}
         >
@@ -408,7 +412,7 @@ function ClassCodeFields({
               {o.label}
             </option>
           ))}
-        </select>
+        </Select>
       </div>
       <div className="field">
         <label>Exposure</label>
@@ -420,7 +424,7 @@ function ClassCodeFields({
       </div>
       <div className="field full">
         <label>Description</label>
-        <input
+        <Input
           placeholder="Condominiums — residential"
           value={form.form.description}
           onChange={(e) => form.setF("description", e.target.value)}

@@ -1,0 +1,42 @@
+@import './tokens.css';
+
+.ui-segmented-control {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.ui-segmented-control > .ui-segmented-control__option,
+.ui-segmented-control > .ui-segmented-control__radio {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: var(--control-height);
+  padding: 7px 12px;
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--control-radius);
+  background: var(--card);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--control-font);
+  line-height: 1.4;
+  font-weight: 500;
+  cursor: pointer;
+}
+.ui-segmented-control > .ui-segmented-control__option[aria-pressed='true'],
+.ui-segmented-control > .ui-segmented-control__radio:has(input:checked) {
+  border-color: var(--accent);
+  background: var(--blue-bg);
+  color: var(--navy);
+}
+.ui-segmented-control > .ui-segmented-control__option:hover:not(:disabled),
+.ui-segmented-control > .ui-segmented-control__radio:hover:not(:has(input:disabled)) { border-color: var(--accent); }
+.ui-segmented-control > .ui-segmented-control__option:focus-visible,
+.ui-segmented-control > .ui-segmented-control__radio:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ui-segmented-control > .ui-segmented-control__option:disabled,
+.ui-segmented-control > .ui-segmented-control__radio:has(input:disabled) { opacity: .5; cursor: not-allowed; }
+.ui-segmented-control__count { padding: 0 5px; border-radius: 3px; background: var(--bg); font-size: .9em; font-variant-numeric: tabular-nums; }
+.ui-segmented-control__radio > input { width: auto; margin: 0; accent-color: var(--accent); }

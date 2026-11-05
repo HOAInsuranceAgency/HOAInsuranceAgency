@@ -1,3 +1,5 @@
+import { Button } from "./ui/Button";
+import { Input } from "./ui/Input";
 import { usePagedList } from '../lib/usePagedList';
 import { useMounted } from '../lib/useMounted';
 import { useAgencyDay } from '../lib/useAgencyDay';
@@ -86,9 +88,9 @@ export default function AccountRelationships({
       </div>
       {r.notes && <p className="small">{r.notes}</p>}
       {!r.validUntil && !['MANAGER', 'REFERRER'].includes(r.role) && (
-        <button className="link" onClick={() => setEnding(r)}>
+        <Button variant="link"  onClick={() => setEnding(r)}>
           End relationship
-        </button>
+        </Button>
       )}
     </li>
   );
@@ -101,28 +103,28 @@ export default function AccountRelationships({
       <div className="card-head">
         <h2>Management and related people</h2>
         <div className="toolbar">
-          <button
-            className="secondary"
+          <Button variant="secondary"
+
             disabled={resource.loading || !!resource.error}
             onClick={() => setManagement(true)}
           >
             Change management
-          </button>
-          <button
-            className="secondary"
+          </Button>
+          <Button variant="secondary"
+
             disabled={resource.loading || !!resource.error}
             onClick={() => setLinking(true)}
           >
             Link relationship
-          </button>
+          </Button>
         </div>
       </div>
       {resource.error ? (
         <p className="error-text" role="alert">
           {resource.error}{' '}
-          <button className="secondary" onClick={() => void resource.refetch()}>
+          <Button variant="secondary"  onClick={() => void resource.refetch()}>
             Retry
-          </button>
+          </Button>
         </p>
       ) : resource.loading ? (
         <p className="muted">Loading relationships…</p>
@@ -155,24 +157,24 @@ export default function AccountRelationships({
       )}
       {resource.data.nextToken && (
         <p>
-          <button
-            className="secondary"
+          <Button variant="secondary"
+
             disabled={resource.loading}
             onClick={() => setHistoryToken(resource.data.nextToken)}
           >
             Next relationships page
-          </button>
+          </Button>
         </p>
       )}
       {historyToken && (
         <p>
-          <button
-            className="secondary"
+          <Button variant="secondary"
+
             disabled={resource.loading}
             onClick={() => setHistoryToken(undefined)}
           >
             Back to first relationships page
-          </button>
+          </Button>
         </p>
       )}
       {notice && (
@@ -259,7 +261,7 @@ function EndRelationship({
       >
         <label className="field">
           First day this relationship no longer applies
-          <input
+          <Input
             type="date"
             value={date}
             required
@@ -270,9 +272,9 @@ function EndRelationship({
             }}
           />
         </label>
-        <button className="primary" disabled={busy}>
+        <Button variant="primary"  disabled={busy}>
           Save end date
-        </button>
+        </Button>
         {error && (
           <p role="alert" className="error-text">
             {error}

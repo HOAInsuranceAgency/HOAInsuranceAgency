@@ -1,3 +1,6 @@
+import { Input } from "./ui/Input";
+import { Button } from "./ui/Button";
+import { Table } from "./ui/Table";
 import { relationshipCurrent } from "../../../shared/relationships";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import {
@@ -350,9 +353,9 @@ function CandidateRow<E>({
   const identical = match.verdict === "identical";
   const bits = detail.filter(Boolean) as string[];
   return (
-    <tr className={identical ? "extraction-row-unchanged" : checked ? "extraction-row-selected" : undefined}>
+    <tr className={identical ? "ui-table-row-muted" : checked ? "ui-table-row-selected" : undefined}>
       <td className="extraction-selection">
-        <input
+        <Input
           type="checkbox"
           aria-label={`Select ${kind.toLowerCase()}: ${title}`}
           checked={checked && !identical}
@@ -852,8 +855,8 @@ function ExtractionPanelContent({
           <h2>Extracted data</h2>
           <p>Review values from your documents before applying them to this account.</p>
         </div>
-        <button
-          className={result ? "secondary" : "primary"}
+        <Button
+          variant={result ? "secondary" : "primary"}
           disabled={starting || applyStatus.busy || status === "PENDING" || status === "PROCESSING"}
           onClick={start}
         >
@@ -864,12 +867,12 @@ function ExtractionPanelContent({
               : result
                 ? "Re-run extraction"
                 : "Extract data"}
-        </button>
+        </Button>
       </div>
       {status === "FAILED" && <p className="error-text extraction-feedback" role="alert">{account.extractionError ?? "Extraction failed"}</p>}
       {error && <p className="error-text extraction-feedback" role="alert">{error}</p>}
       {matchingReads.map(({ label, resource }) => resource.error && <p key={label} role="alert" className="error-text">
-        Could not check existing {label}. {resource.error} <button type="button" disabled={resource.loading} onClick={() => void resource.refetch()}>Retry {label}</button>
+        Could not check existing {label}. {resource.error} <Button type="button" disabled={resource.loading} onClick={() => void resource.refetch()}>Retry {label}</Button>
       </p>)}
 
       {result && status === "COMPLETE" && (
@@ -887,20 +890,20 @@ function ExtractionPanelContent({
               <span aria-live="polite">{selectedCount} selected</span>
               {alreadyApplied && <span className="badge gray">Previously applied</span>}
             </div>
-          <button
-            className="secondary"
+          <Button variant="secondary"
+
             aria-expanded={showReview}
             aria-controls={reviewId}
             onClick={() => setShowReview((s) => !s)}
           >
             {showReview ? "Hide review" : "Review extracted data"}
-          </button>
+          </Button>
           </div>
 
           {showReview && (
           <div id={reviewId}>
           {reviewCount === 0 ? <p className="extraction-empty">No values found to review. Add another document or re-run extraction.</p> : <div className="table-wrap extraction-table-wrap">
-            <table className="extraction-table" aria-label="Extracted values to review">
+            <Table className="extraction-table" aria-label="Extracted values to review">
               <colgroup><col className="extraction-col-select" /><col className="extraction-col-field" /><col className="extraction-col-current" /><col className="extraction-col-value" /><col className="extraction-col-review" /><col className="extraction-col-evidence" /></colgroup>
               <thead>
                 <tr>
@@ -919,9 +922,9 @@ function ExtractionPanelContent({
                   const cur = def.current(account);
                   const extracted = def.display ? def.display(f.value) : fmtVal(f.value);
                   return (
-                    <tr key={def.key} className={selected[def.key] ? "extraction-row-selected" : undefined}>
+                    <tr key={def.key} className={selected[def.key] ? "ui-table-row-selected" : undefined}>
                       <td className="extraction-selection">
-                        <input
+                        <Input
                           type="checkbox"
                           aria-label={`Select ${def.label.toLowerCase()}`}
                           checked={!!selected[def.key]}
@@ -1052,31 +1055,31 @@ function ExtractionPanelContent({
                   );
                 })}
               </tbody>
-            </table>
+            </Table>
           </div>}
 
           <div className="form-actions extraction-actions">
-            <button
-              className="primary"
+            <Button variant="primary"
+
               disabled={applyStatus.busy || !matchesReady}
               onClick={() => apply()}
             >
               {applyStatus.busy
                 ? "Applying…"
                 : `Apply selected to ${account.stage === "CLIENT" ? "client" : "lead"}`}
-            </button>
+            </Button>
             {/* The guard is a default, not a wall. A reviewer who has since
                 ticked a field they skipped the first time has a legitimate
                 reason to apply the same result again, and blocking that
                 outright would send them to edit the record by hand. */}
             {alreadyApplied && (
-              <button
-                className="link"
+              <Button variant="link"
+
                 disabled={applyStatus.busy || !matchesReady}
                 onClick={() => apply(true)}
               >
                 Apply again anyway
-              </button>
+              </Button>
             )}
             <SaveStatus {...applyStatus.status} />
           </div>

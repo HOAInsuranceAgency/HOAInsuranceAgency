@@ -1,3 +1,5 @@
+import { Button } from "./ui/Button";
+import { Input } from "./ui/Input";
 import { useRef, useState } from 'react';
 import { useCommercial } from '../lib/commercial';
 import { communicationRequest } from '../lib/communications';
@@ -120,8 +122,8 @@ function QuotePackagesContent({
             Group quotes into complete coverage options for the client.
           </p>
         </div>
-        <button
-          className="secondary"
+        <Button variant="secondary"
+
           disabled={
             resource.loading ||
             !!resource.error ||
@@ -131,7 +133,7 @@ function QuotePackagesContent({
           onClick={() => edit()}
         >
           + Package option
-        </button>
+        </Button>
       </div>
       {!resource.loaded ? (
         <p className="package-empty" role="status">
@@ -140,9 +142,9 @@ function QuotePackagesContent({
       ) : resource.error ? (
         <p className="error-text" role="alert">
           {resource.error}{' '}
-          <button className="secondary" onClick={() => void resource.refetch()}>
+          <Button variant="secondary"  onClick={() => void resource.refetch()}>
             Retry
-          </button>
+          </Button>
         </p>
       ) : (
         <>
@@ -229,16 +231,16 @@ function QuotePackagesContent({
                     <BusinessDraftButton accountId={accountId} kind="PACKAGE" recordId={option.id} label="Prepare proposal in Front" disabled={saving || !assessment.complete} />
                     {(!plan.selectedOptionId || chosen) && (
                       <>
-                        <button
-                          className="secondary"
+                        <Button variant="secondary"
+
                           disabled={saving}
                           onClick={() => edit(option)}
                         >
                           {chosen ? 'Review / revise option' : 'Edit option'}
-                        </button>
+                        </Button>
                         {(!chosen || forecast.cents == null) && (
-                          <button
-                            className="primary"
+                          <Button variant="primary"
+
                             disabled={saving || !assessment.complete}
                             onClick={() =>
                               void write({
@@ -251,11 +253,11 @@ function QuotePackagesContent({
                             {chosen
                               ? 'Client approved revised option'
                               : 'Client chose this option'}
-                          </button>
+                          </Button>
                         )}
                         {!chosen && (
-                          <button
-                            className="link"
+                          <Button variant="link"
+
                             disabled={saving}
                             onClick={() =>
                               void write({
@@ -265,7 +267,7 @@ function QuotePackagesContent({
                             }
                           >
                             Remove option
-                          </button>
+                          </Button>
                         )}
                       </>
                     )}
@@ -273,15 +275,15 @@ function QuotePackagesContent({
                       <>
                         <a href="#quote-list">Continue binding policies</a>
                         {!assessment.boundCount && (
-                          <button
-                            className="link"
+                          <Button variant="link"
+
                             disabled={saving}
                             onClick={() =>
                               void write({ action: 'CLEAR_SELECTION' })
                             }
                           >
                             Clear client selection
-                          </button>
+                          </Button>
                         )}
                       </>
                     )}
@@ -313,7 +315,7 @@ function QuotePackagesContent({
               </h3>
               <div className="field package-name">
                 <label htmlFor="package-option-name">Option name</label>
-                <input
+                <Input
                   id="package-option-name"
                   value={editor.name}
                   disabled={saving}
@@ -338,7 +340,7 @@ function QuotePackagesContent({
                         key={line}
                         className={`package-choice${editor.requiredLines.includes(line) ? ' is-selected' : ''}`}
                       >
-                        <input
+                        <Input
                           type="checkbox"
                           checked={editor.requiredLines.includes(line)}
                           onChange={(e) =>
@@ -376,7 +378,7 @@ function QuotePackagesContent({
                         key={q.id}
                         className={`package-choice package-quote-choice${editor.quoteIds.includes(q.id) ? ' is-selected' : ''}`}
                       >
-                        <input
+                        <Input
                           type="checkbox"
                           checked={editor.quoteIds.includes(q.id)}
                           onChange={(e) =>
@@ -417,7 +419,7 @@ function QuotePackagesContent({
                 </p>
               )}
               <label className="package-review">
-                <input
+                <Input
                   type="checkbox"
                   checked={editor.reviewed}
                   disabled={saving}
@@ -431,20 +433,20 @@ function QuotePackagesContent({
                 </span>
               </label>
               <div className="form-actions">
-                <button
-                  className="primary"
+                <Button variant="primary"
+
                   disabled={saving || !editor.quoteIds.length}
                 >
                   Save option
-                </button>
-                <button
-                  className="secondary"
+                </Button>
+                <Button variant="secondary"
+
                   type="button"
                   disabled={saving}
                   onClick={() => setEditor(null)}
                 >
                   Cancel
-                </button>
+                </Button>
               </div>
             </form>
           )}

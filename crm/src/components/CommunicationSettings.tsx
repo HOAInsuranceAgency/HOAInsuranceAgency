@@ -1,3 +1,5 @@
+import { Button } from "./ui/Button";
+import { Input } from "./ui/Input";
 import { useRef, useState } from "react";
 import { communicationRequest as request, type IntegrationConfig, type TeamEligibility } from "../lib/communications";
 import CommunicationSettingsEditor from "./CommunicationSettingsEditor";
@@ -68,7 +70,7 @@ export default function CommunicationSettings() {
 
   if (!saved) return <div className="card communication-settings"><h2>Front and Dialpad</h2>
     <p role={resource.error ? "alert" : "status"}>{resource.error || "Loading settings…"}</p>
-    {resource.error && <button className="secondary" disabled={resource.loading} onClick={() => void resource.refetch()}>Retry</button>}
+    {resource.error && <Button variant="secondary"  disabled={resource.loading} onClick={() => void resource.refetch()}>Retry</Button>}
   </div>;
   const disabled = !!busy || editing || resource.loading;
   const failures = checks.filter(check => !check.ok);
@@ -99,14 +101,14 @@ export default function CommunicationSettings() {
         <div><dt>Shared text number</dt><dd>{phoneLabel(saved.sharedSmsNumber)}</dd><small>{saved.dialpadNumbers.length} business {saved.dialpadNumbers.length === 1 ? "number" : "numbers"} configured</small></div>
         <div><dt>Default salesperson</dt><dd>{owner?.name || ((saved.defaultSalespersonId ?? saved.defaultUserId) ? (members.loading ? "Checking teammate…" : "Teammate unavailable") : "Not set")}</dd>
           <small>Website leads rotate among active eligible salespeople. Other new accounts use this default.</small>
-          {members.error && <span className="error-text small">{members.error} <button type="button" className="secondary" disabled={members.loading} onClick={() => void members.refetch()}>Retry teammates</button></span>}</div>
+          {members.error && <span className="error-text small">{members.error} <Button variant="secondary" type="button"  disabled={members.loading} onClick={() => void members.refetch()}>Retry teammates</Button></span>}</div>
       </dl>
       <div className="communication-actions">
-        <button type="button" className="secondary" disabled={disabled} onClick={() => void run("check", async () => {
+        <Button variant="secondary" type="button"  disabled={disabled} onClick={() => void run("check", async () => {
           const result = await request<{ checks: ConnectionCheck[] }>("validateConnection", {}, true);
           setChecks(result.checks); setCheckedAt(new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }));
-        })}>{busy === "check" ? "Checking…" : "Check connections"}</button>
-        {!editing && <button type="button" className="secondary" disabled={disabled} onClick={() => { setEditing(true); setError(""); setMessage(""); }}>Edit settings</button>}
+        })}>{busy === "check" ? "Checking…" : "Check connections"}</Button>
+        {!editing && <Button variant="secondary" type="button"  disabled={disabled} onClick={() => { setEditing(true); setError(""); setMessage(""); }}>Edit settings</Button>}
         {checkedAt && <span className="muted small">Checked at {checkedAt}</span>}
       </div>
       {editingHint && <p className="muted small">{editingHint}</p>}
@@ -123,18 +125,18 @@ export default function CommunicationSettings() {
     <details className="card communication-disclosure">
       <summary><span>Delivery<small>Pause delivery or resume after testing. Inbox cleanup runs automatically with delivery.</small></span></summary>
       <fieldset disabled={disabled} className="communication-controls">
-        {saved.activatedAt && !saved.paused && <div className="communication-actions"><button type="button" className="secondary" onClick={() => void run("pause", async () => {
+        {saved.activatedAt && !saved.paused && <div className="communication-actions"><Button variant="secondary" type="button"  onClick={() => void run("pause", async () => {
           const result = await request<{ config: IntegrationConfig }>("saveSettings", { config: { ...saved, paused: true } }, true);
           adoptConfig(result.config); setMessage("Delivery paused. Team deadlines are unchanged.");
-        })}>Pause delivery</button></div>}
+        })}>Pause delivery</Button></div>}
         <p className="muted small">{saved.environment !== "main"
           ? "First verify sending from the test mailbox, a call on a connected business number, and shared-line texts in Front and Dialpad. Start delivery to test the automated email and CRM activity with your allowed test recipients. Eligible conversations are tidied automatically; conversations needing a response stay visible."
           : "Before starting or resuming delivery, test email replies, calls on each business number, and texts from the shared main line. Confirm that activity and text delivery status appear in the CRM."}</p>
-        <label className="communication-check"><input type="checkbox" checked={nativeVerified} onChange={event => setNativeVerified(event.target.checked)} /><span>I verified email, calls, and shared-line texts with test contacts.</span></label>
-        <button type="button" disabled={!nativeVerified} onClick={() => void run("activate", async () => {
+        <label className="communication-check"><Input type="checkbox" checked={nativeVerified} onChange={event => setNativeVerified(event.target.checked)} /><span>I verified email, calls, and shared-line texts with test contacts.</span></label>
+        <Button type="button" disabled={!nativeVerified} onClick={() => void run("activate", async () => {
           const result = await request<{ config: IntegrationConfig }>("activate", { nativeChecksConfirmed: nativeVerified }, true);
           adoptConfig(result.config); setNativeVerified(false); setMessage("Delivery settings applied. Lead deadlines remain controlled by the CRM.");
-        })}>{busy === "activate" ? "Checking and applying…" : !saved.activatedAt ? "Start delivery" : saved.paused ? "Resume delivery" : "Apply delivery settings"}</button>
+        })}>{busy === "activate" ? "Checking and applying…" : !saved.activatedAt ? "Start delivery" : saved.paused ? "Resume delivery" : "Apply delivery settings"}</Button>
       </fieldset>
     </details>
 
@@ -155,21 +157,21 @@ export default function CommunicationSettings() {
         </details>
         <fieldset disabled={disabled} className="communication-controls">
           <h3>Repair missing history</h3><p className="muted small">Use when activity is missing after a connection problem. Existing messages and deadlines are preserved.</p>
-          <label className="field">Recovery reason<input value={recoveryReason} onChange={event => setRecoveryReason(event.target.value)} placeholder="For example, the mailbox was reconnected" /></label>
-          <div className="communication-actions">{(["front", "dialpad"] as const).map(provider => <button type="button" key={provider} className="secondary" disabled={!saved.activatedAt || !recoveryReason.trim()} onClick={() => void run("recovery", async () => {
+          <label className="field">Recovery reason<Input value={recoveryReason} onChange={event => setRecoveryReason(event.target.value)} placeholder="For example, the mailbox was reconnected" /></label>
+          <div className="communication-actions">{(["front", "dialpad"] as const).map(provider => <Button variant="secondary" type="button" key={provider}  disabled={!saved.activatedAt || !recoveryReason.trim()} onClick={() => void run("recovery", async () => {
             await request("restartReconciliation", { provider, version: resource.data?.recovery?.[provider]?.version ?? 0, reason: recoveryReason }, true);
             await resource.refetch(); setMessage(`${provider === "front" ? "Front" : "Dialpad"} history will be checked again.`);
-          })}>Restart {provider === "front" ? "Front" : "Dialpad"} history search</button>)}</div>
-          <label className="field">Front conversation ID<input value={historyConversation} onChange={event => setHistoryConversation(event.target.value)} placeholder="cnv_…" /></label>
-          <button type="button" className="secondary" disabled={!recoveryReason.trim() || !/^cnv_[a-z0-9]+$/.test(historyConversation.trim())} onClick={() => void run("history", async () => {
+          })}>Restart {provider === "front" ? "Front" : "Dialpad"} history search</Button>)}</div>
+          <label className="field">Front conversation ID<Input value={historyConversation} onChange={event => setHistoryConversation(event.target.value)} placeholder="cnv_…" /></label>
+          <Button variant="secondary" type="button"  disabled={!recoveryReason.trim() || !/^cnv_[a-z0-9]+$/.test(historyConversation.trim())} onClick={() => void run("history", async () => {
             await request("restartConversationHistory", { conversationId: historyConversation.trim(), reason: recoveryReason }, true);
             setMessage("Conversation history is queued for another check.");
-          })}>Retry conversation history</button>
+          })}>Retry conversation history</Button>
           <h3>Existing lead assignments</h3><p className="muted small">Fill missing responsibilities with the selected default teammate. Existing assignments and deadlines stay in place; historical emails are not resent.</p>
-          <button type="button" className="secondary" disabled={!(saved.defaultSalespersonId ?? saved.defaultUserId) || migrationCursor === null} onClick={() => void run("backfill", async () => {
+          <Button variant="secondary" type="button"  disabled={!(saved.defaultSalespersonId ?? saved.defaultUserId) || migrationCursor === null} onClick={() => void run("backfill", async () => {
             const result = await request<{ assigned: number; exceptions: number; nextToken?: string }>("backfill", { nextToken: migrationCursor }, true);
             setMigrationCursor(result.nextToken ?? null); setMessage(`${result.assigned} assignments updated; ${result.exceptions} need attention.${result.nextToken ? " Continue with the next batch." : " All batches reviewed."}`);
-          })}>{migrationCursor === null ? "Backfill complete" : migrationCursor ? "Review next lead batch" : "Fill missing lead responsibilities"}</button>
+          })}>{migrationCursor === null ? "Backfill complete" : migrationCursor ? "Review next lead batch" : "Fill missing lead responsibilities"}</Button>
         </fieldset>
       </div>
     </details>

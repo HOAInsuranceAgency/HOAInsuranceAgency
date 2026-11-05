@@ -1,3 +1,6 @@
+import { Button } from "../components/ui/Button";
+import { Table } from "../components/ui/Table";
+import { Input } from "../components/ui/Input";
 import PartyPicker from '../components/PartyPicker';
 import { usePagedList } from '../lib/usePagedList';
 import { useMounted } from '../lib/useMounted';
@@ -46,9 +49,9 @@ function RelationshipProfile({ id }: { id: string }) {
     return (
       <p role="alert" className="error-text">
         {resource.error}{' '}
-        <button className="secondary" onClick={() => void resource.refetch()}>
+        <Button variant="secondary"  onClick={() => void resource.refetch()}>
           Retry
-        </button>
+        </Button>
       </p>
     );
   if (resource.loading || !resource.data) return <p>Loading relationship…</p>;
@@ -62,7 +65,7 @@ function RelationshipProfile({ id }: { id: string }) {
   const portfolio = (rows: typeof links) =>
     rows.length ? (
       <div className="table-wrap">
-        <table>
+        <Table>
           <thead>
             <tr>
               <th>Insured account</th>
@@ -86,7 +89,7 @@ function RelationshipProfile({ id }: { id: string }) {
               </tr>
             ))}
           </tbody>
-        </table>
+        </Table>
       </div>
     ) : (
       <p className="muted">No linked accounts in the loaded pages.</p>
@@ -105,13 +108,13 @@ function RelationshipProfile({ id }: { id: string }) {
         </div>
         <div className="toolbar">
           {canEdit && (
-            <button className="secondary" onClick={() => setEditing(true)}>
+            <Button variant="secondary"  onClick={() => setEditing(true)}>
               Edit profile
-            </button>
+            </Button>
           )}
-          <button className="secondary" onClick={refresh}>
+          <Button variant="secondary"  onClick={refresh}>
             Refresh
-          </button>
+          </Button>
         </div>
       </div>
       <div className="relationship-grid">
@@ -120,9 +123,9 @@ function RelationshipProfile({ id }: { id: string }) {
             <div className="card-head">
               <h2>Linked insured accounts</h2>
               {!party.archived && (
-                <button className="secondary" onClick={() => setLinking(true)}>
+                <Button variant="secondary"  onClick={() => setLinking(true)}>
                   Link existing account
-                </button>
+                </Button>
               )}
             </div>
             <p className="muted small">
@@ -132,9 +135,9 @@ function RelationshipProfile({ id }: { id: string }) {
             {portfolioPage.error && (
               <p role="alert" className="error-text">
                 {portfolioPage.error}{' '}
-                <button className="secondary" onClick={() => void portfolioPage.more()}>
+                <Button variant="secondary"  onClick={() => void portfolioPage.more()}>
                   Retry portfolio
-                </button>
+                </Button>
               </p>
             )}
             {portfolioPage.loading && <p>Loading portfolio…</p>}
@@ -146,13 +149,13 @@ function RelationshipProfile({ id }: { id: string }) {
               </details>
             )}
             {portfolioPage.nextToken && (
-              <button
-                className="secondary"
+              <Button variant="secondary"
+
                 disabled={portfolioPage.loading}
                 onClick={() => void portfolioPage.more()}
               >
                 Load more account relationships
-              </button>
+              </Button>
             )}
             {!party.archived && (
               <p>
@@ -170,9 +173,9 @@ function RelationshipProfile({ id }: { id: string }) {
                   : 'Organizations and employment history'}
               </h2>
               {canEdit && !party.archived && (
-                <button className="secondary" onClick={() => setAffiliation('new')}>
+                <Button variant="secondary"  onClick={() => setAffiliation('new')}>
                   Add affiliation
-                </button>
+                </Button>
               )}
             </div>
             <ul className="relationship-list">
@@ -188,9 +191,9 @@ function RelationshipProfile({ id }: { id: string }) {
                       {!relationshipCurrent(a, day) && ' · Former or scheduled'}
                     </div>
                     {canEdit && (
-                      <button className="link" onClick={() => setAffiliation(a)}>
+                      <Button variant="link"  onClick={() => setAffiliation(a)}>
                         Edit dates / role
-                      </button>
+                      </Button>
                     )}
                   </li>
                 );
@@ -200,22 +203,22 @@ function RelationshipProfile({ id }: { id: string }) {
             {affiliationPage.error && (
               <p role="alert" className="error-text">
                 {affiliationPage.error}{' '}
-                <button className="secondary" onClick={() => void affiliationPage.more()}>
+                <Button variant="secondary"  onClick={() => void affiliationPage.more()}>
                   Retry affiliations
-                </button>
+                </Button>
               </p>
             )}
             {!affiliations.length && !affiliationPage.loading && (
               <p className="muted">No affiliations in the loaded pages.</p>
             )}
             {affiliationPage.nextToken && (
-              <button
-                className="secondary"
+              <Button variant="secondary"
+
                 disabled={affiliationPage.loading}
                 onClick={() => void affiliationPage.more()}
               >
                 Load more affiliations
-              </button>
+              </Button>
             )}
           </section>
         </div>
@@ -358,7 +361,7 @@ function AffiliationForm({
           />
           <label className="field">
             Role / title
-            <input
+            <Input
               value={title}
               maxLength={200}
               onChange={(e) => {
@@ -369,7 +372,7 @@ function AffiliationForm({
           </label>
           <label className="field">
             Start date (if known)
-            <input
+            <Input
               type="date"
               value={from}
               onChange={(e) => {
@@ -380,7 +383,7 @@ function AffiliationForm({
           </label>
           <label className="field">
             First day no longer affiliated (optional)
-            <input
+            <Input
               type="date"
               value={until}
               onChange={(e) => {
@@ -389,7 +392,7 @@ function AffiliationForm({
               }}
             />
           </label>
-          <button className="primary">{busy ? 'Saving…' : 'Save affiliation'}</button>
+          <Button variant="primary" >{busy ? 'Saving…' : 'Save affiliation'}</Button>
         </fieldset>
         {error && (
           <p role="alert" className="error-text">

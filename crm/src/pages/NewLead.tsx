@@ -1,3 +1,7 @@
+import { Button } from "../components/ui/Button";
+import { Select } from "../components/ui/Select";
+import { Input } from "../components/ui/Input";
+import { Textarea } from "../components/ui/Textarea";
 import { loadPartyIds } from '../lib/relationships';
 import PartyPicker from "../components/PartyPicker";
 import { RELATIONSHIP_LABELS, RELATIONSHIP_ROLES, type RelationshipRole } from "../../../shared/relationships";
@@ -338,9 +342,9 @@ export default function NewLead() {
 
   return (
     <div className="new-lead">
-      <button type="button" className="new-lead-back" disabled={saving} onClick={() => navigate('/leads')}>
+      <Button type="button" variant="link" className="new-lead-back" disabled={saving} onClick={() => navigate('/leads')}>
         <span aria-hidden="true">←</span> Leads
-      </button>
+      </Button>
       <header className="new-lead-heading">
         <h1>New lead</h1>
         <p>Add the basics now. You can fill in the rest later.</p>
@@ -350,7 +354,7 @@ export default function NewLead() {
         <p>An unfinished lead was saved in this tab. Recover its basic details or discard it to start fresh.</p>
         <p className="muted small">Salesperson and relationship selections, notes, financial values and documents are not backed up. Review the selections, re-enter the missing details and reattach any files.</p>
         <div className="form-actions">
-          <button type="button" className="secondary" onClick={() => {
+          <Button variant="secondary" type="button"  onClick={() => {
             const snapshot = draft.available!;
             requestId.current = snapshot.requestId;
             attempted.current = snapshot.attempted;
@@ -361,8 +365,8 @@ export default function NewLead() {
               setError("A lead already exists for this draft. These recovered basic details still need to be compared with the saved lead. Review it in a separate tab, reconcile any differences there, then explicitly discard this draft. Notes, financial values and files were not backed up.");
             }
             draft.recovered();
-          }}>Recover lead details</button>
-          <button type="button" className="secondary" onClick={draft.clear}>Discard saved draft</button>
+          }}>Recover lead details</Button>
+          <Button variant="secondary" type="button"  onClick={draft.clear}>Discard saved draft</Button>
         </div>
       </section>}
       {recovered && <p role="status" className="muted small">Basic details recovered. Review salesperson and relationship selections, re-enter notes and financial values, and reattach documents before creating the lead.</p>}
@@ -375,7 +379,7 @@ export default function NewLead() {
           <details className="new-lead-section" open={!!relatedParty}>
             <summary>Related person or organization {relatedParty ? '· Selected' : '(optional)'}</summary>
             <PartyPicker label="Relationship" value={relatedParty} onChange={setRelatedParty} emptyLabel="No relationship selected" />
-            {relatedParty && <><label className="field">Role<select value={relationshipRole} onChange={e => setRelationshipRole(e.target.value as RelationshipRole)}>{RELATIONSHIP_ROLES.map(r => <option key={r} value={r}>{RELATIONSHIP_LABELS[r]}</option>)}</select></label>{relationshipRole === 'MANAGER' && <p className="muted small">After creating the lead, review the effective date and management contacts.</p>}</>}
+            {relatedParty && <><label className="field">Role<Select value={relationshipRole} onChange={e => setRelationshipRole(e.target.value as RelationshipRole)}>{RELATIONSHIP_ROLES.map(r => <option key={r} value={r}>{RELATIONSHIP_LABELS[r]}</option>)}</Select></label>{relationshipRole === 'MANAGER' && <p className="muted small">After creating the lead, review the effective date and management contacts.</p>}</>}
           </details>
           <div className="new-lead-essentials">
             <section className="new-lead-section" aria-labelledby="new-lead-details-heading">
@@ -383,32 +387,32 @@ export default function NewLead() {
               <div className="new-lead-grid">
                 <div className="field full">
                   <label htmlFor="new-lead-name">Name (association / insured) *</label>
-                  <input id="new-lead-name" required placeholder={isPersonal ? "Insured's full name" : "Association or business name"} value={form.name} onChange={e => setF("name", e.target.value)} />
+                  <Input id="new-lead-name" required placeholder={isPersonal ? "Insured's full name" : "Association or business name"} value={form.name} onChange={e => setF("name", e.target.value)} />
                 </div>
                 <div className="field">
                   <label htmlFor="new-lead-account-type">Account type</label>
-                  <select id="new-lead-account-type" value={form.type} onChange={e => setF("type", e.target.value)}>
+                  <Select id="new-lead-account-type" value={form.type} onChange={e => setF("type", e.target.value)}>
                     {ACCOUNT_TYPE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                  </select>
+                  </Select>
                 </div>
                 <div className="field">
                   <label htmlFor="new-lead-property-type">Property type</label>
-                  <select id="new-lead-property-type" value={form.propertyType} onChange={e => setF("propertyType", e.target.value)}>
+                  <Select id="new-lead-property-type" value={form.propertyType} onChange={e => setF("propertyType", e.target.value)}>
                     <option value="">Choose if confirmed</option>
                     {PROPERTY_TYPES.map(value => <option key={value} value={value}>{PROPERTY_TYPE_LABELS[value]}</option>)}
-                  </select>
+                  </Select>
                   {isPersonal && <span className="new-lead-hint">Personal (HO-6) accounts use Individual unit owner unless you choose another property type.</span>}
                 </div>
                 <div className="field">
                   <label htmlFor="new-lead-source">Lead source *</label>
-                  <select id="new-lead-source" required value={form.leadSource} onChange={e => setF("leadSource", e.target.value)}>
+                  <Select id="new-lead-source" required value={form.leadSource} onChange={e => setF("leadSource", e.target.value)}>
                     <option value="">Choose a source</option>
                     {LEAD_SOURCES.map(value => <option key={value} value={value}>{LEAD_SOURCE_LABELS[value]}</option>)}
-                  </select>
+                  </Select>
                 </div>
                 <ResponsibilitySelect label="Salesperson" value={salespersonId} team={members.data.team} onChange={id => { salespersonEdited.current = true; setSalesperson(id); }} disabled={saving || members.loading} />
               </div>
-              {members.error && <p className="error-text small" role="alert">{members.error} <button type="button" className="link" onClick={() => void members.refetch()}>Retry</button></p>}
+              {members.error && <p className="error-text small" role="alert">{members.error} <Button variant="link" type="button"  onClick={() => void members.refetch()}>Retry</Button></p>}
             </section>
 
             <section className="new-lead-section new-lead-contact" aria-labelledby="new-lead-contact-heading">
@@ -416,18 +420,18 @@ export default function NewLead() {
               <div className="new-lead-grid">
                 <div className="field">
                   <label htmlFor="new-lead-contact-name">Contact name</label>
-                  <input id="new-lead-contact-name" autoComplete="name" placeholder="Full name" value={form.contactName} onChange={e => setF("contactName", e.target.value)} />
+                  <Input id="new-lead-contact-name" autoComplete="name" placeholder="Full name" value={form.contactName} onChange={e => setF("contactName", e.target.value)} />
                 </div>
                 <div className="field">
                   <label htmlFor="new-lead-contact-role">Contact role</label>
-                  <select id="new-lead-contact-role" value={form.contactType} onChange={e => setF("contactType", e.target.value)}>
+                  <Select id="new-lead-contact-role" value={form.contactType} onChange={e => setF("contactType", e.target.value)}>
                     <option value="">Choose a role</option>
                     {CONTACT_TYPE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                  </select>
+                  </Select>
                 </div>
                 <div className="field full">
                   <label htmlFor="new-lead-contact-email">Contact email</label>
-                  <input id="new-lead-contact-email" type="email" autoComplete="email" placeholder="name@example.com" value={form.contactEmail} onChange={e => setF("contactEmail", e.target.value)} />
+                  <Input id="new-lead-contact-email" type="email" autoComplete="email" placeholder="name@example.com" value={form.contactEmail} onChange={e => setF("contactEmail", e.target.value)} />
                 </div>
                 <div className="field full">
                   <label htmlFor="new-lead-contact-phone">Contact phone</label>
@@ -450,23 +454,23 @@ export default function NewLead() {
                 </label>
                 <div className="field">
                   <label htmlFor="new-lead-city">City</label>
-                  <input id="new-lead-city" autoComplete="address-level2" value={form.city} onChange={e => setF("city", e.target.value)} />
+                  <Input id="new-lead-city" autoComplete="address-level2" value={form.city} onChange={e => setF("city", e.target.value)} />
                 </div>
                 <div className="field">
                   <label htmlFor="new-lead-state">State</label>
-                  <select id="new-lead-state" autoComplete="address-level1" value={form.state} onChange={e => setF("state", e.target.value)}>
+                  <Select id="new-lead-state" autoComplete="address-level1" value={form.state} onChange={e => setF("state", e.target.value)}>
                     <option value="">—</option>{US_STATES.map(state => <option key={state}>{state}</option>)}
-                  </select>
+                  </Select>
                 </div>
                 <div className="field">
                   <label htmlFor="new-lead-zip">ZIP</label>
-                  <input id="new-lead-zip" autoComplete="postal-code" inputMode="numeric" value={form.zip} onChange={e => setF("zip", e.target.value)} />
+                  <Input id="new-lead-zip" autoComplete="postal-code" inputMode="numeric" value={form.zip} onChange={e => setF("zip", e.target.value)} />
                 </div>
               </div>
               <div className="new-lead-grid new-lead-coverage-grid">
                 {!isPersonal && <div className="field"><label htmlFor="new-lead-unit-count">Unit count</label><IntegerInput id="new-lead-unit-count" value={form.unitCount} onChange={value => setF("unitCount", value)} /></div>}
                 <div className="field"><label htmlFor="new-lead-tiv">Total insured value ($)</label><MoneyInput id="new-lead-tiv" value={form.totalInsuredValue} onChange={value => setF("totalInsuredValue", value)} /></div>
-                <div className="field"><label htmlFor="new-lead-current-agent">Current agent / broker</label><input id="new-lead-current-agent" placeholder="Agency name" value={form.currentAgent} onChange={e => setF("currentAgent", e.target.value)} /></div>
+                <div className="field"><label htmlFor="new-lead-current-agent">Current agent / broker</label><Input id="new-lead-current-agent" placeholder="Agency name" value={form.currentAgent} onChange={e => setF("currentAgent", e.target.value)} /></div>
                 <div className="field"><label htmlFor="new-lead-expiration">Current policy expiration</label><DateInput id="new-lead-expiration" value={form.currentPolicyExpiration} onChange={value => setF("currentPolicyExpiration", value)} /></div>
               </div>
             </div>
@@ -475,12 +479,12 @@ export default function NewLead() {
           <details className="new-lead-disclosure">
             <summary><span className="new-lead-disclosure-copy"><span className="new-lead-disclosure-title">Notes & documents</span><span className="new-lead-hint">{extrasSummary || "Background notes and supporting files"}</span></span><span className="new-lead-optional">Optional</span></summary>
             <div className="new-lead-disclosure-body new-lead-extras">
-              <div className="field"><label htmlFor="new-lead-notes">Notes</label><textarea id="new-lead-notes" rows={3} placeholder="Anything the team should know…" value={form.notes} onChange={e => setF("notes", e.target.value)} /></div>
+              <div className="field"><label htmlFor="new-lead-notes">Notes</label><Textarea id="new-lead-notes" rows={3} placeholder="Anything the team should know…" value={form.notes} onChange={e => setF("notes", e.target.value)} /></div>
               <div className="new-lead-documents">
                 <div className="new-lead-document-heading"><h3>Documents</h3><FileButton label="Add documents…" multiple disabled={saving || !!createdId} onFiles={files => files && setStagedFiles(current => [...current, ...files])} /></div>
                 <p className="new-lead-hint">Add policies, budgets or association documents. You can extract their details after creating the lead.</p>
                 {stagedFiles.length > 0 && <ul className="new-lead-file-list" aria-label="Attached documents">
-                  {stagedFiles.map((file, index) => <li key={index}><span className="new-lead-file-name">{file.name}</span><span className="new-lead-hint">{Math.max(1, Math.round(file.size / 1024))} KB</span><button type="button" className="link" aria-label={`Remove ${file.name}`} onClick={() => setStagedFiles(current => current.filter((_, position) => position !== index))}>Remove</button></li>)}
+                  {stagedFiles.map((file, index) => <li key={index}><span className="new-lead-file-name">{file.name}</span><span className="new-lead-hint">{Math.max(1, Math.round(file.size / 1024))} KB</span><Button variant="link" type="button"  aria-label={`Remove ${file.name}`} onClick={() => setStagedFiles(current => current.filter((_, position) => position !== index))}>Remove</Button></li>)}
                 </ul>}
               </div>
             </div>
@@ -492,14 +496,14 @@ export default function NewLead() {
           <span className="new-lead-hint">{createdId ? "Your lead is ready to open." : "Only name and lead source are required."}</span>
           <div className="new-lead-action-buttons">
           {createdId ? (
-            <><button type="button" className="primary" onClick={reviewCreatedLead}>{reconciling ? "Review saved lead in new tab" : "Go to the lead"}</button>
-            {reconciling && <button type="button" className="secondary" onClick={() => {
+            <><Button variant="primary" type="button"  onClick={reviewCreatedLead}>{reconciling ? "Review saved lead in new tab" : "Go to the lead"}</Button>
+            {reconciling && <Button variant="secondary" type="button"  onClick={() => {
               const id = created.current!;
               cancelPending(); setNeedsReview(false); setReconciling(false); draft.clear(); markClean();
               navigate(`/accounts/${encodeURIComponent(id)}?tab=overview`);
-            }}>I reviewed the lead — discard this draft</button>}</>
+            }}>I reviewed the lead — discard this draft</Button>}</>
           ) : (
-            <><button type="button" className="secondary" disabled={saving} onClick={() => navigate('/leads')}>Cancel</button><button type="submit" className="primary" disabled={saving}>
+            <><Button variant="secondary" type="button"  disabled={saving} onClick={() => navigate('/leads')}>Cancel</Button><Button variant="primary" type="submit"  disabled={saving}>
               {saving
                 ? stagedFiles.length
                   ? "Creating & uploading…"
@@ -507,7 +511,7 @@ export default function NewLead() {
                 : stagedFiles.length
                   ? `Create lead & upload ${stagedFiles.length} document${stagedFiles.length > 1 ? "s" : ""}`
                   : "Create lead"}
-            </button></>
+            </Button></>
           )}
           </div>
         </footer>

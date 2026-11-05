@@ -1,3 +1,7 @@
+import { Button } from "../../components/ui/Button";
+import { Input } from "../../components/ui/Input";
+import { Textarea } from "../../components/ui/Textarea";
+import { Table } from "../../components/ui/Table";
 import { useRef, useState } from "react";
 import { uploadData } from "../../lib/scopedStorage";
 import {
@@ -264,9 +268,9 @@ function CertificatesTabContent({
         <>
           <div className="toolbar">
             <div className="grow" />
-            <button className="primary" disabled={saving} onClick={() => setShowForm(!showForm)}>
+            <Button variant="primary"  disabled={saving} onClick={() => setShowForm(!showForm)}>
               {showForm ? "Cancel" : "+ New certificate"}
-            </button>
+            </Button>
           </div>
 
           {showForm && (
@@ -275,18 +279,18 @@ function CertificatesTabContent({
               <div className="form-grid">
                 <div className="field">
                   <label>Certificate holder *</label>
-                  <input value={form.holderName} onChange={(e) => setF("holderName", e.target.value)} />
+                  <Input value={form.holderName} onChange={(e) => setF("holderName", e.target.value)} />
                 </div>
                 <div className="field">
                   <label>Holder address</label>
-                  <input
+                  <Input
                     value={form.holderAddress}
                     onChange={(e) => setF("holderAddress", e.target.value)}
                   />
                 </div>
                 <div className="field full">
                   <label>Description of operations</label>
-                  <textarea
+                  <Textarea
                     rows={2}
                     value={form.description}
                     onChange={(e) => setF("description", e.target.value)}
@@ -307,7 +311,7 @@ function CertificatesTabContent({
                         className="small"
                         style={{ display: "flex", gap: 6, alignItems: "center" }}
                       >
-                        <input
+                        <Input
                           type="checkbox"
                           checked={form.selectedPolicies.includes(p.id)}
                           onChange={(e) =>
@@ -327,13 +331,13 @@ function CertificatesTabContent({
               </div>
               </fieldset>
               <div className="form-actions">
-                <button
-                  className="primary"
+                <Button variant="primary"
+
                   disabled={saving || genStatus.busy || !referencesReady || !form.holderName.trim()}
                   onClick={issue}
                 >
                   {saving ? "Saving…" : "Record certificate"}
-                </button>
+                </Button>
               </div>
             </div>
           )}
@@ -347,9 +351,9 @@ function CertificatesTabContent({
           <AiFilledList fields={aiFilled} />
           {/* `error` is the issue/generate failure; the reads have their own. */}
           {error && <p className="error-text">{error}</p>}
-          {carrierRes.error && <p className="error-text">{carrierRes.error} <button disabled={carrierRes.loading} onClick={() => void carrierRes.refetch()}>Retry carriers</button></p>}
-          {policyRes.error && <p className="error-text">{policyRes.error} <button disabled={policyRes.loading} onClick={() => void policyRes.refetch()}>Retry policies</button></p>}
-          {certRes.error && <p className="error-text">{certRes.error} <button disabled={certRes.loading} onClick={() => void certRes.refetch()}>Retry certificates</button></p>}
+          {carrierRes.error && <p className="error-text">{carrierRes.error} <Button disabled={carrierRes.loading} onClick={() => void carrierRes.refetch()}>Retry carriers</Button></p>}
+          {policyRes.error && <p className="error-text">{policyRes.error} <Button disabled={policyRes.loading} onClick={() => void policyRes.refetch()}>Retry policies</Button></p>}
+          {certRes.error && <p className="error-text">{certRes.error} <Button disabled={certRes.loading} onClick={() => void certRes.refetch()}>Retry certificates</Button></p>}
 
           {!certRes.loaded ? (
             <p className="muted small">Loading…</p>
@@ -357,7 +361,7 @@ function CertificatesTabContent({
             <p className="muted small">No certificates issued.</p>
           ) : (
             <div className="table-wrap">
-              <table>
+              <Table>
                 <thead>
                   <tr>
                     <SortTh label="Cert #" colKey="number" sortKey={sortKey} dir={dir} onToggle={toggle} />
@@ -383,35 +387,35 @@ function CertificatesTabContent({
                       <td style={{ whiteSpace: "nowrap" }}>
                         {c.s3Key ? (
                           <>
-                            <button className="link" onClick={() => setPreviewCert(c)}>
+                            <Button variant="link"  onClick={() => setPreviewCert(c)}>
                               Preview
-                            </button>
-                            <button className="link" onClick={() => downloadPdf(c)}>
+                            </Button>
+                            <Button variant="link"  onClick={() => downloadPdf(c)}>
                               Download
-                            </button>
+                            </Button>
                             <BusinessDraftButton accountId={account.id} kind="CERTIFICATE" recordId={c.id} label="Prepare email in Front" disabled={genStatus.busy || saving || !referencesReady} />
-                            <button
-                              className="link"
+                            <Button variant="link"
+
                               disabled={genStatus.busy || saving || !referencesReady}
                               onClick={() => generatePdf(c)}
                             >
                               {generating === c.id ? "Regenerating…" : "Regenerate"}
-                            </button>
+                            </Button>
                           </>
                         ) : (
-                          <button
-                            className="link"
+                          <Button variant="link"
+
                             disabled={genStatus.busy || saving || !referencesReady}
                             onClick={() => generatePdf(c)}
                           >
                             {generating === c.id ? "Generating…" : "Generate PDF"}
-                          </button>
+                          </Button>
                         )}
                       </td>
                     </tr>
                   ))}
                 </tbody>
-              </table>
+              </Table>
             </div>
           )}
         </>

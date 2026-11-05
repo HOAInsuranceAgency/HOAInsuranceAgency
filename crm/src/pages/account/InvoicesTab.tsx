@@ -1,3 +1,6 @@
+import { Button } from "../../components/ui/Button";
+import { Select } from "../../components/ui/Select";
+import { Table } from "../../components/ui/Table";
 import { useRef, useState } from "react";
 import {
   client,
@@ -272,7 +275,7 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
   }
 
   if (!res.loaded) return <p className="muted small">Loading…</p>;
-  const readError = res.error && <p className="error-text">{res.error} <button type="button" disabled={res.loading} onClick={() => void res.refetch()}>Retry invoices</button></p>;
+  const readError = res.error && <p className="error-text">{res.error} <Button type="button" disabled={res.loading} onClick={() => void res.refetch()}>Retry invoices</Button></p>;
   if (!res.data) return readError || null;
 
   const { invoices, lines, policies, quotes, contacts, account } = res.data;
@@ -300,7 +303,7 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
           <h2>Invoices</h2>
           <div className="inline-actions">
             <SaveStatus {...createStatus.status} />
-            <select
+            <Select
               aria-label="Bill which policy or quote"
               value={anchorKey}
               disabled={createStatus.busy}
@@ -324,15 +327,15 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
                   {q.effectiveDate ? ` (${q.effectiveDate})` : ""}
                 </option>
               ))}
-            </select>
-            <button
+            </Select>
+            <Button variant="primary"
               type="button"
-              className="primary"
+
               disabled={createStatus.busy || editorBusy || !anchorKey}
               onClick={() => void newInvoice()}
             >
               New invoice
-            </button>
+            </Button>
           </div>
         </div>
         {openPolicies.length === 0 && openQuotes.length === 0 && (
@@ -350,7 +353,7 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
           </p>
         ) : (
           <div className="table-wrap">
-            <table>
+            <Table>
               <thead>
                 <tr>
                   <th>Invoice</th>
@@ -366,7 +369,7 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
                   const own = lines.filter((l) => l.invoiceId === inv.id);
                   const isOpen = inv.id === openId;
                   return (
-                    <tr key={inv.id} className={isOpen ? "row-open" : undefined}>
+                    <tr key={inv.id} className={isOpen ? "ui-table-row-selected" : undefined}>
                       <td>{inv.number ?? "—"}</td>
                       <td>{fmtDate(inv.issuedAt)}</td>
                       <td>{fmtDate(inv.dueAt)}</td>
@@ -377,21 +380,21 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
                         {fmtMoney(invoiceTotals(own).retail)}
                       </td>
                       <td className="row-action">
-                        <button
+                        <Button variant="link"
                           type="button"
-                          className="link"
+
                           aria-expanded={isOpen}
                           disabled={createStatus.busy || editorBusy}
                           onClick={() => setOpenId(isOpen ? null : inv.id)}
                         >
                           {isOpen ? "Close" : "Open"}
-                        </button>
+                        </Button>
                       </td>
                     </tr>
                   );
                 })}
               </tbody>
-            </table>
+            </Table>
           </div>
         )}
       </div>

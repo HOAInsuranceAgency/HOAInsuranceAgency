@@ -1,3 +1,7 @@
+import { Select } from "../ui/Select";
+import { Input } from "../ui/Input";
+import { Textarea } from "../ui/Textarea";
+import { Button } from "../ui/Button";
 import { useRef, useState } from "react";
 import {
   client,
@@ -125,7 +129,7 @@ export default function LicenseForm({
         {holderType === "PRODUCER" && (
           <div className="field">
             <label>Team member *</label>
-            <select value={form.userProfileId} onChange={(e) => setF("userProfileId", e.target.value)}>
+            <Select value={form.userProfileId} onChange={(e) => setF("userProfileId", e.target.value)}>
               <option value="">—</option>
               {[...profiles]
                 .sort((a, b) =>
@@ -138,29 +142,29 @@ export default function LicenseForm({
                     {p.firstName} {p.lastName}
                   </option>
                 ))}
-            </select>
+            </Select>
           </div>
         )}
         <div className="field">
           <label>State *</label>
-          <select value={form.state} onChange={(e) => setF("state", e.target.value)}>
+          <Select value={form.state} onChange={(e) => setF("state", e.target.value)}>
             <option value="">—</option>
             {US_STATES.map((s) => (
               <option key={s}>{s}</option>
             ))}
-          </select>
+          </Select>
         </div>
         <div className="field">
           <label>License number *</label>
-          <input value={form.licenseNumber} onChange={(e) => setF("licenseNumber", e.target.value)} />
+          <Input value={form.licenseNumber} onChange={(e) => setF("licenseNumber", e.target.value)} />
         </div>
         <div className="field">
           <label>NPN</label>
-          <input value={form.npn} onChange={(e) => setF("npn", e.target.value)} />
+          <Input value={form.npn} onChange={(e) => setF("npn", e.target.value)} />
         </div>
         <div className="field">
           <label>License class</label>
-          <select value={form.licenseClass} onChange={(e) => setF("licenseClass", e.target.value)}>
+          <Select value={form.licenseClass} onChange={(e) => setF("licenseClass", e.target.value)}>
             {Object.entries(LICENSE_CLASS_LABELS)
               .sort((a, b) => a[1].localeCompare(b[1]))
               .map(([v, label]) => (
@@ -168,21 +172,21 @@ export default function LicenseForm({
                   {label}
                 </option>
               ))}
-          </select>
+          </Select>
         </div>
         <div className="field">
           <label>Residency</label>
-          <select value={form.residency} onChange={(e) => setF("residency", e.target.value)}>
+          <Select value={form.residency} onChange={(e) => setF("residency", e.target.value)}>
             {LICENSE_RESIDENCY_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>
                 {o.label}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
         <div className="field">
           <label>Status</label>
-          <select value={form.status} onChange={(e) => setF("status", e.target.value)}>
+          <Select value={form.status} onChange={(e) => setF("status", e.target.value)}>
             {Object.entries(LICENSE_STATUS_LABELS)
               .sort((a, b) => a[1].localeCompare(b[1]))
               .map(([v, label]) => (
@@ -190,19 +194,19 @@ export default function LicenseForm({
                   {label}
                 </option>
               ))}
-          </select>
+          </Select>
         </div>
         <div className="field">
           <label>Effective date</label>
-          <input type="date" value={form.effectiveDate} onChange={(e) => setF("effectiveDate", e.target.value)} />
+          <Input type="date" value={form.effectiveDate} onChange={(e) => setF("effectiveDate", e.target.value)} />
         </div>
         <div className="field">
           <label>Expiration date</label>
-          <input type="date" value={form.expirationDate} onChange={(e) => setF("expirationDate", e.target.value)} />
+          <Input type="date" value={form.expirationDate} onChange={(e) => setF("expirationDate", e.target.value)} />
         </div>
         <div className="field">
           <label>CE due date</label>
-          <input
+          <Input
             type="date"
             value={form.continuingEducationDueDate}
             onChange={(e) => setF("continuingEducationDueDate", e.target.value)}
@@ -217,7 +221,7 @@ export default function LicenseForm({
                 className="small"
                 style={{ display: "flex", gap: 4, alignItems: "center" }}
               >
-                <input
+                <Input
                   type="checkbox"
                   checked={form.loa.includes(l)}
                   onChange={() =>
@@ -233,16 +237,16 @@ export default function LicenseForm({
         </div>
         <div className="field full">
           <label>Notes</label>
-          <textarea rows={2} value={form.notes} onChange={(e) => setF("notes", e.target.value)} />
+          <Textarea rows={2} value={form.notes} onChange={(e) => setF("notes", e.target.value)} />
         </div>
       </div>
       <div className="form-actions">
-        <button className="primary" disabled={saving} onClick={save}>
+        <Button variant="primary"  disabled={saving} onClick={save}>
           {saving ? "Saving…" : existing ? "Save changes" : "Add license"}
-        </button>
-        <button className="link" onClick={onCancel}>
+        </Button>
+        <Button variant="link"  onClick={onCancel}>
           Cancel
-        </button>
+        </Button>
         {error && <span role="alert" className="error-text">{error}</span>}
       </div>
       {!existing && (

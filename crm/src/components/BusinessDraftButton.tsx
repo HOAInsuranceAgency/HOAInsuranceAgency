@@ -1,3 +1,4 @@
+import { Button } from "./ui/Button";
 import { useState } from "react";
 import type { BusinessDeliveryKind } from "../../../shared/frontBusinessDelivery";
 import BusinessDeliveryComposer from "./BusinessDeliveryComposer";
@@ -19,7 +20,7 @@ export default function BusinessDraftButton(props: BusinessDraftButtonProps) {
 function BusinessDraftButtonContent({ label = "Prepare email in Front", disabled, ...selection }: BusinessDraftButtonProps) {
   const [open, setOpen] = useState(false);
   return <>
-    <button type="button" className="secondary" disabled={disabled} onClick={() => setOpen(true)}>{label}</button>
+    <Button variant="secondary" type="button"  disabled={disabled} onClick={() => setOpen(true)}>{label}</Button>
     {open && <BusinessDeliveryComposer {...selection} onClose={() => setOpen(false)} />}
   </>;
 }

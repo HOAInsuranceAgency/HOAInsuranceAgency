@@ -1,3 +1,4 @@
+import { Button } from "../components/ui/Button";
 import { useMemo, useState } from "react";
 
 export type SortDir = "asc" | "desc";
@@ -64,10 +65,10 @@ export function SortTh({
   const active = colKey === sortKey;
   return (
     <th className="sortable" aria-sort={active ? (dir === "asc" ? "ascending" : "descending") : "none"} onClick={() => onToggle(colKey)}>
-      <button type="button" className="sort-label">
+      <Button variant="plain" type="button" className="sort-label">
         {label}
         <span className="arrow" aria-hidden="true">{active ? (dir === "asc" ? " ▲" : " ▼") : ""}</span>
-      </button>
+      </Button>
     </th>
   );
 }

@@ -1,3 +1,7 @@
+import { Select } from "./ui/Select";
+import { Input } from "./ui/Input";
+import { Textarea } from "./ui/Textarea";
+import { Button } from "./ui/Button";
 import PartyPicker from './PartyPicker';
 import AccountPicker from './AccountPicker';
 import { useMounted } from '../lib/useMounted';
@@ -104,7 +108,7 @@ export default function RelationshipLinkForm({
           )}
           <label className="field">
             Role
-            <select
+            <Select
               value={role}
               onChange={(e) => {
                 setRole(e.target.value as RelationshipRole);
@@ -116,7 +120,7 @@ export default function RelationshipLinkForm({
                   {RELATIONSHIP_LABELS[r]}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
           {role === 'MANAGER' ? (
             <p className="muted">
@@ -126,7 +130,7 @@ export default function RelationshipLinkForm({
             <>
               <label className="field">
                 Start date (if known)
-                <input
+                <Input
                   type="date"
                   value={from}
                   onChange={(e) => {
@@ -137,7 +141,7 @@ export default function RelationshipLinkForm({
               </label>
               <label className="field">
                 Account relationship notes
-                <textarea
+                <Textarea
                   maxLength={2000}
                   value={notes}
                   onChange={(e) => {
@@ -148,9 +152,9 @@ export default function RelationshipLinkForm({
               </label>
             </>
           )}
-          <button className="primary" type="submit">
+          <Button variant="primary"  type="submit">
             {busy ? 'Saving…' : role === 'MANAGER' ? 'Review management change' : 'Link relationship'}
-          </button>
+          </Button>
         </fieldset>
         {error && (
           <p className="error-text" role="alert">

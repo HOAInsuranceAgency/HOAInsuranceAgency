@@ -10,9 +10,8 @@
 .hc-full { grid-column: 1 / -1; }
 .hc-submissions .field { min-width: 0; }
 .hc-submissions input, .hc-submissions select, .hc-submissions textarea { min-width: 0; max-width: 100%; }
-.hc-submissions input[readonly] { background: #f1f4f7; color: var(--muted); }
 .hc-submissions .hc-review { display: flex; align-items: flex-start; gap: 10px; margin: 20px 0; font-size: 14px; line-height: 1.5; }
-.hc-review input { flex: 0 0 auto; margin-top: 4px; width: 16px; height: 16px; }
+.hc-review input { flex: 0 0 auto; margin-top: 4px; }
 .hc-actions { display: flex; flex-wrap: wrap; gap: 10px; }
 .hc-submission pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 280px; overflow: auto; background: #f5f7fa; padding: 12px; border-radius: 6px; font-size: 12px; }
 .hc-submission p { overflow-wrap: anywhere; }
@@ -21,7 +20,5 @@
 .hc-submissions summary { cursor: pointer; }
 @media (max-width: 600px) {
   .hc-submissions .form-grid { grid-template-columns: minmax(0, 1fr); }
-  .hc-submissions .field input, .hc-submissions .field select, .hc-submissions .field textarea { font-size: 16px; min-height: 44px; }
-  .hc-submissions button { min-height: 44px; }
   .hc-heading .badge { white-space: normal; }
 }

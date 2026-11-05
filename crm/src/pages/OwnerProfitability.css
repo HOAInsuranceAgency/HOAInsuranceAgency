@@ -9,7 +9,7 @@
 .owner-profitability-table table { min-width: 950px; }
 .owner-profitability-table td, .owner-profitability-table th { vertical-align: top; }
 .owner-profitability-table td:not(:last-child):not(:first-child) { white-space: nowrap; font-variant-numeric: tabular-nums; }
-.owner-profitability-table tbody th { text-transform: none; letter-spacing: normal; font-size: 13px; min-width: 150px; }
+.owner-profitability-table tbody th { min-width: 150px; }
 .owner-profitability-negative { color: var(--red); font-weight: 700; }
 .owner-profitability-contribution { font-weight: 700; }
 .owner-profitability-data-status { min-width: 190px; font-size: 12px; }

@@ -1,3 +1,7 @@
+import { Button } from "./ui/Button";
+import { Select } from "./ui/Select";
+import { Input } from "./ui/Input";
+import { Textarea } from "./ui/Textarea";
 import { useEffect, useState } from 'react';
 import { client, US_STATES } from '../lib/client';
 import { useAsyncResource } from '../lib/useAsyncResource';
@@ -15,10 +19,10 @@ export default function BrokerFeeSettings() {
     return {version:result.data?.brokerFeeJurisdictionsVersion??0,rules:(typeof raw==='string'?JSON.parse(raw):raw??{}) as Record<string,BrokerFeeJurisdictionRule>};
   },[]);
   return <div className="card"><h2>Broker fee disclosures</h2><p className="muted small">Configure the fee eligibility and disclosure wording reviewed for each state. Quotes use these rules automatically. A state without configured rules cannot charge a broker fee.</p>
-    {data.error?<p className="error-text">{data.error} <button className="link" onClick={()=>void data.refetch()}>Retry</button></p>:!data.loaded?<p>Loading disclosure settings…</p>:<>
-      <label className="field">State<select disabled={saving} value={state} onChange={e=>setState(e.target.value)}>{US_STATES.map(s=><option key={s}>{s}</option>)}</select></label>
+    {data.error?<p className="error-text">{data.error} <Button variant="link"  onClick={()=>void data.refetch()}>Retry</Button></p>:!data.loaded?<p>Loading disclosure settings…</p>:<>
+      <label className="field">State<Select disabled={saving} value={state} onChange={e=>setState(e.target.value)}>{US_STATES.map(s=><option key={s}>{s}</option>)}</Select></label>
       <JurisdictionForm key={`${state}:${data.data?.version}`} state={state} existing={data.data?.rules[state]} version={data.data?.version??0} onSaved={()=>void data.refetch()} onBusy={setSaving}/>
-      <button className="link" disabled={saving||data.loading} onClick={()=>void data.refetch()}>Reload current disclosure rules</button>
+      <Button variant="link"  disabled={saving||data.loading} onClick={()=>void data.refetch()}>Reload current disclosure rules</Button>
     </>}
   </div>;
 }
@@ -39,26 +43,26 @@ function JurisdictionForm({state,existing,version,onSaved,onBusy}:{state:string;
   },{errorMessage:'Could not save disclosure settings.',savedMessage:'Disclosure settings saved.'});}
   return <fieldset disabled={status.busy} style={{border:0,padding:0,minWidth:0}}>
     <div className="form-grid">
-      <label className="field">Review reference/version<input value={rule.version} onChange={e=>edit('version',e.target.value)}/></label>
-      <label className="field">Reviewed by<input value={rule.reviewedBy} onChange={e=>edit('reviewedBy',e.target.value)}/></label>
-      <label className="field">Review date<input type="date" value={rule.reviewedAt} onChange={e=>edit('reviewedAt',e.target.value)}/></label>
-      <label className="field">Source/reference link<input type="url" value={rule.evidenceUrl} onChange={e=>edit('evidenceUrl',e.target.value)}/></label>
-      <label className="field">Permitted coverage lines, separated by commas<input value={rule.lines} onChange={e=>edit('lines',e.target.value)}/><span className="muted small">Enter the coverage names used on quotes; use * only if the review permits every line.</span></label>
-      <label className="field">Maximum fee ($), if applicable<input inputMode="decimal" value={rule.maxFee} onChange={e=>edit('maxFee',e.target.value)}/><span className="muted small">Leave blank only when the reviewed rules impose no maximum.</span></label>
+      <label className="field">Review reference/version<Input value={rule.version} onChange={e=>edit('version',e.target.value)}/></label>
+      <label className="field">Reviewed by<Input value={rule.reviewedBy} onChange={e=>edit('reviewedBy',e.target.value)}/></label>
+      <label className="field">Review date<Input type="date" value={rule.reviewedAt} onChange={e=>edit('reviewedAt',e.target.value)}/></label>
+      <label className="field">Source/reference link<Input type="url" value={rule.evidenceUrl} onChange={e=>edit('evidenceUrl',e.target.value)}/></label>
+      <label className="field">Permitted coverage lines, separated by commas<Input value={rule.lines} onChange={e=>edit('lines',e.target.value)}/><span className="muted small">Enter the coverage names used on quotes; use * only if the review permits every line.</span></label>
+      <label className="field">Maximum fee ($), if applicable<Input inputMode="decimal" value={rule.maxFee} onChange={e=>edit('maxFee',e.target.value)}/><span className="muted small">Leave blank only when the reviewed rules impose no maximum.</span></label>
     </div>
     <p className="small muted">HOA broker fees are available only on agency-billed policies.</p>
-    <label style={{display:'block',marginTop:16}}><input type="checkbox" checked={rule.discloseCarrierCommission} onChange={e=>edit('discloseCarrierCommission',e.target.checked)}/> Disclose each policy’s insurer-paid agency commission.</label>
-    <label style={{display:'block',marginTop:16}}><input type="checkbox" checked={rule.requiresBrokerSignature} onChange={e=>edit('requiresBrokerSignature',e.target.checked)}/> This state requires the agency to countersign.</label>
+    <label style={{display:'block',marginTop:16}}><Input type="checkbox" checked={rule.discloseCarrierCommission} onChange={e=>edit('discloseCarrierCommission',e.target.checked)}/> Disclose each policy’s insurer-paid agency commission.</label>
+    <label style={{display:'block',marginTop:16}}><Input type="checkbox" checked={rule.requiresBrokerSignature} onChange={e=>edit('requiresBrokerSignature',e.target.checked)}/> This state requires the agency to countersign.</label>
     {rule.requiresBrokerSignature&&<div className="form-grid">
-      <label className="field">Authorized agency signer<input value={rule.signerName} onChange={e=>edit('signerName',e.target.value)}/></label>
-      <label className="field">Signer title<input value={rule.signerTitle} onChange={e=>edit('signerTitle',e.target.value)}/></label>
-      <label className="field">Agency/broker license number<input value={rule.signerLicense} onChange={e=>edit('signerLicense',e.target.value)}/></label>
-      <label><input type="checkbox" checked={rule.signerAuthorized} onChange={e=>edit('signerAuthorized',e.target.checked)}/> I authorize this agency electronic countersignature on these fee agreements.</label>
+      <label className="field">Authorized agency signer<Input value={rule.signerName} onChange={e=>edit('signerName',e.target.value)}/></label>
+      <label className="field">Signer title<Input value={rule.signerTitle} onChange={e=>edit('signerTitle',e.target.value)}/></label>
+      <label className="field">Agency/broker license number<Input value={rule.signerLicense} onChange={e=>edit('signerLicense',e.target.value)}/></label>
+      <label><Input type="checkbox" checked={rule.signerAuthorized} onChange={e=>edit('signerAuthorized',e.target.checked)}/> I authorize this agency electronic countersignature on these fee agreements.</label>
     </div>}
     <h3>Required state forms</h3><p className="muted small">These appear after the combined one-page summary in the same signing session. Include the complete reviewed wording, including required acknowledgments and agency signature provisions.</p>
-    {rule.forms.map((form,index)=><div key={index} className="card"><label className="field">Form title<input value={form.title} onChange={e=>edit('forms',rule.forms.map((f,i)=>i===index?{...f,title:e.target.value}:f))}/></label><label className="field">Disclosure wording<textarea rows={7} value={form.paragraphs.join('\n\n')} onChange={e=>edit('forms',rule.forms.map((f,i)=>i===index?{...f,paragraphs:e.target.value.split(/\n\s*\n/).filter(s=>s.trim())}:f))}/></label><button className="link" onClick={()=>edit('forms',rule.forms.filter((_,i)=>i!==index))}>Remove form</button></div>)}
-    <button className="secondary" disabled={rule.forms.length>=10} onClick={()=>edit('forms',[...rule.forms,{title:'',paragraphs:[]}])}>Add state form</button>
-    <label style={{display:'block',marginTop:16}}><input type="checkbox" checked={rule.approved} onChange={e=>edit('approved',e.target.checked)}/> Enable these reviewed rules for fees alongside carrier commission. Uncheck to stop new fee agreements in this state.</label>
-    <div className="form-actions"><button className="primary" onClick={()=>void save()}>Save disclosure rules</button><SaveStatus {...status.status}/></div>
+    {rule.forms.map((form,index)=><div key={index} className="card"><label className="field">Form title<Input value={form.title} onChange={e=>edit('forms',rule.forms.map((f,i)=>i===index?{...f,title:e.target.value}:f))}/></label><label className="field">Disclosure wording<Textarea rows={7} value={form.paragraphs.join('\n\n')} onChange={e=>edit('forms',rule.forms.map((f,i)=>i===index?{...f,paragraphs:e.target.value.split(/\n\s*\n/).filter(s=>s.trim())}:f))}/></label><Button variant="link"  onClick={()=>edit('forms',rule.forms.filter((_,i)=>i!==index))}>Remove form</Button></div>)}
+    <Button variant="secondary"  disabled={rule.forms.length>=10} onClick={()=>edit('forms',[...rule.forms,{title:'',paragraphs:[]}])}>Add state form</Button>
+    <label style={{display:'block',marginTop:16}}><Input type="checkbox" checked={rule.approved} onChange={e=>edit('approved',e.target.checked)}/> Enable these reviewed rules for fees alongside carrier commission. Uncheck to stop new fee agreements in this state.</label>
+    <div className="form-actions"><Button variant="primary"  onClick={()=>void save()}>Save disclosure rules</Button><SaveStatus {...status.status}/></div>
   </fieldset>;
 }

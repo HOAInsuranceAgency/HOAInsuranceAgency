@@ -1,3 +1,5 @@
+import { FilePicker } from "../ui/FilePicker";
+import { Button } from "../ui/Button";
 import { useEffect, useId, useRef, useState } from "react";
 import { uploadData, getUrl, remove } from "../../lib/scopedStorage";
 import {
@@ -162,13 +164,13 @@ function PhotoSlot({
     <article className="property-photo-slot" aria-label={label}>
       <h3>{label}</h3>
       {s3Key ? (
-        <button type="button" className="property-photo-preview" aria-label={`Preview ${label.toLowerCase()}`} onClick={() => onView(s3Key)}>
+        <Button variant="surface" type="button" className="property-photo-preview" aria-label={`Preview ${label.toLowerCase()}`} onClick={() => onView(s3Key)}>
           {thumbUrl && !thumbError ? <img src={thumbUrl} alt="" onError={() => setThumbError(true)} /> : <span className="property-photo-placeholder">
             <PhotoIcon />
             <span>{thumbError ? "Preview unavailable" : isImage ? "Loading preview…" : "File attached"}</span>
           </span>}
           <span className="property-photo-preview-label">Preview</span>
-        </button>
+        </Button>
       ) : (
         <div className="property-photo-empty" role={busy ? "status" : undefined}>
           <PhotoIcon />
@@ -177,20 +179,14 @@ function PhotoSlot({
         </div>
       )}
       <div className="property-photo-actions">
-        <label className={`property-photo-upload${disabled ? " is-busy" : ""}`} htmlFor={uploadId}>
-          {busy ? "Uploading…" : s3Key ? "Replace" : "Upload"}<span className="property-photos-sr-only"> {label.toLowerCase()}</span>
-          <input
-            id={uploadId}
-            type="file"
-            accept="image/*,.pdf"
-            disabled={disabled}
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              e.target.value = "";
-              onUpload(file);
-            }}
-          />
-        </label>
+        <FilePicker className="property-photo-upload" controlSize="compact" id={uploadId}
+          label={<>{busy ? "Uploading…" : s3Key ? "Replace" : "Upload"}<span className="property-photos-sr-only"> {label.toLowerCase()}</span></>}
+          accept="image/*,.pdf" disabled={disabled}
+          onChange={e => {
+            const file = e.target.files?.[0];
+            e.target.value = "";
+            onUpload(file);
+          }} />
         {s3Key && (
           /* Was unguarded: one click deleted the S3 object and nulled the
              field. */

@@ -1,0 +1,99 @@
+@import './tokens.css';
+
+.ui-input[data-ui-appearance='field'],
+.ui-select[data-size],
+.ui-textarea[data-size] {
+  --field-height: var(--control-height);
+  --field-font: var(--control-font);
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
+  min-height: var(--field-height);
+  border: 1px solid var(--border, #dfe4ec);
+  border-radius: var(--control-radius);
+  padding: 7px var(--control-padding-inline-end, 10px) 7px var(--control-padding-inline-start, 10px);
+  background-color: var(--card, #fff);
+  color: var(--text, #1c2634);
+  font-family: inherit;
+  font-size: var(--field-font);
+  line-height: 1.4;
+}
+
+.ui-input[data-ui-appearance='field'][data-size='compact'],
+.ui-select[data-size='compact'],
+.ui-textarea[data-size='compact'] {
+  --field-height: var(--control-height-compact);
+  --field-font: var(--control-font-compact);
+  padding-block: 4px;
+}
+
+.ui-input[data-ui-appearance='field'],
+.ui-select:not([data-listbox]) {
+  height: var(--field-height);
+}
+
+.ui-select:not([data-listbox]) {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='m1 1 5 5 5-5' fill='none' stroke='%2364748b' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 11px center;
+  background-size: 12px 8px;
+  padding-right: max(34px, var(--control-padding-inline-end, 10px));
+}
+
+/* Native listboxes and textareas size themselves from `size` and `rows`. */
+.ui-select[data-listbox],
+.ui-textarea[data-size] {
+  height: auto;
+}
+
+.ui-textarea[data-size] {
+  resize: vertical;
+}
+
+.ui-input[data-ui-appearance='field']::placeholder,
+.ui-textarea::placeholder {
+  color: var(--muted, #64748b);
+  opacity: 1;
+}
+
+.ui-input[data-ui-appearance='field']:hover:not(:disabled):not(:read-only),
+.ui-select:hover:not(:disabled),
+.ui-textarea:hover:not(:disabled):not(:read-only) {
+  border-color: var(--accent, #2e7dd1);
+}
+
+.ui-input[data-ui-appearance='field']:focus,
+.ui-select:focus,
+.ui-textarea:focus,
+.ui-input[data-ui-appearance='native']:focus-visible {
+  outline: 2px solid var(--accent, #2e7dd1);
+  outline-offset: -1px;
+}
+
+.ui-input[data-ui-appearance='field']:disabled,
+.ui-select:disabled,
+.ui-textarea:disabled {
+  background-color: var(--bg, #f4f6f9);
+  color: var(--muted, #64748b);
+  cursor: not-allowed;
+  opacity: 1;
+}
+
+.ui-input[data-ui-appearance='field']:read-only:not(:disabled),
+.ui-textarea:read-only:not(:disabled) {
+  background-color: var(--bg, #f4f6f9);
+}
+
+.ui-input[data-ui-appearance='native'] {
+  accent-color: var(--accent, #2e7dd1);
+}
+
+@media (forced-colors: active) {
+  .ui-select:not([data-listbox]) {
+    appearance: auto;
+    -webkit-appearance: auto;
+    background-image: none;
+  }
+}

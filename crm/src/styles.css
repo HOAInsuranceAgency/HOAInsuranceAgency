@@ -1,3 +1,5 @@
+@import './components/ui/MetricButton.css';
+
 :root {
   --navy: #142a4c;
   --navy-dark: #0e1f3a;
@@ -67,11 +69,6 @@ a:hover { text-decoration: underline; }
 }
 .hamburger {
   display: none;
-  background: none;
-  border: none;
-  color: #fff;
-  cursor: pointer;
-  padding: 6px;
 }
 /* The one scrolling region in the rail — see the note on `.sidebar`. */
 .sidebar nav { display: flex; flex-direction: column; gap: 2px; overflow-y: auto; }
@@ -102,29 +99,11 @@ a:hover { text-decoration: underline; }
 }
 .sidebar .user button {
   margin-top: 6px;
-  background: none;
-  border: 1px solid rgba(255,255,255,0.3);
-  color: #fff;
-  border-radius: 6px;
-  padding: 4px 10px;
-  font-size: 12px;
-  cursor: pointer;
 }
-.sidebar .user button:hover { background: rgba(255,255,255,0.1); }
 .role-switcher { display: grid; gap: 5px; margin: 8px 0; }
 .role-switcher select {
   width: 100%;
-  min-height: 36px;
-  padding: 6px 10px;
-  border: 1px solid rgba(255,255,255,0.35);
-  border-radius: 6px;
-  background: var(--navy);
-  color: #fff;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
 }
-.role-switcher select:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
 
 /* ── Agency NPNs in the rail ───────────────────────────────────────── */
 /* Above the signed-in user, separated by a rule so the two blocks read as
@@ -154,25 +133,10 @@ a:hover { text-decoration: underline; }
      to stay selectable — see CopyValue.tsx. */
   user-select: all;
 }
-/* Scoped through `.sidebar .user` deliberately: that selector already styles
-   every button inside the block as a bordered pill, and it is more specific
-   than a lone class — so this has to match it to win. The pill is Sign out's,
-   and two controls of equal weight beside a name stop the destructive one from
-   reading as the action; this is a quiet text button instead. */
+/* Keep the copy action beside the selectable account value. */
 .sidebar .user .copy-value__btn {
   margin: 0;
-  border: none;
-  background: none;
-  color: #8ba3c7;
-  font-size: 11px;
-  padding: 2px 4px;
-  border-radius: 4px;
-  cursor: pointer;
   flex-shrink: 0;
-}
-.sidebar .user .copy-value__btn:hover {
-  color: #fff;
-  background: rgba(255,255,255,0.1);
 }
 
 .main { flex: 1; padding: 24px 32px 64px; min-width: 0; }
@@ -216,30 +180,9 @@ a:hover { text-decoration: underline; }
 .card h3 { font-size: 14px; margin: 18px 0 8px; }
 
 .stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; margin-bottom: 20px; }
-.stat {
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 14px 18px;
-}
-.stat .n { font-size: 26px; font-weight: 700; }
-.stat .l { font-size: 13px; color: var(--muted); }
 
 .toolbar { display: flex; gap: 10px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
 .toolbar .grow { flex: 1; }
-
-.tabs { display: flex; gap: 4px; border-bottom: 2px solid var(--border); margin-bottom: 18px; flex-wrap: wrap; }
-.tabs button {
-  background: none;
-  border: none;
-  padding: 9px 14px;
-  font-size: 14px;
-  cursor: pointer;
-  color: var(--muted);
-  border-bottom: 2px solid transparent;
-  margin-bottom: -2px;
-}
-.tabs button.active { color: var(--accent-dark); border-bottom-color: var(--accent); font-weight: 600; }
 
 /* The dashboard tabs' freshness line — tucked up under the strip, which
    carries an 18px margin of its own. */
@@ -254,141 +197,12 @@ a:hover { text-decoration: underline; }
    and later — beat this `display: none` and rendered BOTH controls at
    desktop width. The select borrows the field styling by joining that
    rule's selector list instead. */
-.dash-tab-select { display: none; }
 @media (max-width: 800px) {
-  .dash-tabs { display: none; }
-  .dash-tab-select { display: block; margin-bottom: 14px; }
-  .dash-tab-select select { width: 100%; font-size: 15px; padding: 9px 10px; }
   .tab-updated { margin-top: -6px; }
-}
-
-/* ── Universal search (top bar) ─────────────────────────────────────── */
-/* Sticky against the document scroll; negative margins span .main's
-   padding so the bar reads as the page's chrome, not a card. z-index 60:
-   above the chart tooltips (50), below every modal (100). */
-.topbar {
-  position: sticky;
-  top: 0;
-  z-index: 60;
-  background: var(--bg);
-  margin: -24px -32px 18px;
-  padding: 10px 32px;
-  border-bottom: 1px solid var(--border);
-}
-.usearch { position: relative; max-width: 640px; }
-.usearch input {
-  width: 100%;
-  padding: 8px 34px 8px 34px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  font-size: 14px;
-  background: var(--card);
-  color: var(--text);
-}
-.usearch input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
-.usearch-glass {
-  position: absolute;
-  left: 10px;
-  top: 50%;
-  transform: translateY(-50%);
-  color: var(--muted);
-  display: flex;
-  pointer-events: none;
-}
-.usearch .kbd,
-.usearch kbd {
-  border: 1px solid var(--border);
-  border-bottom-width: 2px;
-  border-radius: 4px;
-  padding: 0 5px;
-  color: var(--muted);
-  font-size: 10.5px;
-  background: var(--bg);
-  font-family: inherit;
-}
-.usearch .kbd {
-  position: absolute;
-  right: 10px;
-  top: 50%;
-  transform: translateY(-50%);
-  pointer-events: none;
-}
-.usearch-pop {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
-  right: 0;
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  box-shadow: 0 10px 28px rgba(16, 26, 44, 0.16);
-  max-height: 60vh;
-  overflow-y: auto;
-  z-index: 60;
-  padding: 4px 0;
-}
-.usearch-section + .usearch-section { border-top: 1px solid var(--border); margin-top: 4px; }
-.usearch-group {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--muted);
-  padding: 9px 16px 3px;
-}
-.usearch-group .note { text-transform: none; letter-spacing: 0; font-style: italic; }
-.usearch-hit {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 6px 10px;
-  margin: 0 6px;
-  border-radius: 6px;
-  cursor: pointer;
-}
-.usearch-hit .ico { color: var(--muted); flex: none; display: flex; margin-top: 3px; }
-.usearch-hit .hit-body { min-width: 0; }
-.usearch-hit .hit-label { display: block; font-weight: 600; line-height: 1.3; }
-.usearch-hit .sub {
-  display: block;
-  color: var(--muted);
-  font-size: 12.5px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.usearch-hit.on { background: var(--blue-bg); }
-/* The query's occurrence in a hit — colored, not boxed: rows highlight on
-   selection, and two competing backgrounds per row is one too many. */
-.usearch-pop mark {
-  background: transparent;
-  color: var(--accent-dark);
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-.usearch-foot {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-  border-top: 1px solid var(--border);
-  margin-top: 4px;
-  padding: 8px 16px 5px;
-  cursor: pointer;
-}
-.usearch-foot .foot-label { color: var(--accent-dark); font-weight: 600; font-size: 13.5px; }
-.usearch-foot.on { background: var(--blue-bg); }
-.usearch-foot .keys { color: var(--muted); font-size: 11.5px; white-space: nowrap; }
-.usearch-note { padding: 8px 16px; color: var(--muted); font-size: 12.5px; }
-@media (max-width: 800px) {
-  .topbar { margin: -16px -16px 14px; padding: 8px 16px; }
 }
 
 /* ── Dashboard command center ──────────────────────────────────────── */
 /* A tile whose number is itself the alarm (overdue money, attention count). */
-.stat.hot .n { color: var(--red); }
 
 /* Lead pipeline funnel: stage boxes with a proportional underline. */
 .funnel { display: flex; gap: 8px; }
@@ -432,11 +246,6 @@ a:hover { text-decoration: underline; }
 
 /* ── Tables ────────────────────────────────────────────────────────── */
 .table-wrap { overflow-x: auto; }
-table { width: 100%; border-collapse: collapse; font-size: 14px; }
-th { text-align: left; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; padding: 8px 10px; border-bottom: 2px solid var(--border); white-space: nowrap; }
-td { padding: 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
-tr.clickable { cursor: pointer; }
-tr.clickable:hover td { background: var(--blue-bg); }
 
 /* ── Badges ────────────────────────────────────────────────────────── */
 .badge {
@@ -454,90 +263,22 @@ tr.clickable:hover td { background: var(--blue-bg); }
 .badge.gray { background: #eef1f5; color: var(--muted); }
 
 /* ── Forms ─────────────────────────────────────────────────────────── */
-.form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px 16px; }
+.form-grid { display: grid; align-items: end; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px 16px; }
 .field { display: flex; flex-direction: column; gap: 4px; }
 .field label { font-size: 12px; font-weight: 600; color: var(--muted); }
-.field input, .field select, .field textarea, .dash-tab-select select {
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 8px 10px;
-  font-size: 14px;
-  font-family: inherit;
-  background: #fff;
-}
-.field input:focus,
-.field select:focus,
-.field textarea:focus,
-.dash-tab-select select:focus {
-  outline: 2px solid var(--accent);
-  outline-offset: -1px;
-}
 
-/* ── Platform-styled selects (everywhere, incl. inline table selects) ── */
-select {
-  appearance: none;
-  -webkit-appearance: none;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 8px 30px 8px 10px;
-  font-size: 14px;
-  font-family: inherit;
-  color: var(--text);
-  background: #fff
-    url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5 6 6.5 11 1.5' fill='none' stroke='%2364748b' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
-    no-repeat right 10px center;
-  cursor: pointer;
-  transition: border-color 0.15s ease;
-}
-select:hover { border-color: var(--accent); }
-select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
-td select { padding: 5px 26px 5px 8px; font-size: 13px; background-position: right 8px center; }
+/* ── Salesperson selector layout ── */
 .account-salesperson { min-width: 160px; max-width: 240px; }
 .account-salesperson select { width: 100%; }
 .account-salesperson .error-text { margin-top: 4px; overflow-wrap: anywhere; }
 
-/* ── Styled file pickers (native inputs hidden behind label buttons) ── */
-.file-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  background: #fff;
-  color: var(--accent-dark);
-  border: 1px dashed var(--accent);
-  border-radius: 6px;
-  padding: 8px 14px;
-  font-size: 13.5px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: background 0.15s ease;
-  user-select: none;
-}
-.file-btn:hover { background: var(--blue-bg); }
-.file-btn.disabled { opacity: 0.55; cursor: default; }
-.file-btn svg { flex-shrink: 0; }
-.file-btn input[type="file"] { display: none; }
-
 /* ── Sortable table headers ────────────────────────────────────────── */
-th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
-th.sortable:hover { color: var(--accent-dark); }
-th.sortable .arrow { display: inline-block; width: 1em; color: var(--accent-dark); }
-th.sortable .sort-label { border: 0; padding: 0; background: none; color: inherit; font: inherit; text-transform: inherit; letter-spacing: inherit; cursor: pointer; text-align: left; white-space: nowrap; }
-th.sortable .sort-label:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+th.sortable { white-space: nowrap; }
+th.sortable .arrow { display: inline-block; width: 1em; }
+th.sortable .sort-label { text-align: left; white-space: nowrap; }
 
 /* ── Dashboard tiles & renewals ────────────────────────────────────── */
-.stat.clickable { cursor: pointer; transition: border-color 0.15s ease, box-shadow 0.15s ease; }
-.stat.clickable:hover { border-color: var(--accent); box-shadow: 0 2px 10px rgba(46,125,209,0.12); }
 .chip-row { display: flex; gap: 6px; }
-.chip-row button {
-  background: #fff;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 4px 12px;
-  font-size: 12.5px;
-  cursor: pointer;
-  color: var(--muted);
-}
-.chip-row button.on { border-color: var(--accent); color: var(--accent-dark); font-weight: 600; background: var(--blue-bg); }
 .days-badge { font-variant-numeric: tabular-nums; }
 
 /* ── Lead → client celebration ─────────────────────────────────────── */
@@ -574,31 +315,6 @@ th.sortable .sort-label:focus-visible { outline: 2px solid var(--accent); outlin
 .field.full { grid-column: 1 / -1; }
 .form-actions { margin-top: 16px; display: flex; gap: 10px; align-items: center; }
 
-button.primary {
-  background: var(--accent);
-  color: #fff;
-  border: none;
-  border-radius: 6px;
-  padding: 9px 16px;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-}
-button.primary:hover { background: var(--accent-dark); }
-button.primary:disabled { opacity: 0.55; cursor: default; }
-button.secondary {
-  background: #fff;
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 8px 14px;
-  font-size: 13px;
-  cursor: pointer;
-}
-button.secondary:hover { border-color: var(--accent); color: var(--accent-dark); }
-button.danger { background: none; border: none; color: var(--red); font-size: 13px; cursor: pointer; padding: 4px; }
-button.link { background: none; border: none; color: var(--accent-dark); font-size: 13px; cursor: pointer; padding: 4px; }
-
 .error-text { color: var(--red); font-size: 13px; }
 .muted { color: var(--muted); }
 .small { font-size: 13px; }
@@ -622,9 +338,7 @@ mark.ocr-current { background: #f79b32; color: #fff; border-radius: 2px; }
 .ocr-find { display: flex; align-items: center; gap: 6px; }
 .ocr-find input { flex: 1; max-width: 320px; }
 .ocr-find .ocr-count { font-size: 12.5px; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
-.ocr-find button { padding: 6px 10px; line-height: 1; }
 .ocr-table { margin-bottom: 12px; max-height: 320px; overflow: auto; }
-.ocr-table td { font-size: 13px; padding: 6px 8px; border: 1px solid var(--border); }
 
 /* ── File preview modal ────────────────────────────────────────────── */
 .preview-overlay {
@@ -714,14 +428,7 @@ mark.ocr-current { background: #f79b32; color: #fff; border-radius: 2px; }
 .auth-card h2 { font-size: 18px; margin-bottom: 6px; }
 .auth-card .field { margin: 14px 0 4px; }
 .auth-card .form-actions { margin-top: 14px; }
-.auth-card .form-actions .primary { width: 100%; padding: 11px; }
-@font-face {
-  font-family: "Google Sans";
-  font-style: normal;
-  font-weight: 500;
-  font-display: swap;
-  src: url("/fonts/google-sans-medium-latin.woff2") format("woff2");
-}
+.auth-card .form-actions [data-variant='primary'] { width: 100%; }
 .auth-google {
   display: flex;
   align-items: center;
@@ -729,19 +436,8 @@ mark.ocr-current { background: #f79b32; color: #fff; border-radius: 2px; }
   gap: 10px;
   width: 100%;
   margin-top: 20px;
-  min-height: 44px;
-  padding: 11px 12px;
-  background: #fff;
-  color: #1f1f1f;
-  border: 1px solid #747775;
-  border-radius: 4px;
-  font: 500 14px/20px "Google Sans", Arial, sans-serif;
-  cursor: pointer;
 }
 .auth-google img { object-fit: contain; flex-shrink: 0; }
-.auth-google:hover:not(:disabled) { background: #f8fafc; }
-.auth-google:disabled { opacity: 0.55; cursor: default; }
-.auth-google:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .auth-divider { display: flex; align-items: center; gap: 12px; margin: 18px 0; color: var(--muted); font-size: 12px; }
 .auth-divider::before, .auth-divider::after { content: ""; flex: 1; height: 1px; background: var(--border); }
 .auth-tag {
@@ -784,26 +480,15 @@ mark.ocr-current { background: #f79b32; color: #fff; border-radius: 2px; }
 }
 .chart-tip .t-val { font-weight: 700; }
 .filter-row { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 4px; }
-.filter-row .field input { padding: 6px 8px; font-size: 13px; }
-.preset-btns { display: flex; gap: 6px; }
-.preset-btns button.on { border-color: var(--accent); color: var(--accent-dark); font-weight: 600; }
 
 /* ── Licensing: collapsible per-person groups ── */
-.license-group td { background: #f8fafc; padding: 0; }
 .license-group-toggle {
   display: flex;
   align-items: center;
   gap: 10px;
   width: 100%;
-  padding: 9px 12px;
-  background: none;
-  border: 0;
-  font: inherit;
-  color: var(--text);
   text-align: left;
-  cursor: pointer;
 }
-.license-group-toggle:hover { background: #eef2f7; }
 .license-group-caret {
   width: 12px;
   color: var(--muted);
@@ -819,43 +504,11 @@ mark.ocr-current { background: #f79b32; color: #fff; border-radius: 2px; }
 .lic-search {
   flex: 1 1 280px;
   min-width: 0;
-  padding: 9px 12px;
-  font-size: 14px;
-}
-.lic-chip {
-  padding: 7px 12px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--card);
-  color: var(--muted);
-  font-size: 13px;
-  font-weight: 600;
-  white-space: nowrap;
-  cursor: pointer;
-}
-.lic-chip:hover { border-color: var(--accent); color: var(--accent-dark); }
-.lic-chip.on {
-  border-color: var(--accent);
-  background: var(--blue-bg);
-  color: var(--accent-dark);
 }
 
 /* ── Licensing: tables / map view switch ── */
 /* Two chips sharing one pill outline, so they read as one control with two
    positions rather than two buttons that happen to be adjacent. */
-.view-switch { display: inline-flex; border: 1px solid var(--border); border-radius: 999px; padding: 2px; gap: 2px; }
-.view-switch button {
-  padding: 6px 14px;
-  border: 0;
-  border-radius: 999px;
-  background: transparent;
-  color: var(--muted);
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-}
-.view-switch button:hover { color: var(--accent-dark); }
-.view-switch button[aria-pressed="true"] { background: var(--blue-bg); color: var(--accent-dark); }
 
 /* ── Licensing: coverage map ── */
 .us-map { display: block; width: 100%; height: auto; max-height: 62vh; }
@@ -914,14 +567,8 @@ mark.ocr-current { background: #f79b32; color: #fff; border-radius: 2px; }
 .lead-text-cell { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
 .lead-text-switch { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
 .lead-text-phone {
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 5px 8px;
-  font-size: 13px;
-  font-family: inherit;
   width: 150px;
 }
-.lead-text-phone:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 
 /* ── Billing ───────────────────────────────────────────────────────────
    The invoice editor was written against a class vocabulary that never
@@ -944,32 +591,12 @@ mark.ocr-current { background: #f79b32; color: #fff; border-radius: 2px; }
 td.num input { text-align: right; }
 input.money { max-width: 120px; }
 
-/* Agency-only columns, tinted so the split from what the insured sees is
-   visible at a glance rather than something to remember. */
-.internal { background: #f3f5f9; }
-th.internal { color: var(--muted); }
-/* A hard edge where the agency-only band begins, because the tint alone is
-   easy to miss on a laptop screen in a bright room. */
-.band-start { border-left: 1px solid var(--border); }
-.group-head th { border-bottom: none; padding-bottom: 2px; font-size: 11px; }
-.group-head th.internal { border-radius: 4px 4px 0 0; }
-
 .invoice-lines td { vertical-align: middle; }
 .invoice-lines input, .invoice-lines select {
   width: 100%;
-  padding: 6px 8px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  font: inherit;
-  font-size: 13px;
-  background: var(--card);
 }
-.invoice-lines input:focus, .invoice-lines select:focus { outline: none; border-color: var(--accent); }
 .invoice-lines .kind-col { width: 150px; }
 .invoice-lines .row-action { width: 1%; white-space: nowrap; }
-.invoice-lines tfoot th { border-bottom: none; border-top: 2px solid var(--border); font-size: 13px; text-transform: none; letter-spacing: 0; color: var(--text); padding-top: 10px; }
-/* The one number the association is asked to pay. */
-.invoice-lines tfoot .total { font-size: 16px; font-weight: 700; }
 
 /* The buttons that follow the lines table belong to it, but not glued to it. */
 .invoice-lines + .inline-actions, .table-wrap + .inline-actions { margin-top: 12px; }
@@ -1039,19 +666,6 @@ th.internal { color: var(--muted); }
 
 /* A small square + that sits on a table row without competing with the text
    in it. Sized to the row rather than to a form control. */
-.icon-btn {
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  line-height: 1;
-  font-size: 16px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--card);
-  color: var(--muted);
-  cursor: pointer;
-}
-.icon-btn:hover { border-color: var(--accent); color: var(--accent-dark); }
 .row-tools { display: flex; align-items: center; gap: 6px; }
 
 /* Recipients. A checkbox each, so who is selected is readable without opening
@@ -1073,7 +687,6 @@ th.internal { color: var(--muted); }
 .check-list input { margin: 0; }
 
 /* The invoice currently open, tied to the editor below the table. */
-.row-open td { background: var(--blue-bg); }
 
 /* Shared CRM / Front lead workflow controls. */
 .lead-workflow .workflow-task { border-top: 1px solid var(--border, #e2e8f0); padding: 12px 0; }
@@ -1095,20 +708,14 @@ th.internal { color: var(--muted); }
 .front-crm-sidebar .toolbar .grow { flex: 1; }
 .front-crm-sidebar .workflow-heading { margin-bottom: 10px; }
 .front-crm-sidebar .workflow-heading h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .7px; color: var(--muted); }
-.front-crm-sidebar .workflow-heading button { font-size: 12px; min-height: 28px; padding: 4px 8px; }
-.front-crm-sidebar button { max-width: 100%; min-height: 32px; padding: 6px 11px; border: 1px solid var(--navy); border-radius: 6px; background: var(--navy); color: #fff; font-family: inherit; font-weight: 600; font-size: 12px; line-height: 1.4; cursor: pointer; text-align: center; }
-.front-crm-sidebar button.secondary { color: var(--navy); background: #fff; border-color: #d5deea; }
-.front-crm-sidebar button.link { background: transparent; border-color: transparent; color: var(--accent-dark); padding: 4px 2px; min-height: 28px; text-align: left; }
-.front-crm-sidebar button:hover:not(:disabled) { filter: brightness(.95); }
-.front-crm-sidebar button:disabled { opacity: .45; cursor: not-allowed; }
-.front-crm-sidebar :is(button, summary, a):focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.front-crm-sidebar button { max-width: 100%; text-align: center; }
+.front-crm-sidebar button[data-variant='link'] { text-align: left; }
+.front-crm-sidebar :is(summary, a):focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .front-crm-sidebar .form-grid { grid-template-columns: minmax(0, 1fr); gap: 10px; margin: 0 0 12px; }
 .front-crm-sidebar .field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; line-height: 1.4; color: var(--muted); margin: 12px 0; min-width: 0; }
 .front-crm-sidebar .form-grid > .field { margin: 0; }
-.front-crm-sidebar :is(input:not([type=checkbox]):not([type=radio]), select, textarea) { box-sizing: border-box; display: block; width: 100%; min-width: 0; max-width: 100%; padding: 8px 9px; color: var(--text); background: #fff; border: 1px solid #cfd9e6; border-radius: 6px; font: inherit; line-height: 1.4; }
-.front-crm-sidebar textarea { resize: vertical; min-height: 86px; }
-.front-crm-sidebar :is(input, select, textarea):focus { outline: 2px solid #a8caeb; outline-offset: 1px; border-color: var(--accent); }
-.front-crm-sidebar :is(input[type=checkbox], input[type=radio]) { accent-color: var(--navy); width: 15px; height: 15px; flex: 0 0 15px; margin: 2px 6px 0 0; }
+.front-crm-sidebar :is(input:not([type=checkbox]):not([type=radio]), select, textarea) { box-sizing: border-box; display: block; width: 100%; min-width: 0; max-width: 100%; }
+.front-crm-sidebar :is(input[type=checkbox], input[type=radio]) { flex: 0 0 auto; margin: 2px 6px 0 0; }
 .front-lead-summary, .front-next-actions, .front-team, .front-disclosure { border: 1px solid var(--border); border-radius: 9px; background: #fff; padding: 14px; margin: 0 0 10px; }
 .front-crm-sidebar .front-eyebrow { display: inline-block; margin: 0; padding: 3px 7px; border-radius: 4px; font-size: 10px; letter-spacing: .2px; color: #71541f; background: #f7f0df; }
 .front-contact { display: flex; flex-direction: column; gap: 3px; margin: 8px 0 12px; font-size: 12px; }
@@ -1153,7 +760,6 @@ th.internal { color: var(--muted); }
 @media (prefers-reduced-motion: reduce) { .front-crm-sidebar details > summary::after { transition: none; } }
 @media (max-width: 300px) {
   .front-crm-sidebar .workflow-editor { padding: 10px 0; border-inline: 0; border-radius: 0; background: transparent; }
-  .front-crm-sidebar input[type=datetime-local] { padding-inline: 5px; }
 }
 
 /* Communication settings: a compact overview with deliberate edit sessions. */
@@ -1168,11 +774,6 @@ th.internal { color: var(--muted); }
 .communication-summary dd { font-size: 15px; font-weight: 600; margin: 0; overflow-wrap: anywhere; }
 .communication-summary small, .communication-check small { display: block; font-size: 12px; color: var(--muted); margin-top: 5px; overflow-wrap: anywhere; }
 .communication-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
-.communication-settings button { border: 1px solid var(--accent-dark); border-radius: 6px; background: var(--accent-dark); color: white; padding: 8px 12px; font: inherit; font-size: 13px; cursor: pointer; }
-.communication-settings button.secondary { background: white; color: var(--text); border-color: var(--border); }
-.communication-settings button:hover:not(:disabled) { filter: brightness(.96); }
-.communication-settings button:disabled { opacity: .5; cursor: not-allowed; }
-.communication-settings button:focus-visible, .communication-settings summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .communication-success { color: var(--green); font-size: 13px; }
 .communication-checks { margin-top: 16px; padding: 12px 14px; background: var(--bg); border-radius: 6px; font-size: 13px; }
 .communication-checks ul { margin-bottom: 0; padding-left: 18px; }
@@ -1193,7 +794,6 @@ th.internal { color: var(--muted); }
 .communication-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .communication-editor .field { font-size: 13px; min-width: 0; }
 .communication-editor input, .communication-editor textarea, .communication-editor select { min-width: 0; width: 100%; }
-.communication-editor textarea { resize: vertical; }
 .communication-editor .field small { line-height: 1.45; }
 .communication-edit-section { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 14px; }
 .communication-edit-section > summary { cursor: pointer; font-size: 13px; font-weight: 600; }
@@ -1213,7 +813,7 @@ th.internal { color: var(--muted); }
 
 /* One compact export control per dashboard report. */
 .report-download { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-left: auto; }
-.report-download select { width: auto; min-width: 116px; padding: 6px 28px 6px 10px; font-size: 12px; background-color: #fff; }
+.report-download select { width: auto; min-width: 116px; }
 .report-actions { display: flex; justify-content: flex-end; margin-bottom: 10px; }
 
 /* Daily lead work keeps priority, responsibility, and shared intake separate. */
@@ -1233,8 +833,6 @@ th.internal { color: var(--muted); }
 .lead-work-shared-item details { margin-top: 8px; font-size: 12px; }
 .lead-work-reminders > summary { font-size: 14px; font-weight: 600; cursor: pointer; }
 .lead-work-reminder-list { margin-top: 14px; }
-.lead-work-page button:not(.link) { border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; font: inherit; font-size: 13px; background: #fff; color: var(--text); cursor: pointer; }
-.lead-work-page button:disabled { opacity: .5; cursor: not-allowed; }
 @media (max-width: 720px) {
   .lead-work-shared-grid { grid-template-columns: 1fr; }
   .lead-work-filters .field { flex: 1 1 180px; }

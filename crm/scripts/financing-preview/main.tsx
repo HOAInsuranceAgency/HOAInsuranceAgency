@@ -1,3 +1,5 @@
+import { Input } from '../../src/components/ui/Input';
+import '../../src/components/UniversalSearch.css';
 import { createRoot } from 'react-dom/client';
 import Financing from '../../src/pages/Financing';
 import { useIsAdmin } from './fixtures';
@@ -21,7 +23,7 @@ function Preview() {
       <div className="user">Avery Brooks<div className="small">{isAdmin ? 'ADMIN' : 'SALESPERSON'}</div><div className="small" style={{ marginTop: 8 }}>Fictional preview</div></div>
     </aside>
     <main className="main">
-      <div className="topbar"><div className="usearch"><input aria-label="Preview search" placeholder="Search accounts, contacts, policies, invoices, documents…" disabled /></div></div>
+      <div className="topbar"><div className="usearch"><Input aria-label="Preview search" placeholder="Search accounts, contacts, policies, invoices, documents…" disabled /></div></div>
       <Financing />
     </main>
   </div>;

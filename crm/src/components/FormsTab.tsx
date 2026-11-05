@@ -1,3 +1,5 @@
+import { Button } from "./ui/Button";
+import { Table } from "./ui/Table";
 import { useRef, useState } from "react";
 import { uploadData } from "../lib/scopedStorage";
 import {
@@ -347,14 +349,14 @@ function FormsTabContent({
             <article className="carrier-form-choice" key={form.key} aria-label={form.label}>
               <span className="carrier-form-number">{form.label.split(" — ")[0]}</span>
               <h3>{form.label.split(" — ").slice(1).join(" — ") || form.label}</h3>
-              <button
-                className="secondary"
+              <Button variant="secondary"
+
                 disabled={!canGenerate}
                 aria-label={`Generate ${form.label}`}
                 onClick={() => generate(form)}
               >
                 {busyKey === form.key ? "Generating…" : "Generate"}
-              </button>
+              </Button>
             </article>
           ))}
         </div>
@@ -385,7 +387,7 @@ function FormsTabContent({
         ) : genRes.error ? (
           <div className="generated-forms-state generated-forms-state--error" role="alert">
             <p>{genRes.error}</p>
-            <button className="secondary" disabled={genRes.loading} onClick={() => void genRes.refetch()}>Retry generated forms</button>
+            <Button variant="secondary"  disabled={genRes.loading} onClick={() => void genRes.refetch()}>Retry generated forms</Button>
           </div>
         ) : generated.length === 0 ? (
           <div className="generated-forms-state">
@@ -394,7 +396,7 @@ function FormsTabContent({
           </div>
         ) : (
           <div className="table-wrap generated-forms-table-wrap" aria-busy={genRes.loading}>
-            <table className="generated-forms-table" aria-label="Generated carrier forms">
+            <Table className="generated-forms-table" aria-label="Generated carrier forms">
               <colgroup><col /><col className="generated-forms-date-column" /><col className="generated-forms-action-column" /></colgroup>
               <thead>
                 <tr>
@@ -409,12 +411,12 @@ function FormsTabContent({
                     <td className="generated-forms-name">{d.name}</td>
                     <td className="generated-forms-date">{fmtDateTime(d.createdAt)}</td>
                     <td className="generated-forms-actions">
-                      <button className="secondary" aria-label={`Preview ${d.name}`} onClick={() => setPreview(d)}>Preview</button>
+                      <Button variant="secondary"  aria-label={`Preview ${d.name}`} onClick={() => setPreview(d)}>Preview</Button>
                     </td>
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </Table>
           </div>
         )}
       </section>

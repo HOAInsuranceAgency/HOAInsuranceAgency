@@ -40,13 +40,6 @@
 
 .financing-lookup-heading button {
   flex: none;
-  min-height: 36px;
-  font-family: inherit;
-}
-
-.financing-lookup-heading button:disabled {
-  color: var(--muted);
-  cursor: default;
 }
 
 .financing-search {
@@ -78,23 +71,7 @@
   display: block;
   width: 100%;
   min-width: 0;
-  height: 48px;
-  padding: 10px 14px 10px 45px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--card);
-  color: var(--text);
-  font: inherit;
-  font-size: 14px;
-}
-
-.financing-search-input input::placeholder {
-  color: var(--muted);
-}
-
-.financing-search-input input:focus {
-  outline: 2px solid var(--accent);
-  outline-offset: -1px;
+  --control-padding-inline-start: 45px;
 }
 
 .financing-filter-bar {
@@ -104,48 +81,6 @@
   flex-wrap: wrap;
   gap: 12px;
   padding: 18px 24px 12px;
-}
-
-.financing-filters {
-  display: flex;
-  gap: 6px;
-  max-width: 100%;
-}
-
-.financing-filters button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  min-height: 34px;
-  padding: 7px 12px;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--muted);
-  font-family: inherit;
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 1.2;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.financing-filters button:hover {
-  background: var(--bg);
-  color: var(--text);
-}
-
-.financing-filters button[aria-pressed="true"] {
-  background: var(--blue-bg);
-  color: var(--accent-dark);
-}
-
-.financing-filters button span {
-  min-width: 18px;
-  font-size: 11px;
-  font-weight: 500;
-  font-variant-numeric: tabular-nums;
 }
 
 .financing-result-count {
@@ -331,7 +266,7 @@
   margin-bottom: 0;
 }
 
-.financing-page :is(button, summary):focus-visible {
+.financing-page summary:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 3px;
 }
@@ -362,33 +297,17 @@
     font-size: 20px;
   }
 
-  .financing-lookup-heading button {
-    min-height: 34px;
-    padding: 7px 10px;
-    font-size: 12px;
-  }
-
   .financing-search {
     padding: 0 16px;
   }
 
   .financing-search-input input {
-    font-size: 16px;
+    --control-padding-inline-start: 45px;
   }
 
   .financing-filter-bar {
     gap: 10px;
     padding: 16px 16px 6px;
-  }
-
-  .financing-filters {
-    gap: 4px;
-  }
-
-  .financing-filters button {
-    gap: 4px;
-    padding: 7px 8px;
-    font-size: 12px;
   }
 
   .financing-result-count {

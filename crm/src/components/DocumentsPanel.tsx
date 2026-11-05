@@ -1,3 +1,7 @@
+import { Select } from "./ui/Select";
+import { Button } from "./ui/Button";
+import { Table } from "./ui/Table";
+import { Input } from "./ui/Input";
 import { useEffect, useId, useRef, useState } from "react";
 import "./DocumentsPanel.css";
 import { uploadData, remove } from "../lib/scopedStorage";
@@ -407,19 +411,19 @@ function DocumentsPanelContent({
             {/* One control, two jobs on purpose: it filters the table AND
                 targets uploads — "you are looking at this policy's
                 documents; files you attach here belong to it". */}
-            <select id={`${controlId}-link`} disabled={uploading || linkTargets.loading || !!linkTargets.error} value={view} onChange={(e) => setView(e.target.value)}>
+            <Select id={`${controlId}-link`} disabled={uploading || linkTargets.loading || !!linkTargets.error} value={view} onChange={(e) => setView(e.target.value)}>
               <option value="">Everything</option>
               {linkOptions.map((o) => (
                 <option key={o.key} value={o.key}>
                   {o.label}
                 </option>
               ))}
-            </select>
+            </Select>
           </div>
         )}
         <div className="field">
           <label htmlFor={`${controlId}-category`}>{linkAccountId ? "Upload category" : "Category"}</label>
-          <select
+          <Select
             id={`${controlId}-category`}
             value={category}
             disabled={uploading}
@@ -430,11 +434,11 @@ function DocumentsPanelContent({
                 {c.label}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
         <div className="field documents-upload">
           {!linkAccountId && <label>Attach files (PDF/images are OCR'd automatically)</label>}
-          <FileButton
+          <FileButton variant="primary"
             label={linkAccountId ? "Upload files" : "Choose files…"}
             multiple
             busy={uploading}
@@ -443,7 +447,7 @@ function DocumentsPanelContent({
         </div>
       </div>
       {linkAccountId && view && <p className="documents-filter-note">Showing files for {linkLabel(view)}. New uploads will be linked here.</p>}
-      {linkAccountId && linkTargets.error && <p role="alert" className="error-text">Could not load policy and quote links. {linkTargets.error} <button className="secondary" disabled={linkTargets.loading} onClick={() => void linkTargets.refetch()}>Retry links</button></p>}
+      {linkAccountId && linkTargets.error && <p role="alert" className="error-text">Could not load policy and quote links. {linkTargets.error} <Button variant="secondary"  disabled={linkTargets.loading} onClick={() => void linkTargets.refetch()}>Retry links</Button></p>}
       <div className="documents-feedback">
         {error && <p role="alert" className="error-text">{error}</p>}
         {/* Renames and deletes are per-row with no per-row place to report;
@@ -451,7 +455,7 @@ function DocumentsPanelContent({
         <SaveStatus {...rowStatus.status} />
       </div>
 
-      {loadError && <div role="alert" className="documents-state documents-state--error"><p>{loadError}</p><button className="secondary" onClick={() => void reloadDocuments.current()}>Retry</button></div>}
+      {loadError && <div role="alert" className="documents-state documents-state--error"><p>{loadError}</p><Button variant="secondary"  onClick={() => void reloadDocuments.current()}>Retry</Button></div>}
       {!docsSynced ? (!loadError &&
         <p className="documents-state" role="status">Loading…</p>
       ) : visible.length === 0 ? (
@@ -462,7 +466,7 @@ function DocumentsPanelContent({
         </p>
       ) : (
         <div className="table-wrap documents-table-wrap">
-          <table className="documents-table" aria-label="Documents">
+          <Table className="documents-table" aria-label="Documents">
             <thead>
               <tr>
                 <SortTh label="Name" colKey="name" sortKey={sortKey} dir={dir} onToggle={toggle} />
@@ -491,7 +495,7 @@ function DocumentsPanelContent({
                     <td className="document-name">
                       {renaming ? (
                         <div className="field">
-                          <input
+                          <Input
                             aria-label="Document name"
                             autoFocus
                             value={renameValue}
@@ -518,7 +522,7 @@ function DocumentsPanelContent({
                             policy rows: linking existing paper is the whole
                             point — a scan often arrives before the policy
                             it belongs to exists. */}
-                        {(d.quoteIds?.length || d.policyIds?.length) ? <div className="small">{[...(d.policyIds ?? []).filter(Boolean).map(id => linkLabel(`policy:${id}`)), ...(d.quoteIds ?? []).filter(Boolean).map(id => linkLabel(`quote:${id}`))].join(" · ")}</div> : <select
+                        {(d.quoteIds?.length || d.policyIds?.length) ? <div className="small">{[...(d.policyIds ?? []).filter(Boolean).map(id => linkLabel(`policy:${id}`)), ...(d.quoteIds ?? []).filter(Boolean).map(id => linkLabel(`quote:${id}`))].join(" · ")}</div> : <Select
                           aria-label={`Link ${d.name}`}
                           value={linkKeyOf(d)}
                           disabled={rowStatus.busy || linkTargets.loading || !!linkTargets.error}
@@ -534,7 +538,7 @@ function DocumentsPanelContent({
                             !linkOptions.some((o) => o.key === linkKeyOf(d)) && (
                               <option value={linkKeyOf(d)}>(deleted record)</option>
                             )}
-                        </select>}
+                        </Select>}
                       </td>
                     )}
                     <td>
@@ -554,51 +558,51 @@ function DocumentsPanelContent({
                           click that discards the edit without saying so. */}
                       {renaming ? (
                         <>
-                          <button
-                            className="secondary"
+                          <Button variant="secondary"
+
                             disabled={rowStatus.busy}
                             onClick={() => void saveRename(d)}
                           >
                             Save name
-                          </button>
-                          <button
-                            className="link"
+                          </Button>
+                          <Button variant="link"
+
                             disabled={rowStatus.busy}
                             onClick={() => setRenameId(null)}
                           >
                             Cancel
-                          </button>
+                          </Button>
                         </>
                       ) : (
                         <>
                           {d.s3Key !== "pending" && canPreview(d.name) && (
-                            <button
-                              className="link"
+                            <Button variant="link"
+
                               onClick={() => setPreviewDoc(d)}
                             >
                               Preview
-                            </button>
+                            </Button>
                           )}
-                          <button className="link" onClick={() => download(d)}>
+                          <Button variant="link"  onClick={() => download(d)}>
                             Download
-                          </button>
+                          </Button>
                           {entityType === "ACCOUNT" && d.s3Key !== "pending" && isBusinessDeliveryFile(d) && <BusinessDraftButton accountId={entityId} kind="DOCUMENT" recordId={d.id} label="Prepare email in Front" disabled={rowStatus.busy || uploading} />}
-                          <button
-                            className="link"
+                          <Button variant="link"
+
                             disabled={rowStatus.busy || d.category === "BROKER_FEE_DISCLOSURE"}
                             onClick={() => startRename(d)}
                           >
                             Rename
-                          </button>
+                          </Button>
                           {d.ocrStatus === "COMPLETE" && d.ocrText && (
-                            <button
-                              className="link"
+                            <Button variant="link"
+
                               onClick={() =>
                                 setOpenDocId(openDocId === d.id ? null : d.id)
                               }
                             >
                               {openDocId === d.id ? "Hide text" : "View text"}
-                            </button>
+                            </Button>
                           )}
                           <ConfirmButton
                             disabled={rowStatus.busy || d.category === "BROKER_FEE_DISCLOSURE"}
@@ -614,7 +618,7 @@ function DocumentsPanelContent({
                 );
               })}
             </tbody>
-          </table>
+          </Table>
         </div>
       )}
 
@@ -631,7 +635,7 @@ function DocumentsPanelContent({
           <h3>Extracted text — {openDoc.name}</h3>
           <div className="ocr-search field">
             <div className="ocr-find">
-              <input
+              <Input
                 aria-label="Find in extracted text"
                 placeholder="Find in text…"
                 value={ocrSearch}
@@ -648,22 +652,22 @@ function DocumentsPanelContent({
                   <span className="ocr-count">
                     {matchCount === 0 ? "0 results" : `${(matchIdx % matchCount + matchCount) % matchCount + 1} of ${matchCount}`}
                   </span>
-                  <button
-                    className="secondary"
+                  <Button variant="secondary"
+
                     title="Previous match (Shift+Enter)"
                     disabled={matchCount === 0}
                     onClick={() => stepMatch(-1)}
                   >
                     ▲
-                  </button>
-                  <button
-                    className="secondary"
+                  </Button>
+                  <Button variant="secondary"
+
                     title="Next match (Enter)"
                     disabled={matchCount === 0}
                     onClick={() => stepMatch(1)}
                   >
                     ▼
-                  </button>
+                  </Button>
                 </>
               )}
             </div>
@@ -678,7 +682,7 @@ function DocumentsPanelContent({
               </h3>
               {openTables.map((table, ti) => (
                 <div className="table-wrap ocr-table" key={ti}>
-                  <table>
+                  <Table>
                     <tbody>
                       {table.map((row, ri) => (
                         <tr key={ri}>
@@ -688,7 +692,7 @@ function DocumentsPanelContent({
                         </tr>
                       ))}
                     </tbody>
-                  </table>
+                  </Table>
                 </div>
               ))}
             </>

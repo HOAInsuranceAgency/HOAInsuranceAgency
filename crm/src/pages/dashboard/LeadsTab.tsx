@@ -1,3 +1,6 @@
+import { Select } from "../../components/ui/Select";
+import { Button } from "../../components/ui/Button";
+import { Table } from "../../components/ui/Table";
 import { ReportDownload } from "../../components/ReportDownload";
 import { acquisitionLabel, websiteFormLabel } from "../../../../shared/leadSource";
 import { loadCommercial, teammateName, type CommercialData } from '../../lib/commercial';
@@ -171,14 +174,14 @@ export default function LeadsTab() {
           <span className="muted small">sorted by incumbent expiration</span>
         </div>
         <p className="muted small">Last contact includes prospect emails, calls and texts in either direction. Times are shown in your local time zone.</p>
-        <div className="toolbar"><label className="field">Salesperson<select required value={salespersonSelection} onChange={e => setSalespersonFilter(e.target.value)}><option value="">Choose a salesperson</option>{people.map(person => <option key={person.key} value={person.key}>{person.label}</option>)}</select></label></div>
-        {salespersonSelection && worklist.error && <p className="error-text" role="alert">{worklist.error} <button onClick={() => void worklist.refetch()}>Retry lead details</button></p>}
+        <div className="toolbar"><label className="field">Salesperson<Select required value={salespersonSelection} onChange={e => setSalespersonFilter(e.target.value)}><option value="">Choose a salesperson</option>{people.map(person => <option key={person.key} value={person.key}>{person.label}</option>)}</Select></label></div>
+        {salespersonSelection && worklist.error && <p className="error-text" role="alert">{worklist.error} <Button onClick={() => void worklist.refetch()}>Retry lead details</Button></p>}
         {contactHistory.error && <p className="error-text">{contactHistory.error}</p>}
         {!salespersonSelection ? <p className="muted">Choose a salesperson to view their lead work list.</p> : !worklistReady ? <p className="muted small">{worklist.error ? "Lead details are unavailable." : "Loading lead details…"}</p> : rows.length === 0 ? (
           <p className="muted small">No open leads or packages being bound for this salesperson.</p>
         ) : (
           <div className="table-wrap">
-            <table>
+            <Table>
               <thead>
                 <tr>
                   <SortTh label="Lead" colKey="lead" sortKey={sortKey} dir={dir} onToggle={toggle} />
@@ -222,7 +225,7 @@ export default function LeadsTab() {
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </Table>
           </div>
         )}
       </div>

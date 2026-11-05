@@ -1,3 +1,5 @@
+import { Input } from "../ui/Input";
+import { SegmentedRadioControl } from "../ui/SegmentedControl";
 import {
   useEffect,
   useRef,
@@ -170,7 +172,7 @@ function FormattedInput({
   }, [focused]);
 
   return (
-    <input
+    <Input
       ref={ref}
       id={id}
       type={type}
@@ -320,7 +322,7 @@ export function DateInput({
   id,
 }: FormattedInputProps) {
   return (
-    <input
+    <Input
       id={id}
       type="date"
       disabled={disabled}
@@ -359,31 +361,7 @@ export function YesNoRadio({
   name: string;
 }) {
   return (
-    <div className="chip-row" role="radiogroup" aria-label={name}>
-      {[
-        ["yes", "Yes"],
-        ["no", "No"],
-      ].map(([v, label]) => (
-        <label
-          key={v}
-          className="small"
-          style={{ display: "flex", gap: 4, alignItems: "center" }}
-        >
-          <input
-            type="radio"
-            name={name}
-            value={v}
-            checked={value === v}
-            disabled={disabled}
-            // `onClick` rather than `onChange`: React fires no change event
-            // when the already-checked radio is clicked, which is exactly the
-            // gesture that has to clear it.
-            onClick={() => onChange(value === v ? "" : v)}
-            onChange={() => {}}
-          />
-          {label}
-        </label>
-      ))}
-    </div>
+    <SegmentedRadioControl label={name} name={name} value={value} onChange={onChange} disabled={disabled} allowEmpty
+      items={[{value: 'yes', label: 'Yes'}, {value: 'no', label: 'No'}]} />
   );
 }

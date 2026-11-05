@@ -1,0 +1,21 @@
+.ui-table-scroll { min-width: 0; max-width: 100%; overflow-x: auto; overscroll-behavior-inline: contain; }
+.ui-table { width: 100%; border-collapse: collapse; font-size: 14px; line-height: 1.5; }
+.ui-table thead th { text-align: left; color: var(--muted, #64748b); background: #f8fafc; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; white-space: nowrap; padding: 10px 12px; border-bottom: 2px solid var(--border, #dce2e9); }
+.ui-table td, .ui-table tbody th, .ui-table tfoot th { padding: 10px 12px; border-bottom: 1px solid var(--border, #dce2e9); vertical-align: top; text-align: left; }
+.ui-table tbody th { font-size: inherit; text-transform: none; letter-spacing: normal; color: inherit; font-weight: 600; }
+.ui-table tr.clickable { cursor: pointer; }
+.ui-table tr.clickable:hover > :is(td, th) { background: var(--blue-bg, #edf4fc); }
+.ui-table .ui-table-group > :is(td, th) { background: #f8fafc; padding: 0; }
+.ui-table .ui-table-subtotal > :is(td, th) { background: #f8fafc; font-weight: 600; }
+.ui-table .ui-table-total > :is(td, th), .ui-table tfoot > tr > :is(td, th) { background: #eef4fb; font-weight: 700; border-top: 2px solid var(--border, #dce2e9); }
+.ui-table th.sortable { cursor: pointer; user-select: none; }
+.ui-table th.sortable:hover { color: var(--accent-dark, #2566ad); }
+.ui-table th.sortable .arrow { display: inline-block; width: 1em; color: var(--accent-dark, #2566ad); }
+.ui-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.ui-table .ui-table-internal { background: #f3f5f9; }
+.ui-table .ui-table-band-start { border-left: 1px solid var(--border, #dce2e9); }
+.ui-table .ui-table-row-selected > :is(td, th) { background: var(--blue-bg, #edf4fc); }
+.ui-table .ui-table-row-muted { opacity: .6; }
+.ui-table tfoot .total { font-size: 16px; }
+.ui-table th.sortable { padding: 0; }
+.ui-table th.sortable > .ui-button { width: 100%; min-height: var(--control-height); padding: 10px 12px; justify-content: flex-start; }
