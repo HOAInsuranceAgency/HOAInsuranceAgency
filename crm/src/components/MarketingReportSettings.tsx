@@ -17,11 +17,23 @@ const statusLabels: Record<MarketingReportRun["status"], string> = {
 const when = (value: string) => new Intl.DateTimeFormat("en-US", {
   dateStyle: "medium", timeStyle: "short", timeZone: "America/New_York",
 }).format(new Date(value));
-function savedRequest() {
-  try { return sessionStorage.getItem(REQUEST_KEY) || ""; } catch { return ""; }
+type PendingRequest = { requestId: string; runId: string | null };
+function savedRequest(): PendingRequest {
+  try {
+    const value = sessionStorage.getItem(REQUEST_KEY);
+    if (value) {
+      // Previous releases stored only the opaque request UUID.
+      let saved: unknown;
+      try { saved = JSON.parse(value); } catch { return { requestId: value, runId: null }; }
+      if (saved && typeof saved === 'object' && 'requestId' in saved && typeof saved.requestId === 'string') {
+        return { requestId: saved.requestId, runId: 'runId' in saved && typeof saved.runId === 'string' ? saved.runId : null };
+      }
+    }
+  } catch { /* Storage may be unavailable. */ }
+  return { requestId: "", runId: null };
 }
-function keepRequest(value: string) {
-  try { if (value) sessionStorage.setItem(REQUEST_KEY, value); else sessionStorage.removeItem(REQUEST_KEY); } catch { /* In-memory deduplication remains available. */ }
+function keepRequest(value: string, runId: string | null = null) {
+  try { if (value) sessionStorage.setItem(REQUEST_KEY, JSON.stringify({ requestId: value, runId })); else sessionStorage.removeItem(REQUEST_KEY); } catch { /* In-memory deduplication remains available. */ }
 }
 
 export default function MarketingReportSettings() {
@@ -34,7 +46,8 @@ export default function MarketingReportSettings() {
   const [message, setMessage] = useState("");
   const [readError, setReadError] = useState("");
   const inFlight = useRef(false);
-  const requestId = useRef(savedRequest());
+  const [initialRequest] = useState(savedRequest);
+  const requestId = useRef(initialRequest.requestId);
   const mounted = useRef(true);
   const readVersion = useRef(0);
   const reading = useRef(false);
@@ -52,6 +65,11 @@ export default function MarketingReportSettings() {
     ++draftEdits.current;
     const next = { ...currentDraft.current, ...patch }; currentDraft.current = next;
     edited.current = next.recipient.trim() !== draftBaseline.current.recipient || next.enabled !== draftBaseline.current.enabled;
+    // Reverting an old draft also adopts any saved settings received while it
+    // was dirty, so the displayed recipient agrees with the next explicit send.
+    if (!edited.current && snapshotRef.current && snapshotRef.current.settings.version > draftVersion.current) {
+      adoptSettings(snapshotRef.current.settings); return;
+    }
     setIsEdited(edited.current); setRecipient(next.recipient); setEnabled(next.enabled);
   }
 
@@ -59,7 +77,7 @@ export default function MarketingReportSettings() {
   const actionVersion = useRef(0);
   const draftEdits = useRef(0);
   const denied = useRef(false);
-  const acknowledgedRun = useRef<string | null>(null);
+  const acknowledgedRun = useRef(initialRequest.runId);
   const publish = useCallback((value: MarketingReportSettingsSnapshot | null) => {
     snapshotRef.current = value; setSnapshot(value);
   }, []);
@@ -181,7 +199,8 @@ export default function MarketingReportSettings() {
           // Keep an acknowledged queued request id until a terminal read. If
           // the history index briefly lags, another click still deduplicates.
           acknowledgedRun.current = pending(result.run) ? result.run.id : null;
-          if (!pending(result.run)) { requestId.current = ""; keepRequest(""); }
+          if (!pending(result.run)) requestId.current = "";
+          keepRequest(requestId.current, acknowledgedRun.current);
           const previous = snapshotRef.current;
           if (previous) publish({ ...previous, recentRuns: [result.run, ...previous.recentRuns.filter(r => r.id !== result.run.id)].slice(0, 10) });
           setMessage(pending(result.run) ? "Report queued. The delivery status below will update automatically." : result.run.status === "sent" ? "This report has already been sent. Its status is shown below." : "This request has already been processed. Review its delivery status below.");

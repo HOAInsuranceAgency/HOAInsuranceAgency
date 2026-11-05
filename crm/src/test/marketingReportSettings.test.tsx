@@ -339,3 +339,76 @@ it('immediately releases an edited draft when discarding values that already mat
   expect(h.load).toHaveBeenCalledTimes(reads);
   expect(h.save).not.toHaveBeenCalled(); expect(h.send).not.toHaveBeenCalled();
 });
+
+it('adopts a newer saved recipient immediately when an older dirty draft is reverted to its original baseline', async () => {
+  render(<MarketingReportSettings />);
+  await screen.findByRole('button', { name: 'Send now' });
+  const originalEdits = liveUpdates.getSnapshot().edits;
+  fireEvent.change(screen.getByLabelText('Recipient email'), { target: { value: 'draft-b@example.com' } });
+  h.load.mockResolvedValue({ ...snapshot(), settings: { version: 3, enabled: true, recipient: 'external-c@example.com' } });
+  await invalidateLiveUpdates(['CRM']);
+  expect(screen.getByLabelText('Recipient email')).toHaveValue('draft-b@example.com');
+  expect(screen.getByText(/Email a fresh Excel snapshot to external-c@example.com/)).toBeVisible();
+  const reads = h.load.mock.calls.length;
+  fireEvent.change(screen.getByLabelText('Recipient email'), { target: { value: 'marketing@example.com' } });
+  expect(screen.getByLabelText('Recipient email')).toHaveValue('external-c@example.com');
+  expect(screen.getByRole('button', { name: 'Save settings' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Send now' })).toBeEnabled();
+  expect(liveUpdates.getSnapshot().edits).toBe(originalEdits);
+  expect(h.load).toHaveBeenCalledTimes(reads);
+  expect(h.save).not.toHaveBeenCalled(); expect(h.send).not.toHaveBeenCalled();
+});
+
+it('starts a new send after a remount reads the terminal outcome of its persisted acknowledged run', async () => {
+  const first = render(<MarketingReportSettings />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Send now' }));
+  await screen.findByText('Preparing');
+  const firstRequest = h.send.mock.calls[0][0];
+  expect(JSON.parse(sessionStorage.getItem('hoa-marketing-report-request')!)).toEqual({ requestId: firstRequest, runId: run.id });
+  first.unmount();
+  h.load.mockResolvedValue({ ...snapshot(), recentRuns: [{ ...run, status: 'sent', sentAt: '2026-09-28T17:01:00Z', updatedAt: '2026-09-28T17:01:00Z' }] });
+  render(<MarketingReportSettings />);
+  await screen.findByText('Sent');
+  expect(h.send).toHaveBeenCalledTimes(1);
+  h.send.mockResolvedValueOnce({ run: { ...run, id: 'run-2' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Send now' }));
+  await waitFor(() => expect(h.send).toHaveBeenCalledTimes(2));
+  expect(h.send.mock.calls[1][0]).not.toBe(firstRequest);
+});
+
+it('preserves an acknowledged send UUID across a remount and history omission until its terminal run is observed', async () => {
+  const first = render(<MarketingReportSettings />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Send now' }));
+  await screen.findByText('Preparing');
+  const firstRequest = h.send.mock.calls[0][0];
+  first.unmount();
+  render(<MarketingReportSettings />);
+  await screen.findByText('No reports have been sent yet.');
+  expect(h.send).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByRole('button', { name: 'Send now' }));
+  await screen.findByText('Preparing');
+  expect(h.send).toHaveBeenCalledTimes(2);
+  expect(h.send.mock.calls[1][0]).toBe(firstRequest);
+
+  h.load.mockResolvedValue({ ...snapshot(), recentRuns: [{ ...run, status: 'sent', sentAt: '2026-09-28T17:01:00Z', updatedAt: '2026-09-28T17:01:00Z' }] });
+  await invalidateLiveUpdates(['CRM']);
+  expect(screen.getByText('Sent')).toBeVisible();
+  expect(h.send).toHaveBeenCalledTimes(2);
+  h.send.mockResolvedValueOnce({ run: { ...run, id: 'run-2' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Send now' }));
+  await waitFor(() => expect(h.send).toHaveBeenCalledTimes(3));
+  expect(h.send.mock.calls[2][0]).not.toBe(firstRequest);
+});
+
+it('reuses a legacy raw request UUID and persists its acknowledged run in the current storage format', async () => {
+  const legacyRequest = '41111111-1111-4111-8111-111111111111';
+  sessionStorage.setItem('hoa-marketing-report-request', legacyRequest);
+  render(<MarketingReportSettings />);
+  const send = await screen.findByRole('button', { name: 'Send now' });
+  expect(h.send).not.toHaveBeenCalled();
+  fireEvent.click(send);
+  await screen.findByText('Preparing');
+  expect(h.send).toHaveBeenCalledTimes(1);
+  expect(h.send).toHaveBeenCalledWith(legacyRequest);
+  expect(JSON.parse(sessionStorage.getItem('hoa-marketing-report-request')!)).toEqual({ requestId: legacyRequest, runId: run.id });
+});
