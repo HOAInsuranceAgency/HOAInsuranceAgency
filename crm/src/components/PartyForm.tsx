@@ -12,7 +12,6 @@ import { communicationRequest } from '../lib/communications';
 import { searchParties, type PartyRecord } from '../lib/relationships';
 import { useIsAdmin } from '../lib/auth';
 import { useAsyncResource } from '../lib/useAsyncResource';
-import type { TeamEligibility } from '../lib/communications';
 
 export default function PartyForm({
   party,
@@ -44,7 +43,7 @@ export default function PartyForm({
   const requestId = useRef(crypto.randomUUID());
   const admin = useIsAdmin();
   const team = useAsyncResource(
-    async () => (admin ? (await communicationRequest<{ team: TeamEligibility[] }>('team')).team : []),
+    async () => (admin ? (await communicationRequest('team')).team : []),
     [admin],
     { initialData: [] , live: true },
   );
@@ -67,7 +66,7 @@ export default function PartyForm({
   }
   async function save() {
     await saveStatus.run(async current => {
-      const result = await communicationRequest<{ party: PartyRecord }>(
+      const result = await communicationRequest(
         'relationshipSaveParty',
         { ...form, id: party?.id, revision: party?.revision ?? 0, requestId: requestId.current },
         true,

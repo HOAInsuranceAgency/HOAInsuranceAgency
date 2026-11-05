@@ -3,7 +3,7 @@ import { Button } from "./ui/Button";
 import { Select } from "./ui/Select";
 import { useState } from 'react';
 import { communicationRequest } from '../lib/communications';
-import { usePagedList, type Page } from '../lib/usePagedList';
+import { usePagedList } from '../lib/usePagedList';
 export default function AccountPicker({
   value,
   onChange,
@@ -18,7 +18,7 @@ export default function AccountPicker({
   const [selected, setSelected] = useState<{ id: string; name: string }>();
   const page = usePagedList(
     (token) =>
-      communicationRequest<Page<{ id: string; name: string }>>('searchAccounts', { query, nextToken: token }),
+      communicationRequest('searchAccounts', { query, nextToken: token }),
     [query],
     !!query,
   );

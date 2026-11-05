@@ -1,4 +1,5 @@
 import { assertPreviewRead } from "../migration-readonly";
+import { apiFailure } from '../../../../shared/apiResponse';
 import { sendOwnerWrite } from '../live-write';
 import { randomUUID } from 'node:crypto';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
@@ -149,7 +150,7 @@ export function createHandler(store: ProfitabilityRepository) {
     assertPreviewRead((event.fieldName ?? event.info?.fieldName) === "ownerProfitability");
     try {
       const actor = text((event.identity as { sub?: string } | undefined)?.sub);
-      if (!actor || !isActiveOwner(event.identity, event.request)) throw new Error('Only Owners can access employee profitability and compensation.');
+      if (!actor || !isActiveOwner(event.identity, event.request)) throw Object.assign(new Error('Only Owners can access employee profitability and compensation.'), { name: 'Unauthorized' });
       const args = event.arguments ?? {}, field = event.fieldName ?? event.info?.fieldName;
       if (field === 'ownerProfitability') {
         const window = validateProfitabilityWindow(args.from, args.to);
@@ -174,7 +175,7 @@ export function createHandler(store: ProfitabilityRepository) {
       const message = kind === 'TransactionCanceledException' || kind === 'ConditionalCheckFailedException'
         ? 'Compensation changed. Refresh before saving.'
         : error instanceof Error ? error.message : 'Could not load owner reporting. Please retry.';
-      return { ok: false, error: message };
+      return apiFailure({ message, ...(kind === 'Unauthorized' ? { errorType: 'Unauthorized' } : {}) }, message);
     }
   };
 }

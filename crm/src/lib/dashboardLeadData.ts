@@ -43,11 +43,11 @@ function isCompactQuote(item: CompactQuote): boolean {
   return !!item && typeof item.id === 'string' && !!item.id && typeof item.accountId === 'string' && !!item.accountId && (item.status == null || typeof item.status === 'string');
 }
 
-async function reportPages<T extends { id: string }>(operation: string, input: Record<string, unknown>, valid: (item: T) => boolean): Promise<T[]> {
+async function reportPages<T extends { id: string }>(readPage: (nextToken?: string) => Promise<{ items: T[]; nextToken?: string }>, valid: (item: T) => boolean): Promise<T[]> {
   const found = new Map<string, T>(), seen = new Set<string>();
   let nextToken: string | undefined;
   do {
-    const page = await communicationRequest<{ items: T[]; nextToken?: string }>(operation, { ...input, ...(nextToken ? { nextToken } : {}) });
+    const page = await readPage(nextToken);
     if (!Array.isArray(page.items) || page.items.some(item => !valid(item))) throw new Error('Lead report records are incomplete. Refresh to try again.');
     for (const item of page.items) found.set(item.id, item);
     nextToken = page.nextToken;
@@ -64,7 +64,7 @@ export function loadDashboardAccountQuotes(ids: readonly string[], details?: fal
 export async function loadDashboardAccountQuotes(ids: readonly string[], details = false): Promise<CompactQuote[]> {
   const pages = await mapLimited(batches(ids, 25), accountIds => {
     const requested = new Set(accountIds);
-    return reportPages<CompactQuote>('dashboardQuotesPage', { accountIds, ...(details ? { details: true } : {}) },
+    return reportPages<CompactQuote>(nextToken => communicationRequest('dashboardQuotesPage', { accountIds, ...(details ? { details: true } : {}), ...(nextToken ? { nextToken } : {}) }),
       item => isCompactQuote(item) && requested.has(item.accountId));
   });
   return pages.flat();
@@ -74,7 +74,7 @@ export async function loadDashboardAccountQuotes(ids: readonly string[], details
  * be returned or explicitly confirmed missing before classifying a package. */
 export async function loadDashboardQuoteStates(ids: readonly string[]): Promise<{ items: CompactQuote[]; missingIds: string[] }> {
   const pages = await mapLimited(batches(ids, 500), async quoteIds => {
-    const result = await communicationRequest<{ items: CompactQuote[]; missingIds: string[] }>('dashboardQuoteStates', { quoteIds });
+    const result = await communicationRequest('dashboardQuoteStates', { quoteIds });
     if (!Array.isArray(result.items) || !Array.isArray(result.missingIds) || result.items.some(item => !isCompactQuote(item)) || result.missingIds.some(id => typeof id !== 'string')) throw new Error('Selected quote states are incomplete. Refresh to try again.');
     const resolved = [...result.items.map(item => item.id), ...result.missingIds], unique = new Set(resolved);
     if (resolved.length !== quoteIds.length || unique.size !== quoteIds.length || quoteIds.some(id => !unique.has(id))) throw new Error('Selected quote states are incomplete. Refresh to try again.');
@@ -87,7 +87,7 @@ export async function loadDashboardLeadSelections() {
   const selections: Record<string, DashboardLeadSelection> = {}, seen = new Set<string>();
   let nextToken: string | undefined;
   do {
-    const page = await communicationRequest<{ items: DashboardLeadSelection[]; nextToken?: string }>('dashboardLeadPlansPage', { nextToken });
+    const page = await communicationRequest('dashboardLeadPlansPage', { nextToken });
     if (!Array.isArray(page.items) || page.items.some(item => !item || typeof item.accountId !== 'string' || !Array.isArray(item.selectedQuoteIds) || !Array.isArray(item.alternativeQuoteIds) || [...item.selectedQuoteIds, ...item.alternativeQuoteIds].some(id => typeof id !== 'string'))) throw new Error('Selected package details are incomplete. Refresh to try again.');
     for (const selection of page.items) selections[selection.accountId] = selection;
     nextToken = page.nextToken;
@@ -105,8 +105,8 @@ export async function loadLeadsDashboard(): Promise<LeadsData> {
   const [leads, clients, openQuotes, policies, selections, leadQuotes, selectedQuotes] = await allWithAuthorizationPriority([
     leadsRequest,
     listAllPages(nextToken => client.models.Account.listAccountByStageAndName({ stage: 'CLIENT' }, { nextToken, selectionSet: [...ACCOUNT_FIELDS] })),
-    allWithAuthorizationPriority(OPEN_QUOTE_STATUSES.map(status => reportPages<CompactQuote>('dashboardOpenQuotesPage', { status }, item => isCompactQuote(item) && item.status === status))).then(pages => pages.flat()),
-    reportPages<DashboardBoundPolicy>('dashboardBoundPoliciesPage', { from: since, to: asOf }, item => !!item && typeof item.id === 'string' && typeof item.accountId === 'string' && typeof item.datePolicyBound === 'string'),
+    allWithAuthorizationPriority(OPEN_QUOTE_STATUSES.map(status => reportPages<CompactQuote>(nextToken => communicationRequest('dashboardOpenQuotesPage', { status, ...(nextToken ? { nextToken } : {}) }), item => isCompactQuote(item) && item.status === status))).then(pages => pages.flat()),
+    reportPages<DashboardBoundPolicy>(nextToken => communicationRequest('dashboardBoundPoliciesPage', { from: since, to: asOf, ...(nextToken ? { nextToken } : {}) }), item => !!item && typeof item.id === 'string' && typeof item.accountId === 'string' && typeof item.datePolicyBound === 'string'),
     selectionsRequest,
     leadsRequest.then(accounts => loadDashboardAccountQuotes(accounts.map(account => account.id))),
     selectionsRequest.then(selected => loadDashboardQuoteStates(Object.values(selected).flatMap(selection => selection.selectedQuoteIds))),

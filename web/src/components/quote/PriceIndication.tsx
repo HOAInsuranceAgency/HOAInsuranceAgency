@@ -1,19 +1,15 @@
-import { assertWebsiteActionsEnabled } from "../../lib/migrationPreview";
+import { publicApi } from "../../lib/publicApi";
 import { useEffect, useState } from "react";
 export type PublicEstimate = { status: string; price?: number; currency?: string; staging?: boolean };
 export async function readEstimate(token: string, signal: AbortSignal): Promise<PublicEstimate> {
   const url = import.meta.env.PUBLIC_CRM_API_URL, key = import.meta.env.PUBLIC_CRM_API_KEY;
   if (!url || !key) return { status: "unavailable" };
-  assertWebsiteActionsEnabled();
-  const response = await fetch(url, {
-    method: "POST", headers: { "Content-Type": "application/json", "x-api-key": key }, signal,
-    body: JSON.stringify({ query: "query WebLeadEstimate($estimateToken: String!) { webLeadEstimate(estimateToken: $estimateToken) }", variables: { estimateToken: token } }),
-  });
-  if (!response.ok) return { status: "unavailable" };
-  const body = await response.json();
-  if (body.errors?.length) return { status: "unavailable" };
-  const value = body.data?.webLeadEstimate;
-  return (typeof value === "string" ? JSON.parse(value) : value) ?? { status: "unavailable" };
+  const value = await publicApi("query WebLeadEstimate($estimateToken: String!) { webLeadEstimate(estimateToken: $estimateToken) }", { estimateToken: token }, 'webLeadEstimate', {
+    url, key, configurationError: 'Estimates are unavailable.', requireOk: false, request: { signal },
+  }).catch(() => null);
+  if (!value || typeof value.status !== 'string') return { status: 'unavailable' };
+  return { status: value.status, ...(typeof value.price === 'number' && Number.isFinite(value.price) ? { price: value.price } : {}),
+    ...(typeof value.currency === 'string' ? { currency: value.currency } : {}), ...(value.staging === true ? { staging: true } : {}) };
 }
 /** Nothing carrier-specific appears unless an eligible, numeric indication arrives. */
 export default function PriceIndication({ token, read = readEstimate }: { token?: string; read?: typeof readEstimate }) {

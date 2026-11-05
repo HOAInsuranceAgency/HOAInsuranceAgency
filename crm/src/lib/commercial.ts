@@ -23,7 +23,7 @@ export async function loadCommercial(ids: string[], snoozeAccountIds: string[] =
   const accounts = [...new Set(ids)].sort();
   const snoozeIds = new Set(snoozeAccountIds);
   if (!accounts.length) return { entries: {}, team: [] };
-  const roster = knownTeam ? { team: knownTeam } : await communicationRequest<{ team: TeamEligibility[] }>('team', {});
+  const roster = knownTeam ? { team: knownTeam } : await communicationRequest('team', {});
   if (!Array.isArray(roster.team)) throw new Error('Could not load teammates');
   const entries: Record<string, CommercialEntry> = {};
   // Load up to four batches together; every batch must settle before a failed
@@ -32,7 +32,7 @@ export async function loadCommercial(ids: string[], snoozeAccountIds: string[] =
     const results = await Promise.allSettled(Array.from({ length: Math.ceil(Math.min(100, accounts.length - offset) / 25) }, async (_, batchIndex) => {
       const batch = accounts.slice(offset + batchIndex * 25, offset + (batchIndex + 1) * 25);
       const followUps = batch.filter(id => snoozeIds.has(id));
-      const result = await communicationRequest<{ items: CommercialEntry[] }>(
+      const result = await communicationRequest(
         'commercialTable', { accountIds: batch, ...(followUps.length ? { snoozeAccountIds: followUps } : {}) },
       );
       if (!Array.isArray(result.items) || result.items.length !== batch.length ||

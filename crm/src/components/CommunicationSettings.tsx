@@ -1,21 +1,13 @@
 import { Button } from "./ui/Button";
 import { Input } from "./ui/Input";
 import { useRef, useState } from "react";
-import { communicationRequest as request, type IntegrationConfig, type TeamEligibility } from "../lib/communications";
+import { communicationRequest as request, type IntegrationConfig } from "../lib/communications";
 import CommunicationSettingsEditor from "./CommunicationSettingsEditor";
 import CommunicationDiagnostics from "./CommunicationDiagnostics";
 import { useAsyncResource } from "../lib/useAsyncResource";
 
 type ConnectionCheck = { name: string; ok: boolean; detail: string };
-type SettingsSnapshot = {
-  config: IntegrationConfig;
-  recovery?: Record<string, { version: number; checkedAt?: string }>;
-  credentialStatus: Record<string, boolean>;
-  webhookUrl?: string;
-  alertTopicArn?: string;
-  sidebarUrl?: string;
-  health?: { at?: string; lagging?: boolean };
-};
+
 
 const checkLabels: Record<string, [string, string]> = {
   "Default responsibilities": ["Lead ownership", "Choose an eligible default salesperson."],
@@ -33,8 +25,8 @@ function phoneLabel(number: string) {
 }
 
 export default function CommunicationSettings() {
-  const resource = useAsyncResource(() => request<SettingsSnapshot>("settings"), [], { initialData: null, errorMessage: "Could not load integration settings" , live: true });
-  const members = useAsyncResource(() => request<{ team: TeamEligibility[] }>("team"), [], { initialData: { team: [] }, errorMessage: "Could not load teammates" , live: true });
+  const resource = useAsyncResource(() => request("settings"), [], { initialData: null, errorMessage: "Could not load integration settings" , live: true });
+  const members = useAsyncResource(() => request("team"), [], { initialData: { team: [] }, errorMessage: "Could not load teammates" , live: true });
   const [editing, setEditing] = useState(false);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [busy, setBusy] = useState(""), [message, setMessage] = useState(""), [error, setError] = useState("");
@@ -61,7 +53,7 @@ export default function CommunicationSettings() {
   }
   function saveSettings(config: IntegrationConfig, credentials: Record<string, string>) {
     void run("save", async () => {
-      const result = await request<{ config: IntegrationConfig }>("saveSettings", { config, credentials }, true);
+      const result = await request("saveSettings", { config, credentials }, true);
       adoptConfig(result.config, Object.keys(credentials).filter(key => credentials[key].trim()));
       setEditing(false); setChecks([]); setCheckedAt(""); setNativeVerified(false);
       setMessage(result.config.paused ? "Settings saved. Delivery remains paused." : "Settings saved.");
@@ -105,7 +97,7 @@ export default function CommunicationSettings() {
       </dl>
       <div className="communication-actions">
         <Button variant="secondary" type="button"  disabled={disabled} onClick={() => void run("check", async () => {
-          const result = await request<{ checks: ConnectionCheck[] }>("validateConnection", {}, true);
+          const result = await request("validateConnection", {}, true);
           setChecks(result.checks); setCheckedAt(new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }));
         })}>{busy === "check" ? "Checking…" : "Check connections"}</Button>
         {!editing && <Button variant="secondary" type="button"  disabled={disabled} onClick={() => { setEditing(true); setError(""); setMessage(""); }}>Edit settings</Button>}
@@ -126,7 +118,7 @@ export default function CommunicationSettings() {
       <summary><span>Delivery<small>Pause delivery or resume after testing. Inbox cleanup runs automatically with delivery.</small></span></summary>
       <fieldset disabled={disabled} className="communication-controls">
         {saved.activatedAt && !saved.paused && <div className="communication-actions"><Button variant="secondary" type="button"  onClick={() => void run("pause", async () => {
-          const result = await request<{ config: IntegrationConfig }>("saveSettings", { config: { ...saved, paused: true } }, true);
+          const result = await request("saveSettings", { config: { ...saved, paused: true } }, true);
           adoptConfig(result.config); setMessage("Delivery paused. Team deadlines are unchanged.");
         })}>Pause delivery</Button></div>}
         <p className="muted small">{saved.environment !== "main"
@@ -134,7 +126,7 @@ export default function CommunicationSettings() {
           : "Before starting or resuming delivery, test email replies, calls on each business number, and texts from the shared main line. Confirm that activity and text delivery status appear in the CRM."}</p>
         <label className="communication-check"><Input type="checkbox" checked={nativeVerified} onChange={event => setNativeVerified(event.target.checked)} /><span>I verified email, calls, and shared-line texts with test contacts.</span></label>
         <Button type="button" disabled={!nativeVerified} onClick={() => void run("activate", async () => {
-          const result = await request<{ config: IntegrationConfig }>("activate", { nativeChecksConfirmed: nativeVerified }, true);
+          const result = await request("activate", { nativeChecksConfirmed: nativeVerified }, true);
           adoptConfig(result.config); setNativeVerified(false); setMessage("Delivery settings applied. Lead deadlines remain controlled by the CRM.");
         })}>{busy === "activate" ? "Checking and applying…" : !saved.activatedAt ? "Start delivery" : saved.paused ? "Resume delivery" : "Apply delivery settings"}</Button>
       </fieldset>
@@ -169,7 +161,7 @@ export default function CommunicationSettings() {
           })}>Retry conversation history</Button>
           <h3>Existing lead assignments</h3><p className="muted small">Fill missing responsibilities with the selected default teammate. Existing assignments and deadlines stay in place; historical emails are not resent.</p>
           <Button variant="secondary" type="button"  disabled={!(saved.defaultSalespersonId ?? saved.defaultUserId) || migrationCursor === null} onClick={() => void run("backfill", async () => {
-            const result = await request<{ assigned: number; exceptions: number; nextToken?: string }>("backfill", { nextToken: migrationCursor }, true);
+            const result = await request("backfill", { nextToken: migrationCursor }, true);
             setMigrationCursor(result.nextToken ?? null); setMessage(`${result.assigned} assignments updated; ${result.exceptions} need attention.${result.nextToken ? " Continue with the next batch." : " All batches reviewed."}`);
           })}>{migrationCursor === null ? "Backfill complete" : migrationCursor ? "Review next lead batch" : "Fill missing lead responsibilities"}</Button>
         </fieldset>

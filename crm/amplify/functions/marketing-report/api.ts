@@ -1,3 +1,4 @@
+import { apiFailure, decodeAwsJson } from '../../../../shared/apiResponse';
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
 import { assertRecipient, manualRunId, readSettings, readRun, reserveRun, settingsSnapshot, saveSettings, updateRun, conflict } from "./store";
 import { isActiveAdmin, type RoleRequest } from "../crm-access/active-role";
@@ -6,11 +7,11 @@ const lambda = new LambdaClient({ maxAttempts: 1 });
 interface Event { info?: { fieldName?: string }; arguments?: { operation?: string; input?: unknown }; identity?: { sub?: string; username?: string; groups?: unknown; claims?: Record<string, unknown> }; request?: RoleRequest }
 export function requireAdmin(event: Event): string {
   const actor = event.identity?.sub ?? event.identity?.claims?.sub;
-  if (!isActiveAdmin(event.identity, event.request) || typeof actor !== "string" || !actor) throw new Error("Administrator access is required.");
+  if (!isActiveAdmin(event.identity, event.request) || typeof actor !== "string" || !actor) throw Object.assign(new Error("Administrator access is required."), { name: 'Unauthorized' });
   return actor;
 }
 function parseInput(value: unknown): Record<string, unknown> {
-  const parsed = typeof value === "string" ? JSON.parse(value) : value;
+  const parsed = decodeAwsJson(value);
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Invalid report request.");
   return parsed as Record<string, unknown>;
 }
@@ -44,6 +45,7 @@ export const handler = async (event: Event) => {
     return { ok: true, run: reservation.record.data };
   } catch (error) {
     console.error("Marketing report API failed", error instanceof Error ? error.name : "UnknownError");
-    return { ok: false, error: error instanceof Error && !error.name.endsWith("Exception") ? error.message.slice(0, 250) : "The marketing report request failed. Please try again." };
+    return apiFailure({ message: error instanceof Error && !error.name.endsWith("Exception") ? error.message.slice(0, 250) : "The marketing report request failed. Please try again.",
+      ...(error instanceof Error && error.name === 'Unauthorized' ? { errorType: 'Unauthorized' } : {}) }, 'The marketing report request failed. Please try again.');
   }
 };

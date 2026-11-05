@@ -1,4 +1,5 @@
 import { captureHandledFailure } from "../monitoring";
+import { apiFailure } from '../../../../shared/apiResponse';
 import { brokerFeeDisclosure, signBrokerFeeDisclosure } from './agreements';
 import { accountFees, getFee } from './store';
 import { AccountAccess } from '../crm-access/access';
@@ -39,6 +40,6 @@ export const handler = async (event: Event) => {
     const denied = error instanceof Error && error.name === 'Unauthorized';
     const message = denied ? 'Unauthorized: this broker fee request is no longer available to your account.'
       : error instanceof Error && error.name === 'Error' ? error.message : 'This broker fee request could not be completed. Please retry.';
-    return { ok: false, error: message, ...(denied ? { errorType: 'Unauthorized' } : {}) };
+    return apiFailure({ message, ...(denied ? { errorType: 'Unauthorized' } : {}) }, message);
   }
 };

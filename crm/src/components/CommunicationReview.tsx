@@ -20,20 +20,23 @@ function useReviewMutation() {
 }
 
 type ActivityProps = { id: string; onSaved: () => void; accountId?: string; conversationId?: string };
-type AccountSearchPage = { items: { id: string; name: string }[]; nextToken?: string };
 export function ActivityReview(props: ActivityProps) {
   return <ActivityEditor key={`${props.id}:${props.accountId ?? ""}:${props.conversationId ?? ""}`} {...props} />;
 }
 function ActivityEditor({ id, onSaved, accountId, conversationId }: ActivityProps) {
-  const resource = useAsyncResource(() => request<{ communication: Communication }>("activity", { id }), [id], { initialData: null , live: true });
-  const [name, setName] = useState(""), [matches, setMatches] = useState<{ id: string; name: string }[]>([]), [purpose, setPurpose] = useState("PROSPECT");
+  const resource = useAsyncResource(() => request("activity", { id }), [id], { initialData: null , live: true });
+  const [name, setName] = useState(""), [matches, setMatches] = useState<{ id: string; name: string }[]>([]), [purpose, setPurpose] = useState<"PROSPECT" | "CARRIER">("PROSPECT");
   const [searching, setSearching] = useState(false), [searchError, setSearchError] = useState(""), [searched, setSearched] = useState(false);
   const [nextToken, setNextToken] = useState<string>(), [continued, setContinued] = useState(false);
   const searchVersion = useRef(0);
   const searchPending = useRef<number>();
   const mutation = useReviewMutation();
   useEffect(() => () => { searchVersion.current++; }, []);
-  const link = (target: string, selectedConversation?: string) => mutation.run(() => request("linkActivity", { id, accountId: target, conversationId: selectedConversation, version: resource.data!.communication.version, purpose }, true), onSaved);
+  const communication = resource.data?.communication;
+  const link = (target: string, selectedConversation?: string) => {
+    if (!communication) return;
+    return mutation.run(() => request("linkActivity", { id, accountId: target, conversationId: selectedConversation, version: communication.version, purpose }, true), onSaved);
+  };
   async function findAccounts(cursor?: string) {
     if (mutation.busy || searchPending.current !== undefined || !name.trim()) return;
     const version = ++searchVersion.current;
@@ -41,7 +44,7 @@ function ActivityEditor({ id, onSaved, accountId, conversationId }: ActivityProp
     setSearchError(""); setSearching(true);
     if (!cursor) { setSearched(false); setMatches([]); setNextToken(undefined); setContinued(false); }
     try {
-      const page = await request<AccountSearchPage>("searchAccounts", { query: name.trim(), ...(cursor ? { nextToken: cursor } : {}) });
+      const page = await request("searchAccounts", { query: name.trim(), ...(cursor ? { nextToken: cursor } : {}) });
       if (version !== searchVersion.current) return;
       if (!Array.isArray(page.items) || page.items.length > 25 || page.items.some(item => !item || typeof item.id !== "string" || !item.id || typeof item.name !== "string") ||
         page.nextToken != null && (typeof page.nextToken !== "string" || !page.nextToken || page.nextToken === cursor)) {
@@ -58,14 +61,14 @@ function ActivityEditor({ id, onSaved, accountId, conversationId }: ActivityProp
     finally { if (version === searchVersion.current) { searchPending.current = undefined; setSearching(false); } }
   }
   return <div className="workflow-editor"><h3>Link communication to an association</h3>
-    {resource.data && <p>{fmtProviderPhone(resource.data.communication.from)} · {resource.data.communication.status}<br />{resource.data.communication.text?.slice(0, 500)}</p>}
+    {communication && <p>{fmtProviderPhone(communication.from)} · {communication.status}<br />{communication.text?.slice(0, 500)}</p>}
     {(mutation.error || searchError || resource.error) && <p role="alert" className="error-text">{mutation.error || searchError || resource.error}</p>}
-    {accountId && <Button disabled={mutation.busy || !resource.data} onClick={() => void link(accountId, conversationId)}>Link this activity to the selected lead and Front conversation</Button>}
+    {accountId && <Button disabled={mutation.busy || !communication} onClick={() => void link(accountId, conversationId)}>Link this activity to the selected lead and Front conversation</Button>}
     <form onSubmit={e => { e.preventDefault(); void findAccounts(); }}>
       <label className="field">Association name<Input required maxLength={200} disabled={mutation.busy} value={name} onChange={e => { searchVersion.current++; searchPending.current = undefined; setName(e.target.value); setMatches([]); setNextToken(undefined); setContinued(false); setSearching(false); setSearched(false); setSearchError(""); }} /></label><Button disabled={mutation.busy || searching || !name.trim()}>{searching ? "Searching…" : "Find lead or client"}</Button>
     </form>
     {searched && !matches.length && !nextToken && <p role="status">{continued ? "No more matching leads or clients." : "No matching leads or clients."}</p>}
-    <label className="field">Purpose<Select disabled={mutation.busy} value={purpose} onChange={e => setPurpose(e.target.value)}><option value="PROSPECT">Prospect or client</option><option value="CARRIER">Carrier</option></Select></label>
+    <label className="field">Purpose<Select disabled={mutation.busy} value={purpose} onChange={e => { if (e.target.value === "PROSPECT" || e.target.value === "CARRIER") setPurpose(e.target.value); }}><option value="PROSPECT">Prospect or client</option><option value="CARRIER">Carrier</option></Select></label>
     <p className="muted small">Only this activity is linked. A property manager's other associations remain separate.</p>
     {matches.map(m => <p key={m.id}><Button variant="link"  disabled={mutation.busy || searching || !resource.data} onClick={() => void link(m.id)}>{m.name}</Button></p>)}
     {nextToken && <div><p className="muted small" role="status">{matches.length ? "More leads and clients remain to search." : "Search is not finished. Continue to check the remaining leads and clients."}</p><Button type="button" disabled={mutation.busy || searching} onClick={() => void findAccounts(nextToken)}>{matches.length ? "Next matches" : "Continue searching"}</Button></div>}
@@ -82,14 +85,14 @@ export function ReviewAction({ id, version, onSaved, event = false }: { id: stri
     <Button disabled={busy || version !== reviewedVersion}>{event ? "Replay saved event" : "Mark reviewed"}</Button>{error && <p className="error-text">{error}</p>}</form></details>;
 }
 export function DeliveryReview({ item, onSaved }: { item: { id: string; version: number; state?: string }; onSaved: () => void }) {
-  const [action, setAction] = useState("resolve"), [uid, setUid] = useState(""), [reason, setReason] = useState(""), [checked, setChecked] = useState(false);
+  const [action, setAction] = useState<"resolve" | "retry" | "suppress">("resolve"), [uid, setUid] = useState(""), [reason, setReason] = useState(""), [checked, setChecked] = useState(false);
   useLiveUpdateBlock(!!uid.trim() || !!reason.trim() || checked || action !== "resolve");
   const [reviewed, setReviewed] = useState({ version: item.version, state: item.state });
   const { busy, error, run } = useReviewMutation();
   const changed = item.version !== reviewed.version || item.state !== reviewed.state;
   useEffect(() => { if (!uid && !reason && !checked && action === "resolve" && !busy) setReviewed({ version: item.version, state: item.state }); }, [item.version, item.state, uid, reason, checked, action, busy]);
   return <details><summary>Review delivery</summary><form onSubmit={e => { e.preventDefault(); if (changed || action === "retry" && !checked) return; void run(() => request("reviewOperation", { ...item, version: reviewed.version, action, uid, reason, verifiedNotSent: checked }, true), onSaved); }}>
-    <label className="field">Action<Select disabled={busy} value={action} onChange={e => setAction(e.target.value)}><option value="resolve">Link verified Front delivery</option><option value="retry">Retry delivery</option><option value="suppress">Cancel pending delivery</option></Select></label>
+    <label className="field">Action<Select disabled={busy} value={action} onChange={e => { if (e.target.value === "resolve" || e.target.value === "retry" || e.target.value === "suppress") setAction(e.target.value); }}><option value="resolve">Link verified Front delivery</option><option value="retry">Retry delivery</option><option value="suppress">Cancel pending delivery</option></Select></label>
     {action === "resolve" && <label className="field">Front message UID<Input required disabled={busy} value={uid} onChange={e => setUid(e.target.value)} /></label>}
     {action === "retry" && <label><Input required disabled={busy} type="checkbox" checked={checked} onChange={e => setChecked(e.target.checked)} /> I checked the source and confirmed this message was not sent.</label>}
     <label className="field">Review notes<Input required disabled={busy} value={reason} onChange={e => setReason(e.target.value)} /></label>
@@ -110,18 +113,18 @@ export function SidebarActivityLinker(props: LinkerProps) {
 }
 function ActivityLinker({ accountId, conversationId, onSaved }: LinkerProps) {
   const [id, setId] = useState(""), [error, setError] = useState(""), [loadingMore, setLoadingMore] = useState(false);
-  const rows = useAsyncResource(() => request<{ items: { id: string; communicationId: string; phone?: string; at?: string; resolved?: boolean }[]; nextToken?: string }>("work", { kind: "TRIAGE" }), [accountId, conversationId], { initialData: { items: [] } , live: true });
+  const rows = useAsyncResource(() => request("work", { kind: "TRIAGE" }), [accountId, conversationId], { initialData: { items: [] } , live: true });
   const currentRows = useRef(rows.data); currentRows.current = rows.data;
   const pending = useRef(false), mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   return <details><summary>Link a call or text to this conversation</summary><p className="muted small">Review the source before choosing its association.</p>
-    {rows.data.items.filter(r => !r.resolved).map(r => <p key={r.id}><Button variant="link"  onClick={() => setId(r.communicationId)}>{r.phone ? fmtProviderPhone(r.phone) : "Unknown contact"} · {r.at ? new Date(r.at).toLocaleString() : "Time unavailable"}</Button></p>)}
+    {rows.data.items.filter(r => !r.resolved).map(r => <p key={r.id}><Button variant="link"  disabled={!r.communicationId} onClick={() => { if (r.communicationId) setId(r.communicationId); }}>{r.phone ? fmtProviderPhone(r.phone) : "Unknown contact"} · {r.at ? new Date(r.at).toLocaleString() : "Time unavailable"}</Button></p>)}
     {rows.data.nextToken && <Button variant="link"  disabled={loadingMore || rows.loading} onClick={async () => {
       if (pending.current) return;
       pending.current = true; setLoadingMore(true); setError("");
       const captured = rows.data;
       try {
-        const page = await request<typeof rows.data>("work", { kind: "TRIAGE", nextToken: captured.nextToken });
+        const page = await request("work", { kind: "TRIAGE", nextToken: captured.nextToken });
         if (mounted.current && currentRows.current === captured) rows.setData(current => current === captured ? { ...page, items: [...new Map([...current.items, ...page.items].map(item => [item.id, item])).values()] } : current);
       } catch(e) { if (mounted.current) setError(String(e)); }
       finally { pending.current = false; if (mounted.current) setLoadingMore(false); }

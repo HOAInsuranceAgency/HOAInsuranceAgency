@@ -1,3 +1,4 @@
+import { assertGraphqlErrors } from '../lib/apiResponse';
 import { Input } from "./ui/Input";
 import { Button } from "./ui/Button";
 import { Table } from "./ui/Table";
@@ -563,7 +564,8 @@ function ExtractionPanelContent({
         pending = true;
         try {
           const { data, errors } = await client.models.Account.get({ id: account.id });
-          if (errors?.length || !data) throw new Error(errors?.[0]?.message ?? 'Could not refresh extraction status');
+          assertGraphqlErrors({ errors });
+          if (!data) throw new Error(errors?.[0]?.message ?? 'Could not refresh extraction status');
           if (!active) return;
           setError('');
           if (data.extractionStatus !== status) onChange(data);
@@ -623,7 +625,7 @@ function ExtractionPanelContent({
       const { errors } = await client.mutations.startLeadExtraction({
         accountId: account.id,
       });
-      if (errors?.length) throw new Error(errors[0].message);
+      assertGraphqlErrors({ errors: errors });
       const { data, errors: readErrors } = await client.models.Account.get({ id: account.id });
       if (readErrors?.length || !data) throw new Error(readErrors?.[0]?.message ?? 'Could not refresh extraction status');
       if (live.current) onChange(data);
@@ -695,7 +697,8 @@ function ExtractionPanelContent({
           // did land.
           ...(result.extractedAt ? { aiExtractionAppliedAt: result.extractedAt } : {}),
         });
-        if (errors?.length || !data) throw new Error(errors?.[0]?.message);
+        assertGraphqlErrors({ errors });
+        if (!data) throw new Error(errors?.[0]?.message);
 
         // Contacts, losses and buildings all follow the same rule now: match
         // on the natural key, then create, update, or do nothing. Buildings

@@ -1,3 +1,5 @@
+import { publicApi } from "./publicApi";
+import { isHttpsUrl } from '../../../shared/apiResponse';
 import { assertWebsiteActionsEnabled } from "./migrationPreview";
 /** Durable website lead capture. A success means the CRM saved the enquiry. */
 import { captureLeadAttribution } from "./leadAttribution";
@@ -72,46 +74,18 @@ export interface CrmLeadResult {
   uploadToken: string | null;
 }
 
-/**
- * Unwrap what AppSync returns for an `a.json()` mutation.
- *
- * It comes back as a JSON *string*, not an object — `AWSJSON` is serialised, so
- * `data.submitWebLead` is `"{\"ok\":true,…}"`. Reading `.ok` off that is
- * `undefined`, which silently looked exactly like a refusal: intake worked, the
- * lead was created, and the browser concluded it had failed. That is why no
- * upload panel ever appeared.
- *
- * Tolerates an object too, in case a future runtime stops stringifying.
- */
-function unwrap(payload: unknown): Record<string, unknown> | null {
-  if (payload == null) return null;
-  if (typeof payload === "object") return payload as Record<string, unknown>;
-  if (typeof payload === "string") {
-    try {
-      const parsed = JSON.parse(payload);
-      return parsed && typeof parsed === "object" ? parsed : null;
-    } catch {
-      return null;
-    }
-  }
-  return null;
-}
 
 export interface SubmissionIdentity { submissionId: string; retryProof: string }
 export async function submitCrmLead(input: CrmLeadInput, identity: SubmissionIdentity): Promise<CrmLeadResult> {
   const url = import.meta.env.PUBLIC_CRM_API_URL;
   const key = import.meta.env.PUBLIC_CRM_API_KEY;
   if (!url || !key) throw new Error("The enquiry form is temporarily unavailable. Please call us.");
-  assertWebsiteActionsEnabled();
-  const response = await fetch(url, {
-    method: "POST", headers: { "Content-Type": "application/json", "x-api-key": key },
-    body: JSON.stringify({ query: MUTATION, variables: { ...input, ...identity } }),
-    signal: AbortSignal.timeout(40000),
+  const result = await publicApi(MUTATION, { ...input, ...identity }, 'submitWebLead', {
+    url, key, configurationError: 'The enquiry form is temporarily unavailable. Please call us.',
+    httpError: "We couldn't confirm your request. Please try again.",
+    graphQLError: "We couldn't save your request. Please try again.", refused: "We couldn't save your request.",
+    request: { signal: AbortSignal.timeout(40000) },
   });
-  if (!response.ok) throw new Error("We couldn't confirm your request. Please try again.");
-  const body = await response.json();
-  if (body.errors?.length) throw new Error("We couldn't save your request. Please try again.");
-  const result = unwrap(body.data?.submitWebLead);
   if (!result?.ok || typeof result.id !== "string") throw new Error(String(result?.error ?? "We couldn't save your request."));
   return { accountId: result.id, ...(typeof result.estimateToken === "string" ? { estimateToken: result.estimateToken } : {}), uploadToken: typeof result.uploadToken === "string" ? result.uploadToken : null };
 }
@@ -177,24 +151,16 @@ const CLOSE_WINDOW = `mutation CloseLeadUploadWindow($uploadToken: String!) {
 async function crmMutation(
   query: string,
   variables: Record<string, unknown>,
+  field: 'requestLeadUpload' | 'closeLeadUploadWindow',
   opts?: { keepalive?: boolean }
 ): Promise<Record<string, unknown> | null> {
   const url = import.meta.env.PUBLIC_CRM_API_URL;
   const key = import.meta.env.PUBLIC_CRM_API_KEY;
   if (!url || !key) return null;
-  assertWebsiteActionsEnabled();
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "x-api-key": key },
-    body: JSON.stringify({ query, variables }),
-    // `keepalive`, not sendBeacon: a beacon cannot set the x-api-key header
-    // AppSync requires, and this has to survive the page going away.
-    keepalive: opts?.keepalive,
+  return publicApi(query, variables, field, {
+    url, key, configurationError: 'Uploads are unavailable on this build.',
+    refused: "We couldn't accept that file.", request: { keepalive: opts?.keepalive },
   });
-  const body = await res.json();
-  if (body.errors?.length) throw new Error(body.errors[0].message);
-  const [payload] = Object.values(body.data ?? {});
-  return unwrap(payload);
 }
 
 /**
@@ -213,7 +179,7 @@ export async function uploadLeadFile(
     filename: file.name,
     contentType: file.type || undefined,
     sizeBytes: file.size,
-  });
+  }, 'requestLeadUpload');
   if (!result?.ok) {
     throw new Error(
       typeof result?.error === "string"
@@ -221,8 +187,9 @@ export async function uploadLeadFile(
         : "We couldn't accept that file."
     );
   }
+  if (!isHttpsUrl(result.uploadUrl)) throw new Error("We couldn't accept that file.");
   assertWebsiteActionsEnabled();
-  const put = await fetch(String(result.uploadUrl), {
+  const put = await fetch(result.uploadUrl, {
     method: "PUT",
     // Must match the type the URL was signed with, or S3 rejects it.
     headers: file.type ? { "Content-Type": file.type } : undefined,
@@ -242,7 +209,7 @@ export async function closeLeadUploads(
   opts?: { keepalive?: boolean }
 ): Promise<void> {
   try {
-    await crmMutation(CLOSE_WINDOW, { uploadToken }, opts);
+    await crmMutation(CLOSE_WINDOW, { uploadToken }, 'closeLeadUploadWindow', opts);
   } catch (err) {
     console.warn("Closing the upload window failed", err);
   }

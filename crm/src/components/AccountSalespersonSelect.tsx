@@ -42,7 +42,7 @@ export function AccountSalespersonSelect({
     setError('');
     setSaved(false);
     try {
-      const result = await communicationRequest<{ workflow: LeadWorkflow }>(
+      const result = await communicationRequest(
         'setResponsibilities', { accountId, salespersonId: nextId, version: workflowVersion }, true,
       );
       onSaved(result.workflow);

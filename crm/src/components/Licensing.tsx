@@ -1,3 +1,4 @@
+import { assertGraphqlErrors } from '../lib/apiResponse';
 import { Button } from "./ui/Button";
 import { Input } from "./ui/Input";
 import { SegmentedControl } from "./ui/SegmentedControl";
@@ -168,7 +169,8 @@ export default function Licensing() {
 
   async function del(id: string) {
     const { data, errors } = await client.models.License.delete({ id });
-    if (errors?.length || !data) throw new Error(errors?.[0]?.message || "Could not confirm the license was deleted.");
+    assertGraphqlErrors({ errors });
+    if (!data) throw new Error(errors?.[0]?.message || "Could not confirm the license was deleted.");
     setLicenses((ls) => ls.filter((l) => l.id !== id));
   }
 

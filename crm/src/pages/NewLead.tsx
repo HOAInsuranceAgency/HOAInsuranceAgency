@@ -1,3 +1,4 @@
+import { assertGraphqlErrors } from '../lib/apiResponse';
 import { Button } from "../components/ui/Button";
 import { Select } from "../components/ui/Select";
 import { Input } from "../components/ui/Input";
@@ -7,7 +8,7 @@ import PartyPicker from "../components/PartyPicker";
 import { RELATIONSHIP_LABELS, RELATIONSHIP_ROLES, type RelationshipRole } from "../../../shared/relationships";
 import { LEAD_SOURCES, LEAD_SOURCE_LABELS } from "../../../shared/leadSource";
 import { PROPERTY_TYPES, PROPERTY_TYPE_LABELS, normalizePropertyType, accountPropertyType } from "../../../shared/propertyType";
-import { communicationRequest, type TeamEligibility } from "../lib/communications";
+import { communicationRequest } from "../lib/communications";
 import { ResponsibilitySelect } from "../components/LeadWorkflowPanel";
 import { isAssignableSalesperson } from "../../../shared/salespersonOwnership";
 import { useAsyncResource } from "../lib/useAsyncResource";
@@ -69,7 +70,7 @@ export default function NewLead() {
   const [salespersonId, setSalesperson] = useState("");
   const initialSalesperson = useRef("");
   const salespersonEdited = useRef(false);
-  const members = useAsyncResource(() => communicationRequest<{ team: TeamEligibility[]; actorId?: string }>("team"), [], { initialData: { team: [] } , live: true });
+  const members = useAsyncResource(() => communicationRequest("team"), [], { initialData: { team: [] } , live: true });
   useEffect(() => {
     const self = members.data.team.find(t => t.userId === members.data.actorId && isAssignableSalesperson(t));
     if (self && !salespersonEdited.current) { initialSalesperson.current = self.userId; setSalesperson(s => s || self.userId); }
@@ -185,7 +186,7 @@ export default function NewLead() {
     attempted.current = true;
     draft.markAttempted();
     try {
-      data = await communicationRequest<{ id: string }>("createLead", {
+      data = await communicationRequest("createLead", {
         requestId: requestId.current, salespersonId: salespersonId || undefined,
         fields,
       }, true);
@@ -207,7 +208,7 @@ export default function NewLead() {
     try {
       const [saved, context] = await Promise.all([
         client.models.Account.get({ id: data.id }),
-        salespersonId ? communicationRequest<{ workflow?: { salespersonId?: string } }>("context", { accountId: data.id }) : Promise.resolve(null),
+        salespersonId ? communicationRequest("context", { accountId: data.id }) : Promise.resolve(null),
       ]);
       const expected = { ...fields, propertyType: accountPropertyType(fields) };
       const account = saved.data as Record<string, unknown> | null;
@@ -284,7 +285,7 @@ export default function NewLead() {
         const path = `documents/ACCOUNT/${data.id}/${doc.id}/${file.name}`;
         const updated = await client.models.Document.update({ id: doc.id, s3Key: path });
         if (!mounted.current) return;
-        if (updated.errors?.length) throw new Error(updated.errors[0].message);
+        assertGraphqlErrors(updated);
         await uploadData({
           path,
           data: file,

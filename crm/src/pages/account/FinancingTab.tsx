@@ -1,3 +1,4 @@
+import { serviceFinanceLoan, generateFinanceAgreement } from '../../lib/billingApi';
 import { useLiveUpdateBlock } from "../../lib/useLiveUpdates";
 import { Button } from "../../components/ui/Button";
 import { Select } from "../../components/ui/Select";
@@ -89,17 +90,11 @@ function LoanActions({ loan, onChanged, refreshRequired, setRefreshRequired }: {
         // that nothing was posted.
         if (action === "POST_PAYMENT") postedInstallment.current = (loan.paidThrough ?? 0) + 1;
         try {
-          const { data, errors } = await client.mutations.servicePfLoan({
+          const result = await serviceFinanceLoan({
             loanId: loan.id,
             action,
             ...extra,
           });
-          if (errors?.length) throw new Error(errors[0].message);
-          const result =
-            typeof data === "string" ? JSON.parse(data) : (data as Record<string, unknown>);
-          if (!result?.ok) {
-            throw new Error(String(result?.error ?? "Refused."));
-          }
           if (action === "POST_PAYMENT") {
             const posted = result.posted as { n?: unknown } | undefined;
             postedInstallment.current = typeof posted?.n === "number"
@@ -408,11 +403,7 @@ function AccountFinancing({ account }: { account: Account }) {
     agreementPending.current = true;
     try { await agreementStatus.run(
       async () => {
-        const { data, errors } = await client.mutations.generatePfAgreement({ loanId });
-        if (errors?.length) throw new Error(errors[0].message);
-        const result =
-          typeof data === "string" ? JSON.parse(data) : (data as Record<string, unknown>);
-        if (!result?.ok) throw new Error(String(result?.error ?? "Generation failed."));
+        await generateFinanceAgreement(loanId);
         return "Financing agreement filed in Documents.";
       },
       { errorMessage: "Couldn't generate the agreement." }

@@ -1,4 +1,5 @@
 import { str, inputValue } from "../lib/formCodec";
+import { assertGraphqlErrors } from '../lib/apiResponse';
 import { Select } from "./ui/Select";
 import { Input } from "./ui/Input";
 import { Button } from "./ui/Button";
@@ -201,7 +202,7 @@ export default function CoverageForm({
           // MEP is underwriting data; blank stays null, never a confident 0.
           minimumEarnedPremiumPct: form.mepPct.trim() === "" ? null : Number(form.mepPct),
         });
-        if (errors?.length) throw new Error(errors[0].message);
+        assertGraphqlErrors({ errors: errors });
       } else if (existing) {
         const { errors } = await client.models.Quote.update({
           id: existing.id,
@@ -213,7 +214,7 @@ export default function CoverageForm({
           ...(form.status === "PRESENTED" && !(existing as Quote | null)?.presentedAt ? { presentedAt: new Date().toISOString() } : {}),
           minimumEarnedPremiumPct: form.mepPct.trim() === "" ? null : Number(form.mepPct),
         });
-        if (errors?.length) throw new Error(errors[0].message);
+        assertGraphqlErrors({ errors: errors });
       } else {
         const { errors } = await client.models.Quote.create({
           accountId,
@@ -225,7 +226,7 @@ export default function CoverageForm({
           ...(form.status === "PRESENTED" && !(existing as Quote | null)?.presentedAt ? { presentedAt: new Date().toISOString() } : {}),
           minimumEarnedPremiumPct: form.mepPct.trim() === "" ? null : Number(form.mepPct),
         });
-        if (errors?.length) throw new Error(errors[0].message);
+        assertGraphqlErrors({ errors: errors });
       }
       if (current()) { markSaved(submitted); onSaved(); }
     }, { errorMessage: "Save failed" });

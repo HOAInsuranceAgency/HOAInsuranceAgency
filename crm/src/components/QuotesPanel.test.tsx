@@ -137,7 +137,7 @@ describe("binding recovery", () => {
     const feeQuote = { ...quote, brokerFee: 500, billType: 'AGENCY' as const };
     h.quotes.mockResolvedValue({ data: [feeQuote] });
     h.fee.mockResolvedValue({ data: { ok: true, fees: [{
-      quoteId: quote.id, amountCents: 50000, collectedCents: 50000, submittedCents: 50000,
+      quoteId: quote.id, refundedCents: 0, amountCents: 50000, collectedCents: 50000, submittedCents: 50000,
       signedAt: '2026-09-30T12:00:00Z', terms: authorizedQuoteTerms(feeQuote),
     }] } });
     h.preview.mockResolvedValue({ data: { ok: true, carrierTermsVersion: 8, basis: 'COLLECTED', payment: {
@@ -261,7 +261,7 @@ describe("binding recovery", () => {
 
 it('updates verified broker fee status through an open bind draft without repeating financial actions', async () => {
   const feeQuote = { ...quote, brokerFee: 500, billType: 'AGENCY' as const };
-  const fee = { quoteId: quote.id, amountCents: 50000, collectedCents: 0, submittedCents: 0,
+  const fee = { quoteId: quote.id, refundedCents: 0, amountCents: 50000, collectedCents: 0, submittedCents: 0,
     signedAt: '2026-09-30T12:00:00Z', terms: authorizedQuoteTerms(feeQuote) };
   h.quotes.mockResolvedValue({ data: [feeQuote] });
   h.fee.mockResolvedValue({ data: { ok: true, fees: [fee] } });

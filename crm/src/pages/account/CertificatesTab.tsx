@@ -1,3 +1,5 @@
+import { assertGraphqlErrors } from '../../lib/apiResponse';
+import { reserveCertificateNumber } from '../../lib/billingApi';
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
 import { Textarea } from "../../components/ui/Textarea";
@@ -107,11 +109,7 @@ function CertificatesTabContent({
     const submitted = form;
     await issueStatus.run(async () => {
       setError("");
-      const { data: reserved, errors: reserveErrors } = await client.mutations.reserveCertificateNumber();
-      if (reserveErrors?.length) throw new Error(reserveErrors[0].message);
-      const body = typeof reserved === "string" ? JSON.parse(reserved) : reserved;
-      const certificateNumber = body?.certificateNumber;
-      if (!certificateNumber) throw new Error("Couldn't reserve a certificate number. Nothing was saved; try again.");
+      const certificateNumber = await reserveCertificateNumber();
       const { data, errors } = await client.models.Certificate.create({
         accountId: account.id,
         sourceCommunicationId,
@@ -124,7 +122,8 @@ function CertificatesTabContent({
         issuedBy: `${profile.firstName} ${profile.lastName}`,
         issuedAt: new Date().toISOString(),
       });
-      if (errors?.length || !data) throw new Error(errors?.[0]?.message ?? "Couldn't record the certificate. Your entries are still here; try again.");
+      assertGraphqlErrors({ errors });
+      if (!data) throw new Error(errors?.[0]?.message ?? "Couldn't record the certificate. Your entries are still here; try again.");
       setCerts(cs => [data, ...cs]);
       setShowForm(false);
       reset();

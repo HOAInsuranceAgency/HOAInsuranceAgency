@@ -1,4 +1,6 @@
 import { assertWebsiteActionsEnabled } from "./migrationPreview";
+import { publicApi } from "./publicApi";
+import { isHttpsUrl, isRecord } from '../../../shared/apiResponse';
 /**
  * The lead document portal's two calls against the CRM's public AppSync API.
  *
@@ -26,49 +28,11 @@ const UPLOAD_MUTATION = `mutation RequestPortalUpload(
   )
 }`;
 
-/**
- * `a.json()` is AWSJSON on the wire, which is a JSON *string*, and the fetch
- * above does no parsing. Same trap `crmLead.ts` documents: reading past the
- * string cost a working upload panel once already.
- */
-function unwrap(raw: unknown): Record<string, unknown> | null {
-  let v: unknown = raw;
-  try {
-    if (typeof v === "string") v = JSON.parse(v);
-    if (typeof v === "string") v = JSON.parse(v);
-  } catch {
-    return null;
-  }
-  return v && typeof v === "object" ? (v as Record<string, unknown>) : null;
-}
-
-async function call(
-  query: string,
-  variables: Record<string, unknown>,
-  field: string
-): Promise<Record<string, unknown>> {
-  if (!API_URL || !API_KEY) {
-    throw new Error("Uploads are not configured on this build.");
-  }
-  assertWebsiteActionsEnabled();
-  const res = await fetch(API_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "x-api-key": API_KEY },
-    body: JSON.stringify({ query, variables }),
+async function call(query: string, variables: Record<string, unknown>, field: string) {
+  return publicApi(query, variables, field, {
+    url: API_URL, key: API_KEY, configurationError: 'Uploads are not configured on this build.',
+    refused: 'That upload link is no longer active.',
   });
-  if (!res.ok) throw new Error(`We couldn't reach the server (${res.status}).`);
-  const body = await res.json();
-  if (body.errors?.length) {
-    throw new Error(body.errors[0].message ?? "The server refused that request.");
-  }
-  const result = unwrap(body.data?.[field]);
-  if (!result) throw new Error("The server sent back something unreadable.");
-  // The handler's own refusals arrive as { ok: false, error }, and its messages
-  // are written to be shown — an expired link explains how to get a new one.
-  if (result.ok !== true) {
-    throw new Error(String(result.error ?? "That upload link is no longer active."));
-  }
-  return result;
 }
 
 export interface PortalSection {
@@ -89,13 +53,18 @@ export interface PortalStatus {
 
 export async function fetchPortalStatus(token: string): Promise<PortalStatus> {
   const r = await call(STATUS_QUERY, { token }, "uploadPortalStatus");
+  if (typeof r.associationName !== 'string' || typeof r.expiresAt !== 'string' || typeof r.full !== 'boolean'
+    || !Number.isSafeInteger(r.uploadCount) || Number(r.uploadCount) < 0 || !Number.isSafeInteger(r.maxFiles) || Number(r.maxFiles) < 0
+    || !Array.isArray(r.sections) || !r.sections.every(section => isRecord(section) && ['key', 'label', 'help'].every(key => typeof section[key] === 'string') && Number.isSafeInteger(section.received) && Number(section.received) >= 0)) {
+    throw new Error('The server sent back something unreadable.');
+  }
   return {
     associationName: String(r.associationName ?? "your association"),
     expiresAt: String(r.expiresAt ?? ""),
     uploadCount: Number(r.uploadCount ?? 0),
     maxFiles: Number(r.maxFiles ?? 0),
     full: r.full === true,
-    sections: Array.isArray(r.sections) ? (r.sections as PortalSection[]) : [],
+    sections: r.sections.map(section => ({ key: String(section.key), label: String(section.label), help: String(section.help), received: Number(section.received) })),
   };
 }
 
@@ -122,8 +91,8 @@ export async function uploadPortalFile(
     },
     "requestPortalUpload"
   );
-  const uploadUrl = String(r.uploadUrl ?? "");
-  if (!uploadUrl) throw new Error("The server didn't give us anywhere to put it.");
+  const uploadUrl = r.uploadUrl;
+  if (!isHttpsUrl(uploadUrl)) throw new Error("The server didn't give us anywhere to put it.");
 
   assertWebsiteActionsEnabled();
   const put = await fetch(uploadUrl, {

@@ -48,3 +48,16 @@ it("follows every authorized template-list page", async () => {
   expect((await list({ path: "templates/" })).items.map(i => i.path)).toEqual(["templates/a.pdf", "templates/b.pdf"]);
   expect(h.crmFile).toHaveBeenLastCalledWith({ operation: "list", path: "templates/", nextToken: "second" });
 });
+it('retains typed authorization errors and never returns a URL after a mixed GraphQL failure', async () => {
+  h.crmFile.mockResolvedValue({ data: { url: 'https://files.example.test/old', expiresAt: '2030-01-01' }, errors: [{ message: 'Other lookup failed' }, { message: 'Inactive', errorType: 'Unauthorized' }] });
+  await expect(getUrl({ path: 'generated/a/private.pdf' })).rejects.toMatchObject({ name: 'Unauthorized', errors: [{ message: 'Other lookup failed' }, { message: 'Inactive', errorType: 'Unauthorized' }] });
+  expect(h.fetch).not.toHaveBeenCalled();
+});
+it('refuses malformed signed URLs and list cursors rather than fetching an invented location or looping', async () => {
+  h.crmFile.mockResolvedValueOnce({ data: { url: 'javascript:alert(1)', expiresAt: '2030-01-01' } });
+  await expect(uploadData({ path: 'generated/a/private.pdf', data: 'test' }).result).rejects.toThrow('File access');
+  expect(h.fetch).not.toHaveBeenCalled();
+  h.crmFile.mockResolvedValue({ data: { items: [], nextToken: 'repeated' } });
+  await expect(list({ path: 'templates/' })).rejects.toThrow('could not finish');
+  expect(h.crmFile).toHaveBeenCalledTimes(3);
+});

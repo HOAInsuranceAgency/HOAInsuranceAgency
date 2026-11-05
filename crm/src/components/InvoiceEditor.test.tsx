@@ -354,7 +354,7 @@ it.each([-100, 0])('does not offer an incoming cash receipt for a sent adjustmen
 it.each([0, 50000])('repairs a missing HOA fee without charging a previously collected balance of %s cents again', async collectedCents => {
   h.list.mockResolvedValue({ data: [{ ...line, description: 'Quoted coverage' }] });
   h.sourceGet.mockResolvedValue({ data: { id: 'q', accountId: 'a1', premium: 100, billType: 'AGENCY', brokerFee: 500, passThroughCharges: '[]' } });
-  h.feeAction.mockResolvedValue({ data: JSON.stringify({ ok: true, fees: [{ quoteId: 'q', collectedCents }] }) });
+  h.feeAction.mockResolvedValue({ data: JSON.stringify({ ok: true, fees: [{ quoteId: 'q', amountCents: 50000, terms: 'current', submittedCents: collectedCents, refundedCents: 0, collectedCents }] }) });
   h.lineCreate.mockImplementation(async row => ({ data: row }));
   render(<InvoiceEditor invoice={{ ...initial, quoteId: 'q', sourcePricingVersion: 1 } as Invoice} policies={[]} quotes={[]} account={null} contacts={contacts} onChange={h.change} onLinesChange={h.linesChange} onDeleted={vi.fn()} />);
   await screen.findByRole('button', { name: 'Send invoice' });

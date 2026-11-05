@@ -1,3 +1,4 @@
+import { assertGraphqlErrors } from '../lib/apiResponse';
 import { useLiveUpdateBlock } from "../lib/useLiveUpdates";
 import { Select } from "./ui/Select";
 import { Button } from "./ui/Button";
@@ -199,7 +200,7 @@ function DocumentsPanelContent({
 
         const path = `documents/${entityType}/${entityId}/${doc.id}/${file.name}`;
         const linked = await client.models.Document.update({ id: doc.id, s3Key: path });
-        if (linked.errors?.length) throw new Error(linked.errors[0].message);
+        assertGraphqlErrors(linked);
         await uploadData({
           path,
           data: file,
@@ -259,7 +260,7 @@ function DocumentsPanelContent({
           id: doc.id,
           name,
         });
-        if (errors?.length) throw new Error(errors[0].message);
+        assertGraphqlErrors({ errors: errors });
         setRenameId(null);
         await reloadDocuments.current();
       },
@@ -278,7 +279,7 @@ function DocumentsPanelContent({
         }
         // Amplify reports write errors in the response instead of throwing.
         const { errors } = await client.models.Document.delete({ id: doc.id });
-        if (errors?.length) throw new Error(errors[0].message);
+        assertGraphqlErrors({ errors: errors });
         await reloadDocuments.current();
       },
       {
@@ -298,7 +299,7 @@ function DocumentsPanelContent({
           id: doc.id,
           ...linkFields(key),
         });
-        if (errors?.length) throw new Error(errors[0].message);
+        assertGraphqlErrors({ errors: errors });
         await reloadDocuments.current();
       },
       {

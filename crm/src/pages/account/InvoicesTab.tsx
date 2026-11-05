@@ -1,3 +1,5 @@
+import { assertGraphqlErrors } from '../../lib/apiResponse';
+import { reserveInvoiceNumber } from '../../lib/billingApi';
 import { Button } from "../../components/ui/Button";
 import { Select } from "../../components/ui/Select";
 import { Table } from "../../components/ui/Table";
@@ -156,14 +158,7 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
          * is spent and the sequence has a gap — the trade this scheme makes
          * deliberately: gaps are explainable, reuse is not.
          */
-        const reserved = await client.mutations.reserveInvoiceNumber();
-        if (reserved.errors?.length) throw new Error(reserved.errors[0].message);
-        const raw = reserved.data;
-        const parsed =
-          typeof raw === "string" ? JSON.parse(raw) : (raw as Record<string, unknown>);
-        const number =
-          typeof parsed?.invoiceNumber === "string" ? parsed.invoiceNumber : null;
-        if (!number) throw new Error("Couldn't reserve an invoice number. Nothing was created; try again.");
+        const number = await reserveInvoiceNumber();
 
         const today = new Date().toISOString().slice(0, 10);
         const { data, errors } = await client.models.Invoice.create({
@@ -176,7 +171,8 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
           dueAt: !adjustment && (source?.brokerFee ?? 0) > 0 ? today : addDays(today, DEFAULT_TERM_DAYS),
           ...(kind === "policy" ? { policyId: anchorId } : { quoteId: anchorId }),
         });
-        if (errors?.length || !data) throw new Error(errors?.[0]?.message ?? "Couldn't create the invoice.");
+        assertGraphqlErrors({ errors });
+        if (!data) throw new Error(errors?.[0]?.message ?? "Couldn't create the invoice.");
         // Creation has committed even if seeding fails. Show that invoice and
         // remove its anchor from the picker before attempting another write.
         res.setData(cur => cur ? { ...cur, invoices: [data, ...cur.invoices] } : cur);
@@ -190,7 +186,8 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
             const line = await client.models.InvoiceLine.create({ id: `invoice:${data.id}:adjustment`, invoiceId: data.id,
               accountId, policyId: policy!.id, kind: "ENDORSEMENT", description: "Endorsement or audit adjustment",
               retailAmount: null, costAmount: null, sortOrder: 0 });
-            if (line.errors?.length || !line.data) throw new Error("Adjustment line was not saved.");
+            assertGraphqlErrors(line);
+            if (!line.data) throw new Error("Adjustment line was not saved.");
             created.push(line.data);
           } catch {
             setOpenId(data.id);
@@ -226,7 +223,8 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
           try {
             for (const charge of passThroughLinesFromSource(source, policy?.id)) {
               const line = await client.models.InvoiceLine.create({ id: sourceChargeLineId(data.id, charge.sourceQuoteChargeId), invoiceId: data.id, accountId, ...charge, sortOrder: created.length });
-              if (line.errors?.length || !line.data) throw new Error("Supplier charge was not saved.");
+              assertGraphqlErrors(line);
+              if (!line.data) throw new Error("Supplier charge was not saved.");
               created.push(line.data);
             }
           } catch {

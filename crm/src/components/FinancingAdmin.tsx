@@ -1,4 +1,5 @@
 import { str } from "../lib/formCodec";
+import { assertGraphqlErrors } from '../lib/apiResponse';
 import { Button } from "./ui/Button";
 import { Table } from "./ui/Table";
 import { Select } from "./ui/Select";
@@ -20,7 +21,7 @@ type OpinionPage = { items: Opinion[]; nextToken?: string };
 async function loadOpinionHistory(nextToken?: string): Promise<OpinionPage> {
   // History includes states that no longer require an opinion under current rules.
   const page = await client.models.PfCounselOpinion.list({ limit: 100, nextToken });
-  if (page.errors?.length) throw new Error(page.errors[0].message);
+  assertGraphqlErrors(page);
   if (!page.data) throw new Error("Couldn't load counsel opinions.");
   return { items: page.data, nextToken: page.nextToken ?? undefined };
 }
@@ -94,7 +95,7 @@ export function FinancingAdmin({ onChanged }: { onChanged: () => Promise<void> }
         notes: str(notes),
         occurredAt: new Date().toISOString(),
       });
-      if (errors?.length) throw new Error(errors[0].message);
+      assertGraphqlErrors({ errors: errors });
       if (!data) throw new Error("Couldn't confirm that the opinion was recorded. Refresh before trying again.");
       setCode("");
       setEffectiveAt("");

@@ -60,13 +60,13 @@ function QuotePackagesContent({
     }));
   useLiveUpdateBlock(!!editor || saving);
   const writeLock = useRef(false);
-  async function write(input: Record<string, unknown>) {
+  async function write(input: import('../lib/communicationContracts').CommercialChange) {
     if (writeLock.current) return;
     writeLock.current = true;
     setSaving(true);
     setError('');
     try {
-      const result = await communicationRequest<{ plan: CommercialPlan }>(
+      const result = await communicationRequest(
         'saveCommercial',
         { accountId, version: plan.version, ...input },
         true,

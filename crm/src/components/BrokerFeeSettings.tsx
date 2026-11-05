@@ -1,3 +1,4 @@
+import { privateApiRecord } from '../lib/apiResponse';
 import { useLiveUpdateBlock } from "../lib/useLiveUpdates";
 import { Button } from "./ui/Button";
 import { Select } from "./ui/Select";
@@ -38,9 +39,7 @@ function JurisdictionForm({state,existing,version,onSaved,onRetry,onBusy}:{state
     if(rule.approved&&(!rule.version.trim()||!rule.reviewedBy.trim()||!rule.reviewedAt||!rule.evidenceUrl.startsWith('https://')||!rule.lines.trim()||maxFeeCents!==null&&(!Number.isSafeInteger(maxFeeCents)||maxFeeCents<0)))throw new Error('Complete the reviewed fee rules and source reference.');
     const next:BrokerFeeJurisdictionRule={approved:true,version:rule.version.trim(),reviewedBy:rule.reviewedBy.trim(),reviewedAt:`${rule.reviewedAt}T12:00:00Z`,evidenceUrl:rule.evidenceUrl.trim(),allowedLines:rule.lines.split(',').map(s=>s.trim()).filter(Boolean),allowedBillTypes:['AGENCY'],allowsCarrierCommission:true,maxFeeCents,forms:rule.forms,discloseCarrierCommission:rule.discloseCarrierCommission,requiresBrokerSignature:rule.requiresBrokerSignature,...(rule.requiresBrokerSignature?{agencySigner:{name:rule.signerName.trim(),title:rule.signerTitle.trim(),licenseNumber:rule.signerLicense.trim(),authorized:rule.signerAuthorized as true}}:{})};
     const result=await client.mutations.brokerFeeAction({input:JSON.stringify({op:'saveJurisdiction',state,version,rule:rule.approved?next:null})});
-    if(result.errors?.length)throw new Error(result.errors[0].message);
-    const answer=typeof result.data==='string'?JSON.parse(result.data):result.data;
-    if(!answer?.ok)throw new Error(answer?.error??'Disclosure settings could not be saved.');
+    privateApiRecord(result,{fallback:'Disclosure settings could not be saved.'});
     baseline.current=JSON.stringify(submitted);
     onSaved();
   },{errorMessage:'Could not save disclosure settings.',savedMessage:'Disclosure settings saved.'});}

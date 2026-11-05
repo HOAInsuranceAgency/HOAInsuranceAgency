@@ -1,3 +1,4 @@
+import { assertGraphqlErrors } from '../lib/apiResponse';
 import { ControlSizeProvider } from "../components/ui/ControlDensity";
 import { Input } from "../components/ui/Input";
 import { Textarea } from "../components/ui/Textarea";
@@ -19,7 +20,7 @@ export default function FrontSidebar() {
   const [conversationId, setConversationId] = useState<string | null>(null), [status, setStatus] = useState("Select one conversation in Front.");
   const [search, setSearch] = useState(""), [matches, setMatches] = useState<{ id: string; name: string }[]>([]), [error, setError] = useState("");
   const [searchBusy, setSearchBusy] = useState(false), [searched, setSearched] = useState(false);
-  const [revision, setRevision] = useState(0), [purpose, setPurpose] = useState("PROSPECT");
+  const [revision, setRevision] = useState(0), [purpose, setPurpose] = useState<"PROSPECT" | "CARRIER">("PROSPECT");
   useEffect(() => {
     const subscription = Front.contextUpdates.subscribe(context => {
       const id = "conversation" in context && context.conversation ? context.conversation.id : null;
@@ -43,7 +44,7 @@ export default function FrontSidebar() {
         smsFlight.current = attempt; setSmsBusy(true); setError("");
         const current = () => captured === scope.current && smsFlight.current === attempt;
         try {
-          const setup = await request<{ channelId: string; sender: string }>("smsComposer");
+          const setup = await request("smsComposer");
           if (!current()) return;
           await Front.createDraft({ channelId: setup.channelId as Parameters<typeof Front.createDraft>[0]["channelId"], to: [smsTo.trim()], content: { body: smsBody, type: "text" } });
         } catch(e) { if (current()) setError(`Could not open the text draft: ${String(e)}. Use Front's native composer and select the shared main line.`); }
@@ -55,7 +56,7 @@ export default function FrontSidebar() {
         // compare locally so capitalization cannot hide an existing account.
         const accounts = await listAllPages(async nextToken => {
           const p = await client.models.Account.list({ nextToken, limit: 200, selectionSet: ["id", "name"] });
-          if (p.errors?.length) throw new Error(p.errors[0].message);
+          assertGraphqlErrors(p);
           return p;
         });
         if (captured === activeId.current && version === searchVersion.current) {
@@ -66,7 +67,7 @@ export default function FrontSidebar() {
       finally { if (captured === activeId.current && version === searchVersion.current) setSearchBusy(false); }
       }}><label className="field">Association or client name<Input required value={search} onChange={e => { setSearch(e.target.value); searchVersion.current++; setMatches([]); setSearched(false); setSearchBusy(false); }} placeholder="Search by name" /></label><Button disabled={searchBusy || !search.trim()}>{searchBusy ? "Searching…" : "Search CRM"}</Button></form>
       {searched && !matches.length && <p role="status" className="muted small">No matching CRM leads or clients. Try another part of the name.</p>}
-      <label className="field">Conversation purpose<Select value={purpose} onChange={e => setPurpose(e.target.value)}><option value="PROSPECT">Prospect</option><option value="CARRIER">Carrier</option></Select></label>
+      <label className="field">Conversation purpose<Select value={purpose} onChange={e => { if (e.target.value === "PROSPECT" || e.target.value === "CARRIER") setPurpose(e.target.value); }}><option value="PROSPECT">Prospect</option><option value="CARRIER">Carrier</option></Select></label>
       {matches.map(m => <p key={m.id}><Button variant="link"  disabled={linkBusy} onClick={async () => {
         if (linkFlight.current) return;
         const attempt = {}, captured = scope.current, searchAtStart = searchVersion.current;

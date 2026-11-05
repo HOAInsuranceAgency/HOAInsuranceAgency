@@ -2769,6 +2769,7 @@ describe("CRM task retirement", () => {
     const { handler } = await import("../../amplify/functions/communications/handler");
     const context = await handler({ arguments: { readOperation: "context", input: { accountId: "a1" } }, identity: { sub: "brian", groups: [] } as never });
     expect(context.ok).toBe(true);
+    if (!("issues" in context)) throw new Error("Expected an authorized workflow context");
     expect(context.issues?.map(r => r.id).sort()).toEqual(activeIds.map(id => `issue:${id}`).sort());
     const { workPage } = await import("../../amplify/functions/communications/work");
     const page = await workPage({ kind: "ISSUE", actor: "brian" });

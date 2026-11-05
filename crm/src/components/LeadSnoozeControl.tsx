@@ -35,7 +35,7 @@ export function LeadSnoozeControl({ accountName, snooze, today, onSaved, onRefre
     setBusy(true); setError('');
     try {
       const fields = validateLeadSnooze(date, nextNote, today);
-      const result = await communicationRequest<{ snooze: LeadSnooze }>('saveLeadSnooze', {
+      const result = await communicationRequest('saveLeadSnooze', {
         accountId: snooze.accountId, version, ...fields,
       }, true);
       onSaved(result.snooze);

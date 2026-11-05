@@ -1,3 +1,4 @@
+import { assertGraphqlErrors } from '../../lib/apiResponse';
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { remove } from "../../lib/scopedStorage";
@@ -28,7 +29,7 @@ import { communicationRequest } from '../../lib/communications';
  */
 function throwFirstError(results: { errors?: { message: string }[] }[]) {
   for (const r of results) {
-    if (r.errors?.length) throw new Error(r.errors[0].message);
+    assertGraphqlErrors(r);
   }
 }
 
@@ -84,7 +85,7 @@ export function DeleteLeadZone({ account }: { account: Account }) {
     throwFirstError(await Promise.all(contacts.map(c => client.models.Contact.delete({ id: c.id }))));
 
     const { errors } = await client.models.Account.delete({ id: account.id });
-    if (errors?.length) throw new Error(errors[0].message);
+    assertGraphqlErrors({ errors: errors });
     if (mounted.current) navigate("/leads");
   }
 

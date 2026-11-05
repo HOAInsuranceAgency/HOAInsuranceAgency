@@ -1,3 +1,6 @@
+import { assertGraphqlErrors } from '../lib/apiResponse';
+import { readBrokerFeeStatus, bindCommissionPolicy, type BrokerFeeStatus } from '../lib/brokerFees';
+import { serviceFinanceLoan } from '../lib/billingApi';
 import { useLiveUpdateBlock } from "../lib/useLiveUpdates";
 import { Button } from "./ui/Button";
 import { Table } from "./ui/Table";
@@ -25,7 +28,7 @@ import { BILL_TYPE_OPTIONS, type BillType } from "../../../shared/enums";
 import QuoteOfferExpiry from "./QuoteOfferExpiry";
 import { quoteOfferDate } from "../lib/quoteOfferExpiry";
 import { useAgencyDay } from "../lib/useAgencyDay";
-import { brokerFeeCents, type BrokerFeeRecord } from "../../../shared/brokerFees";
+import { brokerFeeCents } from "../../../shared/brokerFees";
 import PolicyCharges from "./PolicyCharges";
 import { readCarrierPaymentPreview } from '../lib/commissions';
 import { COMMISSION_BASES } from '../../../shared/commissions';
@@ -130,7 +133,7 @@ function QuotesPanelContent({
           ...(["QUOTED", "PRESENTED"].includes(status) && !quote.readyAt ? { readyAt: new Date().toISOString() } : {}),
           ...(status === "PRESENTED" && !quote.presentedAt ? { presentedAt: new Date().toISOString() } : {}),
         });
-        if (errors?.length) throw new Error(errors[0].message);
+        assertGraphqlErrors({ errors: errors });
         await refresh();
       },
       {
@@ -507,12 +510,9 @@ function BindForm({
   useLiveUpdateBlock(saving);
   const feeStatus = useAsyncResource(async () => {
     if (!(quote.brokerFee && quote.brokerFee > 0)) return null;
-    const response = await client.mutations.brokerFeeAction({ input: JSON.stringify({ op: "status", accountId: account.id, quoteIds: [quote.id] }) });
-    if (response.errors?.length) throw new Error(response.errors[0].message);
-    const result = (typeof response.data === "string" ? JSON.parse(response.data) : response.data) as { ok?: boolean; error?: string; fees?: BrokerFeeRecord[] };
-    if (result?.ok === false || !Array.isArray(result?.fees)) throw new Error(result?.error || "Could not load broker fee status.");
-    return result.fees.find(fee => fee.quoteId === quote.id) ?? null;
-  }, [quote.id, quote.brokerFee, account.id], { initialData: null as BrokerFeeRecord | null, errorMessage: "Could not load broker fee status", live: { protectEdits: false, intervalMs: 15_000 } });
+    const fees = await readBrokerFeeStatus(account.id, [quote.id]);
+    return fees.find(fee => fee.quoteId === quote.id) ?? null;
+  }, [quote.id, quote.brokerFee, account.id], { initialData: null as BrokerFeeStatus | null, errorMessage: "Could not load broker fee status", live: { protectEdits: false, intervalMs: 15_000 } });
   const currentFeeSigned = Boolean(feeStatus.data?.signedAt && feeStatus.data.amountCents === brokerFeeCents(quote.brokerFee) && feeStatus.data.terms === authorizedQuoteTerms(quote));
   const bindLock = useRef(false);
   const live = useRef(true);
@@ -539,14 +539,11 @@ function BindForm({
     setSaving(true);
     onError("");
     try {
-      const response = await client.mutations.bindCommissionPolicy({ input: JSON.stringify({
+      const result = await bindCommissionPolicy({
         quoteId: quote.id, terms: packageTerms(quote), premium, agencyRate, billType, policyNumber,
         carrierTermsVersion: paymentPreview.data!.carrierTermsVersion,
         carrierArrangementId: paymentPreview.data!.payment?.id,
-      }) });
-      if (response.errors?.length) throw new Error(response.errors[0].message);
-      const result = (typeof response.data === "string" ? JSON.parse(response.data) : response.data) as { ok: boolean; error?: string; policy: Policy; account: Account };
-      if (!result?.ok || !result.policy) throw new Error(result?.error ?? "Could not bind this policy.");
+      });
       const policy = result.policy;
       policyCreated = true;
 
@@ -606,15 +603,7 @@ function BindForm({
           const live = ["QUOTED", "ACCEPTED", "ACTIVE", "DEFAULTED"].includes(loan.status);
           if (!live || loan.policyId) continue;
           try {
-            const { data, errors } = await client.mutations.servicePfLoan({
-              loanId: loan.id,
-              action: "BIND_ROLLOVER",
-              policyId: policy.id,
-            });
-            if (errors?.length) throw new Error(errors[0].message);
-            const result =
-              typeof data === "string" ? JSON.parse(data) : (data as Record<string, unknown>);
-            if (!result?.ok) throw new Error(String(result?.error ?? "Rollover refused."));
+            await serviceFinanceLoan({ loanId: loan.id, action: 'BIND_ROLLOVER', policyId: policy.id });
           } catch (err) {
             rollFailures.push(`loan ${loan.id.slice(0, 8)}: ${(err as Error).message}`);
           }

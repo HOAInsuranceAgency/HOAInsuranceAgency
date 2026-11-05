@@ -1,3 +1,4 @@
+import { assertGraphqlErrors } from '../lib/apiResponse';
 import { LiveStatus } from "../components/LiveStatus";
 import { useLiveUpdateBlock } from "../lib/useLiveUpdates";
 import { Button } from "../components/ui/Button";
@@ -11,7 +12,7 @@ import { useIsOwner } from '../lib/auth';
 import { useAsyncResource } from '../lib/useAsyncResource';
 import { client, fmtMoney } from "../lib/client";
 import { listAllPages } from "../../../shared/pagination";
-import { communicationRequest, type TeamEligibility } from '../lib/communications';
+import { communicationRequest } from '../lib/communications';
 import { commissionAction, readCommissions } from '../lib/commissions';
 import AccountPicker from '../components/AccountPicker';
 import { ReportContext, ReportDownload } from '../components/ReportDownload';
@@ -393,7 +394,7 @@ function Settings({ data, refresh }: { data: CommissionOverview; refresh: () => 
   const references = useAsyncResource(
     async () => {
       const [team, carriers] = await Promise.all([
-        communicationRequest<{ team: TeamEligibility[] }>('team', {}),
+        communicationRequest('team', {}),
         listAllPages((nextToken) => client.models.Carrier.list({ nextToken })),
       ]);
       return { team: team.team, carriers };
@@ -694,10 +695,7 @@ function AccountClassifications() {
 function AccountClassificationResource({ id }: { id: string }) {
   const resource = useAsyncResource(
     () =>
-      commissionAction<{
-        classification: CommissionAccount | null;
-        accountName: string;
-      }>('getAccountClassification', { id }),
+      commissionAction('getAccountClassification', { id }),
     [id],
     { clearDataOnError: () => true , live: { topics: ['CRM', 'OWNER', 'PERSONAL'] } },
   );
@@ -1463,7 +1461,7 @@ function StatementEditor({
     try {
       const contentType =
         file.type || (file.name.endsWith('.csv') ? 'text/csv' : 'application/pdf');
-      const result = await commissionAction<{ key: string; url: string }>('file', {
+      const result = await commissionAction('file', {
         action: 'upload',
         size: file.size,
         contentType,
@@ -1758,7 +1756,7 @@ function StatementCard({
 
         onClick={async () => {
           try {
-            const r = await commissionAction<{ url: string }>('file', {
+            const r = await commissionAction('file', {
               key: s.source,
             });
             window.location.assign(r.url);
@@ -1923,7 +1921,7 @@ function BatchCard({
 }) {
   const [reference, setReference] = useState(''),
     [date, setDate] = useState(today()),
-    [action, setAction] = useState('payPayroll');
+    [action, setAction] = useState<'payPayroll' | 'cancelPayroll'>('payPayroll');
   const body = (
     <>
       <p>
@@ -1983,7 +1981,7 @@ function BatchCard({
       {body}
       <label className="field">
         Outcome
-        <Select value={action} onChange={(e) => setAction(e.target.value)}>
+        <Select value={action} onChange={(e) => { if (e.target.value === "payPayroll" || e.target.value === "cancelPayroll") setAction(e.target.value); }}>
           <option value="payPayroll">Confirm the full batch was paid</option>
           <option value="cancelPayroll">Cancel an unpaid batch</option>
         </Select>
@@ -2027,7 +2025,7 @@ function LegacyPolicies({
         limit: 25,
         nextToken: cursor,
       });
-      if (page.errors?.length) throw new Error(page.errors[0].message);
+      assertGraphqlErrors(page);
       return page;
     },
     [query, cursor],
@@ -2040,7 +2038,7 @@ function LegacyPolicies({
   const [policyId, setPolicy] = useState(''),
     [producerId, setProducer] = useState(''),
     [boundOn, setBound] = useState(''),
-    [transaction, setTransaction] = useState(''),
+    [transaction, setTransaction] = useState<'NEW' | 'RENEWAL' | ''>(''),
     [evidence, setEvidence] = useState('');
   const options = resource.data?.data ?? [],
     selected = options.find((p) => p.id === policyId);
@@ -2164,7 +2162,7 @@ function LegacyPolicies({
         <Field label="Original bind date" type="date" value={boundOn} change={setBound} />
         <label className="field">
           Original transaction
-          <Select required value={transaction} onChange={(e) => setTransaction(e.target.value)}>
+          <Select required value={transaction} onChange={(e) => { if (e.target.value === "NEW" || e.target.value === "RENEWAL" || e.target.value === "") setTransaction(e.target.value); }}>
             <option value="">Choose…</option>
             <option value="NEW">New business</option>
             <option value="RENEWAL">Renewal</option>
