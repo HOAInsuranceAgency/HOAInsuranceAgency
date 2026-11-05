@@ -1,3 +1,4 @@
+import { captureHandledFailure } from "../monitoring";
 import { randomUUID } from "node:crypto";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, GetCommand, PutCommand, TransactWriteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
@@ -513,6 +514,7 @@ export const handler = async (event: {
     }
     return { ok: true, enabled: false };
   } catch (err) {
+    captureHandledFailure(err);
     console.error("pf-admin failed", err);
     return { ok: false, error: "Couldn't change the setting. Try again." };
   }

@@ -20,7 +20,7 @@ import { defineFunction, secret } from "@aws-amplify/backend";
  */
 export const voidInvoice = defineFunction({
   name: "void-invoice",
-  entry: "./handler.ts",
+  entry: "./handler.sentry.ts",
   timeoutSeconds: 30,
   resourceGroupName: "data",
   environment: {

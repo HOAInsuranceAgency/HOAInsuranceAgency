@@ -7,7 +7,8 @@ function iso(value: unknown): value is string {
     Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
 }
 function configured(name: string): string {
-  const value = process.env[name];
+  const model = ({ DASHBOARD_PAYMENT_TABLE: 'PfLoanPayment', DASHBOARD_POLICY_TABLE: 'Policy', DASHBOARD_INVOICE_LINE_TABLE: 'InvoiceLine' } as Record<string, string>)[name];
+  const value = process.env[name] || (model && process.env.ACCESS_API_ID ? `${model}-${process.env.ACCESS_API_ID}-NONE` : undefined);
   if (!value) throw new Error('Dashboard finance storage is not configured');
   return value;
 }

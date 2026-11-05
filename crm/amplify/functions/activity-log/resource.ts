@@ -23,7 +23,7 @@ import { defineFunction } from "@aws-amplify/backend";
  */
 export const activityLog = defineFunction({
   name: "activity-log",
-  entry: "./handler.ts",
+  entry: "./handler.sentry.ts",
   timeoutSeconds: 60,
   memoryMB: 512,
   resourceGroupName: "data",

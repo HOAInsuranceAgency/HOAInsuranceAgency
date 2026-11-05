@@ -1,3 +1,4 @@
+import { captureHandledFailure } from "../monitoring";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { Amplify } from "aws-amplify";
 import { generateClient } from "aws-amplify/data";
@@ -166,6 +167,7 @@ export const handler = async (event: {
     console.log(`pf-agreement: rendered agreement for loan ${loan.id}`);
     return { ok: true, documentIds: created };
   } catch (err) {
+    captureHandledFailure(err);
     console.error("pf-agreement failed", err);
     return { ok: false, error: "Couldn't generate the agreement. Try again." };
   }

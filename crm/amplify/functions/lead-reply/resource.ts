@@ -27,7 +27,7 @@ import { defineFunction, secret } from "@aws-amplify/backend";
  */
 export const leadReply = defineFunction({
   name: "lead-reply",
-  entry: "./handler.ts",
+  entry: "./handler.sentry.ts",
   schedule: {
     // Every minute. Day-of-month `*`, day-of-week `?` — the one combination
     // Amplify's validator accepts (see task-digest for the trap here).

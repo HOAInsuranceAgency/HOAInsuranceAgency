@@ -31,6 +31,9 @@ npm run dev             # in a second terminal
 
 See [`crm/README.md`](crm/README.md) for CRM architecture and data model notes.
 
+Sentry monitors browser and backend errors through a separate HOA organization.
+See [configuration, privacy, and verification](docs/SENTRY.md).
+
 ## Marketing articles
 
 The marketing site owns a native Astro collection at `web/src/content/articles/`.

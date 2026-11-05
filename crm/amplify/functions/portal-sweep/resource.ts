@@ -33,7 +33,7 @@ import { defineFunction } from "@aws-amplify/backend";
  */
 export const portalSweep = defineFunction({
   name: "portal-sweep",
-  entry: "./handler.ts",
+  entry: "./handler.sentry.ts",
   schedule: {
     // Day-of-month `*`, day-of-week `?` — the one combination Amplify's
     // validator accepts. See task-digest for what happens when it isn't.

@@ -1,3 +1,4 @@
+import { captureHandledFailure } from "../monitoring";
 import { createHash } from "node:crypto";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, GetCommand, PutCommand, TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
@@ -25,6 +26,7 @@ export async function handler(event: Event) {
     return await start(event.arguments, actor);
   } catch (error) {
     if (error instanceof InputError) return { ok: false, error: error.message };
+    captureHandledFailure(error);
     console.error("Honeycomb submission operation failed", { type: error instanceof Error ? error.name : "Error" });
     return { ok: false, error: "Could not confirm this operation. Refresh the submissions list before trying again." };
   }

@@ -15,7 +15,7 @@ import { defineFunction, secret } from "@aws-amplify/backend";
  */
 export const processDocument = defineFunction({
   name: "process-document",
-  entry: "./handler.ts",
+  entry: "./handler.sentry.ts",
   timeoutSeconds: 900,
   memoryMB: 1024,
   environment: {

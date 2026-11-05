@@ -15,11 +15,13 @@
     "seo:save": "node scripts/seo-fingerprint.mjs --save",
     "sync": "tsx scripts/sync-buildium.ts",
     "articles:test": "tsx --test tests/articles.test.ts tests/article-loader.test.ts",
-    "articles:build-test": "node tests/articles-build.mjs"
+    "articles:build-test": "node tests/articles-build.mjs",
+    "test:sentry": "tsx --test tests/sentry.test.ts"
   },
   "dependencies": {
     "@astrojs/react": "^6.0.5",
     "@astrojs/sitemap": "^3.7.4",
+    "@sentry/browser": "^11.10.0",
     "astro": "^7.3.1",
     "react": "~18.3.1",
     "react-dom": "~18.3.1",
@@ -27,6 +29,7 @@
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.10",
+    "@sentry/vite-plugin": "^11.10.0",
     "@types/google.maps": "^3.58.1",
     "@types/react": "~18.3.27",
     "@types/react-dom": "~18.3.7",

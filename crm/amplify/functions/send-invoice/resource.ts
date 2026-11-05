@@ -14,7 +14,7 @@ import { defineFunction, secret } from "@aws-amplify/backend";
  */
 export const sendInvoice = defineFunction({
   name: "send-invoice",
-  entry: "./handler.ts",
+  entry: "./handler.sentry.ts",
   timeoutSeconds: 60,
   memoryMB: 512,
   resourceGroupName: "data",

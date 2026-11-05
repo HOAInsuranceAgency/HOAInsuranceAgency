@@ -1,3 +1,4 @@
+import { captureHandledFailure } from "../monitoring";
 import { zeroFeeQuoteClaimWrites } from "../quote-source-billing";
 import { assertBrokerFeeSigned } from "../broker-fees/bindValidation";
 import { getFee, getModel, modelTable, table as brokerFeeTable, versionCheck, type Write } from "../broker-fees/store";
@@ -887,6 +888,7 @@ export const handler = async (event: {
       ? await handleAccept(client, args, sourceIp)
       : await handleTerms(client, args);
   } catch (err) {
+    captureHandledFailure(err);
     // Never leak an internal message to a public caller.
     console.error("pf-election failed", err);
     return { ok: false, error: "Something went wrong. Please try again." };
