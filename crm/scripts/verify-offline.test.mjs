@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { spawn } from 'node:child_process';
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { devNull, tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -17,6 +18,80 @@ function buildOutput(dist, value = 'offline fixture bundle') {
   writeFileSync(join(dist, 'front-sidebar/index.html'), value);
 }
 const run = (paths, execute, extra = {}) => runOfflineVerification({ directory: paths.directory, temporaryRoot: paths.root, execute, environment: {}, log: () => {}, ...extra });
+
+async function waitFor(predicate, message, timeout = 8000) {
+  const deadline = Date.now() + timeout;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error(message);
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+}
+
+for (const signal of ['SIGTERM', 'SIGINT']) {
+  test(`${signal} to the verifier stops its owned descendant group before restoring output and permits a successor`, { skip: process.platform === 'win32', timeout: 15000 }, async t => {
+    const paths = workspace(t), ready = join(paths.root, 'ready.json'), heartbeat = join(paths.root, 'heartbeat'), late = join(paths.root, 'late-write');
+    buildOutput(paths.dist, 'original build');
+    const original = lstatSync(paths.dist);
+    writeFileSync(join(paths.directory, 'package.json'), JSON.stringify({ scripts: {
+      'test:run': 'node child.mjs', typecheck: 'node following.mjs', build: 'node following.mjs', 'synth:check': 'node following.mjs',
+    } }));
+    writeFileSync(join(paths.directory, 'following.mjs'), `import { writeFileSync } from 'node:fs'; writeFileSync(${JSON.stringify(join(paths.root, 'following-command'))}, 'unexpected');`);
+    writeFileSync(join(paths.directory, 'child.mjs'), `
+      import { spawn } from 'node:child_process';
+      spawn(process.execPath, ['leaf.mjs'], { stdio: 'inherit' });
+      setInterval(() => {}, 1000);
+    `);
+    // npm may exit immediately on the signal while its grandchild ignores it.
+    // A cleanup that waits only for npm would restore dist under this writer.
+    writeFileSync(join(paths.directory, 'leaf.mjs'), `
+      import { execFileSync } from 'node:child_process';
+      import { writeFileSync } from 'node:fs';
+      process.on('SIGTERM', () => {}); process.on('SIGINT', () => {});
+      writeFileSync(${JSON.stringify(ready)}, JSON.stringify({ group: Number(execFileSync('ps', ['-o', 'pgid=', '-p', String(process.pid)], { encoding: 'utf8' }).trim()) }));
+      setInterval(() => writeFileSync(${JSON.stringify(heartbeat)}, String(Date.now())), 20);
+      setTimeout(() => {
+        writeFileSync(${JSON.stringify(late)}, 'descendant survived cancellation');
+        writeFileSync(${JSON.stringify(join(paths.dist, 'late-child.txt'))}, 'unexpected');
+      }, 1600);
+    `);
+    let ownedGroup;
+    const runner = spawn(process.execPath, ['--input-type=module', '-e', `
+      import { runOfflineVerification } from ${JSON.stringify(new URL('./verify-offline.mjs', import.meta.url).href)};
+      process.exitCode = await runOfflineVerification({ directory: ${JSON.stringify(paths.directory)}, log: () => {} });
+    `], { detached: true, stdio: 'ignore' });
+    let exit, spawnError;
+    runner.on('error', error => { spawnError = error; });
+    runner.on('exit', (code, killedBy) => { exit = { code, signal: killedBy }; });
+    t.after(() => {
+      const groups = [runner.pid, ownedGroup];
+      for (const group of new Set(groups)) {
+        if (group > 0) try { process.kill(-group, 'SIGKILL'); } catch (error) { if (error.code !== 'ESRCH') throw error; }
+      }
+    });
+    await waitFor(() => existsSync(ready) && existsSync(heartbeat) || exit || spawnError, 'The fixture did not start');
+    assert.equal(spawnError, undefined);
+    assert.equal(exit, undefined);
+    ownedGroup = JSON.parse(readFileSync(ready, 'utf8')).group;
+    runner.kill(signal); // Signal the verifier itself, rather than its child.
+    await new Promise(resolve => setTimeout(resolve, 50));
+    runner.kill(signal); // A repeated signal cannot interrupt restoration.
+    await waitFor(() => exit !== undefined, 'The verifier did not stop');
+    assert.deepEqual(exit, { code: signal === 'SIGINT' ? 130 : 143, signal: null });
+    assert.equal(existsSync(paths.config), false, 'temporary generated config must be removed');
+    assert.equal(existsSync(paths.lock), false, 'the checkout lock must be released');
+    assert.equal(lstatSync(paths.dist).ino, original.ino, 'restore the intact original output directory');
+    assert.equal(readFileSync(join(paths.dist, 'index.html'), 'utf8'), 'original build');
+    assert.equal(readFileSync(join(paths.dist, 'front-sidebar/index.html'), 'utf8'), 'original build');
+    const stoppedHeartbeat = readFileSync(heartbeat, 'utf8');
+    await new Promise(resolve => setTimeout(resolve, 1800));
+    assert.equal(readFileSync(heartbeat, 'utf8'), stoppedHeartbeat, 'no descendant can write after cleanup');
+    assert.equal(existsSync(late), false);
+    assert.equal(existsSync(join(paths.dist, 'late-child.txt')), false);
+    assert.equal(existsSync(join(paths.root, 'following-command')), false);
+    assert.equal(await run(paths, () => ({ status: 0 })), 0, 'the next run can acquire the same checkout');
+    assert.equal(readFileSync(join(paths.dist, 'index.html'), 'utf8'), 'original build');
+  });
+}
 
 test('the plan runs the real test, combined type, complete build and both branch synth scripts', () => {
   const plan = offlinePlan('crm', '/fictional/crm');
@@ -58,9 +133,9 @@ test('offline children cannot inherit credentials or deployment controls, and re
   assert.equal(source.AWS_BRANCH, 'production'); // Do not mutate the caller environment.
 });
 
-test('a clean checkout gets a private minimal fixture only during checks, then no config or fixture bundle remains', t => {
+test('a clean checkout gets a private minimal fixture only during checks, then no config or fixture bundle remains', async t => {
   const paths = workspace(t), calls = [];
-  const status = run(paths, (command, args, options) => {
+  const status = await run(paths, (command, args, options) => {
     calls.push({ command, args, options });
     assert.equal(JSON.parse(readFileSync(paths.config, 'utf8')).version, '1.3');
     assert.equal(lstatSync(paths.config).mode & 0o777, 0o600);
@@ -77,12 +152,12 @@ test('a clean checkout gets a private minimal fixture only during checks, then n
   assert.deepEqual(readdirSync(paths.root), ['crm']);
 });
 
-test('existing generated configuration and complete build output survive successful verification byte-for-byte', t => {
+test('existing generated configuration and complete build output survive successful verification byte-for-byte', async t => {
   const paths = workspace(t), configuration = '{"version":"1.3","custom":"existing fictional configuration"}\n';
   writeFileSync(paths.config, configuration);
   buildOutput(paths.dist, 'existing build');
   const oldConfig = lstatSync(paths.config), oldDist = lstatSync(paths.dist);
-  assert.equal(run(paths, (_command, args) => {
+  assert.equal(await run(paths, (_command, args) => {
     if (args[1] === 'build') buildOutput(paths.dist);
     return { status: 0 };
   }), 0);
@@ -95,10 +170,10 @@ test('existing generated configuration and complete build output survive success
   assert.deepEqual(readdirSync(paths.root), ['crm']);
 });
 
-test('a failed build stops the plan, discards its fixture bundle, and restores the original output', t => {
+test('a failed build stops the plan, discards its fixture bundle, and restores the original output', async t => {
   const paths = workspace(t), calls = [];
   buildOutput(paths.dist, 'original build');
-  assert.equal(run(paths, (_command, args) => {
+  assert.equal(await run(paths, (_command, args) => {
     calls.push(args[1]);
     if (args[1] === 'build') { buildOutput(paths.dist); return { status: 7 }; }
     return { status: 0 };
@@ -110,19 +185,19 @@ test('a failed build stops the plan, discards its fixture bundle, and restores t
   assert.equal(readFileSync(join(paths.dist, 'front-sidebar/index.html'), 'utf8'), 'original build');
 });
 
-test('unstartable, thrown and interrupted child failures never continue or leave a generated config', t => {
+test('unstartable, thrown and interrupted child failures never continue or leave a generated config', async t => {
   for (const result of [{ status: null, error: new Error('missing npm') }, { status: null, signal: 'SIGTERM' }, undefined]) {
     const paths = workspace(t);
     let count = 0;
-    assert.equal(run(paths, () => { count++; if (result === undefined) throw new Error('spawn failed'); return result; }), 1);
+    assert.equal(await run(paths, () => { count++; if (result === undefined) throw new Error('spawn failed'); return result; }), 1);
     assert.equal(count, 1);
     assert.deepEqual(readdirSync(paths.directory), []);
   }
 });
 
-test('cleanup preserves a real outputs file written over the temporary fixture during verification', t => {
+test('cleanup preserves a real outputs file written over the temporary fixture during verification', async t => {
   const paths = workspace(t), replacement = '{"version":"1.3","custom":"new real deployment output"}';
-  assert.equal(run(paths, () => { writeFileSync(paths.config, replacement); return { status: 0 }; }), 0);
+  assert.equal(await run(paths, () => { writeFileSync(paths.config, replacement); return { status: 0 }; }), 0);
   assert.equal(readFileSync(paths.config, 'utf8'), replacement);
 });
 
@@ -137,10 +212,10 @@ test('cleanup cannot remove a different outputs file even if its contents equal 
   assert.equal(existsSync(paths.lock), false);
 });
 
-test('overlapping verification cannot move the active output or release the first invocation lock', t => {
+test('overlapping verification cannot move the active output or release the first invocation lock', async t => {
   const paths = workspace(t);
   let checked = false;
-  assert.equal(run(paths, () => {
+  assert.equal(await run(paths, () => {
     if (!checked) {
       checked = true;
       const identity = lstatSync(paths.dist).ino;
@@ -153,10 +228,10 @@ test('overlapping verification cannot move the active output or release the firs
   assert.deepEqual(readdirSync(paths.directory), []);
 });
 
-test('an unexpected replacement output is retained along with the original backup instead of being overwritten', t => {
+test('an unexpected replacement output is retained along with the original backup instead of being overwritten', async t => {
   const paths = workspace(t);
   buildOutput(paths.dist, 'original build');
-  assert.throws(() => run(paths, (_command, args) => {
+  await assert.rejects(run(paths, (_command, args) => {
     if (args[1] === 'build') {
       renameSync(paths.dist, join(paths.root, 'old-offline-dist'));
       buildOutput(paths.dist, 'another process output');

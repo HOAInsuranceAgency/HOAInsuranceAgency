@@ -49,8 +49,11 @@ function SubmissionsPanelContent({ account, initialEstimateId }: { account: Acco
   // Decide the initial empty-state composer once. Later history refreshes
   // must not close a draft just because another submission appeared.
   useEffect(() => {
-    if (open === undefined && resource.data && !resource.error) setOpen(resource.data.submissions.length === 0 && !queuedId);
-  }, [open, resource.data, resource.error, queuedId]);
+    if (resource.data && !resource.error) {
+      const initiallyOpen = resource.data.submissions.length === 0 && !queuedId;
+      setOpen(current => current === undefined ? initiallyOpen : current);
+    }
+  }, [resource.data, resource.error, queuedId]);
   const pending = records.some(r => ["PENDING", "RUNNING"].includes(submissionStatus(r))) || !!queuedId && !records.some(r => r.id === queuedId);
   useEffect(() => {
     if (!pending || resource.loading) return;

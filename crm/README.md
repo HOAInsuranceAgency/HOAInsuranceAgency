@@ -139,6 +139,8 @@ restores previous build artifacts, removing its own fixture and build afterward,
 including when a check fails. Its build is for validation only. Never deploy it
 or use the fixture to run the app, backfills, migrations, or live integrations.
 It does not retrieve cloud credentials, run a sandbox, or deploy a backend.
+The verifier runs on macOS and Linux. On cancellation it stops its command's
+process group before restoring the configuration and build output.
 
 The staging CI workflow runs these checks on Node 22 and Node 24, covering both
 the deployed toolchain and the nightly audit runner. Audit reports should cite

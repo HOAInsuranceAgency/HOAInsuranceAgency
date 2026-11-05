@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { closeSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { devNull } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -87,30 +87,102 @@ export function prepareOfflineWorkspace(directory, temporaryRoot = directory) {
   }
 }
 
-export function runOfflineVerification({ directory = crmDirectory, scope = 'crm', execute = spawnSync, environment = process.env, temporaryRoot = directory, log = console.log } = {}) {
+/** Each command owns a POSIX process group. npm can exit before a descendant,
+ * so cancellation always kills that same group after a short grace period,
+ * then waits for the direct child to close before workspace restoration. */
+function executeOfflineCommand(command, args, { signal, ...options }) {
+  if (process.platform === 'win32') return Promise.resolve({ status: null, error: new Error('Offline verification requires a POSIX process group (macOS or Linux).') });
+  if (signal.aborted) return Promise.resolve({ status: null, signal: signal.reason });
+  return new Promise(resolve => {
+    let child;
+    try { child = spawn(command, args, { ...options, detached: true }); }
+    catch (error) { resolve({ status: null, error }); return; }
+    let closed = false, result, terminating = false, killed = false, grace, deadline;
+    const finish = () => {
+      if (!closed || terminating && !killed) return;
+      clearTimeout(grace); clearTimeout(deadline);
+      signal.removeEventListener('abort', cancel);
+      resolve(result);
+    };
+    const stopGroup = name => {
+      if (!child.pid) return;
+      try { process.kill(-child.pid, name); }
+      catch (error) { if (error.code !== 'ESRCH') throw error; }
+    };
+    const cancel = () => {
+      if (terminating) return;
+      terminating = true;
+      // Do not restore files until even signal-ignoring descendants cannot write.
+      try { stopGroup(signal.reason); } catch { /* SIGKILL below must still be attempted. */ }
+      grace = setTimeout(() => {
+        try { stopGroup('SIGKILL'); killed = true; finish(); }
+        catch (error) {
+          clearTimeout(deadline);
+          signal.removeEventListener('abort', cancel);
+          child.unref();
+          resolve({ status: null, error, unsafeToCleanup: true });
+        }
+      }, 300);
+      deadline = setTimeout(() => {
+        signal.removeEventListener('abort', cancel);
+        child.unref();
+        resolve({ status: null, unsafeToCleanup: true, error: new Error('The cancelled verification command did not close; workspace and backup were retained.') });
+      }, 5000);
+    };
+    child.once('error', error => { result = { status: null, error }; });
+    child.once('close', (status, childSignal) => {
+      closed = true;
+      result = result?.error ? result : { status, signal: childSignal };
+      finish();
+    });
+    signal.addEventListener('abort', cancel, { once: true });
+    if (signal.aborted) cancel();
+  });
+}
+
+export function runOfflineVerification({ directory = crmDirectory, scope = 'crm', execute = executeOfflineCommand, environment = process.env, temporaryRoot = directory, log = console.log } = {}) {
   // Validate the complete plan before locking, moving outputs or creating a fixture.
   const plan = offlinePlan(scope, directory), env = offlineEnvironment(environment);
-  const cleanup = prepareOfflineWorkspace(directory, temporaryRoot);
-  try {
-    for (const task of plan) {
-      log(`Verifying ${task.name}`);
-      let result;
-      try { result = execute(task.command, task.args, { cwd: task.cwd, env: { ...env, ...task.env }, stdio: 'inherit' }); }
-      catch (error) { log(`Verification failed: ${task.name} (${error.message})`); return 1; }
-      if (result.error || result.status !== 0) {
-        log(`Verification failed: ${task.name}${result.error ? ` (${result.error.message})` : result.signal ? ` (${result.signal})` : ''}`);
-        return result.status > 0 ? result.status : 1;
+  const cancellation = new AbortController();
+  const cancel = signal => { if (!cancellation.signal.aborted) cancellation.abort(signal); };
+  const interrupt = () => cancel('SIGINT'), terminate = () => cancel('SIGTERM');
+  process.on('SIGINT', interrupt); process.on('SIGTERM', terminate);
+  const removeHandlers = () => { process.off('SIGINT', interrupt); process.off('SIGTERM', terminate); };
+  let cleanup;
+  try { cleanup = prepareOfflineWorkspace(directory, temporaryRoot); }
+  catch (error) { removeHandlers(); throw error; }
+  return (async () => {
+    let safeToCleanup = true;
+    const cancelledStatus = () => cancellation.signal.reason === 'SIGINT' ? 130 : 143;
+    try {
+      for (const task of plan) {
+        if (cancellation.signal.aborted) return cancelledStatus();
+        log(`Verifying ${task.name}`);
+        let result;
+        try { result = await execute(task.command, task.args, { cwd: task.cwd, env: { ...env, ...task.env }, stdio: 'inherit', signal: cancellation.signal }); }
+        catch (error) { log(`Verification failed: ${task.name} (${error.message})`); return 1; }
+        safeToCleanup = !result.unsafeToCleanup;
+        if (result.error || result.status !== 0) {
+          log(`Verification failed: ${task.name}${result.error ? ` (${result.error.message})` : result.signal ? ` (${result.signal})` : ''}`);
+          return cancellation.signal.aborted ? cancelledStatus() : result.status > 0 ? result.status : 1;
+        }
+        if (cancellation.signal.aborted) return cancelledStatus();
       }
+      log('Offline CRM verification passed. Build artifacts are discarded; this does not deploy a backend.');
+      return 0;
+    } finally {
+      // Keep signal handlers installed through synchronous cleanup: a repeated
+      // signal must not interrupt restoration halfway through.
+      try { if (safeToCleanup) cleanup(); }
+      finally { removeHandlers(); }
     }
-    log('Offline CRM verification passed. Build artifacts are discarded; this does not deploy a backend.');
-    return 0;
-  } finally { cleanup(); }
+  })();
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const args = process.argv.slice(2);
   try {
     if (args.length > 1 || args[0] && args[0] !== '--scope=crm') throw new Error('Usage: node scripts/verify-offline.mjs [--scope=crm]');
-    process.exitCode = runOfflineVerification();
+    process.exitCode = await runOfflineVerification();
   } catch (error) { console.error(error.message); process.exitCode = 1; }
 }
