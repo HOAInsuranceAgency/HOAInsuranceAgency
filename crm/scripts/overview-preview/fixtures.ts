@@ -77,7 +77,7 @@ export function normalizePhone(value: string) {
 }
 export const fmtPhone = (value?: string | null) => value?.trim() ? normalizePhone(value) : '—';
 export const friendlyError = (error: unknown, fallback = 'Please try again.') => error instanceof Error && error.message ? error.message : fallback;
-export const US_STATES = ['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY','DC'];
+export { US_STATES } from '../../../shared/usStates';
 export const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 export function assertNoErrors(result: { errors?: { message: string }[] }) {
   if (result.errors?.length) throw new Error(result.errors.map(error => error.message).join('; '));
