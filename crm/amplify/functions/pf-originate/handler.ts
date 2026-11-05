@@ -5,13 +5,13 @@ import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtim
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import type { Schema } from "../../data/resource";
-import { isRealIsoDay } from "../../../src/lib/premiumFinance/noticeSequence";
-import { listAllPages } from "../../../src/lib/pagination";
+import { isRealIsoDay } from "../../../../shared/premiumFinance/noticeSequence";
+import { listAllPages } from "../../../../shared/pagination";
 import {
   PF_DEFAULT_APR,
   PF_DEFAULT_DOWN_PCT,
   PF_DEFAULT_MONTHS,
-} from "../../../src/lib/premiumFinance/quote";
+} from "../../../../shared/premiumFinance/quote";
 import { originateLoan } from "../pfOrigination";
 
 /**

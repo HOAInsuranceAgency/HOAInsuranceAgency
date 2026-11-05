@@ -1,12 +1,12 @@
-import { currentContacts } from "../../../src/lib/contacts";
+import { currentContacts } from "../../../../shared/contacts";
 import { Amplify } from "aws-amplify";
 import { generateClient } from "aws-amplify/data";
 import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtime";
 import Anthropic from "@anthropic-ai/sdk";
 import type { Schema } from "../../data/resource";
 import { CLAUDE_MODEL } from "../model";
-import { listAllPages } from "../../../src/lib/pagination";
-import { MAX_FIELDS, sanitiseSuggestions, type Suggestion } from "./sanitise";
+import { listAllPages } from "../../../../shared/pagination";
+import { MAX_FIELDS, sanitiseSuggestions, type Suggestion } from "../../../../shared/formSuggestions";
 
 /**
  * AI gap-filling for a carrier-submission PDF.

@@ -2,13 +2,8 @@ import { Table } from "../components/ui/Table";
 import { Button } from "../components/ui/Button";
 import { useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import {
-  client,
-  fmtDate,
-  friendlyError,
-  listAllPages,
-  type CrmDocument,
-} from "../lib/client";
+import { client, fmtDate, friendlyError, type CrmDocument } from "../lib/client";
+import { listAllPages } from "../../../shared/pagination";
 import { downloadFile } from "../lib/storage";
 import FilePreviewModal, { canPreview } from "../components/FilePreview";
 import { useAsyncResource } from "../lib/useAsyncResource";

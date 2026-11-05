@@ -3,7 +3,7 @@ const h = vi.hoisted(() => ({
   invoiceList: vi.fn(), loanList: vi.fn(), feePolicies: vi.fn(), request: vi.fn(), assignments: vi.fn(), forbidden: vi.fn(),
 }));
 vi.mock('./client', async () => ({
-  listAllPages: (await import('./pagination')).listAllPages,
+  listAllPages: (await import('../../../shared/pagination')).listAllPages,
   client: { models: {
     Invoice: { list: h.invoiceList }, PfLoan: { list: h.loanList },
     PfLoanPayment: { list: h.forbidden }, Policy: { list: h.forbidden, listPolicyByBrokerFeeReportingKey: h.feePolicies },

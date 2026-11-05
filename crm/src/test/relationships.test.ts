@@ -1,7 +1,7 @@
 import { db } from '../../amplify/functions/communications/store';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { relationshipCurrent, relationshipDates } from '../../../shared/relationships';
-import { primaryContact, billingContact, inspectionContact } from '../lib/contacts';
+import { primaryContact, billingContact, inspectionContact } from '../../../shared/contacts';
 
 const h = vi.hoisted(() => ({ records: new Map<string, Record<string, any>>(), commit: vi.fn(), fail: false }));
 vi.mock('../../amplify/functions/crm-access/user-status', () => ({ assertUserSession: vi.fn(async () => {}), activeTeamUserCheck: () => ({ ConditionCheck: { TableName: 'UserAccess', Key: { userId: 'alice' } } }) }));

@@ -4,7 +4,7 @@ import { publishCrmChange } from "../live-changes";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { createPartial, type PartialResult } from "./submission-client";
-import type { PartialInput, SubmissionRecord } from "./submission-contract";
+import type { PartialInput, SubmissionRecord } from "../../../../shared/honeycomb/submission";
 const db = DynamoDBDocumentClient.from(new DynamoDBClient(), { marshallOptions: { removeUndefinedValues: true } });
 const table = () => process.env.HONEYCOMB_SUBMISSION_TABLE!;
 async function finish(record: SubmissionRecord, result: PartialResult) {

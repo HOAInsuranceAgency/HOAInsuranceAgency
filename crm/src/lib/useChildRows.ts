@@ -1,5 +1,6 @@
 import { useState, type Dispatch, type SetStateAction } from "react";
-import { assertNoErrors, listAllPages, unwrap } from "./client";
+import { assertNoErrors, unwrap } from "./client";
+import { listAllPages } from "../../../shared/pagination";
 import { useAsyncResource } from "./useAsyncResource";
 import { useFormState, type FormState } from "./useFormState";
 import { useSaveStatus, type SaveStatusApi } from "../components/SaveStatus";

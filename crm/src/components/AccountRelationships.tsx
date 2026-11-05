@@ -8,7 +8,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { client, fmtDate, type Contact } from '../lib/client';
 import { loadAccountRelationships, loadPartyIds, type AccountRelationshipRecord } from '../lib/relationships';
 import { useAsyncResource } from '../lib/useAsyncResource';
-import { isAuthorizationError } from '../lib/authorizationError';
+import { isAuthorizationError } from '../../../shared/authorizationError';
 import { RELATIONSHIP_LABELS, relationshipCurrent } from '../../../shared/relationships';
 import { communicationRequest } from '../lib/communications';
 import ManagementChangeForm from './ManagementChangeForm';

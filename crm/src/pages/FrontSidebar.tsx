@@ -8,7 +8,7 @@ import Front from "@frontapp/plugin-sdk";
 import LeadWorkflowPanel from "../components/LeadWorkflowPanel";
 import { client, friendlyError } from "../lib/client";
 import { communicationRequest as request } from "../lib/communications";
-import { listAllPages } from "../lib/pagination";
+import { listAllPages } from "../../../shared/pagination";
 
 export default function FrontSidebar() {
   const activeId = useRef<string | null>(null);

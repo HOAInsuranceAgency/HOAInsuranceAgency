@@ -3,7 +3,7 @@ import { Input } from "./ui/Input";
 import { Table } from "./ui/Table";
 import { liveUpdates } from "../lib/liveUpdates";
 import { useLiveRefresh, useLiveUpdateBlock } from "../lib/useLiveUpdates";
-import { isAuthorizationError } from "../lib/authorizationError";
+import { isAuthorizationError } from "../../../shared/authorizationError";
 import { mergeLiveSnapshot } from "../lib/liveSnapshot";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { loadMarketingReports, saveMarketingReports, sendMarketingReport } from "../lib/marketingReports";

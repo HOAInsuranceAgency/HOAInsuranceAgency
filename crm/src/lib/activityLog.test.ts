@@ -16,7 +16,7 @@ import {
   fieldLabel,
   resolveEntityId,
   subjectLabel,
-} from "../../amplify/functions/activity-log/diff";
+} from "../../../shared/activity";
 import { subjectTypeFromArn } from "../../amplify/functions/activity-log/handler";
 
 /**

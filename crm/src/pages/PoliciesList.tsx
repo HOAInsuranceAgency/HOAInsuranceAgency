@@ -2,15 +2,8 @@ import { Button } from "../components/ui/Button";
 import { Table } from "../components/ui/Table";
 import { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import {
-  client,
-  fmtDate,
-  fmtMoney,
-  listAllPages,
-  type Account,
-  type Carrier,
-  type Policy,
-} from "../lib/client";
+import { client, fmtDate, fmtMoney, type Account, type Carrier, type Policy } from "../lib/client";
+import { listAllPages } from "../../../shared/pagination";
 import { Badge, statusBadge, POLICY_STATUS_BADGE } from "../lib/badges";
 import { useSort, SortTh } from "../lib/useSort";
 import { useAsyncResource } from "../lib/useAsyncResource";

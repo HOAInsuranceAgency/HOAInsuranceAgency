@@ -33,7 +33,7 @@ vi.mock("./lib/client", async () => ({
       },
     },
   },
-  listAllPages: (await import("./lib/pagination")).listAllPages,
+  listAllPages: (await import("../../shared/pagination")).listAllPages,
   friendlyError: (error: unknown, fallback: string) =>
     error instanceof Error ? error.message : fallback,
 }));

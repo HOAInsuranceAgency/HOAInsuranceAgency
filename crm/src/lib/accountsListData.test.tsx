@@ -6,7 +6,7 @@ import type { CommercialData } from './commercial';
 
 const h = vi.hoisted(() => ({ accounts: vi.fn(), contacts: vi.fn(), policies: vi.fn(), quotes: vi.fn(), commercial: vi.fn(), isAdmin: true }));
 vi.mock('./client', async () => ({
-  ...(await import('./pagination')),
+  ...(await import('../../../shared/pagination')),
   friendlyError: (error: unknown, fallback: string) => error instanceof Error ? error.message : fallback,
   client: { models: { Account: { list: h.accounts }, Contact: { list: h.contacts }, Policy: { list: h.policies }, Quote: { list: h.quotes } } },
 }));

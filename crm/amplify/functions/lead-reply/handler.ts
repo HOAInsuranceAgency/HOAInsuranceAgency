@@ -1,6 +1,6 @@
 import { sendCrmWrite } from '../live-write';
 import { migrationPendingCutoff, migrationPendingHeld } from "../migration-pending";
-import { currentContacts } from "../../../src/lib/contacts";
+import { currentContacts } from "../../../../shared/contacts";
 import { randomBytes } from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
 import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
@@ -14,7 +14,7 @@ import { Amplify } from "aws-amplify";
 import { generateClient } from "aws-amplify/data";
 import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtime";
 import type { Schema } from "../../data/resource";
-import { listAllPages } from "../../../src/lib/pagination";
+import { listAllPages } from "../../../../shared/pagination";
 import { CLAUDE_MODEL } from "../model";
 import { decide } from "./decide";
 import { flattenExtraction } from "./extraction";

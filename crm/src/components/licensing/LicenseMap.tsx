@@ -7,7 +7,7 @@ import {
   type License,
   type UserProfile,
 } from "../../lib/client";
-import { LICENSE_CLASS_LABELS } from "../../lib/enums";
+import { LICENSE_CLASS_LABELS } from "../../../../shared/enums";
 import { Badge } from "../../lib/badges";
 import { useSort, SortTh } from "../../lib/useSort";
 import { US_MAP_VIEWBOX, US_STATE_NAMES, US_STATE_PATHS } from "../../lib/usMap";

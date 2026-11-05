@@ -4,18 +4,11 @@ import { Table } from "../components/ui/Table";
 import { SegmentedControl } from "../components/ui/SegmentedControl";
 import { useId, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import {
-  client,
-  fmtDate,
-  fmtMoney,
-  listAllPages,
-  type Account,
-  type Carrier,
-  type Quote,
-} from "../lib/client";
+import { client, fmtDate, fmtMoney, type Account, type Carrier, type Quote } from "../lib/client";
+import { listAllPages } from "../../../shared/pagination";
 import { Badge, statusBadge, QUOTE_STATUS_BADGE } from "../lib/badges";
 import { useSort, SortTh } from "../lib/useSort";
-import { isOpenQuoteStatus } from "../lib/quoteStatus";
+import { isOpenQuoteStatus } from "../../../shared/quoteStatus";
 import { useAsyncResource } from "../lib/useAsyncResource";
 import { useAgencyDay } from "../lib/useAgencyDay";
 import { matchesQuoteOfferFilter, quoteOfferDate, type QuoteOfferFilter } from "../lib/quoteOfferExpiry";

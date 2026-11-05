@@ -67,8 +67,8 @@ import { Amplify } from "aws-amplify";
 import { generateClient } from "aws-amplify/data";
 import outputs from "../amplify_outputs.json";
 import type { Schema } from "../amplify/data/resource";
-import { listAllPages } from "../src/lib/pagination";
-import { DEFAULT_CONTACT_TYPE } from "../src/lib/enums";
+import { listAllPages } from "../../shared/pagination";
+import { DEFAULT_CONTACT_TYPE } from "../../shared/enums";
 
 Amplify.configure(outputs);
 const client = generateClient<Schema>({ authMode: "iam" });

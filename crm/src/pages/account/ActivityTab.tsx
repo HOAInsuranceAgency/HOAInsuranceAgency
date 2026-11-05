@@ -2,18 +2,13 @@ import { Button } from "../../components/ui/Button";
 import { Select } from "../../components/ui/Select";
 import { Table } from "../../components/ui/Table";
 import { useMemo, useState } from "react";
-import {
-  client,
-  fmtDateTime,
-  fmtMoney,
-  listAllPages,
-  type Activity,
-} from "../../lib/client";
+import { client, fmtDateTime, fmtMoney, type Activity } from "../../lib/client";
+import { listAllPages } from "../../../../shared/pagination";
 import { useAsyncResource } from "../../lib/useAsyncResource";
 import { communicationRequest, type Communication } from "../../lib/communications";
-import { isAuthorizationError } from "../../lib/authorizationError";
+import { isAuthorizationError } from "../../../../shared/authorizationError";
 import LeadWorkflowPanel from "../../components/LeadWorkflowPanel";
-import { fieldLabel } from "../../../amplify/functions/activity-log/diff";
+import { fieldLabel } from "../../../../shared/activity";
 import "./ActivityTab.css";
 
 /**

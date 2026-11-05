@@ -4,7 +4,7 @@ import type { BusinessDeliveryAttempt, BusinessDeliveryContext, BusinessDelivery
 import type { Communication, TeamEligibility, LeadWorkflow } from '../../../../shared/leadWorkflow';
 import { packageAssessment, packageTerms, type CommercialPlan } from '../../../../shared/quotePackages';
 import { agencyDay } from '../../../../shared/leadActionGuidance';
-import { currentContacts } from '../../../src/lib/contacts';
+import { currentContacts } from '../../../../shared/contacts';
 import { currentMessage } from '../../../../shared/serviceEvidence';
 import { contactProgress } from '../../../../shared/contactProgress';
 import { dataClient } from './data';

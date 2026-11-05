@@ -9,7 +9,7 @@ import {
   latestIntent,
   NOTICE_DAYS,
   type NoticeRow,
-} from "./noticeSequence";
+} from "../../../../shared/premiumFinance/noticeSequence";
 
 /**
  * The ordering of the cancellation sequence — the rules an examiner reads
@@ -185,13 +185,13 @@ describe("immutability and server time", () => {
 
 describe("isRealIsoDay — day-shaped is not a day", () => {
   it("accepts real days only", async () => {
-    const { isRealIsoDay } = await import("./noticeSequence");
+    const { isRealIsoDay } = await import("../../../../shared/premiumFinance/noticeSequence");
     expect(isRealIsoDay("2026-08-21")).toBe(true);
     expect(isRealIsoDay("2028-02-29")).toBe(true); // leap
   });
 
   it("rejects the strings that beat the old regex", async () => {
-    const { isRealIsoDay } = await import("./noticeSequence");
+    const { isRealIsoDay } = await import("../../../../shared/premiumFinance/noticeSequence");
     // 9999-99-99 sorted after every real date and activated a loan on a
     // resolution executed on a day that does not exist.
     for (const bad of ["9999-99-99", "2026-02-30", "2027-13-01", "2026-00-10", "", null, undefined, "21-08-2026"]) {

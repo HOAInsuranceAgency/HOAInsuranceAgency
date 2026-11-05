@@ -13,7 +13,7 @@ import {
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { SendEmailCommand } from "@aws-sdk/client-sesv2";
-import { PF_CONFIG_SHA256 } from "../../../src/lib/premiumFinance/jurisdictions";
+import { PF_CONFIG_SHA256 } from "../../../../shared/premiumFinance/jurisdictions";
 import { postInstallment, type PostableLoan } from "../pfPosting";
 import type { PfEventDecision } from "./decide";
 import { readPaidContext } from "./lookups";

@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, type ReactNode } from 'react';
 import { Hub } from 'aws-amplify/utils';
 import { client } from './client';
 import { activeRoleHeaders } from './activeRole';
-import { isAuthorizationError } from './authorizationError';
+import { isAuthorizationError } from '../../../shared/authorizationError';
 import { liveUpdates, type LiveTopic } from './liveUpdates';
 
 /** Scoped transport only: notifications contain no records or financial data. */

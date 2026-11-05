@@ -1,7 +1,7 @@
 import { voidedInvoiceSendRetirementWrites } from "./send-invoice/sendOperation";
 import { brokerFeeCents, feeAllocations, type BrokerFeeRecord } from '../../../shared/brokerFees';
 import { authorizedQuoteTerms } from '../../../shared/quoteAuthorization';
-import { isOpenQuoteStatus } from '../../src/lib/quoteStatus';
+import { isOpenQuoteStatus } from '../../../shared/quoteStatus';
 import { loanWithoutCheckoutGuard } from './broker-fees/payments';
 import { db, accountModels, getFee, getModel, modelTable, table, versionCheck, type Write } from './broker-fees/store';
 type RecordData = Record<string, unknown>;

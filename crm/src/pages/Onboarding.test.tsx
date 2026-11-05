@@ -7,7 +7,7 @@ const fetchAuthSession = vi.hoisted(() => vi.fn());
 vi.mock("aws-amplify/auth", () => ({ fetchAuthSession }));
 vi.mock("../lib/client", async () => ({
   client: { models: { UserProfile: profileWrites, License: licenseModels } },
-  listAllPages: (await import("../lib/pagination")).listAllPages,
+  listAllPages: (await import("../../../shared/pagination")).listAllPages,
   US_STATES: ["FL", "NY"],
   friendlyError: (error: unknown, fallback: string) =>
     error instanceof Error ? error.message : fallback,

@@ -4,7 +4,7 @@ import {
   renderInvoice,
   type InvoiceView,
 } from "../../amplify/functions/send-invoice/invoice";
-import { formatMoney } from "../lib/invoiceTotals";
+import { formatMoney } from "../../../shared/invoiceTotals";
 
 const base: InvoiceView = {
   number: "INV-2026-00001",

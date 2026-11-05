@@ -6,7 +6,7 @@ import { Textarea } from "../../components/ui/Textarea";
 import { client, US_STATES, type Carrier } from "../../lib/client";
 import { SaveStatus, useSaveStatus } from "../../components/SaveStatus";
 import { useFormState } from "../../lib/useFormState";
-import { MARKET_TYPE_OPTIONS, type MarketType } from "../../lib/enums";
+import { MARKET_TYPE_OPTIONS, type MarketType } from "../../../../shared/enums";
 
 export function CarrierForm({
   carrier,

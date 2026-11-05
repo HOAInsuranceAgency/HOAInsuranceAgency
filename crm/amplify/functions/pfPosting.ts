@@ -1,7 +1,7 @@
 import { sendCrmWrite } from './live-write';
 import type { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import { TransactWriteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
-import { parseScheduleJson } from "../../src/lib/premiumFinance/quote";
+import { parseScheduleJson } from "../../../shared/premiumFinance/quote";
 
 /**
  * The one way an installment posts.

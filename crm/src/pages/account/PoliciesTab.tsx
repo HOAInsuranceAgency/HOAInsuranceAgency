@@ -3,23 +3,16 @@ import { Button } from "../../components/ui/Button";
 import { Table } from "../../components/ui/Table";
 import { Select } from "../../components/ui/Select";
 import { useRef, useState } from "react";
-import {
-  client,
-  fmtDate,
-  fmtMoney,
-  friendlyError,
-  listAllPages,
-  type Carrier,
-  type Policy,
-} from "../../lib/client";
+import { client, fmtDate, fmtMoney, friendlyError, type Carrier, type Policy } from "../../lib/client";
+import { listAllPages } from "../../../../shared/pagination";
 import { useAsyncResource } from "../../lib/useAsyncResource";
-import { BILL_TYPE_SHORT, POLICY_STATUSES } from "../../lib/enums";
+import { BILL_TYPE_SHORT, POLICY_STATUSES } from "../../../../shared/enums";
 import { useSort, SortTh } from "../../lib/useSort";
 import { commissionCell, termsSummary } from "../../components/QuotesPanel";
 import PolicyCharges from "../../components/PolicyCharges";
 import CoverageForm from "../../components/CoverageForm";
 import { SaveStatus, type SaveStatusValue } from "../../components/SaveStatus";
-import { isAuthorizationError } from "../../lib/authorizationError";
+import { isAuthorizationError } from "../../../../shared/authorizationError";
 
 export function PoliciesTab({ accountId }: { accountId: string }) {
   return <AccountPolicies key={accountId} accountId={accountId} />;

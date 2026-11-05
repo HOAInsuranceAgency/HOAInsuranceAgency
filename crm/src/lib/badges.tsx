@@ -1,12 +1,12 @@
 import type { CSSProperties } from "react";
-import type { QuoteStatus } from "./quoteStatus";
+import type { QuoteStatus } from "../../../shared/quoteStatus";
 import type {
   InvoiceStatus,
   AccountStage,
   MarketingTaskResolution,
   OcrStatus,
   PolicyStatus,
-} from "./enums";
+} from "../../../shared/enums";
 
 /**
  * Status badges — one place for "what colour and what words does this state

@@ -14,7 +14,7 @@ export type {
   Policy,
 } from '../../src/lib/client';
 export type { TeamEligibility } from '../../../shared/leadWorkflow';
-export { listAllPages } from '../../src/lib/pagination';
+export { listAllPages } from '../../../shared/pagination';
 export const LINES_OF_BUSINESS = [
   'Property',
   'General Liability',

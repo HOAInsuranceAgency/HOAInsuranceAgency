@@ -7,7 +7,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useIsOwner } from "../lib/auth";
 import { LeadEligibilityCells, LeadEligibilityEditor, LeadEligibilityFeedback, useLeadEligibilitySettings } from "../components/LeadEligibilitySettings";
 import { client, fmtDate, friendlyError, type UserProfile } from "../lib/client";
-import { toE164 } from "../../amplify/functions/lead-intake/sms";
+import { toE164 } from "../../../shared/leadTextAlerts";
 import { Badge, flagBadge } from "../lib/badges";
 import SignatureManager from "../components/SignatureManager";
 import Modal from "../components/Modal";
@@ -15,7 +15,7 @@ import { SaveStatus, useSaveStatus } from "../components/SaveStatus";
 import { useAsyncResource } from "../lib/useAsyncResource";
 import { useSort, SortTh } from "../lib/useSort";
 import { useFormState } from "../lib/useFormState";
-import { DEFAULT_USER_ROLE, isUserRole, USER_ROLE_OPTIONS, type UserRole } from "../lib/enums";
+import { DEFAULT_USER_ROLE, isUserRole, USER_ROLE_OPTIONS, type UserRole } from "../../../shared/enums";
 
 interface TeamUser {
   userId: string;

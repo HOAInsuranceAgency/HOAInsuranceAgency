@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { liveUpdates } from './liveUpdates';
 import { fetchUserGroups } from './auth';
-import { isAuthorizationError } from './authorizationError';
+import { isAuthorizationError } from '../../../shared/authorizationError';
 import { useLiveRefresh } from './useLiveUpdates';
 
 /** Refresh claims without remounting the shell when membership is unchanged.

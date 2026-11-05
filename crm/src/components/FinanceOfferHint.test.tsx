@@ -3,14 +3,14 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 const api = vi.hoisted(() => ({ models: { PfCounselOpinion: { list: vi.fn() }, PfLoan: { list: vi.fn() } } }));
 vi.mock("aws-amplify/data", () => ({ generateClient: () => api }));
-vi.mock("../lib/premiumFinance/gate", () => ({
+vi.mock("../../../shared/premiumFinance/gate", () => ({
   jurisdictionFor: () => ({ code: "MA", status: "conditional" }),
   hasCurrentOpinion: (rows: unknown[]) => rows.length > 0,
   originationGate: (_: string, options: { hasCurrentCounselOpinion: boolean }) => options.hasCurrentCounselOpinion
     ? { open: true, jurisdiction: { name: "Massachusetts" } } : { open: false, reason: "No current opinion" },
   aprCapViolation: () => null, minPrincipalViolation: () => null,
 }));
-vi.mock("../lib/premiumFinance/eligibility", () => ({ evaluateEligibility: () => [] }));
+vi.mock("../../../shared/premiumFinance/eligibility", () => ({ evaluateEligibility: () => [] }));
 import { FinanceOfferHint } from "./FinanceOfferHint";
 import type { Account } from "../lib/client";
 const props = { account: { id: "a1", state: "MA" } as Account, anchor: { id: "p1", kind: "policy" as const, lines: [] }, retailTotal: 1000 };

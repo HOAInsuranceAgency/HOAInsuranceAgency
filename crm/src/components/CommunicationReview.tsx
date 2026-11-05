@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { fmtProviderPhone } from "../lib/client";
 import { communicationRequest as request, type Communication } from "../lib/communications";
 import { useAsyncResource } from "../lib/useAsyncResource";
-import { isAuthorizationError } from "../lib/authorizationError";
+import { isAuthorizationError } from "../../../shared/authorizationError";
 import { useSaveStatus } from "./SaveStatus";
 
 function useReviewMutation() {

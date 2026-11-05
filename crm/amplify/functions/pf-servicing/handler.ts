@@ -16,8 +16,8 @@ import {
   isRealIsoDay,
   NOTICE_DAYS,
   type NoticeRow,
-} from "../../../src/lib/premiumFinance/noticeSequence";
-import { PF_CONFIG_SHA256 } from "../../../src/lib/premiumFinance/jurisdictions";
+} from "../../../../shared/premiumFinance/noticeSequence";
+import { PF_CONFIG_SHA256 } from "../../../../shared/premiumFinance/jurisdictions";
 import { postInstallment } from "../pfPosting";
 
 /**

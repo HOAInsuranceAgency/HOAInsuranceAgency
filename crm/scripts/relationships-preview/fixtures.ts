@@ -1,5 +1,5 @@
 /** Local fictional fixtures. No AWS, customer messages, or persistent mutations. */
-export { listAllPages } from '../../src/lib/pagination';
+export { listAllPages } from '../../../shared/pagination';
 export const currentActor = async () => 'alice';
 export const useIsAdmin = () => true;
 export const friendlyError = (e: unknown) => e instanceof Error ? e.message : 'Please try again.';

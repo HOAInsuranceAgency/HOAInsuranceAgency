@@ -8,7 +8,7 @@ import {
   PF_COVERAGE_ALLOW,
   PF_COVERAGE_DENY,
   PF_JURISDICTIONS,
-} from "./jurisdictions";
+} from "../../../../shared/premiumFinance/jurisdictions";
 
 /**
  * The drift guard.

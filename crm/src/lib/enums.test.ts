@@ -78,7 +78,7 @@ import {
   type PolicyStatus,
   type ReplacementCostType,
   type UserRole,
-} from "./enums";
+} from "../../../shared/enums";
 
 /**
  * The `satisfies Record<TheEnum, …>` guards in enums.ts only bite while the

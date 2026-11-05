@@ -33,13 +33,13 @@ import { useFormState } from "../lib/useFormState";
 import { useEditProtection, useUnsavedChanges } from "../lib/editProtection";
 import { useNewLeadDraft } from "../lib/newLeadDraft";
 import { str } from "../lib/formCodec";
-import { contactKey } from "../lib/extractionKeys";
+import { contactKey } from "../../../shared/extractionKeys";
 import {
   ACCOUNT_TYPE_OPTIONS,
   CONTACT_TYPE_OPTIONS,
   DEFAULT_ACCOUNT_TYPE,
   type AccountType,
-} from "../lib/enums";
+} from "../../../shared/enums";
 import "./NewLead.css";
 
 const PRIMARY_TEXT_LIMITS = [

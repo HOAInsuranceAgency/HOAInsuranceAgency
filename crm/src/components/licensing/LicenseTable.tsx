@@ -8,7 +8,7 @@ import {
   type License,
   type UserProfile,
 } from "../../lib/client";
-import { LICENSE_CLASS_LABELS } from "../../lib/enums";
+import { LICENSE_CLASS_LABELS } from "../../../../shared/enums";
 import { Badge } from "../../lib/badges";
 import ConfirmButton from "../ConfirmButton";
 import DocumentsPanel from "../DocumentsPanel";

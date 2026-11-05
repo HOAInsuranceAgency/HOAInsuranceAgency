@@ -1,5 +1,5 @@
 /**
- * config/premium_finance/jurisdictions.yml → src/lib/premiumFinance/jurisdictions.ts
+ * config/premium_finance/jurisdictions.yml → ../shared/premiumFinance/jurisdictions.ts
  *
  * The YAML is the signed-off compliance artifact; this emits the form the
  * bundlers can actually ship. Amplify's esbuild step bundles TypeScript, not
@@ -22,7 +22,7 @@ import { load } from "js-yaml";
 
 const ROOT = resolve(process.cwd());
 const YAML_PATH = resolve(ROOT, "config/premium_finance/jurisdictions.yml");
-const OUT_PATH = resolve(ROOT, "src/lib/premiumFinance/jurisdictions.ts");
+const OUT_PATH = resolve(ROOT, "../shared/premiumFinance/jurisdictions.ts");
 
 /**
  * USPS codes are reference data, not compliance data, so they live in the

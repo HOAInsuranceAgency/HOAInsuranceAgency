@@ -4,18 +4,8 @@ import { Textarea } from "../../components/ui/Textarea";
 import { Table } from "../../components/ui/Table";
 import { useRef, useState } from "react";
 import { uploadData } from "../../lib/scopedStorage";
-import {
-  client,
-  fmtDate,
-  friendlyError,
-  listAllPages,
-  TEMPLATE_MISSING_MESSAGE,
-  type Account,
-  type Carrier,
-  type Certificate,
-  type Policy,
-  type UserProfile,
-} from "../../lib/client";
+import { client, fmtDate, friendlyError, TEMPLATE_MISSING_MESSAGE, type Account, type Carrier, type Certificate, type Policy, type UserProfile } from "../../lib/client";
+import { listAllPages } from "../../../../shared/pagination";
 import {
   aiFillGaps,
   fillAcord25,
@@ -24,7 +14,7 @@ import {
 } from "../../lib/acord";
 import { downloadFile } from "../../lib/storage";
 import { useSort, SortTh } from "../../lib/useSort";
-import { isAuthorizationError } from "../../lib/authorizationError";
+import { isAuthorizationError } from "../../../../shared/authorizationError";
 import { useAsyncResource } from "../../lib/useAsyncResource";
 import AiFilledList from "../../components/AiFilledList";
 import FilePreviewModal from "../../components/FilePreview";

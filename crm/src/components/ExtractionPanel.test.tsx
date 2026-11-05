@@ -21,7 +21,7 @@ vi.mock("aws-amplify/auth", () => ({
   getCurrentUser: vi.fn(async () => ({ userId: "u1" })),
 }));
 
-import { buildingKey, contactKey, lossKey } from "../lib/extractionKeys";
+import { buildingKey, contactKey, lossKey } from "../../../shared/extractionKeys";
 import ExtractionPanel from "./ExtractionPanel";
 import type { Account } from "../lib/client";
 

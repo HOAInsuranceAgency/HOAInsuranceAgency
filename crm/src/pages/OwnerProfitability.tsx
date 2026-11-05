@@ -1,4 +1,4 @@
-import { isAuthorizationError } from "../lib/authorizationError";
+import { isAuthorizationError } from "../../../shared/authorizationError";
 import { LiveStatus } from "../components/LiveStatus";
 import { useLiveUpdateBlock } from "../lib/useLiveUpdates";
 import { Button } from "../components/ui/Button";

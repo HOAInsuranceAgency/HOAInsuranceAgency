@@ -5,21 +5,13 @@ import { Select } from "../../components/ui/Select";
 import { Textarea } from "../../components/ui/Textarea";
 import { useState } from "react";
 import { useSaveStatus } from "../../components/SaveStatus";
-import {
-  BEST_FIT_BUSINESS,
-  assertNoErrors,
-  client,
-  fmtMoney,
-  LINES_OF_BUSINESS,
-  listAllPages,
-  US_STATES,
-  type AppetiteGuide,
-} from "../../lib/client";
+import { BEST_FIT_BUSINESS, assertNoErrors, client, fmtMoney, LINES_OF_BUSINESS, US_STATES, type AppetiteGuide } from "../../lib/client";
+import { listAllPages } from "../../../../shared/pagination";
 import ConfirmButton from "../../components/ConfirmButton";
 import { useAsyncResource } from "../../lib/useAsyncResource";
 import { useFormState } from "../../lib/useFormState";
 import { bool, boolValue, num, str as nullableText, inputValue } from "../../lib/formCodec";
-import { PAPER_TYPE_LABELS, PAPER_TYPE_OPTIONS, type PaperType } from "../../lib/enums";
+import { PAPER_TYPE_LABELS, PAPER_TYPE_OPTIONS, type PaperType } from "../../../../shared/enums";
 import { LOSS_LOOKBACK_YEARS, restrictionSummary } from "../../lib/appetite";
 
 export function AppetiteGuides({ carrierId }: { carrierId: string }) {

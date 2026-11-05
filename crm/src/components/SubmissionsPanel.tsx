@@ -4,12 +4,12 @@ import { Input } from "./ui/Input";
 import { Textarea } from "./ui/Textarea";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { client, type Account } from "../lib/client";
-import { listAllPages } from "../lib/pagination";
+import { listAllPages } from "../../../shared/pagination";
 import { useAsyncResource } from "../lib/useAsyncResource";
-import { isAuthorizationError } from "../lib/authorizationError";
+import { isAuthorizationError } from "../../../shared/authorizationError";
 import { allWithAuthorizationPriority } from "../lib/allWithAuthorizationPriority";
-import { businessDate, eligibleEstimate, lastEffectiveDate, object, partialInput, portalUrl, submissionStatus, type SubmissionDetails } from "../../amplify/functions/honeycomb/submission-contract";
-import { isHoneycombEnvironment } from "../../amplify/functions/honeycomb/environment";
+import { businessDate, eligibleEstimate, lastEffectiveDate, object, partialInput, portalUrl, submissionStatus, type SubmissionDetails } from "../../../shared/honeycomb/submission";
+import { isHoneycombEnvironment } from "../../../shared/honeycomb/environment";
 import type { Schema } from "../../amplify/data/resource";
 import "./SubmissionsPanel.css";
 

@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { receivesNewLeads } from "../../../shared/salespersonOwnership";
 import { communicationRequest as request, type TeamEligibility } from "../lib/communications";
 import { useAsyncResource } from "../lib/useAsyncResource";
-import { isAuthorizationError } from "../lib/authorizationError";
+import { isAuthorizationError } from "../../../shared/authorizationError";
 import Modal from "./Modal";
 import { liveUpdates } from '../lib/liveUpdates';
 import { useLiveRefresh, useLiveUpdateBlock } from '../lib/useLiveUpdates';

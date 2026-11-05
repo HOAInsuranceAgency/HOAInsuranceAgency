@@ -6,17 +6,11 @@ import { Input } from "./ui/Input";
 import { useEffect, useId, useRef, useState } from "react";
 import "./DocumentsPanel.css";
 import { uploadData, remove } from "../lib/scopedStorage";
-import {
-  client,
-  friendlyError,
-  listAllPages,
-  type CrmDocument,
-  type Policy,
-  type Quote,
-} from "../lib/client";
+import { client, friendlyError, type CrmDocument, type Policy, type Quote } from "../lib/client";
+import { listAllPages } from "../../../shared/pagination";
 import { downloadFile } from "../lib/storage";
 import { useAsyncResource } from "../lib/useAsyncResource";
-import { isAuthorizationError } from "../lib/authorizationError";
+import { isAuthorizationError } from "../../../shared/authorizationError";
 import { allWithAuthorizationPriority } from "../lib/allWithAuthorizationPriority";
 import {
   linkFields,
@@ -34,12 +28,12 @@ import { isBusinessDeliveryFile } from "../../../shared/frontBusinessDelivery";
 import { SaveStatus, useSaveStatus } from "./SaveStatus";
 import { Badge, statusBadge, OCR_STATUS_BADGE } from "../lib/badges";
 import { useSort, SortTh } from "../lib/useSort";
-import { withExtension } from "../../amplify/functions/process-document/name";
+import { withExtension } from "../../../shared/documentName";
 import {
   DEFAULT_DOCUMENT_CATEGORY,
   DOCUMENT_CATEGORY_OPTIONS,
   type DocumentCategory as Category,
-} from "../lib/enums";
+} from "../../../shared/enums";
 
 type EntityType = Schema["DocumentEntityType"]["type"];
 

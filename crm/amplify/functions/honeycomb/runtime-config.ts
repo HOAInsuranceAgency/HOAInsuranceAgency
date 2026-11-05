@@ -1,4 +1,4 @@
-import { HONEYCOMB_ENDPOINTS, isHoneycombEnvironment } from "./environment";
+import { HONEYCOMB_ENDPOINTS, isHoneycombEnvironment } from "../../../../shared/honeycomb/environment";
 
 // Identify the integration explicitly; the production edge rejects generic HTTP clients.
 export const HONEYCOMB_USER_AGENT = "HOAInsuranceAgency-Honeycomb/1.0";

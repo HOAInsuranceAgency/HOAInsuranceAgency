@@ -2,18 +2,10 @@ import { Input } from "../ui/Input";
 import { Select } from "../ui/Select";
 import { Textarea } from "../ui/Textarea";
 import { type KeyboardEvent as ReactKeyboardEvent } from "react";
-import {
-  client,
-  fmtMoney,
-  fmtNum,
-  listAllPages,
-  validateYear,
-  validatePositiveInt,
-  type Blanket,
-  type Building,
-} from "../../lib/client";
+import { client, fmtMoney, fmtNum, validateYear, validatePositiveInt, type Blanket, type Building } from "../../lib/client";
+import { listAllPages } from "../../../../shared/pagination";
 import { bool, boolValue, inputValue, num, str } from "../../lib/formCodec";
-import { buildingKey } from "../../lib/extractionKeys";
+import { buildingKey } from "../../../../shared/extractionKeys";
 import { useAsyncResource } from "../../lib/useAsyncResource";
 import { useChildRows } from "../../lib/useChildRows";
 import type { FormState } from "../../lib/useFormState";
@@ -23,7 +15,7 @@ import {
   CONSTRUCTION_LABELS,
   CONSTRUCTION_OPTIONS,
   REPLACEMENT_COST_OPTIONS,
-} from "../../lib/enums";
+} from "../../../../shared/enums";
 import ChildRowsCard from "../ChildRowsCard";
 import { IntegerInput, MoneyInput, PercentInput, YearInput, YesNoRadio } from "../inputs";
 

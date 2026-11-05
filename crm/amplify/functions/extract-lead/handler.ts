@@ -6,14 +6,14 @@ import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
 import Anthropic from "@anthropic-ai/sdk";
 import type { Schema } from "../../data/resource";
 import { CLAUDE_MODEL } from "../model";
-import { listAllPages } from "../../../src/lib/pagination";
+import { listAllPages } from "../../../../shared/pagination";
 import {
   CONSTRUCTION_TYPES,
   CONTACT_TYPES,
   DEFAULT_DOCUMENT_CATEGORY,
   DOCUMENT_CATEGORY_EXTRACTION_PRIORITY,
   isExtractableCategory,
-} from "../../../src/lib/enums";
+} from "../../../../shared/enums";
 
 /**
  * Two invocation modes:

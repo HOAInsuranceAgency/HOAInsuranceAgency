@@ -7,8 +7,8 @@ import { useEffect, useId, useRef, useState } from "react";
 import type { Schema } from "../../amplify/data/resource";
 import { client, friendlyError } from "../lib/client";
 import { Badge } from "../lib/badges";
-import { defaultReviewBy, isOpinionCurrent } from "../lib/premiumFinance/gate";
-import { PF_CONFIG_SHA256, PF_JURISDICTIONS } from "../lib/premiumFinance/jurisdictions";
+import { defaultReviewBy, isOpinionCurrent } from "../../../shared/premiumFinance/gate";
+import { PF_CONFIG_SHA256, PF_JURISDICTIONS } from "../../../shared/premiumFinance/jurisdictions";
 import { useAsyncResource } from "../lib/useAsyncResource";
 import { SaveStatus, useSaveStatus } from "./SaveStatus";
 

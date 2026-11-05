@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { PF_CONFIG_SHA256 } from "./premiumFinance/jurisdictions";
+import { PF_CONFIG_SHA256 } from "../../../shared/premiumFinance/jurisdictions";
 
 /**
  * The kill switch's two directions, exercised against a mocked table.

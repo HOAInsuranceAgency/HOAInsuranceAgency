@@ -3,7 +3,7 @@ import type { Communication, LeadWorkflow, TeamEligibility, WorkflowContext } fr
 import type { Activity } from '../../src/lib/client';
 export type { Activity, Account, Policy } from '../../src/lib/client';
 export type { Communication, LeadWorkflow, TeamEligibility, WorkflowContext } from '../../../shared/leadWorkflow';
-export { listAllPages } from '../../src/lib/pagination';
+export { listAllPages } from '../../../shared/pagination';
 
 export const scenario = new URLSearchParams(location.search).get('scenario') || 'lead';
 export const isClient = scenario === 'client';

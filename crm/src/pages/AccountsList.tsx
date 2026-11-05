@@ -14,7 +14,7 @@ import {
   type Account,
   type Contact,
 } from "../lib/client";
-import { primaryContact } from "../lib/contacts";
+import { primaryContact } from "../../../shared/contacts";
 import { useAccountsListData } from "../lib/accountsListData";
 import { useSort, SortTh } from "../lib/useSort";
 import { teammateName } from '../lib/commercial';

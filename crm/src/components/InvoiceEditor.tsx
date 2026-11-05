@@ -6,7 +6,7 @@ import { Select } from "./ui/Select";
 import { Textarea } from "./ui/Textarea";
 import { feeAllocations } from "../../../shared/brokerFees";
 import { validateAdjustmentLines } from "../../../shared/invoiceAdjustments";
-import { currentContacts, billingContact } from "../lib/contacts";
+import { currentContacts, billingContact } from "../../../shared/contacts";
 import { useEffect, useRef, useState } from "react";
 import {
   client,
@@ -18,7 +18,7 @@ import {
   type Quote,
 } from "../lib/client";
 import { FinanceOfferHint } from "./FinanceOfferHint";
-import { listAllPages } from "../lib/pagination";
+import { listAllPages } from "../../../shared/pagination";
 import { brokerFeeLineFromSource, passThroughLinesFromSource, sourceChargeLineId, seededLineDescription, seededQuoteLineDescription } from "../lib/invoiceSeed";
 import { useAsyncResource } from "../lib/useAsyncResource";
 import { SaveStatus, useSaveStatus } from "./SaveStatus";
@@ -33,7 +33,7 @@ import {
   marginWarnings,
   missingRemittanceCost,
   premiumLineFromPolicy,
-} from "../lib/invoiceTotals";
+} from "../../../shared/invoiceTotals";
 
 /**
  * One invoice: its lines, what they cost us, and the button that emails it.

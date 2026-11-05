@@ -11,8 +11,8 @@ import {
   renderNotification,
   totalArrived,
 } from "../../amplify/functions/portal-sweep/email";
-import { extractedAt, parseStoredJson } from "../lib/aiExtraction";
-import { isExtractableCategory } from "../lib/enums";
+import { extractedAt, parseStoredJson } from "../../../shared/aiExtraction";
+import { isExtractableCategory } from "../../../shared/enums";
 import { REQUESTED_DOCUMENTS } from "../../../shared/leadDocuments";
 
 /**

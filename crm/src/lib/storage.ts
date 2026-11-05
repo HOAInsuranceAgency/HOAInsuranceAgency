@@ -27,7 +27,7 @@ import { getUrl, remove, uploadData } from "./scopedStorage";
 import { client, type CrmDocument } from "./client";
 // Re-exported: `safeSegment` lives dependency-free in storageKeys.ts so the
 // lead-upload Lambda can build the same keys without importing this module.
-import { CONTROL_CHARS, safeSegment } from "./storageKeys";
+import { CONTROL_CHARS, safeSegment } from "../../../shared/storageKeys";
 export { safeSegment };
 import type { Schema } from "../../amplify/data/resource";
 

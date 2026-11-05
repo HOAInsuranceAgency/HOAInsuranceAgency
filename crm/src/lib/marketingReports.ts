@@ -1,5 +1,5 @@
 import { client } from "./client";
-import { isAuthorizationError } from "./authorizationError";
+import { isAuthorizationError } from "../../../shared/authorizationError";
 import type { MarketingReportRun, MarketingReportSettings, MarketingReportSettingsSnapshot } from "../../../shared/marketingReportSettings";
 
 function unwrap<T>(response: { data?: unknown; errors?: readonly { message: string }[] }): T {

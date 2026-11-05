@@ -2,7 +2,7 @@ import { Select } from "./ui/Select";
 import { Button } from "./ui/Button";
 import { useState, useEffect, useRef } from "react";
 import { client } from "../lib/client";
-import { listAllPages } from "../lib/pagination";
+import { listAllPages } from "../../../shared/pagination";
 import { useAsyncResource } from "../lib/useAsyncResource";
 import { useFormState } from "../lib/useFormState";
 import { communicationRequest as request } from "../lib/communications";

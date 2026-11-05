@@ -13,7 +13,7 @@ import { brokerFeeCents, feeAllocations, type BrokerFeeAllocation, type BrokerFe
 import { getFee, getModel, modelTable, versionCheck, type Write } from "../broker-fees/store";
 import { TransactionalMailClient } from "../transactional-mail/client";
 import { MailDeliveryError } from "../transactional-mail/contract";
-import { currentContacts, billingContact } from "../../../src/lib/contacts";
+import { currentContacts, billingContact } from "../../../../shared/contacts";
 import { randomUUID } from "node:crypto";
 import { SendEmailCommand } from "@aws-sdk/client-sesv2";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
@@ -22,19 +22,19 @@ import { Amplify } from "aws-amplify";
 import { generateClient } from "aws-amplify/data";
 import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtime";
 import type { Schema } from "../../data/resource";
-import { listAllPages } from "../../../src/lib/pagination";
-import { isOpenQuoteStatus } from "../../../src/lib/quoteStatus";
+import { listAllPages } from "../../../../shared/pagination";
+import { isOpenQuoteStatus } from "../../../../shared/quoteStatus";
 import { AGENCY, AGENCY_FMT } from "../../../../shared/agency";
 import Stripe from "stripe";
-import { invoiceTotals, remittanceSplit, financeableInvoiceTotal, type RemittanceSplit } from "../../../src/lib/invoiceTotals";
+import { invoiceTotals, remittanceSplit, financeableInvoiceTotal, type RemittanceSplit } from "../../../../shared/invoiceTotals";
 import { electionExpiry, mintElectionToken } from "../pfElectionToken";
 import { originateLoan } from "../pfOrigination";
 import {
   PF_DEFAULT_APR,
   PF_DEFAULT_DOWN_PCT,
   PF_DEFAULT_MONTHS,
-} from "../../../src/lib/premiumFinance/quote";
-import { PF_CONFIG_SHA256 } from "../../../src/lib/premiumFinance/jurisdictions";
+} from "../../../../shared/premiumFinance/quote";
+import { PF_CONFIG_SHA256 } from "../../../../shared/premiumFinance/jurisdictions";
 import { renderInvoice } from "./invoice";
 import { createPaymentLink, InactivePaymentLink, toCents } from "./stripeLink";
 import { buildMimeMessage } from "./mime";

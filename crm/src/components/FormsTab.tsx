@@ -2,15 +2,8 @@ import { Button } from "./ui/Button";
 import { Table } from "./ui/Table";
 import { useRef, useState } from "react";
 import { uploadData } from "../lib/scopedStorage";
-import {
-  client,
-  fmtDateTime,
-  friendlyError,
-  listAllPages,
-  TEMPLATE_MISSING_MESSAGE,
-  type Account,
-  type CrmDocument,
-} from "../lib/client";
+import { client, fmtDateTime, friendlyError, TEMPLATE_MISSING_MESSAGE, type Account, type CrmDocument } from "../lib/client";
+import { listAllPages } from "../../../shared/pagination";
 import {
   ACORD_FORMS,
   MAPPED_APP_FORM_KEYS,
@@ -24,7 +17,7 @@ import {
 import type { UserProfile } from "../lib/client";
 import { useSort, SortTh } from "../lib/useSort";
 import { useAsyncResource } from "../lib/useAsyncResource";
-import { isAuthorizationError } from "../lib/authorizationError";
+import { isAuthorizationError } from "../../../shared/authorizationError";
 import AiFilledList from "./AiFilledList";
 import FilePreviewModal from "./FilePreview";
 import { SaveStatus, useSaveStatus } from "./SaveStatus";

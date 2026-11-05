@@ -1,12 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { remove } from "../../lib/scopedStorage";
-import {
-  client,
-  friendlyError,
-  listAllPages,
-  type Account,
-} from "../../lib/client";
+import { client, friendlyError, type Account } from "../../lib/client";
+import { listAllPages } from "../../../../shared/pagination";
 import { useIsAdmin } from "../../lib/auth";
 import ConfirmButton from "../../components/ConfirmButton";
 import { communicationRequest } from '../../lib/communications';

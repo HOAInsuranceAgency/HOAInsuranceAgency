@@ -1,7 +1,7 @@
 import { invalidateLiveUpdates } from "../test/liveUpdates";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { listAllPages } from "../lib/pagination";
+import { listAllPages } from "../../../shared/pagination";
 import type { Account } from "../lib/client";
 
 const h = vi.hoisted(() => ({ preview: vi.fn(), fee: vi.fn(), bind: vi.fn(), quotes: vi.fn(), update: vi.fn(), carriers: vi.fn(), getQuote: vi.fn(), policies: vi.fn(), createPolicy: vi.fn(), accountUpdate: vi.fn(), request: vi.fn(), children: vi.fn() }));

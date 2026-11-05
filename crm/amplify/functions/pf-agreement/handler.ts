@@ -8,7 +8,7 @@ import {
   renderAgreementPdf,
   type AgreementView,
 } from "./agreementPdf";
-import { parseScheduleJson } from "../../../src/lib/premiumFinance/quote";
+import { parseScheduleJson } from "../../../../shared/premiumFinance/quote";
 
 /**
  * Custom mutation handler: generatePfAgreement. See resource.ts.

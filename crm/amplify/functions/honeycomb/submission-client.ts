@@ -1,5 +1,5 @@
 import { signature } from "./client";
-import { object, portalUrl, type PartialInput } from "./submission-contract";
+import { object, portalUrl, type PartialInput } from "../../../../shared/honeycomb/submission";
 import { configuredHoneycomb, HONEYCOMB_USER_AGENT } from "./runtime-config";
 export const PARTIAL_PATH = "/v1/submissions/partial";
 export type PartialResult = { status: "CREATED" | "EXISTING" | "REJECTED" | "UNKNOWN"; submissionId?: string; readableSubmissionId?: string; submissionStatus?: string; portalUrl?: string; result?: string; issue?: string };

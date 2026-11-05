@@ -17,7 +17,7 @@ import {
   GL_DEDUCTIBLE_TYPE_OPTIONS,
   GL_PREMIUM_BASIS_LABELS,
   GL_PREMIUM_BASIS_OPTIONS,
-} from "../../lib/enums";
+} from "../../../../shared/enums";
 import ChildRowsCard from "../ChildRowsCard";
 import { SaveStatus } from "../SaveStatus";
 import { IntegerInput, MoneyInput, PercentInput, YesNoRadio } from "../inputs";

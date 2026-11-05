@@ -2,7 +2,7 @@ import { beforeEach, expect, it, vi } from 'vitest';
 const h = vi.hoisted(() => ({ read: vi.fn(), action: vi.fn() }));
 vi.mock('./client', () => ({ client: { queries: { marketingReportSettings: h.read }, mutations: { marketingReportAction: h.action } } }));
 import { loadMarketingReports, saveMarketingReports, sendMarketingReport } from './marketingReports';
-import { isAuthorizationError } from './authorizationError';
+import { isAuthorizationError } from '../../../shared/authorizationError';
 
 beforeEach(() => { vi.resetAllMocks(); });
 it('loads settings and status only through the read operation', async () => {

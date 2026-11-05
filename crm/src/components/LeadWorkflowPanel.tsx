@@ -17,7 +17,7 @@ import "./LeadWorkflowPanel.css";
 import { LeadSnoozeControl } from './LeadSnoozeControl';
 import { useAgencyDay } from '../lib/useAgencyDay';
 import type { LeadSnooze } from '../../../shared/leadSnooze';
-import { isAuthorizationError } from '../lib/authorizationError';
+import { isAuthorizationError } from '../../../shared/authorizationError';
 import { useIsAdmin } from '../lib/auth';
 import BusinessDraftButton from './BusinessDraftButton';
 

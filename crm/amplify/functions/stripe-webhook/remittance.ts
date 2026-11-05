@@ -1,5 +1,5 @@
 import { AGENCY } from "../../../../shared/agency";
-import { formatMoney } from "../../../src/lib/invoiceTotals";
+import { formatMoney } from "../../../../shared/invoiceTotals";
 
 /**
  * Telling corporate finance how a payment divides.

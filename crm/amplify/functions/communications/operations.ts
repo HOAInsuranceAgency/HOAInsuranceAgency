@@ -9,7 +9,7 @@ import { front, ProviderError, FrontPersonalAccessError, assertRecipient, messag
 import { ensureWorkflow, producerUser, recordOutbound, syncProducerEligibility } from "./workflow";
 import { dataClient } from "./data";
 import { textLeadAlerts } from "../lead-intake/alerts";
-import type { LeadSummary } from "../lead-intake/sms";
+import type { LeadSummary } from "../../../../shared/leadTextAlerts";
 import type { Submission } from "../lead-intake/handler";
 import { renderIntakeBrief } from "../lead-intake/brief";
 import type { Communication, LeadWorkflow, Responsibility, TeamEligibility } from "../../../../shared/leadWorkflow";

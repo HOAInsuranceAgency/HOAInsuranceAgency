@@ -23,7 +23,7 @@ import { DynamoDBDocumentClient, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 // Role names are the schema's `UserRole` and the Cognito group names both —
 // see the note on `isUserRole`. enums.ts pulls in no runtime dependency, the
 // way pagination.ts does not.
-import { isUserRole, type UserRole } from "../../../src/lib/enums";
+import { isUserRole, type UserRole } from "../../../../shared/enums";
 import { isActiveAdmin, isActiveOwner } from "../crm-access/active-role";
 import { listTeamUsers, loadTeamProfile, type TeamRosterArgs } from "./roster";
 import { assertUserSession, readUserAccess } from "../crm-access/user-status";

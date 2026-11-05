@@ -3,7 +3,7 @@ import { captureHandledFailure } from "../monitoring";
 import { randomUUID } from "node:crypto";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, GetCommand, PutCommand, TransactWriteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
-import { PF_CONFIG_SHA256 } from "../../../src/lib/premiumFinance/jurisdictions";
+import { PF_CONFIG_SHA256 } from "../../../../shared/premiumFinance/jurisdictions";
 
 /**
  * Custom mutation handler: setPremiumFinanceEnabled. See resource.ts.

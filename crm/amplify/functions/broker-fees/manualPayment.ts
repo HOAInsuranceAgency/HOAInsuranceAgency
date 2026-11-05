@@ -9,7 +9,7 @@ import { feeAllocations } from '../../../../shared/brokerFees';
 import { invoiceBrokerFeeAllocations } from '../send-invoice/brokerFeeInvoice';
 import { validateInvoiceSourceCharges } from '../send-invoice/passThroughInvoice';
 import { assertAdjustmentInvoiceProof, assertInitialInvoiceAvailable } from '../send-invoice/adjustmentInvoice';
-import { invoiceTotals } from '../../../src/lib/invoiceTotals';
+import { invoiceTotals } from '../../../../shared/invoiceTotals';
 import { db, getFee, getModel, modelTable, versionCheck, type Write } from './store';
 import { assertBrokerFeeSigned } from './bindValidation';
 import { assertNoFeeLoanCheckout, syncBrokerFeePayment } from './payments';
