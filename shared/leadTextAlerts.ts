@@ -1,3 +1,4 @@
+import { accountPath } from './crmRoutes';
 /**
  * Who gets texted when a web lead lands, and what the text says.
  *
@@ -98,7 +99,7 @@ export const unreachableOptIns = (profiles: NotifiableProfile[]) =>
 export const SMS_SEGMENT = 160;
 
 export function leadText(lead: LeadSummary, baseUrl: string): string {
-  const link = `${baseUrl.replace(/\/$/, "")}/accounts/${lead.id}`;
+  const link = `${baseUrl.replace(/\/$/, "")}${accountPath(lead.id)}`;
   const where = [lead.city, lead.state].filter(Boolean).join(", ");
   const who = [lead.contactName, lead.contactPhone].filter(Boolean).join(" ");
   const detail = [where, who].filter(Boolean).join(" - ");

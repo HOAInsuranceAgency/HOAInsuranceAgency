@@ -1,3 +1,4 @@
+import { accountPath, accountManagementPath } from '../../../shared/crmRoutes';
 import { Button } from "./ui/Button";
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
@@ -42,13 +43,13 @@ export default function LegacyManagerReview() {
             <strong>{contact.name}</strong>
             {contact.email && ` · ${contact.email}`}
             <p>
-              <Link to={`/accounts/${contact.accountId}`}>{accountName}</Link>
+              <Link to={accountPath(contact.accountId)}>{accountName}</Link>
             </p>
             <div className="toolbar">
               <Button variant="secondary"  onClick={() => setSelected(contact)}>
                 Create reviewed profile
               </Button>
-              <Link to={`/accounts/${contact.accountId}?management=1`}>Link an existing manager</Link>
+              <Link to={accountManagementPath(contact.accountId)}>Link an existing manager</Link>
             </div>
           </li>
         ))}
@@ -69,7 +70,7 @@ export default function LegacyManagerReview() {
           }}
           onClose={() => setSelected(null)}
           onSaved={(p) =>
-            navigate(`/accounts/${selected.accountId}?management=1&partyId=${encodeURIComponent(p.id)}`)
+            navigate(accountManagementPath(selected.accountId, p.id))
           }
         />
       )}

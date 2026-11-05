@@ -33,38 +33,13 @@ import { ActivityTab } from "./account/ActivityTab";
 import { CertificatesTab } from "./account/CertificatesTab";
 import { useIsAdmin } from "../lib/auth";
 import { communicationRequest, type LeadWorkflow, type WorkflowContext } from "../lib/communications";
+import { ACCOUNT_TABS, accountTabLocation, type AccountTab } from '../../../shared/crmRoutes';
 import { isAuthorizationError } from "../../../shared/authorizationError";
 import { AccountSalespersonSelect } from "../components/AccountSalespersonSelect";
 import "./AccountDetail.css";
 
-type Tab =
-  | "overview"
-  | "property"
-  | "priorcarrier"
-  | "losses"
-  | "submissions"
-  | "quotes"
-  | "policies"
-  | "invoices"
-  | "financing"
-  | "documents"
-  | "certificates"
-  | "activity";
-
-const VALID_TABS: Tab[] = [
-  "overview",
-  "property",
-  "priorcarrier",
-  "losses",
-  "submissions",
-  "quotes",
-  "policies",
-  "invoices",
-  "financing",
-  "documents",
-  "certificates",
-  "activity",
-];
+type Tab = AccountTab;
+const VALID_TABS = ACCOUNT_TABS;
 
 /**
  * Tabs that only make sense while the account is still a prospect.
@@ -188,9 +163,7 @@ function AccountDetailPage({ profile }: { profile: UserProfile }) {
    * navigation Back should have to walk out of one step at a time.
    */
   function selectTab(t: Tab) {
-    const next = new URLSearchParams(searchParams);
-    next.set("tab", t);
-    navigate({ search: `?${next.toString()}`, hash: "" }, { replace: true });
+    navigate(accountTabLocation(searchParams, t), { replace: true });
   }
   const [celebrate, setCelebrate] = useState(false);
   const prevStage = useRef<string | null>(null);

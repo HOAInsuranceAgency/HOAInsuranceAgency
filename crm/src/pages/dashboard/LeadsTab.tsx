@@ -1,3 +1,4 @@
+import { accountPath } from '../../../../shared/crmRoutes';
 import { useLiveUpdateBlock } from "../../lib/useLiveUpdates";
 import { Select } from "../../components/ui/Select";
 import { Button } from "../../components/ui/Button";
@@ -207,7 +208,7 @@ export default function LeadsTab() {
                   <tr
                     key={r.id}
                     className="clickable"
-                    onClick={() => navigate(`/accounts/${r.id}`)}
+                    onClick={() => navigate(accountPath(r.id))}
                   >
                     <td>
                       <strong>{r.name}</strong>

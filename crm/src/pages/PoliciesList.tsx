@@ -1,3 +1,4 @@
+import { accountPath } from '../../../shared/crmRoutes';
 import { Button } from "../components/ui/Button";
 import { Table } from "../components/ui/Table";
 import { useMemo } from "react";
@@ -102,7 +103,7 @@ export default function PoliciesList() {
                   <tr
                     key={p.id}
                     className="clickable"
-                    onClick={() => navigate(`/accounts/${p.accountId}?tab=policies`)}
+                    onClick={() => navigate(accountPath(p.accountId, { tab: 'policies' }))}
                   >
                     <td>
                       <strong>{accountName.get(p.accountId) ?? "—"}</strong>

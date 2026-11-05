@@ -1,3 +1,4 @@
+import { accountPath, carrierPath, relationshipsPath } from '../../../shared/crmRoutes';
 import { Table } from "../components/ui/Table";
 import { Button } from "../components/ui/Button";
 import { useMemo, useState } from "react";
@@ -132,15 +133,15 @@ export default function SearchResults() {
 
   function entityLink(doc: CrmDocument) {
     if (doc.entityType === "ACCOUNT")
-      return <Link to={`/accounts/${doc.entityId}`}>View account</Link>;
+      return <Link to={accountPath(doc.entityId)}>View account</Link>;
     if (doc.entityType === "CARRIER")
-      return <Link to={`/carriers/${doc.entityId}`}>View carrier</Link>;
+      return <Link to={carrierPath(doc.entityId)}>View carrier</Link>;
     return <span className="badge gray">{doc.entityType}</span>;
   }
 
   return (
     <>
-      {runnable && <section className="card"><h2>Relationships</h2><Link to={`/relationships?q=${encodeURIComponent(q)}`}>Search the shared directory for “{q}” →</Link></section>}
+      {runnable && <section className="card"><h2>Relationships</h2><Link to={relationshipsPath(q)}>Search the shared directory for “{q}” →</Link></section>}
       <h1>Search</h1>
       <p className="sub">
         {runnable

@@ -1,3 +1,4 @@
+import { accountPath, newLeadPath } from '../../../shared/crmRoutes';
 import { Button } from "../components/ui/Button";
 import { Select } from "../components/ui/Select";
 import { Table } from "../components/ui/Table";
@@ -159,7 +160,7 @@ function AccountList({ stage, viewScope }: AccountsListProps) {
         {isAdmin && <label className="field">Salesperson<Select value={salesperson} onChange={e => setSalesperson(e.target.value)}><option value="">All salespeople</option>{commercial.data.team.filter(t => t.salesperson).map(t => <option key={t.userId} value={t.userId}>{t.name}</option>)}</Select></label>}
         <ReportDownload disabled={loading || refreshing || !loaded || !!error || !!refreshError || stage === 'LEAD' && !!quoteResource.error} report={{ title: label, filters: [isAdmin ? `Salesperson: ${commercial.data.team.find(t => t.userId === salesperson)?.name ?? 'All'}` : 'All displayed data', ...(stage === 'LEAD' ? [`View: ${leadView}`] : []), ...(view.state ? [`State: ${US_STATE_NAMES[view.state]}`] : [])].join(' · '), sections: [{ title: label, columns: ['Name', 'Type', 'Contact', 'City', 'State', ...(isAdmin ? ['Salesperson'] : []), ...(stage === 'LEAD' ? [ 'Lead source', 'Website form', 'Estimated opportunity (USD)', 'Pending commission (USD)', 'Commission basis', 'Entered', 'Follow-up date', 'Follow-up note'] : []), 'Units', 'TIV (USD)', stage === 'LEAD' ? 'Incumbent expires' : 'Renewal'], rows: sorted.map(a => { const f = forecastOf(a), estimate = commercial.data.entries[a.id]?.plan.estimatedCents; return [a.name, a.type, contactOf(a)?.name, a.city, a.state, ...(isAdmin ? [assignee(a, 'salespersonId')] : []), ...(stage === 'LEAD' ? [ acquisitionLabel(a.leadSource, a.source), websiteFormLabel(a.source), estimate == null ? null : estimate / 100, f?.cents == null ? null : f.cents / 100, f?.label, a.createdAt?.slice(0,10), a.stage === 'LEAD' ? snoozeOf(a)?.followUpOn : null, a.stage === 'LEAD' ? snoozeOf(a)?.note : null] : []), a.unitCount, a.totalInsuredValue, renewalOf(a)]; }) }] }} />
         {stage === "LEAD" && (
-          <Link to="/leads/new">
+          <Link to={newLeadPath()}>
             <Button variant="primary" >+ New lead</Button>
           </Link>
         )}
@@ -213,7 +214,7 @@ function AccountList({ stage, viewScope }: AccountsListProps) {
                     <tr
                       key={a.id}
                       className="clickable"
-                      onClick={() => navigate(`/accounts/${a.id}`)}
+                      onClick={() => navigate(accountPath(a.id))}
                     >
                       <td>
                         <strong>{a.name}</strong>

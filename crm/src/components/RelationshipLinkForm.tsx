@@ -1,3 +1,4 @@
+import { accountManagementPath } from '../../../shared/crmRoutes';
 import { useLiveUpdateBlock } from "../lib/useLiveUpdates";
 import { Select } from "./ui/Select";
 import { Input } from "./ui/Input";
@@ -44,7 +45,7 @@ export default function RelationshipLinkForm({
     if (saveStatus.isPending() || !account || !party) return;
     if (role === 'MANAGER') {
       onClose();
-      navigate(`/accounts/${account}?management=1&partyId=${encodeURIComponent(party)}`);
+      navigate(accountManagementPath(account, party));
       return;
     }
     await saveStatus.run(async current => {

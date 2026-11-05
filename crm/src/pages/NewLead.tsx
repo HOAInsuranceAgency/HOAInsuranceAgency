@@ -1,3 +1,4 @@
+import { accountPath, accountManagementPath } from '../../../shared/crmRoutes';
 import { assertGraphqlErrors } from '../lib/apiResponse';
 import { Button } from "../components/ui/Button";
 import { Select } from "../components/ui/Select";
@@ -124,11 +125,11 @@ export default function NewLead() {
     if (reconciling) {
       // Keep this tab's latest draft visible while the saved record is reviewed.
       cancelPending();
-      window.open(`/accounts/${encodeURIComponent(id)}?tab=overview`, "_blank", "noopener,noreferrer");
+      window.open(accountPath(id, { tab: 'overview' }), "_blank", "noopener,noreferrer");
       return;
     }
     cancelPending(); setNeedsReview(false); markClean();
-    navigate(relatedParty && relationshipRole === 'MANAGER' ? `/accounts/${id}?management=1&partyId=${encodeURIComponent(relatedParty)}` : `/accounts/${id}?tab=documents`);
+    navigate(relatedParty && relationshipRole === 'MANAGER' ? accountManagementPath(id, relatedParty) : accountPath(id, { tab: 'documents' }));
   }
 
   function focusField(id: string) {
@@ -324,8 +325,8 @@ export default function NewLead() {
     // Land on Documents so OCR completes and AI extraction is the next step.
     if (isLeaving()) return;
     navigate(relatedParty && relationshipRole === 'MANAGER'
-      ? `/accounts/${data.id}?management=1&partyId=${encodeURIComponent(relatedParty)}`
-      : `/accounts/${data.id}?tab=documents`);
+      ? accountManagementPath(data.id, relatedParty)
+      : accountPath(data.id, { tab: 'documents' }));
   }
 
   const isPersonal = form.type === "PERSONAL";
@@ -499,7 +500,7 @@ export default function NewLead() {
             {reconciling && <Button variant="secondary" type="button"  onClick={() => {
               const id = created.current!;
               cancelPending(); setNeedsReview(false); setReconciling(false); draft.clear(); markClean();
-              navigate(`/accounts/${encodeURIComponent(id)}?tab=overview`);
+              navigate(accountPath(id, { tab: 'overview' }));
             }}>I reviewed the lead — discard this draft</Button>}</>
           ) : (
             <><Button variant="secondary" type="button"  disabled={saving} onClick={() => navigate('/leads')}>Cancel</Button><Button variant="primary" type="submit"  disabled={saving}>

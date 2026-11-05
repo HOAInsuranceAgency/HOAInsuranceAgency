@@ -1,3 +1,4 @@
+import { accountPath, newLeadPath, relationshipPath } from '../../../shared/crmRoutes';
 import { LiveStatus } from "../components/LiveStatus";
 import { Button } from "../components/ui/Button";
 import { Table } from "../components/ui/Table";
@@ -79,7 +80,7 @@ function RelationshipProfile({ id }: { id: string }) {
             {rows.map((r) => (
               <tr key={r.id}>
                 <td>
-                  <Link to={`/accounts/${r.accountId}`}>{accounts.get(r.accountId)?.name}</Link>
+                  <Link to={accountPath(r.accountId)}>{accounts.get(r.accountId)?.name}</Link>
                 </td>
                 <td>{RELATIONSHIP_LABELS[r.role]}</td>
                 <td>{accounts.get(r.accountId)?.stage === 'CLIENT' ? 'Client' : 'Lead'}</td>
@@ -159,7 +160,7 @@ function RelationshipProfile({ id }: { id: string }) {
             )}
             {!party.archived && (
               <p>
-                <Link to={`/leads/new?relatedParty=${id}`}>
+                <Link to={newLeadPath(id)}>
                   Create an insurance lead for this relationship →
                 </Link>
               </p>
@@ -183,7 +184,7 @@ function RelationshipProfile({ id }: { id: string }) {
                 const related = party.kind === 'PERSON' ? a.organizationId : a.personId;
                 return (
                   <li key={a.id}>
-                    <Link to={`/relationships/${related}`}>{a.relatedName}</Link>
+                    <Link to={relationshipPath(related)}>{a.relatedName}</Link>
                     {a.title && ` · ${a.title}`}
                     <div className="relationship-dates">
                       {a.validFrom ? fmtDate(a.validFrom) : 'Start not recorded'}

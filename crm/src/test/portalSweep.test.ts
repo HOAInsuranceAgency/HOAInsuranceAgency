@@ -338,6 +338,12 @@ describe("what the email says", () => {
     }
   });
 
+  it('retains a configured CRM path prefix and encodes special account IDs in both notification formats', () => {
+    const { text, html } = renderNotification({ associationName: 'Fictional HOA', accountId: 'account/?#', arrived: [], extracted: {}, outstanding: [], crmBaseUrl: 'https://crm.example.test/app/' });
+    expect(text).toContain('https://crm.example.test/app/accounts/account%2F%3F%23');
+    expect(html).toContain('https://crm.example.test/app/accounts/account%2F%3F%23');
+  });
+
   it("reports what extraction read, humanised", () => {
     const { text, html } = renderNotification({
       associationName: "A",
