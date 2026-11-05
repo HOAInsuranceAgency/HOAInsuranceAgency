@@ -1,7 +1,8 @@
 import { authorizedQuoteTerms } from './quoteAuthorization';
 import { validCalendarDate } from './renewalPolicy';
 import { brokerFeeCents } from './brokerFees';
-import { normalizeClientConditions, passThroughTotalCents } from './passThroughCharges';
+import { clientChargeTotals } from './clientCharges';
+import { normalizeClientConditions, normalizePassThroughCharges } from './passThroughCharges';
 
 export interface PackageQuote {
   id: string;
@@ -136,28 +137,24 @@ export function packageAssessment(
     problems.push('Record each quote’s coverages');
   if (valid.some((q) => commissionCents(q) == null))
     problems.push('Commission information is missing');
-  const fees = valid.map(q => {
-    try { return brokerFeeCents(q.brokerFee); }
-    catch { problems.push('Check the broker fee amounts'); return 0; }
+  const chargeSources = valid.map(q => {
+    let fee = 0, passThroughCharges;
+    try { fee = brokerFeeCents(q.brokerFee); }
+    catch { problems.push('Check the broker fee amounts'); }
+    try { normalizeClientConditions(q.clientConditions); passThroughCharges = normalizePassThroughCharges(q.passThroughCharges); }
+    catch { problems.push('Review the pass-through charges and client conditions'); }
+    return { premium: q.premium, brokerFee: fee / 100, passThroughCharges };
   });
-  const feeTotal = fees.reduce((sum, fee) => sum + fee, 0);
-  const passThroughTotal = valid.reduce((sum, q) => {
-    try { normalizeClientConditions(q.clientConditions); return sum + passThroughTotalCents(q.passThroughCharges); }
-    catch { problems.push('Review the pass-through charges and client conditions'); return sum; }
-  }, 0);
+  let charges = clientChargeTotals([]);
+  try { charges = clientChargeTotals(chargeSources); }
+  catch { problems.push('Check the recorded amounts'); }
   if (valid.some(q => (q.brokerFee ?? 0) > 0 && q.billType !== 'AGENCY'))
     problems.push('Broker fees require agency billing.');
-  const premiumTotal = valid.reduce((sum, q) => sum + Math.round((q.premium ?? 0) * 100), 0);
   if (
-    !Number.isSafeInteger(
-      valid.reduce((sum, q) => sum + Math.round((q.premium ?? 0) * 100), 0),
-    ) ||
     !Number.isSafeInteger(
       valid.reduce((sum, q) => sum + (commissionCents(q) ?? 0), 0),
     )
   )
-    problems.push('Check the recorded amounts');
-  if (!Number.isSafeInteger(feeTotal) || !Number.isSafeInteger(premiumTotal + feeTotal + passThroughTotal))
     problems.push('Check the recorded amounts');
   if (
     requireReview &&
@@ -172,11 +169,8 @@ export function packageAssessment(
   return {
     problems: [...new Set(problems)],
     complete: problems.length === 0,
-    premiumCents: premiumTotal,
-    brokerFeeCents: feeTotal,
-    passThroughCents: passThroughTotal,
-    clientTotalCents: premiumTotal + feeTotal + passThroughTotal,
-    agencyRevenueCents: valid.reduce((sum, q) => sum + (commissionCents(q) ?? 0), 0) + feeTotal,
+    ...charges,
+    agencyRevenueCents: valid.reduce((sum, q) => sum + (commissionCents(q) ?? 0), 0) + charges.brokerFeeCents,
     commissionCents: valid.reduce(
       (sum, q) => sum + (commissionCents(q) ?? 0),
       0,

@@ -133,6 +133,18 @@ describe('bounded package source reads', () => {
     expect(JSON.stringify(source.quotes)).not.toContain('Private review note');
   });
 
+  it('composes rounded per-policy amounts into the public proposal total without including private earnings', async () => {
+    Object.assign(h.records.get(`Quote:${quoteIds[0]}`), { premium: 100.104, brokerFee: 10.02, billType: 'AGENCY', passThroughCharges: [{ id: 'tax', kind: 'TAX', description: 'Supplier tax', amountCents: 503 }] });
+    h.records.get(`Quote:${quoteIds[1]}`).premium = 200.104;
+    review();
+    const source = await load();
+    expect(source.facts).toContain('Supplier fees and taxes: $5.03');
+    expect(source.facts).toContain('Total HOA broker fees: $10.02');
+    expect(source.facts).toContain('Total quoted policy cost: $23,614.25');
+    expect(source.quotes[0]).not.toHaveProperty('commissionPct');
+    expect(JSON.stringify({ facts: source.facts, quotes: source.quotes })).not.toContain('Private review note');
+  });
+
   it.each(['passThroughCharges', 'clientConditions'])('requires another review after %s changes', async field => {
     const quote = h.records.get(`Quote:${quoteIds[0]}`);
     quote[field] = field === 'clientConditions' ? 'New binding requirement.' : [{ id: 'rt', kind: 'WHOLESALER_FEE', description: 'RT brokerage fee', amountCents: 25000 }];

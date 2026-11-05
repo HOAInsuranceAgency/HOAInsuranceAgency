@@ -111,3 +111,22 @@ it('preserves absent structured charges on ordinary legacy quote edits', async (
   await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Save changes' })));
   expect(h.update.mock.calls[0][0]).not.toHaveProperty('passThroughCharges');
 });
+
+it('keeps unfinished charge rows editable and previews amounts before their labels are complete', () => {
+  render(<CoverageForm kind="quote" accountId="a" carriers={[]} existing={null} onSaved={() => {}} onCancel={() => {}} />);
+  fireEvent.change(screen.getByLabelText('Premium ($)'), { target: { value: '19.99' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Add supplier charge or tax' }));
+  expect(screen.getByText('Client policy total: $19.99')).toBeVisible();
+  fireEvent.change(screen.getByLabelText('Charge 1 amount'), { target: { value: '.' } });
+  expect(screen.getByLabelText('Charge 1 amount')).toHaveValue('.');
+  expect(screen.getByText('Client policy total: —')).toBeVisible();
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText('Charge 1 amount'), { target: { value: '.01' } });
+  expect(screen.getByLabelText('Charge 1 description')).toHaveValue('');
+  expect(screen.getByText('Client policy total: $20.00')).toBeVisible();
+  fireEvent.change(screen.getByLabelText('Charge 1 amount'), { target: { value: '1.001' } });
+  expect(screen.getByText('Client policy total: —')).toBeVisible();
+  fireEvent.change(screen.getByLabelText('Charge 1 amount'), { target: { value: '1.00' } });
+  expect(screen.getByText('Client policy total: $20.99')).toBeVisible();
+  expect(h.create).not.toHaveBeenCalled();
+});
