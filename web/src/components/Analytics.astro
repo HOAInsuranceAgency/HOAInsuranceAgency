@@ -28,6 +28,12 @@
 import { ANALYTICS_DISABLED, GA4_ID, ADS_IDS, CLARITY_ID } from "../constants";
 ---
 
+{/* Private pages omit this component; the client also guards token routes. */}
+<script>
+  import { initializeSentry } from "../lib/sentry";
+  initializeSentry();
+</script>
+
 {!ANALYTICS_DISABLED && (
   <Fragment>
     {/* Google tag — one library, configured for GA4 and Google Ads */}

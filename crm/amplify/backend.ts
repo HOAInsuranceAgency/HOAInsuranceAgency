@@ -1,3 +1,4 @@
+import { configureSentry } from "./sentry";
 import { brokerFees } from './functions/broker-fees/resource';
 import { installBrokerFees } from './broker-fees';
 import { migrationProbeScopes } from "./migration-probe-scopes";
@@ -135,6 +136,11 @@ export const backend = defineBackend({
   magicLinkVerify,
   migrationNativeMessage,
   ...Object.fromEntries(destinationStagingNativeAuth ? [] : [["googleSignIn", googleSignIn]]),
+});
+
+configureSentry(backend, {
+  preview: migrationPreview,
+  environment: providerBranch === "main" ? "production" : providerBranch === "staging" ? "staging" : "development",
 });
 
 // The OCR function drives async Textract jobs over uploaded documents.

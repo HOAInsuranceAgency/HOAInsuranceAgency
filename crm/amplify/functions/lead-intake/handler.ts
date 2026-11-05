@@ -1,3 +1,4 @@
+import { captureHandledFailure } from "../monitoring";
 import { estimateInput, PUBLIC_WINDOW_MS } from "../honeycomb/contract";
 import { cleanAttribution, websiteLeadSource } from "../../../../shared/leadSource";
 import { webLeadPropertyType } from "../../../../shared/propertyType";
@@ -107,6 +108,7 @@ export const handler: Schema["submitWebLead"]["functionHandler"] = async event =
           continue;
         }
       }
+      captureHandledFailure(e);
       console.error("Durable lead capture failed", e instanceof Error ? e.name : "unknown");
       break;
     }

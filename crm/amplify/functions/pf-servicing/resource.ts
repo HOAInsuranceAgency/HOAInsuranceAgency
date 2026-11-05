@@ -10,7 +10,7 @@ import { defineFunction } from "@aws-amplify/backend";
  */
 export const pfServicing = defineFunction({
   name: "pf-servicing",
-  entry: "./handler.ts",
+  entry: "./handler.sentry.ts",
   timeoutSeconds: 30,
   resourceGroupName: "data",
 });

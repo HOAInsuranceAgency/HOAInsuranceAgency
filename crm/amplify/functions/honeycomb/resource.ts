@@ -10,7 +10,7 @@ const runtimeEnvironment = {
   HONEYCOMB_ENVIRONMENT: environment,
 };
 export const honeycombWorker = defineFunction({
-  name: "honeycomb-estimate-worker", entry: "./worker.ts", resourceGroupName: "data",
+  name: "honeycomb-estimate-worker", entry: "./worker.sentry.ts", resourceGroupName: "data",
   timeoutSeconds: 90, memoryMB: 512,
   environment: {
     ...runtimeEnvironment,
@@ -23,16 +23,16 @@ export const honeycombWorker = defineFunction({
   },
 });
 export const honeycombStatus = defineFunction({
-  name: "honeycomb-estimate-status", entry: "./status.ts", resourceGroupName: "data", timeoutSeconds: 10,
+  name: "honeycomb-estimate-status", entry: "./status.sentry.ts", resourceGroupName: "data", timeoutSeconds: 10,
   environment: { HONEYCOMB_ENVIRONMENT: environment },
 });
 
 export const honeycombSubmissions = defineFunction({
-  name: "honeycomb-submissions", entry: "./submissions.ts", resourceGroupName: "data", timeoutSeconds: 15,
+  name: "honeycomb-submissions", entry: "./submissions.sentry.ts", resourceGroupName: "data", timeoutSeconds: 15,
   environment: runtimeEnvironment,
 });
 export const honeycombSubmissionWorker = defineFunction({
-  name: "honeycomb-submission-worker", entry: "./submission-worker.ts", resourceGroupName: "data",
+  name: "honeycomb-submission-worker", entry: "./submission-worker.sentry.ts", resourceGroupName: "data",
   timeoutSeconds: 90, memoryMB: 512,
   environment: {
     ...runtimeEnvironment,

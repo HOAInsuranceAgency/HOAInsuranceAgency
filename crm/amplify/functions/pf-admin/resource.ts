@@ -13,7 +13,7 @@ import { defineFunction } from "@aws-amplify/backend";
  */
 export const pfAdmin = defineFunction({
   name: "pf-admin",
-  entry: "./handler.ts",
+  entry: "./handler.sentry.ts",
   timeoutSeconds: 20,
   resourceGroupName: "data",
 });

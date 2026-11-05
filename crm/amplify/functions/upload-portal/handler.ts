@@ -1,3 +1,4 @@
+import { captureHandledFailure } from "../monitoring";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { Amplify } from "aws-amplify";
@@ -260,6 +261,7 @@ export const handler = async (event: {
       ? await handleRequestUpload(client, args)
       : await handleGetPortal(client, args);
   } catch (err) {
+    captureHandledFailure(err);
     // Never leak an internal message to a public caller.
     console.error("upload-portal failed", err);
     return { ok: false, error: "Something went wrong. Please try again." };

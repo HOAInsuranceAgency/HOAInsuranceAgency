@@ -1,3 +1,4 @@
+import { captureHandledFailure } from "../monitoring";
 import { initialQuotePublicationWrites } from "../quote-source-billing";
 import { reserveFeeInvoice, reserveFeeLoan, publishFeeInvoiceLink, completeFeeInvoiceSend } from "../broker-fees/payments";
 import { closeInvoiceCheckoutSessions } from "../invoiceCheckout";
@@ -1161,6 +1162,7 @@ export const handler = async (event: {
     if (err instanceof SendBlocked || err instanceof InvoiceSendBlocked || err instanceof MailDeliveryError) {
       return { ok: false, error: err.message };
     }
+    captureHandledFailure(err);
     if (acceptedForReview) return { ok: false, error: "The invoice email was accepted, but its send details need review. Do not send a replacement." };
     console.error("send-invoice failed", err);
     return { ok: false, error: "We couldn't send that invoice. Please try again." };

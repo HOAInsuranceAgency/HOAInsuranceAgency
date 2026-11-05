@@ -1,3 +1,4 @@
+import { captureHandledFailure } from "../monitoring";
 import { brokerFeeDisclosure, signBrokerFeeDisclosure } from './agreements';
 import { accountFees, getFee } from './store';
 import { AccountAccess } from '../crm-access/access';
@@ -32,6 +33,9 @@ export const handler = async (event: Event) => {
     } else fees = await accountFees(accountId);
     return { ok: true, fees };
   } catch (error) {
+    // Generic Error/Unauthorized are expected validation/access responses.
+    // Report named service/runtime failures, excluding normal write conflicts.
+    if (error instanceof Error && !['Error', 'Unauthorized', 'ConditionalCheckFailedException', 'TransactionCanceledException'].includes(error.name)) captureHandledFailure(error);
     const message = error instanceof Error && error.name === 'Error' ? error.message : 'This broker fee request could not be completed. Please retry.';
     return { ok: false, error: message };
   }

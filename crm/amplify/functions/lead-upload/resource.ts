@@ -20,7 +20,7 @@ import { defineFunction } from "@aws-amplify/backend";
  */
 export const leadUpload = defineFunction({
   name: "lead-upload",
-  entry: "./handler.ts",
+  entry: "./handler.sentry.ts",
   timeoutSeconds: 30,
   memoryMB: 512,
   resourceGroupName: "data",

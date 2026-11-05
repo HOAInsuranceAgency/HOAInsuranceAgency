@@ -17,7 +17,7 @@ import { defineFunction, secret } from "@aws-amplify/backend";
  */
 export const pfElection = defineFunction({
   name: "pf-election",
-  entry: "./handler.ts",
+  entry: "./handler.sentry.ts",
   timeoutSeconds: 30,
   environment: {
     ...(migrationPreview ? {} : { STRIPE_SECRET_KEY: secret("STRIPE_SECRET_KEY") }),

@@ -1,3 +1,4 @@
+import { captureHandledFailure } from "../monitoring";
 import type { S3Handler } from "aws-lambda";
 import {
   TextractClient,
@@ -240,6 +241,7 @@ export const handler: S3Handler = async (event) => {
       // extraction as FAILED.
       await autoName(client, documentId, filename, text);
     } catch (err) {
+      captureHandledFailure(err);
       console.error(`OCR failed for ${documentId} (${key})`, err);
       await client.models.Document.update({
         id: documentId,
