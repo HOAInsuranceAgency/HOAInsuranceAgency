@@ -7,6 +7,15 @@ const object = (value: unknown): Fields =>
   value !== null && typeof value === "object" && !Array.isArray(value) ? value as Fields : {};
 const safeName = (value: unknown, fallback = "Error"): string =>
   typeof value === "string" && /^[\w.$<> /:-]{1,160}$/.test(value) ? value : fallback;
+const environmentSegments: Record<string, string> = {
+  production: "environment:production",
+  staging: "environment:staging",
+  development: "environment:development",
+  "integration-test": "environment:integration-test",
+  test: "environment:test",
+  unknown: "environment:unknown",
+};
+const lambdaFailureKinds = new Set(["http_server_error", "batch_item_failure", "worker_item_failure"]);
 
 /** Only origins are useful for requests; paths can contain customer IDs/tokens. */
 function origin(value: unknown): string | undefined {
@@ -85,6 +94,17 @@ export function sanitizeSentryEvent<T>(value: T): T {
   const tags = object(event.tags);
   const request = object(event.request);
   const debugImages = object(event.debug_meta).images;
+  const environment = typeof event.environment === "string" && Object.hasOwn(environmentSegments, event.environment)
+    ? event.environment : "unknown";
+  const fingerprint = event.fingerprint;
+  // Keep the wrapper's static per-function result grouping, without accepting
+  // arbitrary SDK hints or payload values as a new fingerprint component.
+  const lambdaResultFingerprint = Array.isArray(fingerprint)
+    && fingerprint.length === 3 && fingerprint[0] === "hoa-lambda-result"
+    && fingerprint.every((part) => typeof part === "string" && /^[\w.:-]{1,120}$/.test(part))
+    && lambdaFailureKinds.has(fingerprint[2])
+    && fingerprint[1] === tags.function && fingerprint[2] === tags.failure_kind
+    && Array.isArray(exceptions) && exceptions.some((item) => object(item).type === "LambdaResultFailure");
   return {
     event_id: event.event_id,
     timestamp: event.timestamp,
@@ -92,14 +112,13 @@ export function sanitizeSentryEvent<T>(value: T): T {
     level: event.level,
     message: typeof event.message === "string" ? "Application error details withheld" : undefined,
     release: event.release,
-    environment: event.environment,
+    environment,
     type: event.type,
     // Preserve the SDK's static package/version metadata.
     sdk: event.sdk,
-    fingerprint: Array.isArray(event.fingerprint)
-      && event.fingerprint.length === 3 && event.fingerprint[0] === "hoa-lambda-result"
-      && event.fingerprint.every((part) => typeof part === "string" && /^[\w.:-]{1,120}$/.test(part))
-      ? event.fingerprint : undefined,
+    // Sentry's default grouping otherwise spans environments, allowing a
+    // staging issue to consume production's first-seen/regression notification.
+    fingerprint: [...(lambdaResultFingerprint ? fingerprint : ["{{ default }}"]), environmentSegments[environment]],
     tags: Object.fromEntries(["app", "function", "service", "failure_kind"].flatMap((key) =>
       typeof tags[key] === "string" && /^[\w.:-]{1,120}$/.test(tags[key] as string) ? [[key, tags[key]]] : [])),
     request: request.url ? { url: origin(request.url) } : undefined,
