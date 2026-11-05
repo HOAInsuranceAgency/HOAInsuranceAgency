@@ -65,7 +65,13 @@ export function inspectFile(source, filename, repository = root) {
   function visit(node) {
     if (node.type === 'element' && node.name === 'script') {
       const type = node.attributes.find(attribute => attribute.name === 'type');
-      if (!type || type.kind === 'expression' || ['module', 'text/javascript', 'application/javascript'].includes(type.value)) {
+      const inert = type && type.kind !== 'expression' && ['application/ld+json', 'application/json', 'importmap', 'speculationrules'].includes(type.value.trim().toLowerCase());
+      if (!inert) {
+        const src = node.attributes.find(attribute => attribute.name === 'src');
+        if (src?.kind === 'quoted' && src.value) {
+          const line = src.position.start.line;
+          failures.push(...inspectSource('\n'.repeat(line - 1) + `import ${JSON.stringify(src.value)};`, filename, repository));
+        }
         for (const child of node.children ?? []) {
           if (child.type === 'text') {
             const offset = child.position.start.offset;

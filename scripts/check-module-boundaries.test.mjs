@@ -53,6 +53,10 @@ test('file-level scanning checks Astro browser scripts without treating frontmat
     }
     writeFileSync(path, '---\nimport buildOnly from "../../../crm/amplify/data/resource";\n---\n<script type="application/ld+json">{"text":"import server"}</script>');
     assert.deepEqual(moduleBoundaryViolations(fixture), []);
+    for (const attributes of ['src="../../../crm/amplify/functions/example/handler.sentry.ts"', 'type="" src="../../../crm/amplify/functions/example/handler.ts"']) {
+      writeFileSync(path, `<script ${attributes}></script>`);
+      assert.equal(moduleBoundaryViolations(fixture).length, 1);
+    }
   } finally { rmSync(fixture, { recursive: true, force: true }); }
 });
 
