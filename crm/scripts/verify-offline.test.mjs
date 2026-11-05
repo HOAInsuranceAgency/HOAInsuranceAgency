@@ -123,13 +123,16 @@ test('offline children cannot inherit credentials or deployment controls, and re
     if (!['PATH', 'KEEP_NON_SECRET', 'NODE_OPTIONS', 'AWS_REGION'].includes(key)) assert.equal(env[key], undefined, key);
   }
   assert.equal(env.PATH, source.PATH);
-  assert.equal(env.NODE_OPTIONS, source.NODE_OPTIONS);
+  assert.equal(env.NODE_OPTIONS, `${source.NODE_OPTIONS} --preserve-symlinks`);
   assert.equal(env.KEEP_NON_SECRET, 'yes');
   assert.equal(env.AWS_REGION, 'us-east-1');
   assert.equal(env.AWS_EC2_METADATA_DISABLED, 'true');
   assert.equal(env.AWS_CONFIG_FILE, devNull);
   assert.equal(env.AWS_SHARED_CREDENTIALS_FILE, devNull);
-  assert.equal(offlineEnvironment({}).NODE_OPTIONS, '--max-old-space-size=6144');
+  assert.equal(offlineEnvironment({}).NODE_OPTIONS, '--max-old-space-size=6144 --preserve-symlinks');
+  const auditOptions = offlineEnvironment({ NODE_OPTIONS: '--disable-sigusr1' }).NODE_OPTIONS;
+  assert.equal(auditOptions, '--disable-sigusr1 --preserve-symlinks');
+  assert.equal(auditOptions.includes('--preserve-symlinks-main'), false);
   assert.equal(source.AWS_BRANCH, 'production'); // Do not mutate the caller environment.
 });
 

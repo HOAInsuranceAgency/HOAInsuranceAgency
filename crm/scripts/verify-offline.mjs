@@ -16,9 +16,12 @@ const sameFile = (left, right) => left && right && left.dev === right.dev && lef
 export function offlineEnvironment(source = process.env) {
   const env = Object.fromEntries(Object.entries(source).filter(([key]) =>
     !/^(?:AWS_|CDK_|HOA_|VITE_HOA_|PUBLIC_HOA_|SENTRY_|VITE_SENTRY_|PUBLIC_SENTRY_|PUBLIC_CRM_|AMPLIFY_|GOOGLE_|OPENAI_|ANTHROPIC_)/.test(key)));
+  // Audit worktrees link installed dependencies from the primary checkout.
+  // Amplify's branch-linker asset must still resolve beneath this project root.
+  const nodeOptions = `${env.NODE_OPTIONS || '--max-old-space-size=6144'} --preserve-symlinks`;
   return { ...env, AWS_REGION: 'us-east-1', AWS_DEFAULT_REGION: 'us-east-1', AWS_EC2_METADATA_DISABLED: 'true',
     AWS_CONFIG_FILE: devNull, AWS_SHARED_CREDENTIALS_FILE: devNull,
-    ASTRO_TELEMETRY_DISABLED: '1', NODE_OPTIONS: env.NODE_OPTIONS || '--max-old-space-size=6144' };
+    ASTRO_TELEMETRY_DISABLED: '1', NODE_OPTIONS: nodeOptions };
 }
 
 /** The normal scripts remain authoritative. No deployments, migrations or command retries. */
