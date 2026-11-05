@@ -1,10 +1,11 @@
+import { resetCommercialFixtures } from '../test/fixtures/commercialClient';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { emptyLeadSnooze } from '../../../shared/leadSnooze';
 
 const request = vi.hoisted(() => vi.fn());
 vi.mock('../lib/communications', () => ({ communicationRequest: request }));
-vi.mock('../lib/client', () => import('../../scripts/commercial-preview/fixtures'));
+vi.mock('../lib/client', () => import('../test/fixtures/commercialClient'));
 vi.mock('./CommunicationAccountSummary', () => ({ default: () => null }));
 import LeadWorkflowPanel from './LeadWorkflowPanel';
 import { enableLiveUpdates, invalidateLiveUpdates } from '../test/liveUpdates';
@@ -36,6 +37,7 @@ function expectPrivateContextCleared() {
 }
 
 beforeEach(() => {
+  resetCommercialFixtures();
   request.mockReset();
   vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
   vi.setSystemTime('2026-10-01T16:00:00Z');

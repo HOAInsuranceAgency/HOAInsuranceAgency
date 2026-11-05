@@ -36,6 +36,8 @@ and JSON-LD are handled separately. Its tests introduce forbidden dependencies a
 verify they are caught, including deployed Lambda monitoring wrappers and static
 script sources. This is the single source-boundary checker; the shared enum/schema
 compile proofs remain in the CRM's `schemaContracts.test.ts`.
+Production browser source also cannot import fictional records, test helpers or preview tools, including their types. The CRM verifier compiles every local preview using its declared replacements; ordinary component tests use isolated test clients and data-only builders instead of importing preview entry points.
+
 The existing control architecture suite additionally checks native controls,
 inline styling, CSS recipes and component usage.
 

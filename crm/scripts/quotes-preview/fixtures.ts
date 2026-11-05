@@ -1,7 +1,8 @@
+import { account as accountFixture, quote as quoteFixture, carrier as carrierFixture } from '../../fixtures/builders';
 /** In-memory fictional data only. This entry point never loads the API client. */
 import { emptyCommercialPlan, packageAssessment, packageTerms, parseEstimate, type CommercialPlan, type PackageOption } from '../../../shared/quotePackages';
 import { authorizedQuoteTerms } from '../../../shared/quoteAuthorization';
-import type { Account, Carrier, Quote } from '../../src/lib/client';
+import type { Quote } from '../../src/lib/client';
 export type { Account, Carrier, Quote, Policy } from '../../src/lib/client';
 export type { TeamEligibility } from '../../../shared/leadWorkflow';
 export { listAllPages } from '../../../shared/pagination';
@@ -26,21 +27,21 @@ const params = new URLSearchParams(window.location.search);
 export const scenario = params.get('scenario') || 'empty';
 const today = new Date().toISOString().slice(0, 10);
 const future = (days: number) => new Date(Date.parse(`${today}T12:00:00Z`) + days * 86400000).toISOString().slice(0, 10);
-export const account = {
+export const account = accountFixture({
   id: 'fictional-willow', name: 'Willow Court Condominium', type: 'ASSOCIATION', stage: 'LEAD',
   city: 'Boston', state: 'MA', createdAt: `${future(-14)}T13:00:00Z`,
-} as Account;
+});
 export const carriers = [
-  { id: 'harbor', name: 'Harbor Mutual' },
-  { id: 'pine', name: 'Pine Insurance' },
-  { id: 'summit', name: 'Summit Specialty' },
-] as Carrier[];
-const quote = (id: string, carrierId: string, lines: string[], premium: number) => ({
+  carrierFixture({ id: 'harbor', name: 'Harbor Mutual' }),
+  carrierFixture({ id: 'pine', name: 'Pine Insurance' }),
+  carrierFixture({ id: 'summit', name: 'Summit Specialty' }),
+];
+const quote = (id: string, carrierId: string, lines: string[], premium: number) => quoteFixture({
   id, accountId: account.id, carrierId, lines, premium, commissionPct: 12.5, status: 'QUOTED',
   effectiveDate: future(30), expirationDate: future(395), offerExpiresAt: future(14),
   perOccurrenceDeductible: 5000, blanketLimit: 4000000,
   createdAt: `${future(-2)}T13:00:00Z`, updatedAt: `${today}T13:00:00Z`,
-}) as Quote;
+});
 export const quotes: Quote[] = ['populated', 'selected', 'estimates'].includes(scenario) ? [
   { ...quote('bundle', 'harbor', ['Commercial Property', 'General Liability', 'D&O'], 55541), brokerFee: 500, billType: 'AGENCY',
     passThroughCharges: JSON.stringify([

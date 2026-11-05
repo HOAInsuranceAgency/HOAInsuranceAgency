@@ -31,3 +31,4 @@ export const fmtDate=(value:string)=>new Date(`${value.slice(0,10)}T12:00:00Z`).
 export const fmtProviderPhone=(value:string)=>value==='+16175550123'?'(617) 555-0123':value;
 export const friendlyError=(error:unknown)=>String(error);
 export default {contextUpdates:{subscribe:(fn:(value:unknown)=>void)=>{const timer=setTimeout(()=>fn({conversation:{id:'cnv_example'}}),0);return{unsubscribe:()=>clearTimeout(timer)};}},openUrl:(url:string)=>notice(`Preview destination: ${url}`),createDraft:async()=>{notice('Draft prepared. In Front you would review and send it; this preview sends nothing.');}};
+export { fmtMoney } from '../../fixtures/presentation';

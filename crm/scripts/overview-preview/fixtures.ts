@@ -1,5 +1,6 @@
+import { account as accountFixture, contact as contactFixture } from '../../fixtures/builders';
 /** Fictional local data only. Type imports never initialize the CRM client. */
-import type { Account, Contact } from '../../src/lib/client';
+import type { Contact } from '../../src/lib/client';
 export type { Account, Contact } from '../../src/lib/client';
 export { listAllPages } from '../../../shared/pagination';
 export { validateAccountFields } from '../../src/lib/accountValidation';
@@ -8,7 +9,7 @@ export const scenario = new URLSearchParams(location.search).get('scenario') || 
 export const isClient = scenario === 'client';
 const isEmpty = scenario === 'empty';
 const time = (hoursAgo = 0) => new Date(Date.now() - hoursAgo * 3600000).toISOString();
-export const account = {
+export const account = accountFixture({
   id: 'fictional-willow', name: 'Willow Court Condominium', stage: isClient ? 'CLIENT' : 'LEAD', type: 'ASSOCIATION',
   createdAt: time(24 * 14), convertedAt: isClient ? time(24 * 4) : null,
   ...(isEmpty ? {} : {
@@ -25,13 +26,13 @@ export const account = {
     coverPhotoKey: 'preview/Willow-Court-cover.jpg', aerialPhotoKey: 'preview/Willow-Court-aerial.jpg',
     plotPlanKey: 'preview/Willow_Court_Condominium_Association_Buildings_A_B_C_Clubhouse_and_Detached_Maintenance_Garage_Site_Plan_REVISED_2026.pdf',
   }),
-} as unknown as Account;
+});
 
 const contacts: Contact[] = isEmpty ? [] : [
-  { id: 'contact-alex', accountId: account.id, name: 'Alex Taylor', type: 'MANAGER', email: 'alex.propertymanager@example.test', phone: '6175550142', notes: 'Best reached weekday mornings. Coordinates vendor access and renewal documents.', isPrimary: true },
-  { id: 'contact-riley', accountId: account.id, name: 'Riley Chen', type: 'PRESIDENT', email: 'riley.chen.board.president@example.test', phone: '6175550177', notes: 'Board president. Please copy on coverage decisions.', isPrimary: false },
-  { id: 'contact-jordan', accountId: account.id, name: 'Jordan Ellis — Community Management Accounting', type: 'ACCOUNTING', email: 'jordan.ellis.community.management.accounting@example.test', phone: '6175550128', notes: 'Handles invoices and the annual association budget.', isPrimary: false },
-] as unknown as Contact[];
+  contactFixture({ id: 'contact-alex', accountId: account.id, name: 'Alex Taylor', type: 'MANAGER', email: 'alex.propertymanager@example.test', phone: '6175550142', notes: 'Best reached weekday mornings. Coordinates vendor access and renewal documents.', isPrimary: true }),
+  contactFixture({ id: 'contact-riley', accountId: account.id, name: 'Riley Chen', type: 'PRESIDENT', email: 'riley.chen.board.president@example.test', phone: '6175550177', notes: 'Board president. Please copy on coverage decisions.', isPrimary: false }),
+  contactFixture({ id: 'contact-jordan', accountId: account.id, name: 'Jordan Ellis — Community Management Accounting', type: 'ACCOUNTING', email: 'jordan.ellis.community.management.accounting@example.test', phone: '6175550128', notes: 'Handles invoices and the annual association budget.', isPrimary: false }),
+];
 const failed = new Set<string>();
 async function readReady() {
   if (scenario === 'loading') await new Promise<void>(() => {});

@@ -57,6 +57,7 @@ test('both offline synth environments match the retained deployment contracts', 
 
 test('all verification includes both apps and scopes cannot silently skip their checks', () => {
   const all = verificationPlan().map(task => task.name);
+  assert.ok(all.includes('crm: preview:check'));
   for (const required of ['module boundaries', 'crm: test:run', 'crm: build', 'crm: typecheck:backend', 'backend synth: main', 'backend synth: staging', 'web: typecheck', 'web: articles:test', 'web: articles:build-test', 'web: test:sentry', 'web: build', 'web: seo:check']) assert.ok(all.includes(required), required);
   assert.ok(verificationPlan('web').every(task => !task.name.startsWith('crm:') && !task.name.startsWith('backend synth:')));
   assert.ok(verificationPlan('backend').some(task => task.name === 'backend synth: staging'));

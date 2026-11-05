@@ -1,6 +1,6 @@
 import { Input } from '../../src/components/ui/Input';
 import '../../src/components/UniversalSearch.css';
-import { createRoot } from 'react-dom/client';
+import { mountPreview } from '../preview-support/mount';
 import Financing from '../../src/pages/Financing';
 import { useIsAdmin } from './fixtures';
 import '../../src/styles.css';
@@ -29,4 +29,4 @@ function Preview() {
   </div>;
 }
 
-createRoot(document.getElementById('root')!).render(<Preview />);
+mountPreview(<Preview />);

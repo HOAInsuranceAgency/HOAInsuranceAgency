@@ -88,3 +88,15 @@ test('shared platform dependencies cannot hide behind element access, globalThis
 });
 
 test('current production modules satisfy the enforced boundaries', () => assert.deepEqual(moduleBoundaryViolations(), []));
+
+test('production code cannot import fictional records, tests or preview helpers, including through type and dynamic paths', () => {
+  const file = 'crm/src/lib/example.ts';
+  for (const path of ['../../fixtures/builders', '../../scripts/commercial-preview/fixtures', '../test/fixtures/commercialClient', './client.test.ts']) {
+    for (const declaration of ['import { account } from "' + path + '";', 'export * from "' + path + '";', 'import type { Example } from "' + path + '";', 'import("' + path + '");']) {
+      assert.equal(inspect(declaration, file).length, 1, declaration);
+    }
+  }
+  assert.equal(inspect('import(`../../fixtures/${name}`);', file).length, 1);
+  assert.equal(inspect('import { data } from "../../crm/fixtures/commercial";', 'web/src/example.ts').length, 1);
+  assert.deepEqual(inspect('import { Account } from "./client"; const label = "preview fixtures";', file), []);
+});

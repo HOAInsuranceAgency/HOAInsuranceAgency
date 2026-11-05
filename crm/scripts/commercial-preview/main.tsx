@@ -1,6 +1,6 @@
 import { Tabs, TabPanel } from '../../src/components/ui/Tabs';
 import { useState } from 'react';
-import { createRoot } from 'react-dom/client';
+import { mountPreview } from '../preview-support/mount';
 import { MemoryRouter } from 'react-router-dom';
 import AccountsList from '../../src/pages/AccountsList';
 import LeadsTab from '../../src/pages/dashboard/LeadsTab';
@@ -45,7 +45,7 @@ function Preview() {
     </div>
   );
 }
-createRoot(document.getElementById('root')!).render(
+mountPreview(
   <MemoryRouter>
     <Preview />
   </MemoryRouter>,

@@ -31,6 +31,7 @@ export function inspectSource(source, filename, repository = root) {
     const target = name.startsWith('.') ? normalized(relative(repository, resolve(dirname(filename), name))) : name;
     if (shared && (!name.startsWith('.') || !within(target, 'shared'))) report(node, 'Shared business rules may depend only on other shared modules.');
     if (browser && !typeOnly && within(target, 'crm/amplify')) report(node, 'Browser code must not load server runtime modules; use a shared contract or type-only schema import.');
+    if (browser && (['crm/fixtures', 'crm/scripts', 'crm/src/test', 'web/tests'].some(directory => within(target, directory)) || /\.(?:test|spec)\.[cm]?[jt]sx?$/.test(target))) report(node, 'Production browser modules must not depend on test fixtures or preview tools.');
     if (primitive && name.startsWith('.') && !within(target, 'crm/src/components/ui')) report(node, 'UI primitives must not depend on feature or data modules.');
     if (server && within(target, 'crm/src')) report(node, 'Server code must not import frontend modules; use shared business rules.');
   }
