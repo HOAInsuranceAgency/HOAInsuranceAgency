@@ -1,10 +1,22 @@
 import { spawnSync } from 'node:child_process';
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync, writeFileSync, unlinkSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export const repository = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const scopes = new Set(['all', 'crm', 'web', 'backend', 'architecture']);
+
+/** Satisfy the generated module import in clean checkouts without fetching a real backend. */
+export function prepareVerificationOutputs(root = repository) {
+  const path = join(root, 'crm/amplify_outputs.json');
+  const fixture = JSON.stringify({ version: '1.3', _comment: 'Temporary offline verification fixture; not a deployment configuration.' }) + '\n';
+  try { writeFileSync(path, fixture, { flag: 'wx' }); }
+  catch (error) { if (error.code === 'EEXIST') return () => {}; throw error; }
+  return () => {
+    try { if (readFileSync(path, 'utf8') === fixture) unlinkSync(path); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
+  };
+}
 
 /** Verification builds are offline: never upload monitoring data or inherit deployment controls. */
 export function verificationEnvironment(source = process.env) {
@@ -81,7 +93,13 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
     console.error('Usage: node scripts/verify.mjs [--scope=all|crm|web|backend|architecture]');
     process.exitCode = 1;
   } else {
-    try { process.exitCode = runVerification(verificationPlan(args[0]?.slice('--scope='.length) || 'all')); }
+    try {
+      const scope = args[0]?.slice('--scope='.length) || 'all';
+      const plan = verificationPlan(scope);
+      const cleanup = ['all', 'crm'].includes(scope) ? prepareVerificationOutputs() : () => {};
+      try { process.exitCode = runVerification(plan); }
+      finally { cleanup(); }
+    }
     catch (error) { console.error(error.message); process.exitCode = 1; }
   }
 }

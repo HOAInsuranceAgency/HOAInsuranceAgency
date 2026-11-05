@@ -15,6 +15,9 @@ synthesis uses non-secret settings from the retained deployment contracts and
 writes only temporary local build output. Those settings are not deployment
 credentials or permission to invoke a deployment. Live retained-resource checks
 in the Amplify release pipeline remain separate from this offline verification.
+For a clean checkout, verification temporarily creates the minimal generated
+Amplify outputs module needed by mocked tests and the offline browser build.
+It preserves existing outputs and removes only its unchanged fixture on completion.
 
 Architecture rules enforced by `scripts/check-module-boundaries.mjs`:
 
@@ -27,7 +30,9 @@ Architecture rules enforced by `scripts/check-module-boundaries.mjs`:
 - Lambda handlers cannot import the browser SDK-initializing client module.
 
 The checker inspects TypeScript syntax, including re-exports, require and dynamic
-imports. Its tests introduce forbidden dependencies and verify they are caught.
+imports, plus executable browser scripts in Astro pages. Build-time frontmatter
+and JSON-LD are handled separately. Its tests introduce forbidden dependencies and
+verify they are caught, including deployed Lambda monitoring wrappers.
 The existing control architecture suite additionally checks native controls,
 inline styling, CSS recipes and component usage.
 

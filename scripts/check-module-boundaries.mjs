@@ -6,6 +6,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(new URL('../crm/package.json', import.meta.url));
 const ts = require('typescript');
+const webRequire = createRequire(new URL('../web/package.json', import.meta.url));
+const { parse: parseAstro } = webRequire('@astrojs/compiler/sync');
 const normalized = value => value.replaceAll('\\', '/');
 const within = (path, directory) => path === directory || path.startsWith(`${directory}/`);
 
@@ -27,7 +29,7 @@ export function inspectSource(source, filename, repository = root) {
     const target = name.startsWith('.') ? normalized(relative(repository, resolve(dirname(filename), name))) : name;
     if (shared && (!name.startsWith('.') || !within(target, 'shared'))) report(node, 'Shared business rules may depend only on other shared modules.');
     const executableServer = /^crm\/amplify\/(?:backend|(?:data|auth|storage)\/resource)(?:\.[cm]?[jt]s)?$/.test(target)
-      || /^crm\/amplify\/functions\/.+\/handler(?:\.[cm]?[jt]s)?$/.test(target);
+      || /^crm\/amplify\/functions\/.+\/handler(?:\.sentry)?(?:\.[cm]?[jt]s)?$/.test(target);
     if (browser && !typeOnly && executableServer) report(node, 'Browser code must not load server entrypoints; use a shared contract or type-only schema import.');
     if (primitive && name.startsWith('.') && !within(target, 'crm/src/components/ui')) report(node, 'UI primitives must not depend on feature or data modules.');
     if (server && /^crm\/src\/lib\/client(?:\.[cm]?[jt]sx?)?$/.test(target)) report(node, 'Server code must not import the browser SDK client.');
@@ -56,14 +58,36 @@ export function inspectSource(source, filename, repository = root) {
   return errors;
 }
 
+/** Astro frontmatter runs at build time; only executable script bodies are browser code. */
+export function inspectFile(source, filename, repository = root) {
+  if (!filename.endsWith('.astro')) return inspectSource(source, filename, repository);
+  const failures = [];
+  function visit(node) {
+    if (node.type === 'element' && node.name === 'script') {
+      const type = node.attributes.find(attribute => attribute.name === 'type');
+      if (!type || type.kind === 'expression' || ['module', 'text/javascript', 'application/javascript'].includes(type.value)) {
+        for (const child of node.children ?? []) {
+          if (child.type === 'text') {
+            const offset = child.position.start.offset;
+            failures.push(...inspectSource(source.slice(0, offset).replace(/[^\n]/g, ' ') + child.value, filename, repository));
+          }
+        }
+      }
+    }
+    for (const child of node.children ?? []) visit(child);
+  }
+  visit(parseAstro(source, { position: true }).ast);
+  return failures;
+}
+
 export function moduleBoundaryViolations(repository = root) {
   function walk(directory) {
     if (!existsSync(directory)) return [];
     return readdirSync(directory, { withFileTypes: true }).flatMap(entry => {
       const path = join(directory, entry.name);
       if (entry.isDirectory()) return ['node_modules', 'test', '__tests__'].includes(entry.name) ? [] : walk(path);
-      return /\.[cm]?[jt]sx?$/.test(path) && !/\.(?:test|spec)\.[cm]?[jt]sx?$/.test(path)
-        ? inspectSource(readFileSync(path, 'utf8'), path, repository) : [];
+      return /(?:\.[cm]?[jt]sx?|\.astro)$/.test(path) && !/\.(?:test|spec)\.[cm]?[jt]sx?$/.test(path)
+        ? inspectFile(readFileSync(path, 'utf8'), path, repository) : [];
     });
   }
   return ['shared', 'crm/src', 'crm/amplify/functions', 'web/src'].flatMap(path => walk(join(repository, path)));

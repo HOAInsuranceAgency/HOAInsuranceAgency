@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { verificationEnvironment, synthEnvironment, verificationPlan, runVerification } from './verify.mjs';
+import { verificationEnvironment, synthEnvironment, verificationPlan, runVerification, prepareVerificationOutputs } from './verify.mjs';
 import { assertSteadyState } from '../crm/amplify/steady-state.mjs';
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const require = createRequire(new URL('../crm/package.json', import.meta.url));
 const { load } = require('js-yaml');
@@ -15,6 +17,27 @@ test('verification is fail-fast for failed, interrupted or unstartable commands'
     assert.notEqual(runVerification(plan, command => { calls.push(command); return result; }, {}), 0);
     assert.deepEqual(calls, ['first']);
   }
+});
+
+test('clean checkouts receive a temporary offline config without replacing existing or subsequently generated outputs', () => {
+  const root = mkdtempSync(join(tmpdir(), 'hoa-verification-tests-'));
+  const path = join(root, 'crm/amplify_outputs.json');
+  mkdirSync(join(root, 'crm'));
+  try {
+    let cleanup = prepareVerificationOutputs(root);
+    assert.equal(JSON.parse(readFileSync(path, 'utf8')).version, '1.3');
+    cleanup();
+    assert.equal(existsSync(path), false);
+    writeFileSync(path, 'existing configuration');
+    cleanup = prepareVerificationOutputs(root);
+    cleanup();
+    assert.equal(readFileSync(path, 'utf8'), 'existing configuration');
+    rmSync(path);
+    cleanup = prepareVerificationOutputs(root);
+    writeFileSync(path, 'configuration generated while verification ran');
+    cleanup();
+    assert.equal(readFileSync(path, 'utf8'), 'configuration generated while verification ran');
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test('verification does not inherit credentials, monitoring uploads or deployment controls', () => {
