@@ -85,6 +85,39 @@ describe("owner profitability privacy and report", () => {
     await act(async () => finish({ data: { ...snapshot(), report: { ...snapshot().report, from: "2025-01-01", to: "2025-12-31" } } }));
     expect(screen.getByText("2025-01-01 through 2025-12-31 · USD · Estimated")).toBeVisible();
   });
+  it("combines nearby date edits into one report read and cancels a pending invalid range", async () => {
+    vi.useFakeTimers();
+    try {
+      render(<OwnerProfitability />);
+      await act(async () => {});
+      expect(h.query).toHaveBeenCalledTimes(1);
+      fireEvent.change(screen.getByLabelText("From date"), { target: { value: "2025-01-01" } });
+      expect(screen.queryByRole("table")).toBeNull();
+      expect(screen.queryByRole("combobox", { name: /Download/ })).toBeNull();
+      act(() => vi.advanceTimersByTime(100));
+      fireEvent.change(screen.getByLabelText("Through date"), { target: { value: "2025-12-31" } });
+      await act(async () => { vi.advanceTimersByTime(249); });
+      expect(h.query).toHaveBeenCalledTimes(1);
+      await act(async () => { vi.advanceTimersByTime(1); });
+      expect(h.query).toHaveBeenCalledTimes(2);
+      expect(h.query).toHaveBeenLastCalledWith({ from: "2025-01-01", to: "2025-12-31" });
+      fireEvent.change(screen.getByLabelText("From date"), { target: { value: "2024-01-01" } });
+      act(() => vi.advanceTimersByTime(100));
+      fireEvent.change(screen.getByLabelText("From date"), { target: { value: "2025-01-01" } });
+      expect(h.query).toHaveBeenCalledTimes(2);
+      act(() => vi.advanceTimersByTime(100));
+      fireEvent.change(screen.getByLabelText("Through date"), { target: { value: "2025-11-30" } });
+      await act(async () => { vi.advanceTimersByTime(250); });
+      expect(h.query).toHaveBeenCalledTimes(3);
+      expect(h.query).toHaveBeenLastCalledWith({ from: "2025-01-01", to: "2025-11-30" });
+      fireEvent.change(screen.getByLabelText("From date"), { target: { value: "2024-01-01" } });
+      act(() => vi.advanceTimersByTime(100));
+      fireEvent.change(screen.getByLabelText("From date"), { target: { value: "" } });
+      await act(async () => { vi.advanceTimersByTime(1000); });
+      expect(h.query).toHaveBeenCalledTimes(3);
+      expect(screen.getByRole("alert")).toHaveTextContent("Choose a valid start and end date.");
+    } finally { vi.useRealTimers(); }
+  });
   it("automatically loads corrected dates while blocking incomplete, reversed, and over-five-year periods", async () => {
     render(<OwnerProfitability />); await screen.findByRole("table");
     fireEvent.change(screen.getByLabelText("From date"), { target: { value: "" } });

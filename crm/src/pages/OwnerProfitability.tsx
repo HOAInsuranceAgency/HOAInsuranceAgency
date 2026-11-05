@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { ReportDownload } from "../components/ReportDownload";
 import { DateRangeFilter } from "../components/DateRangeFilter";
 import { dateRangeError, dateRangePreset } from "../lib/dateRange";
+import { useReportDateRange } from "../lib/useReportDateRange";
 import { client } from "../lib/client";
 import { useIsOwner } from "../lib/auth";
 import { useAsyncResource } from "../lib/useAsyncResource";
@@ -37,9 +38,10 @@ function OwnerPage() {
   const [window, setWindow] = useState(() => dateRangePreset('ytd'));
   const [editingPay, setEditingPay] = useState(false);
   const error = dateRangeError(window, { validate: validateProfitabilityWindow });
+  const applied = useReportDateRange(window, !error);
   return <div className="owner-profitability">
     <DateRangeFilter label="Reporting period" value={window} onChange={setWindow} validate={validateProfitabilityWindow} disabled={editingPay} />
-    {!error && <ProfitabilitySnapshot key={`${window.from}|${window.to}`} {...window} onEditingChange={setEditingPay} />}
+    {applied ? <ProfitabilitySnapshot key={`${applied.from}|${applied.to}`} {...applied} onEditingChange={setEditingPay} /> : !error && <p className="muted small">Loading employee profitability…</p>}
   </div>;
 }
 

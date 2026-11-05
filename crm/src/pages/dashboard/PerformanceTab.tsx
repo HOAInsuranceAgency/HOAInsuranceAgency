@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { ReportDownload } from "../../components/ReportDownload";
 import { DateRangeFilter } from "../../components/DateRangeFilter";
 import { dateRangeError, type DateRange } from "../../lib/dateRange";
+import { useReportDateRange } from "../../lib/useReportDateRange";
 import { StackedBars, type ChartRow, type ChartSeries } from "../../components/StackedBars";
 import { client, fmtMoney, listAllPages, type Carrier, type Policy, type Quote } from "../../lib/client";
 import { loadAssignments, type AssignmentData } from "../../lib/dashboardAssignments";
@@ -26,9 +27,9 @@ const DECIDED_STATUSES = ["BOUND", "LOST", "DECLINED"] as const;
 
 export default function PerformanceTab() {
   const [range, setRange] = useState<DateRange>({ from: '', to: '' });
-  const { from, to } = range;
   const [excludeCancelled, setExcludeCancelled] = useState(true);
   const invalidRange = !!dateRangeError(range, { allowOpenEnded: true });
+  const applied = useReportDateRange(range, !invalidRange);
 
   return <>
     <DateRangeFilter label="Policy effective dates" value={range} onChange={setRange} allowOpenEnded />
@@ -36,7 +37,7 @@ export default function PerformanceTab() {
       <button aria-pressed={excludeCancelled} className={excludeCancelled ? "on" : ""} onClick={() => setExcludeCancelled(value => !value)}>Exclude cancelled</button>
     </div>
     <p className="muted small">Policy and quote effective dates · current account salesperson. Unassigned records stay in the totals. Earned broker fees remain after cancellation; recorded refunds reduce fee revenue.</p>
-    {!invalidRange && <PerformanceSnapshot key={`${from}|${to}|${excludeCancelled}`} from={from} to={to} excludeCancelled={excludeCancelled} />}
+    {applied ? <PerformanceSnapshot key={`${applied.from}|${applied.to}|${excludeCancelled}`} {...applied} excludeCancelled={excludeCancelled} /> : !invalidRange && <p className="muted small">Loading…</p>}
   </>;
 }
 

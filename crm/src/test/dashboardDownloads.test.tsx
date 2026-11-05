@@ -68,7 +68,7 @@ describe("dashboard report controls", () => {
     expect(value("Pending commission (USD)")).toBe(null);
     expect(JSON.stringify(report)).not.toContain("website-quote");
   });
-  it("exports the selected reporting window and excludes cancelled policies", () => {
+  it("exports the selected reporting window and excludes cancelled policies", async () => {
     h.data.policies = [
       { id: "p1", accountId: "a1", carrierId: "c1", effectiveDate: "2026-09-01", premium: 1000, commissionPct: 10, status: "ACTIVE" },
       { id: "p2", accountId: "a1", carrierId: "c1", effectiveDate: "2025-09-01", premium: 5000, commissionPct: 10, status: "ACTIVE" },
@@ -78,7 +78,7 @@ describe("dashboard report controls", () => {
     render(<MemoryRouter><PerformanceTab /></MemoryRouter>);
     const dates = document.querySelectorAll('input[type="date"]');
     fireEvent.change(dates[0], { target: { value: "2026-01-01" } }); fireEvent.change(dates[1], { target: { value: "2026-12-31" } });
-    fireEvent.change(screen.getByRole("combobox", { name: "Download Commission by lead source" }), { target: { value: "csv" } });
+    fireEvent.change(await screen.findByRole("combobox", { name: "Download Commission by lead source" }), { target: { value: "csv" } });
     const report = h.save.mock.calls[0][0];
     expect(report.filters).toContain("2026-01-01 through 2026-12-31");
     expect(report.sections[0].rows).toEqual([["Google Ad Website", 100, 0, 100, 1]]);
