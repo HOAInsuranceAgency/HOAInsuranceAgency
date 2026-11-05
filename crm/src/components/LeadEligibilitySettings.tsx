@@ -150,7 +150,7 @@ type EligibilitySettings = ReturnType<typeof useLeadEligibilitySettings>;
 export function LeadEligibilityFeedback({ settings }: { settings: EligibilitySettings }) {
   const { editing, error, resource, disabled, refresh, busy, message } = settings;
   return <>
-    {!editing && (error || resource.error) && <div role="alert"><p className="error-text">{error || resource.error}</p><Button variant="secondary" type="button"  disabled={disabled} onClick={refresh}>Refresh assignment settings</Button></div>}
+    {!editing && (error || resource.error) && <div role="alert"><p className="error-text">{error || resource.error}</p><Button variant="secondary" type="button"  disabled={disabled} onClick={refresh}>Retry</Button></div>}
     <p className="small muted" role="status">{busy ? "Saving teammate settings…" : resource.loading ? "Loading assignment settings…" : message}</p>
     <LiveStatus resource={resource} />
   </>;

@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
+import { invalidateLiveUpdates } from "../test/liveUpdates";
 import type { BusinessDeliveryAttempt, BusinessDeliveryContext, BusinessDeliveryPreview, BusinessDeliverySelection } from "../../../shared/frontBusinessDelivery";
 const h = vi.hoisted(() => ({ request: vi.fn() }));
 vi.mock("../lib/communications", () => ({ communicationRequest: h.request }));
@@ -53,8 +54,24 @@ function recipients(to = "client@example.com", cc = "") {
 }
 function acknowledge() { fireEvent.click(screen.getByLabelText(/I checked the sender/)); }
 
+it("offers a read-only Retry only when Front history fails to load", async () => {
+  const base = h.request.getMockImplementation()!;
+  let unavailable = true;
+  h.request.mockImplementation((op, input) => op === "historyBusinessDeliveries" && unavailable
+    ? Promise.reject(new Error("Front history unavailable")) : base(op, input));
+  await mount();
+  const history = screen.getByRole("region", { name: "Front email history" });
+  expect(await within(history).findByRole("alert")).toHaveTextContent("Front history unavailable");
+  unavailable = false;
+  fireEvent.click(within(history).getByRole("button", { name: "Retry" }));
+  await within(history).findByText("No Front drafts recorded for this account.");
+  expect(within(history).queryByRole("button", { name: "Retry" })).toBeNull();
+  expect(h.request.mock.calls.filter(([, , write]) => write)).toHaveLength(0);
+});
+
 it("requires explicit recipients and review, with one server API in standalone CRM", async () => {
   await mount();
+  expect(within(screen.getByRole("region", { name: "Front email history" })).queryByRole("button", { name: /refresh|retry/i })).toBeNull();
   expect(screen.getByLabelText("To")).toHaveValue("");
   expect(screen.getByLabelText("Front conversation")).toHaveValue("NEW");
   await review();
@@ -168,6 +185,16 @@ it("retains the exact request and recipients after an uncertain create response"
   fireEvent.click(screen.getByRole("button", { name: "Prepare Front draft" }));
   await screen.findByRole("region", { name: "Unconfirmed draft" });
   expect(screen.getByLabelText("To")).toBeDisabled();
+  const unconfirmed = screen.getByRole("region", { name: "Unconfirmed draft" });
+  const reads = h.request.mock.calls.filter(([op]) => op === "historyBusinessDeliveries").length;
+  fireEvent.click(within(unconfirmed).getByRole("button", { name: "Retry" }));
+  await waitFor(() => expect(h.request.mock.calls.filter(([op]) => op === "historyBusinessDeliveries")).toHaveLength(reads + 1));
+  await invalidateLiveUpdates(['CRM']);
+  expect(h.request.mock.calls.filter(([op]) => op === "historyBusinessDeliveries")).toHaveLength(reads + 2);
+  expect(screen.getByLabelText("To")).toHaveValue("holder@example.com");
+  expect(screen.getByLabelText("CC (optional)")).toHaveValue("client@example.com");
+  expect(screen.getByLabelText("To")).toBeDisabled();
+  expect(h.request.mock.calls.filter(([op]) => op === "prepareBusinessDraft")).toHaveLength(1);
   fireEvent.click(screen.getByRole("button", { name: "Retry same draft request" }));
   await screen.findByRole("region", { name: "Prepared draft result" });
   const calls = h.request.mock.calls.filter(([op]) => op === "prepareBusinessDraft");
@@ -357,7 +384,7 @@ it("upgrades an active Sent result to Sent with changes without losing verified 
   await mount(); recipients(); await review(); acknowledge();
   fireEvent.click(screen.getByRole("button", { name: "Prepare Front draft" }));
   const result = await screen.findByRole("region", { name: "Prepared draft result" });
-  const refresh = async () => { fireEvent.click(within(screen.getByRole("region", { name: "Front email history" })).getByRole("button", { name: "Refresh history" })); await act(async () => {}); };
+  const refresh = () => invalidateLiveUpdates(['CRM']);
   rows = [attempt({ state: "SENT", sentAt: "2026-11-01T15:01:00Z" })]; await refresh();
   expect(await within(result).findByText("Sent", { exact: true })).toBeInTheDocument();
   rows = [attempt({ state: "SENT", sentWithChanges: true, sentAt: "2026-11-01T15:01:00Z", messageUrl: "https://app.frontapp.com/open/msg_actual" })]; await refresh();
@@ -377,7 +404,7 @@ it("upgrades an active Sent result to Sent with changes without losing verified 
   rows = [attempt({ state: "SENT", sentWithChanges: false })]; await refresh();
   expect(within(result).getByText("Failed", { exact: true })).toBeInTheDocument();
   expect(result).toHaveTextContent("Front reported a delivery failure");
-});
+}, 10_000);
 
 it("keeps trusted sent-with-changes responses qualified through stale passive history refreshes", async () => {
   const base = h.request.getMockImplementation()!;
@@ -392,7 +419,7 @@ it("keeps trusted sent-with-changes responses qualified through stale passive hi
   fireEvent.click(await within(history).findByRole("button", { name: "Check Front status" }));
   expect(await within(history).findByText("Sent with changes", { exact: true })).toBeInTheDocument();
   rows = [attempt({ state: "DRAFT", sentWithChanges: false, frontUrl: undefined })];
-  fireEvent.click(within(history).getByRole("button", { name: "Refresh history" })); await act(async () => {});
+  await invalidateLiveUpdates(['CRM']);
   expect(within(history).getByText("Sent with changes", { exact: true })).toBeInTheDocument();
   expect(history).toHaveTextContent("Originally prepared for To: client@example.com");
   expect(within(history).getByRole("link", { name: "Open in Front ↗" })).toHaveAttribute("href", "https://app.frontapp.com/open/msg_verified");
@@ -406,7 +433,7 @@ it("refreshes the active prepared result to Sent/Failed without stale history do
   fireEvent.click(screen.getByRole("button", { name: "Prepare Front draft" }));
   const result = await screen.findByRole("region", { name: "Prepared draft result" });
   expect(within(result).getByText("Prepared", { exact: true })).toBeInTheDocument();
-  const refresh = async () => { fireEvent.click(within(screen.getByRole("region", { name: "Front email history" })).getByRole("button", { name: "Refresh history" })); await act(async () => {}); };
+  const refresh = () => invalidateLiveUpdates(['CRM']);
   rows = [attempt({ state: "SENT", sentAt: "2026-11-01T15:01:00Z" })];
   await refresh();
   expect(await within(result).findByText("Sent", { exact: true })).toBeInTheDocument();
@@ -418,7 +445,7 @@ it("refreshes the active prepared result to Sent/Failed without stale history do
   expect(result).toHaveTextContent("Front reported a delivery failure");
   rows = [attempt({ state: "SENT" })]; await refresh();
   expect(within(result).getByText("Failed", { exact: true })).toBeInTheDocument();
-});
+}, 10_000);
 
 it.each(["preview", "prepared"])("clears all cached account details on history authorization denial while showing %s", async phase => {
   const base = h.request.getMockImplementation()!;

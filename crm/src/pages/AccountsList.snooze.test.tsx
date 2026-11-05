@@ -186,7 +186,7 @@ it('preserves the saved date after failure and refreshes the version before retr
 
   snoozes.willow = { accountId: 'willow', version: 5, followUpOn: '2026-10-10', note: 'Updated elsewhere' };
   h.request.mockImplementation(initial);
-  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
   fireEvent.click(await screen.findByRole('button', { name: `Edit follow-up for ${willow}` }));
   expect(row(willow).getByLabelText('Follow-up date')).toHaveValue('2026-10-10');
   fillFollowUp(willow, '2026-10-12', 'Revised note');
@@ -217,7 +217,7 @@ it.each(['refresh-last', 'save-last'] as const)('keeps the newest confirmed foll
   fireEvent.click(row(willow).getByRole('button', { name: `Snooze ${willow}` }));
   fillFollowUp(willow, '2026-10-09', 'Saved follow-up');
   refreshing = true;
-  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
   await waitFor(() => expect(finishRefresh).toBeTypeOf('function'));
   const snapshot = await initial('commercialTable', { accountIds: ['willow', 'pine', 'cedar'], snoozeAccountIds: ['willow', 'pine'] });
   const saved = { snooze: { accountId: 'willow', version: 8, followUpOn: '2026-10-09', note: 'Saved follow-up' } };

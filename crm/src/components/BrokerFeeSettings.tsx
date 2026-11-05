@@ -22,12 +22,11 @@ export default function BrokerFeeSettings() {
   return <div className="card"><h2>Broker fee disclosures</h2><p className="muted small">Configure the fee eligibility and disclosure wording reviewed for each state. Quotes use these rules automatically. A state without configured rules cannot charge a broker fee.</p>
     {data.error?<p className="error-text">{data.error} <Button variant="link"  onClick={()=>void data.refetch()}>Retry</Button></p>:!data.loaded?<p>Loading disclosure settings…</p>:<>
       <label className="field">State<Select disabled={saving} value={state} onChange={e=>setState(e.target.value)}>{US_STATES.map(s=><option key={s}>{s}</option>)}</Select></label>
-      <JurisdictionForm key={`${state}:${data.data?.version}`} state={state} existing={data.data?.rules[state]} version={data.data?.version??0} onSaved={()=>void data.refetch()} onBusy={setSaving}/>
-      <Button variant="link"  disabled={saving||data.loading} onClick={()=>void data.refetch()}>Reload current disclosure rules</Button>
+      <JurisdictionForm key={`${state}:${data.data?.version}`} state={state} existing={data.data?.rules[state]} version={data.data?.version??0} onSaved={()=>void data.refetch()} onRetry={()=>void data.refetch()} onBusy={setSaving}/>
     </>}
   </div>;
 }
-function JurisdictionForm({state,existing,version,onSaved,onBusy}:{state:string;existing?:BrokerFeeJurisdictionRule;version:number;onSaved:()=>void;onBusy:(busy:boolean)=>void}) {
+function JurisdictionForm({state,existing,version,onSaved,onRetry,onBusy}:{state:string;existing?:BrokerFeeJurisdictionRule;version:number;onSaved:()=>void;onRetry:()=>void;onBusy:(busy:boolean)=>void}) {
   const [rule,setRule]=useState({version:existing?.version??'',reviewedBy:existing?.reviewedBy??'',reviewedAt:existing?.reviewedAt?.slice(0,10)??'',evidenceUrl:existing?.evidenceUrl??'',lines:existing?.allowedLines.join(', ')??'',maxFee:existing?.maxFeeCents==null?'':String(existing.maxFeeCents/100),approved:!!existing,discloseCarrierCommission:existing?.discloseCarrierCommission??false,requiresBrokerSignature:existing?.requiresBrokerSignature??false,signerName:existing?.agencySigner?.name??'',signerTitle:existing?.agencySigner?.title??'',signerLicense:existing?.agencySigner?.licenseNumber??'',signerAuthorized:existing?.agencySigner?.authorized??false,forms:existing?.forms??[]});
   const baseline=useRef(JSON.stringify(rule));
   useLiveUpdateBlock(JSON.stringify(rule)!==baseline.current);
@@ -67,6 +66,6 @@ function JurisdictionForm({state,existing,version,onSaved,onBusy}:{state:string;
     {rule.forms.map((form,index)=><div key={index} className="card"><label className="field">Form title<Input value={form.title} onChange={e=>edit('forms',rule.forms.map((f,i)=>i===index?{...f,title:e.target.value}:f))}/></label><label className="field">Disclosure wording<Textarea rows={7} value={form.paragraphs.join('\n\n')} onChange={e=>edit('forms',rule.forms.map((f,i)=>i===index?{...f,paragraphs:e.target.value.split(/\n\s*\n/).filter(s=>s.trim())}:f))}/></label><Button variant="link"  onClick={()=>edit('forms',rule.forms.filter((_,i)=>i!==index))}>Remove form</Button></div>)}
     <Button variant="secondary"  disabled={rule.forms.length>=10} onClick={()=>edit('forms',[...rule.forms,{title:'',paragraphs:[]}])}>Add state form</Button>
     <label style={{display:'block',marginTop:16}}><Input type="checkbox" checked={rule.approved} onChange={e=>edit('approved',e.target.checked)}/> Enable these reviewed rules for fees alongside carrier commission. Uncheck to stop new fee agreements in this state.</label>
-    <div className="form-actions"><Button variant="primary"  onClick={()=>void save()}>Save disclosure rules</Button><SaveStatus {...status.status}/></div>
+    <div className="form-actions"><Button variant="primary"  onClick={()=>void save()}>Save disclosure rules</Button><SaveStatus {...status.status}/>{status.status.state==='error'&&<Button variant="link" type="button" onClick={onRetry}>Retry</Button>}</div>
   </fieldset>;
 }
