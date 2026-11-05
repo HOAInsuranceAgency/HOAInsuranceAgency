@@ -1,3 +1,4 @@
+import { sendCrmWrite } from '../live-write';
 import { agencyDay } from "../../../../shared/leadActionGuidance";
 import { feeAllocations } from "../../../../shared/brokerFees";
 import { syncBrokerFeePayment } from "../broker-fees/payments";
@@ -244,7 +245,7 @@ async function cancelQuotedLoans(invoice: InvoiceRow) {
       }
       if (logTable) {
         try {
-          await ddb.send(
+          await sendCrmWrite(ddb.send(
             new PutCommand({
               TableName: logTable,
               Item: {
@@ -264,7 +265,7 @@ async function cancelQuotedLoans(invoice: InvoiceRow) {
                 occurredAt: now,
               },
             })
-          );
+          ));
         } catch (err) {
           console.error("stripe-webhook: double-path log write failed", err);
         }
@@ -272,7 +273,7 @@ async function cancelQuotedLoans(invoice: InvoiceRow) {
       continue;
     }
     try {
-      await ddb.send(
+      await sendCrmWrite(ddb.send(
         new UpdateCommand({
           TableName: loanTable,
           Key: { id: loan.id },
@@ -283,7 +284,7 @@ async function cancelQuotedLoans(invoice: InvoiceRow) {
           ExpressionAttributeNames: { "#s": "status" },
           ExpressionAttributeValues: { ":c": "CANCELLED", ":q": "QUOTED", ":now": now },
         })
-      );
+      ));
     } catch (err) {
       if ((err as { name?: string }).name === "ConditionalCheckFailedException") {
         /**
@@ -306,7 +307,7 @@ async function cancelQuotedLoans(invoice: InvoiceRow) {
     }
     if (logTable) {
       try {
-        await ddb.send(
+        await sendCrmWrite(ddb.send(
           new PutCommand({
             TableName: logTable,
             Item: {
@@ -326,7 +327,7 @@ async function cancelQuotedLoans(invoice: InvoiceRow) {
               occurredAt: now,
             },
           })
-        );
+        ));
       } catch (err) {
         console.error("stripe-webhook: supersede log write failed", err);
       }

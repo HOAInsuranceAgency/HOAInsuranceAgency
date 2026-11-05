@@ -55,7 +55,7 @@ describe("TabFrame", () => {
     expect(screen.getByText("Loading…")).toBeTruthy();
   });
 
-  it("a failed refresh keeps the data and the Refresh control on screen", () => {
+  it("a failed read keeps data visible with a recovery message", () => {
     const { rerender } = render(<TabFrame res={base}>the table</TabFrame>);
     expect(screen.getByText("the table")).toBeTruthy();
 
@@ -66,7 +66,7 @@ describe("TabFrame", () => {
     );
     expect(screen.getByText("the table")).toBeTruthy();
     expect(screen.getByText(/showing the last numbers/)).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Refresh" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Refresh" })).toBeNull();
   });
 
   it('removes a cleared snapshot and keeps it hidden during retry', () => {

@@ -1,3 +1,4 @@
+import { sendCrmWrite } from './live-write';
 import { feeAllocations, type BrokerFeeAllocation } from "../../../shared/brokerFees";
 import { randomUUID } from "node:crypto";
 import type { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
@@ -117,7 +118,7 @@ async function writeDecisions(
   let allLanded = true;
   for (const d of decisions) {
     try {
-      await ddb.send(
+      await sendCrmWrite(ddb.send(
         new PutCommand({
           TableName: table,
           Item: {
@@ -137,7 +138,7 @@ async function writeDecisions(
             occurredAt: now,
           },
         })
-      );
+      ));
     } catch (err) {
       console.error(`[pfOrigination] log write failed for ${d.rule}`, err);
       allLanded = false;
@@ -293,7 +294,7 @@ export async function originateLoan(
         const loanId = randomUUID();
         const nowIso = new Date().toISOString();
         try {
-          await ddb.send(
+          await sendCrmWrite(ddb.send(
             new TransactWriteCommand({
               TransactItems: [
                 {
@@ -343,7 +344,7 @@ export async function originateLoan(
                 },
               ],
             })
-          );
+          ));
         } catch (err) {
           const canceled = err as {
             name?: string;

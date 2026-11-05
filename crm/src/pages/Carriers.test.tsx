@@ -1,3 +1,4 @@
+import { invalidateLiveUpdates } from "../test/liveUpdates";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation } from "react-router-dom";
@@ -362,6 +363,21 @@ describe("adding a carrier", () => {
   });
 });
 
+it("releases cancelled carrier drafts and applies deferred live lists", async () => {
+  const user = userEvent.setup(); await renderPage();
+  await user.click(screen.getByRole("button", {name:"+ Add carrier"}));
+  await user.type(screen.getByRole("textbox", {name:"Carrier name *"}), "Unsaved market");
+  models.Carrier.list.mockResolvedValue({data:[{...CARRIERS[0],name:"Updated Atlantic"},...CARRIERS.slice(1)],nextToken:null});
+  await invalidateLiveUpdates();
+  expect(models.Carrier.list).toHaveBeenCalledTimes(1);
+  expect(screen.getByRole("textbox", {name:"Carrier name *"})).toHaveValue("Unsaved market");
+  await user.click(screen.getByRole("button", {name:"Cancel"}));
+  expect(await screen.findByRole("link", {name:"Updated Atlantic"})).toBeVisible();
+  expect(models.Carrier.list).toHaveBeenCalledTimes(2);
+  await user.click(screen.getByRole("button", {name:"+ Add carrier"}));
+  expect(screen.getByRole("textbox", {name:"Carrier name *"})).toHaveValue("");
+});
+
 describe("the appetite finder", () => {
   it("retains the risk while refresh and retry withhold stale appetite results", async () => {
     const user = userEvent.setup();
@@ -371,9 +387,9 @@ describe("the appetite finder", () => {
     expect(results().getByRole("link", { name: "Beacon Specialty" })).toBeInTheDocument();
     let finish!: (page: { data: typeof GUIDES; nextToken: null; errors: { message: string }[] }) => void;
     models.AppetiteGuide.list.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
-    await user.click(screen.getByRole("button", { name: "Refresh" }));
-    expect(results().queryByRole("table", { name: "Appetite matches" })).not.toBeInTheDocument();
-    expect(results().getByRole("status")).toHaveTextContent("Appetite results are unavailable");
+    await invalidateLiveUpdates();
+    expect(results().getByRole("table", { name: "Appetite matches" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Refresh" })).toBeNull();
     expect(field("State")).toHaveValue("MA");
     expect(field("Rented units (%)")).toHaveValue(40);
     await act(async () => { finish({ data: [], nextToken: null, errors: [{ message: "Guide refresh unavailable" }] }); });

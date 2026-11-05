@@ -1,3 +1,4 @@
+import { sendCrmWrite } from '../live-write';
 import { randomUUID } from "node:crypto";
 import { Amplify } from "aws-amplify";
 import { generateClient } from "aws-amplify/data";
@@ -75,7 +76,7 @@ export const handler = async () => {
     const logTable = process.env.PF_COMPLIANCE_LOG_TABLE;
     if (logTable) {
       try {
-        await ddb.send(
+        await sendCrmWrite(ddb.send(
           new PutCommand({
             TableName: logTable,
             Item: {
@@ -99,7 +100,7 @@ export const handler = async () => {
               occurredAt: now,
             },
           })
-        );
+        ));
       } catch (err) {
         console.error("pf-default-sweep: stale-marker log write failed", err);
       }
@@ -121,7 +122,7 @@ export const handler = async () => {
       break;
     }
     try {
-      await ddb.send(
+      await sendCrmWrite(ddb.send(
         new UpdateCommand({
           TableName: loanTable,
           Key: { id: loan.id },
@@ -144,7 +145,7 @@ export const handler = async () => {
             ":seen": loan.nextDueAt,
           },
         })
-      );
+      ));
     } catch (err) {
       if ((err as { name?: string }).name === "ConditionalCheckFailedException") {
         console.log(`pf-default-sweep: ${loan.id} was serviced or claimed mid-sweep; not marking`);
@@ -156,7 +157,7 @@ export const handler = async () => {
     const table = process.env.PF_COMPLIANCE_LOG_TABLE;
     if (table) {
       try {
-        await ddb.send(
+        await sendCrmWrite(ddb.send(
           new PutCommand({
             TableName: table,
             Item: {
@@ -176,7 +177,7 @@ export const handler = async () => {
               occurredAt: now,
             },
           })
-        );
+        ));
       } catch (err) {
         console.error("pf-default-sweep: log write failed", err);
       }

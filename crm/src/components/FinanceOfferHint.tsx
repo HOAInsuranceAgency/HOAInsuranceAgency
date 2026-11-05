@@ -81,7 +81,7 @@ export function FinanceOfferHint({
       return { hasOpinion: opinions, loans: loans as PfLoan[] };
     },
     [anchor.id, anchor.kind, j?.code, j?.status],
-    { initialData: null, errorMessage: "Couldn't check financing." }
+    { initialData: null, errorMessage: "Couldn't check financing." , live: true }
   );
 
   if (res.error) return <p className="muted small">{res.error} <Button type="button" disabled={res.loading} onClick={() => void res.refetch()}>Retry financing check</Button></p>;

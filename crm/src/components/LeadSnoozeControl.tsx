@@ -1,3 +1,4 @@
+import { useLiveUpdateBlock } from "../lib/useLiveUpdates";
 import { Input } from "./ui/Input";
 import { Textarea } from "./ui/Textarea";
 import { Button } from "./ui/Button";
@@ -25,6 +26,7 @@ export function LeadSnoozeControl({ accountName, snooze, today, onSaved, onRefre
   const [busy, setBusy] = useState(false);
   const saving = useRef(false);
   const status = leadSnoozeStatus(snooze, today);
+  useLiveUpdateBlock(editing || busy);
   useRowInteraction(`snooze:${snooze.accountId}`, editing || busy, onInteractionChange);
 
   async function save(date: string | null, nextNote: string, version = snooze.version) {

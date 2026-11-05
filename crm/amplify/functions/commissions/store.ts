@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { sendCommissionWrite } from '../live-write';
 import { setTimeout } from 'node:timers/promises';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import {
@@ -150,5 +151,7 @@ export async function commit(changes: Change[], actor: string, extras: Transacti
     items.some((item) => Buffer.byteLength(JSON.stringify(item), 'utf8') > 300_000)
   )
     throw new Error('This operation is too large. Use a smaller statement or payroll batch.');
-  await db.send(new TransactWriteCommand({ TransactItems: items }));
+  const producers = changes.flatMap(change => [change.value.producerId, change.previous?.producerId])
+    .filter((id): id is string => typeof id === 'string' && !!id);
+  await sendCommissionWrite(db.send(new TransactWriteCommand({ TransactItems: items })), producers);
 }

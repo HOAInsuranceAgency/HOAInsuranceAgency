@@ -202,7 +202,7 @@ function AccountDetailPage({ profile }: { profile: UserProfile }) {
       return response.data;
     },
     [id],
-    { initialData: null as Account | null, errorMessage: "Failed to load account" }
+    { initialData: null as Account | null, errorMessage: "Failed to load account" , live: true }
   );
   const account = res.data;
   const setAccount = res.setData;
@@ -313,7 +313,7 @@ function LeadAssignment({ account }: { account: Account }) {
     // An explicit retry may finish after a newer assignment save.
     const saved = savedWorkflow.current;
     return saved && saved.version > (context.workflow?.version ?? 0) ? { ...context, workflow: saved } : context;
-  }, [account.id], { initialData: null as WorkflowContext | null, errorMessage: "Could not load salesperson", clearDataOnError: isAuthorizationError });
+  }, [account.id], { initialData: null as WorkflowContext | null, errorMessage: "Could not load salesperson", clearDataOnError: isAuthorizationError , live: true });
 
   return <section className="card account-lead-assignment" aria-label="Lead salesperson">
     <h2>Salesperson</h2>

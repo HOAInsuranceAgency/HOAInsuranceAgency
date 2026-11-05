@@ -38,7 +38,7 @@ export function AppetiteGuides({ carrierId }: { carrierId: string }) {
       // A failed read said "No appetite guides recorded.", so the next step is
       // adding a duplicate of a guide that already exists.
       errorMessage: "Failed to load appetite guides",
-    }
+     live: true }
   );
   const guides = res.data;
   const setGuides = res.setData;
@@ -191,7 +191,7 @@ function GuideForm({
   // Read side: column value → input string. (Not `formCodec`'s `str`, which
   // runs the other way; that boundary is a separate migration.)
   const str = (n: number | null | undefined) => (n == null ? "" : String(n));
-  const { form, setF } = useFormState({
+  const { form, setF, markSaved } = useFormState({
     lines: (existing?.linesWritten ?? []).filter((l): l is string => !!l),
     bestFit: (existing?.bestFitBusiness ?? []).filter((b): b is string => !!b),
     states: (existing?.states ?? []).filter((s): s is string => !!s),
@@ -216,6 +216,7 @@ function GuideForm({
   const [error, setError] = useState("");
 
   async function save() {
+    const submitted = form;
     if (inFlight.current) return;
     // Inverted ranges silently break the Appetite Finder — catch them here.
     const problems: string[] = [];
@@ -271,6 +272,7 @@ function GuideForm({
         : await client.models.AppetiteGuide.create({ carrierId, ...payload });
       assertNoErrors(result);
       if (!result.data) throw new Error('No saved guide was returned.');
+      markSaved(submitted);
       onSaved(result.data);
     } catch (error) {
       setError(friendlyError(error, 'Save failed'));

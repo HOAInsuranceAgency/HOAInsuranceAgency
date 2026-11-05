@@ -1,3 +1,4 @@
+import { useLiveUpdateBlock } from "../lib/useLiveUpdates";
 import { Button } from "./ui/Button";
 import { Input } from "./ui/Input";
 import { useRef, useState } from 'react';
@@ -24,6 +25,7 @@ export function OpportunityEstimate({
     [error, setError] = useState('');
   const pending = useRef(false);
   const [editingVersion, setEditingVersion] = useState(plan.version);
+  useLiveUpdateBlock(editing || saving);
   useRowInteraction(`estimate:${plan.accountId}`, editing || saving, onInteractionChange);
   return (
     <div

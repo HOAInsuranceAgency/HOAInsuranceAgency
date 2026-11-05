@@ -1,3 +1,4 @@
+import { sendCrmWrite } from './live-write';
 import type { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import { TransactWriteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { parseScheduleJson } from "../../src/lib/premiumFinance/quote";
@@ -143,7 +144,7 @@ export async function postInstallment(opts: {
    */
   let alreadyPosted = false;
   try {
-    await ddb.send(
+    await sendCrmWrite(ddb.send(
       new TransactWriteCommand({
         TransactItems: [
           {
@@ -174,7 +175,7 @@ export async function postInstallment(opts: {
           { Update: advance },
         ],
       })
-    );
+    ));
   } catch (err) {
     const canceled = err as { name?: string; CancellationReasons?: { Code?: string }[] };
     if (canceled.name !== "TransactionCanceledException") throw err;
@@ -202,7 +203,7 @@ export async function postInstallment(opts: {
      */
     alreadyPosted = true;
     try {
-      await ddb.send(new UpdateCommand(advance));
+      await sendCrmWrite(ddb.send(new UpdateCommand(advance)));
     } catch (advErr) {
       if ((advErr as { name?: string }).name !== "ConditionalCheckFailedException") throw advErr;
       console.error(

@@ -27,7 +27,7 @@ export default function DetailsCard({
   // One owner for "is the confirmation still true": `useFormState`'s `saved`
   // is left unread and `useSaveStatus` carries saving/saved/error together.
   const saveStatus = useSaveStatus();
-  const { form, setF, patch } = useFormState({
+  const { form, setF, patch, markSaved } = useFormState({
     address: inputValue(account.address),
     city: inputValue(account.city),
     county: inputValue(account.county),
@@ -48,6 +48,7 @@ export default function DetailsCard({
   }, { onEdit: saveStatus.markDirty });
 
   async function save() {
+    const submitted = form;
     // The four system-update year checks moved with the years themselves:
     // they are per-building now, in `BuildingsCard`'s validator.
     const problems = validateAccountFields(form);
@@ -87,6 +88,7 @@ export default function DetailsCard({
             })
           )
         );
+        markSaved(submitted);
       },
       { errorMessage: "Save failed" }
     );

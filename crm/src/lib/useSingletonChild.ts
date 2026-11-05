@@ -40,11 +40,9 @@ import { useSaveStatus, type SaveStatusApi } from "../components/SaveStatus";
  *
  * `useFormState` reads its seed once, at mount, and this record arrives from
  * a fetch afterwards — so the form is re-seeded through `reset()` when the
- * read settles. Exactly once: a `refetch` or a re-render must not overwrite
- * what the user has typed since. That is what the ref guards, and it is the
- * reason this is a hook rather than a `key`-remount at the call site — the
- * caller would need the loaded record to compute the key, which is precisely
- * what it does not have yet.
+ * read settles. Later authorized snapshots may update a clean form; dirty
+ * or saving forms retain their draft. The row ref distinguishes an external
+ * refresh from our own save, preserving its confirmation without a remount.
  */
 
 /**
@@ -111,7 +109,7 @@ export function useSingletonChild<T, F extends object>(
       return got.data;
     },
     [accountId],
-    { initialData: null as T | null, errorMessage: `Failed to load the ${noun}` }
+    { initialData: null as T | null, errorMessage: `Failed to load the ${noun}`, live: true }
   );
 
   const row = res.data;
@@ -121,23 +119,26 @@ export function useSingletonChild<T, F extends object>(
   const status = useSaveStatus();
   const form = useFormState<F>(initialForm, { onEdit: status.markDirty });
 
-  // Seeded once, when the read settles — see the note above.
+  // Seed on the first read and on later external snapshots only while clean.
   const seeded = useRef(false);
+  const seededRow = useRef<T | null>(null);
   const { reset } = form;
   useEffect(() => {
     seeded.current = false;
+    seededRow.current = null;
     reset(initialForm);
     // Each account starts with its own blank form until its read succeeds.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accountId]);
   useEffect(() => {
-    if (seeded.current || !res.loaded || res.error) return;
+    if (!res.loaded || res.error || form.dirty || status.busy || seeded.current && seededRow.current === row) return;
     seeded.current = true;
+    seededRow.current = row;
     reset(row ? toForm(row) : initialForm);
     // `toForm` is a fresh closure each render and `reset` is identity-stable;
     // the ref is what makes this run once, not the dependency list.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [res.loaded]);
+  }, [res.loaded, res.error, row, form.dirty, status.busy]);
 
   /**
    * Create the record, unless somebody else just did.
@@ -181,6 +182,8 @@ export function useSingletonChild<T, F extends object>(
           ? unwrap(await model.update({ accountId, ...payload }))
           : await createOrFold();
         if (scope.current !== accountId) return;
+        seeded.current = true;
+        seededRow.current = saved;
         res.setData(saved);
         // Moves the baseline, so `dirty` goes false and the next edit is
         // measured against what was actually persisted.

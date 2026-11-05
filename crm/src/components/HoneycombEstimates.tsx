@@ -14,7 +14,7 @@ export default function HoneycombEstimates({ accountId }: { accountId: string })
       const result = await client.models.HoneycombEstimate.listHoneycombEstimateByAccountId({ accountId }, { nextToken });
       return result;
     });
-  }, [accountId], { initialData: [], errorMessage: "Carrier estimates could not be loaded.", clearDataOnError: isAuthorizationError });
+  }, [accountId], { initialData: [], errorMessage: "Carrier estimates could not be loaded.", clearDataOnError: isAuthorizationError , live: true });
   const pending = resource.data.some(r => ["PENDING", "RUNNING"].includes(visibleStatus(r)));
   useEffect(() => {
     if (!pending || resource.loading) return;

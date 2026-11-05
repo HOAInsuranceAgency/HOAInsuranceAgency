@@ -1,3 +1,4 @@
+import { useLiveUpdateBlock } from "../lib/useLiveUpdates";
 import { Input } from "./ui/Input";
 import { Button } from "./ui/Button";
 import { Select } from "./ui/Select";
@@ -91,6 +92,7 @@ export default function BusinessDeliveryComposer(props: BusinessDeliveryComposer
 }
 
 function BusinessDeliveryComposerContent({ accountId, conversationId, kind, recordId, onClose }: BusinessDeliveryComposerProps) {
+  useLiveUpdateBlock(true);
   const id = useId();
   const evidence = useRef(new Map<string, BusinessDeliveryAttempt>());
   function rememberAttempt(incoming: BusinessDeliveryAttempt) {
@@ -98,11 +100,11 @@ function BusinessDeliveryComposerContent({ accountId, conversationId, kind, reco
     evidence.current.set(current.id, current);
     return current;
   }
-  const context = useAsyncResource(() => request<{ context: BusinessDeliveryContext }>("businessDeliveryContext", { accountId }), [accountId], { initialData: null, errorMessage: "Could not load delivery choices" });
+  const context = useAsyncResource(() => request<{ context: BusinessDeliveryContext }>("businessDeliveryContext", { accountId }), [accountId], { initialData: null, errorMessage: "Could not load delivery choices" , live: true });
   const history = useAsyncResource(async () => {
     try { const page = await request<History>("historyBusinessDeliveries", { accountId }); return { ...page, items: page.items.map(rememberAttempt) }; }
     catch (err) { if (isAuthorizationError(err)) context.invalidate(err); throw err; }
-  }, [accountId], { initialData: { items: [] } as History, errorMessage: "Could not load Front draft history" });
+  }, [accountId], { initialData: { items: [] } as History, errorMessage: "Could not load Front draft history", live: { protectEdits: false, intervalMs: 15_000 } });
   const [choiceKey, setChoiceKey] = useState(kind && recordId ? `${kind}:${recordId}` : "");
   const [thread, setThread] = useState(conversationId ?? "NEW");
   const [documentIds, setDocumentIds] = useState<string[]>([]);

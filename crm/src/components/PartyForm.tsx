@@ -1,3 +1,4 @@
+import { useLiveUpdateBlock } from "../lib/useLiveUpdates";
 import { Select } from "./ui/Select";
 import { Input } from "./ui/Input";
 import { Button } from "./ui/Button";
@@ -24,6 +25,7 @@ export default function PartyForm({
   onClose: () => void;
 }) {
   const seed = party ?? initial;
+  useLiveUpdateBlock(true);
   const [form, setForm] = useState({
     kind: seed?.kind ?? 'ORGANIZATION',
     name: seed?.name ?? '',
@@ -44,7 +46,7 @@ export default function PartyForm({
   const team = useAsyncResource(
     async () => (admin ? (await communicationRequest<{ team: TeamEligibility[] }>('team')).team : []),
     [admin],
-    { initialData: [] },
+    { initialData: [] , live: true },
   );
   const nameQuery = form.name.trim(),
     emailQuery = form.email.trim();

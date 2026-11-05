@@ -25,7 +25,7 @@ export default function PoliciesList() {
     async () =>
       listAllPages((nextToken) => client.models.Policy.list({ nextToken })),
     [],
-    { initialData: [] as Policy[], errorMessage: "Failed to load policies" }
+    { initialData: [] as Policy[], errorMessage: "Failed to load policies" , live: true }
   );
   const policies = policyRes.data;
 
@@ -37,7 +37,7 @@ export default function PoliciesList() {
     async () =>
       listAllPages((nextToken) => client.models.Account.list({ nextToken })),
     [],
-    { initialData: [] as Account[], errorMessage: "Failed to load account names" }
+    { initialData: [] as Account[], errorMessage: "Failed to load account names" , live: true }
   );
   const accounts = accountRes.data;
 
@@ -45,7 +45,7 @@ export default function PoliciesList() {
     async () =>
       listAllPages((nextToken) => client.models.Carrier.list({ nextToken })),
     [],
-    { initialData: [] as Carrier[], errorMessage: "Failed to load carrier names" }
+    { initialData: [] as Carrier[], errorMessage: "Failed to load carrier names" , live: true }
   );
   const carriers = carrierRes.data;
 

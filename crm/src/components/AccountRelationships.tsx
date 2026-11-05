@@ -48,7 +48,7 @@ export default function AccountRelationships({
         selfManagedFrom: undefined as string | undefined,
       },
       clearDataOnError: isAuthorizationError,
-    },
+     live: true },
   );
   const contactPage = usePagedList<Contact>(async nextToken => {
     const page = await client.models.Contact.list({ filter: { accountId: { eq: accountId } }, limit: 50, nextToken });

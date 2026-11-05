@@ -33,8 +33,8 @@ function phoneLabel(number: string) {
 }
 
 export default function CommunicationSettings() {
-  const resource = useAsyncResource(() => request<SettingsSnapshot>("settings"), [], { initialData: null, errorMessage: "Could not load integration settings" });
-  const members = useAsyncResource(() => request<{ team: TeamEligibility[] }>("team"), [], { initialData: { team: [] }, errorMessage: "Could not load teammates" });
+  const resource = useAsyncResource(() => request<SettingsSnapshot>("settings"), [], { initialData: null, errorMessage: "Could not load integration settings" , live: true });
+  const members = useAsyncResource(() => request<{ team: TeamEligibility[] }>("team"), [], { initialData: { team: [] }, errorMessage: "Could not load teammates" , live: true });
   const [editing, setEditing] = useState(false);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [busy, setBusy] = useState(""), [message, setMessage] = useState(""), [error, setError] = useState("");

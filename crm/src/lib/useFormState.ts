@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { liveUpdates } from "./liveUpdates";
+import { useLiveUpdateBlock } from "./useLiveUpdates";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 /**
  * One form object, one setter, and the two flags that always came with them.
@@ -36,14 +38,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
  *    `initial` and consumes `form`; this hook is what sits between them, and
  *    stays out of the way of one.
  *
- * `initial` is read once, like `useState`'s. It is not re-applied when its
- * identity changes: callers build it as an object literal from props, so it is
- * a fresh object on every render, and re-seeding on identity would erase what
- * the user is typing every time the parent re-rendered. Forms that switch
- * subject already remount by `key` (`CoverageForm`, `GuideForm`) or mount only
- * after their record loads (`AccountDetail`, `CarrierDetail` both return early
- * while the record is null). Where a re-seed really is wanted, `reset(next)`
- * says so out loud.
+ * Object seeds are compared by field value. A clean form adopts a changed
+ * server snapshot; dirty forms defer it. Successful saves discard snapshots
+ * observed before that save, so stale props cannot roll back confirmed edits.
+ * Function initializers retain useState's evaluate-once semantics.
  */
 export interface FormState<T extends object> {
   /** Current field values — exactly the shape `initial` had. */
@@ -115,6 +113,23 @@ function sameValue(a: unknown, b: unknown): boolean {
   return false;
 }
 
+// Source seeds may rebuild nested data (e.g. charge lines) each render.
+// Compare those by content; reference-only comparison would rebase forever.
+function sameSource(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (!a || !b || typeof a !== 'object' || typeof b !== 'object') return false;
+  if (Array.isArray(a) || Array.isArray(b)) return Array.isArray(a) && Array.isArray(b)
+    && a.length === b.length && a.every((value, index) => sameSource(value, b[index]));
+  const left = a as Record<string, unknown>, right = b as Record<string, unknown>;
+  const keys = Object.keys(left);
+  return keys.length === Object.keys(right).length && keys.every(key => Object.hasOwn(right, key) && sameSource(left[key], right[key]));
+}
+
+function sameForm<T extends object>(a: T, b: T): boolean {
+  const keys = Object.keys(a) as (keyof T)[];
+  return keys.length === Object.keys(b).length && keys.every(k => sameSource(a[k], b[k]));
+}
+
 interface Internal<T> {
   form: T;
   /** What `dirty` is measured against and what `reset()` returns to. */
@@ -145,6 +160,11 @@ export function useFormState<T extends object>(
     return { form: seed, baseline: seed, saved: false };
   });
 
+  const source = typeof initial === 'function' ? undefined : initial;
+  const sourceRef = useRef(source); sourceRef.current = source;
+  const seenSource = useRef(source);
+  const pendingSource = useRef<T | undefined>(undefined);
+
   // The callback closes over the caller's props, so it is a different function
   // every render; the ref is what lets the setters below keep one identity.
   // It is invoked outside the state updater, which must stay pure.
@@ -155,6 +175,7 @@ export function useFormState<T extends object>(
 
   const setF = useCallback(
     <K extends keyof T>(key: K, value: T[K] | ((prev: T[K]) => T[K])) => {
+      liveUpdates.touchEdit();
       onEditRef.current?.('edit');
       setState((s) => ({
         ...s,
@@ -172,7 +193,8 @@ export function useFormState<T extends object>(
   );
 
   const patch = useCallback((fields: Partial<T> | ((prev: T) => Partial<T>)) => {
-    onEditRef.current?.('edit');
+    liveUpdates.touchEdit();
+      onEditRef.current?.('edit');
     setState((s) => ({
       ...s,
       form: { ...s.form, ...(typeof fields === "function" ? fields(s.form) : fields) },
@@ -181,6 +203,8 @@ export function useFormState<T extends object>(
   }, []);
 
   const markSaved = useCallback((submitted?: T) => {
+    pendingSource.current = undefined;
+    seenSource.current = sourceRef.current;
     setState((s) => {
       const baseline = submitted ?? s.form;
       return { form: s.form, baseline,
@@ -189,6 +213,8 @@ export function useFormState<T extends object>(
   }, []);
 
   const reset = useCallback((next?: T) => {
+    pendingSource.current = undefined;
+    seenSource.current = sourceRef.current;
     onEditRef.current?.('reset');
     setState((s) => {
       const seed = next ?? s.baseline;
@@ -200,6 +226,19 @@ export function useFormState<T extends object>(
   const dirty = (Object.keys(form) as (keyof T)[]).some(
     (k) => !sameValue(form[k], baseline[k])
   );
+
+  useLiveUpdateBlock(dirty);
+  useLayoutEffect(() => {
+    const next = sourceRef.current;
+    if (next && (!seenSource.current || !sameForm(next, seenSource.current))) {
+      seenSource.current = next;
+      pendingSource.current = next;
+    }
+    if (!dirty && pendingSource.current && liveUpdates.getSnapshot().writes === 0) {
+      const seed = pendingSource.current; pendingSource.current = undefined;
+      setState(s => sameForm(s.form, seed) ? s : { form: seed, baseline: seed, saved: false });
+    }
+  });
 
   return { form, setF, patch, dirty, saved, markSaved, reset };
 }

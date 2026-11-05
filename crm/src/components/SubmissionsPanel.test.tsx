@@ -1,3 +1,4 @@
+import { invalidateLiveUpdates } from "../test/liveUpdates";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import type { Account } from "../lib/client";
@@ -76,13 +77,13 @@ it("keeps edited submission details through failed refresh and blocks creation u
   fireEvent.change(screen.getByLabelText("Legal insured name *"), { target: { value: "Unsaved legal name" } });
   fireEvent.click(screen.getByRole("checkbox"));
   h.list.mockRejectedValueOnce(new Error("Temporary history failure"));
-  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  await invalidateLiveUpdates();
   await screen.findByRole("alert");
   expect(screen.getByLabelText("Legal insured name *")).toHaveValue("Unsaved legal name");
   expect(screen.getByRole("button", { name: "Create partial submission" })).toBeDisabled();
   fireEvent.submit(screen.getByRole("form"));
   expect(h.start).not.toHaveBeenCalled();
-  fireEvent.click(screen.getAllByRole("button", { name: "Refresh" })[0]);
+  fireEvent.click(screen.getByRole("button", { name: "Retry submissions" }));
   await waitFor(() => expect(screen.getByRole("button", { name: "Create partial submission" })).toBeEnabled());
   expect(screen.getByLabelText("Legal insured name *")).toHaveValue("Unsaved legal name");
 });
@@ -99,7 +100,7 @@ it("clears cached submission details when a refreshed read denies access", async
   render(<SubmissionsPanel account={account} />);
   await screen.findByRole("form");
   h.list.mockResolvedValue({ data: [], errors: [{ errorType: "Unauthorized", message: "Not authorized" }] });
-  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  await invalidateLiveUpdates();
   await screen.findByRole("alert");
   expect(screen.queryByRole("form")).toBeNull();
   expect(screen.queryByLabelText("Legal insured name *")).toBeNull();
@@ -122,7 +123,7 @@ it("keeps the draft open when a refresh discovers another submission", async () 
   await screen.findByRole("form");
   fireEvent.change(screen.getByLabelText("Legal insured name *"), { target: { value: "Draft being reviewed" } });
   h.list.mockResolvedValue({ data: [{ ...job, status: "CREATED", submissionId: "other" }] });
-  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  await invalidateLiveUpdates();
   await screen.findByText(/A submission already exists for this effective date/);
   expect(screen.getByLabelText("Legal insured name *")).toHaveValue("Draft being reviewed");
   expect(screen.getByRole("button", { name: "Create partial submission" })).toBeDisabled();

@@ -50,7 +50,7 @@ export default function Onboarding({
   roles?: Role[];
   onComplete: (p: UserProfile, licenses: SavedProducerLicense[]) => void;
 }) {
-  const { form, setF } = useFormState({
+  const { form, setF, markSaved } = useFormState({
     firstName: existing?.firstName ?? "",
     lastName: existing?.lastName ?? "",
     npn: existing?.npn ?? "",
@@ -72,6 +72,7 @@ export default function Onboarding({
   }
 
   async function submit() {
+    const submitted = form;
     if (!form.firstName.trim() || !form.lastName.trim()) {
       setError("First and last name are required.");
       return;
@@ -175,8 +176,10 @@ export default function Onboarding({
           throw new Error(completed.errors?.[0]?.message || "Failed to complete setup.");
         }
         savedProfile.current = completed.data;
+        markSaved(submitted);
         onComplete(completed.data, persisted);
       } else {
+        markSaved(submitted);
         onComplete(profile, []);
       }
     } catch (err) {

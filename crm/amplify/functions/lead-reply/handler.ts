@@ -1,3 +1,4 @@
+import { sendCrmWrite } from '../live-write';
 import { migrationPendingCutoff, migrationPendingHeld } from "../migration-pending";
 import { currentContacts } from "../../../src/lib/contacts";
 import { randomBytes } from "node:crypto";
@@ -115,10 +116,10 @@ export const handler = async () => {
     }
     const op = await get<Operation>(`op:ai:${r.id}`);
     const status = !op ? "WAITING" : op.data.state === "CONFIRMED" ? "SENT" : op.data.state === "SUPPRESSED" ? "SUPPRESSED" : op.data.state === "FAILED" ? "FAILED" : "QUEUED";
-    await db.send(new UpdateCommand({ TableName: process.env.LEAD_REPLY_TABLE, Key: { id: r.id },
+    await sendCrmWrite(db.send(new UpdateCommand({ TableName: process.env.LEAD_REPLY_TABLE, Key: { id: r.id },
       UpdateExpression: "SET #s = :status, updatedAt = :now", ConditionExpression: "#s = :sending",
       ExpressionAttributeNames: { "#s": "status" }, ExpressionAttributeValues: { ":status": status, ":sending": "SENDING", ":now": now },
-    })).catch(e => { if (e?.name !== "ConditionalCheckFailedException") throw e; });
+    }))).catch(e => { if (e?.name !== "ConditionalCheckFailedException") throw e; });
     await issue(`generation:${r.id}`, op ? "Recovered queued initial email" : "Initial email generation was interrupted and will retry", r.accountId);
   }
 
@@ -155,10 +156,10 @@ export const handler = async () => {
       } catch (error) {
         const message = error instanceof Error ? error.message : "The assigned salesperson could not be verified";
         try {
-          await db.send(new UpdateCommand({ TableName: process.env.LEAD_REPLY_TABLE, Key: { id: reply.id },
+          await sendCrmWrite(db.send(new UpdateCommand({ TableName: process.env.LEAD_REPLY_TABLE, Key: { id: reply.id },
             UpdateExpression: "SET dueAt = :retry, note = :note, updatedAt = :now", ConditionExpression: "#s = :waiting",
             ExpressionAttributeNames: { "#s": "status" }, ExpressionAttributeValues: { ":waiting": "WAITING", ":retry": new Date(Date.now() + 60_000).toISOString(), ":note": `Initial email is waiting: ${message}`.slice(0, 500), ":now": now },
-          }));
+          })));
           await issue(`generation-assignment:${reply.id}`, `Initial email is waiting: ${message}`.slice(0, 500), reply.accountId);
         } catch (error) {
           // A warning/projection failure cannot turn pending assignment into a
@@ -247,13 +248,13 @@ export const handler = async () => {
         continue;
       }
 
-      await db.send(new UpdateCommand({
+      await sendCrmWrite(db.send(new UpdateCommand({
         TableName: process.env.LEAD_REPLY_TABLE, Key: { id: reply.id },
         UpdateExpression: "SET #s = :sending, updatedAt = :now, frontGenerationClaimedAt = :now",
         ConditionExpression: "#s = :waiting",
         ExpressionAttributeNames: { "#s": "status" },
         ExpressionAttributeValues: { ":sending": "SENDING", ":waiting": "WAITING", ":now": now },
-      }));
+      })));
 
       /**
        * Before generating, not after: the prompt is told a link is coming so it
@@ -303,11 +304,11 @@ export const handler = async () => {
         : null;
       // The delivery worker may already have confirmed SENT. Never overwrite
       // that result with this producer's delayed QUEUED projection.
-      await db.send(new UpdateCommand({ TableName: process.env.LEAD_REPLY_TABLE, Key: { id: reply.id },
+      await sendCrmWrite(db.send(new UpdateCommand({ TableName: process.env.LEAD_REPLY_TABLE, Key: { id: reply.id },
         UpdateExpression: "SET #s = :queued, sentSubject = :subject, sentBody = :body, note = :note, updatedAt = :now",
         ConditionExpression: "#s = :sending", ExpressionAttributeNames: { "#s": "status" },
         ExpressionAttributeValues: { ":queued": "QUEUED", ":sending": "SENDING", ":subject": subject, ":body": text, ":note": [decision.note, nameNote].filter(Boolean).join(" ") || null, ":now": new Date().toISOString() },
-      })).catch(e => { if (e?.name !== "ConditionalCheckFailedException") throw e; });
+      }))).catch(e => { if (e?.name !== "ConditionalCheckFailedException") throw e; });
       summary.queued++;
       console.log("lead-reply queued", reply.id, JSON.stringify({ subject }));
     } catch (err) {

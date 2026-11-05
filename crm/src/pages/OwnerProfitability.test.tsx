@@ -1,3 +1,4 @@
+import { invalidateLiveUpdates } from "../test/liveUpdates";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { calculateEmployeeProfitability, type EmployeeCompensation } from "../../../shared/employeeProfitability";
@@ -67,9 +68,9 @@ describe("owner profitability privacy and report", () => {
   });
   it("clears the prior report on refresh failure instead of exposing stale salary data", async () => {
     render(<OwnerProfitability />); await screen.findByRole("table");
-    h.query.mockResolvedValue({ data: null, errors: [{ message: "Owner access is no longer available" }] });
-    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Owner access is no longer available");
+    h.query.mockResolvedValue({ data: null, errors: [{ message: "Access denied: Owner access is no longer available" }] });
+    await invalidateLiveUpdates();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Access denied: Owner access is no longer available");
     expect(screen.queryByRole("table")).toBeNull(); expect(screen.queryByRole("combobox", { name: /Download/ })).toBeNull();
     expect(screen.getByRole("button", { name: "Try again" })).toBeEnabled();
   });
@@ -185,46 +186,42 @@ describe("private employee compensation editor", () => {
   });
 });
 
-it('blocks refresh and date presets while pay settings are open and keeps a dirty draft intact', async () => {
+it('defers external updates and date presets while pay settings are open, preserving a dirty draft', async () => {
   render(<OwnerProfitability />); await openPay();
   fireEvent.change(screen.getByLabelText('Annual salary 1'), { target: { value: '71000' } });
   h.query.mockRejectedValue(new Error('Report temporarily unavailable'));
-  expect(screen.getByRole('button', { name: 'Refresh' })).toBeDisabled();
+  expect(screen.queryByRole('button', { name: 'Refresh' })).toBeNull();
   expect(screen.getByLabelText('From date')).toBeDisabled();
   expect(screen.getByLabelText('Through date')).toBeDisabled();
   expect(screen.getByRole('button', { name: 'Year to date' })).toBeDisabled();
   expect(screen.getByRole('button', { name: 'Last 12 months' })).toBeDisabled();
   fireEvent.click(screen.getByRole('button', { name: 'Last 12 months' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+  await invalidateLiveUpdates();
   expect(h.query).toHaveBeenCalledTimes(1);
   expect(screen.getByLabelText('Annual salary 1')).toHaveValue('71000');
   fireEvent.click(screen.getByRole('button', { name: 'Manage pay settings' }));
   expect(screen.getByLabelText('From date')).toBeEnabled();
   expect(screen.getByLabelText('Through date')).toBeEnabled();
-  expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled();
-  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
-  expect(await screen.findByRole('alert')).toHaveTextContent('Report temporarily unavailable');
-  expect(screen.queryByRole('table')).toBeNull();
+  await screen.findByText(/Report temporarily unavailable/);
+  expect(screen.getByRole('table')).toBeVisible();
   expect(screen.queryByRole('region', { name: 'Private pay settings' })).toBeNull();
-  expect(screen.getByRole('button', { name: 'Try again' })).toBeEnabled();
+  expect(screen.getByRole('combobox', { name: /Download/ })).toBeDisabled();
 });
 
-it('prevents starting pay edits while a report refresh may clear private data', async () => {
+it('clears private pay data after revocation even when a new editor fences an in-flight live read', async () => {
   h.query.mockResolvedValueOnce({ data: snapshot(true) });
   render(<OwnerProfitability />); await screen.findByRole('table');
   let fail!: (error: Error) => void;
   h.query.mockImplementationOnce(() => new Promise((_resolve, reject) => { fail = reject; }));
-  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
-  const manage = screen.getByRole('button', { name: 'Manage pay settings' });
-  const setup = screen.getByRole('button', { name: 'Edit pay settings for Casey Staff' });
-  expect(manage).toBeDisabled(); expect(setup).toBeDisabled();
-  fireEvent.click(manage); fireEvent.click(setup);
-  expect(screen.queryByRole('region', { name: 'Private pay settings' })).toBeNull();
-  await act(async () => fail(new Error('Report temporarily unavailable')));
-  expect(screen.getByRole('alert')).toHaveTextContent('Report temporarily unavailable');
+  await invalidateLiveUpdates();
+  fireEvent.click(screen.getByRole('button', { name: 'Manage pay settings' }));
+  fireEvent.change(screen.getByLabelText('Annual salary 1'), { target: { value: '73000' } });
+  expect(screen.getByRole('region', { name: 'Private pay settings' })).toBeVisible();
+  await act(async () => fail(Object.assign(new Error('Access denied'), { name: 'Unauthorized' })));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Access denied');
   expect(screen.queryByRole('table')).toBeNull();
+  expect(screen.queryByRole('region', { name: 'Private pay settings' })).toBeNull();
 });
-
 
 it('keeps an in-flight pay save attached to its employee and adopts the committed version before rereads catch up', async () => {
   let finish!: (value: unknown) => void;
@@ -277,7 +274,7 @@ it('adopts a newer report pay version and does not regress it on a later older r
   await screen.findByText('Pay settings saved.');
   await waitFor(() => expect(screen.getByLabelText('Annual salary 1')).toHaveValue('82000.00'));
   fireEvent.click(screen.getByRole('button', { name: 'Manage pay settings' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+  await invalidateLiveUpdates();
   await waitFor(() => expect(h.query).toHaveBeenCalledTimes(3));
   await waitFor(() => expect(screen.getByRole('button', { name: 'Manage pay settings' })).toBeEnabled());
   fireEvent.click(screen.getByRole('button', { name: 'Manage pay settings' }));
@@ -298,13 +295,13 @@ it('labels stale report totals and disables exports until a refreshed report inc
   fireEvent.change(screen.getByLabelText('Annual salary 1'), { target: { value: '71000' } });
   fireEvent.click(screen.getByRole('button', { name: 'Save pay settings' }));
   await screen.findByText('Pay settings saved.');
-  expect(screen.getByText(/report is still catching up/)).toHaveTextContent('Close pay settings and refresh');
+  expect(screen.getByText(/report is still catching up/)).toHaveTextContent('Close pay settings to allow the report to update');
   const download = screen.getByRole('combobox', { name: 'Download Estimated employee profitability' });
   expect(download).toBeDisabled();
   expect(screen.getByLabelText('Annual salary 1')).toHaveValue('71000.00');
   fireEvent.click(screen.getByRole('button', { name: 'Manage pay settings' }));
   h.query.mockResolvedValueOnce({ data: snapshot(false, newer) });
-  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+  await invalidateLiveUpdates();
   await waitFor(() => expect(download).toBeEnabled());
   expect(screen.queryByText(/report is still catching up/)).toBeNull();
   fireEvent.change(download, { target: { value: 'csv' } });
@@ -314,7 +311,7 @@ it('labels stale report totals and disables exports until a refreshed report inc
   expect(screen.getByLabelText('Annual salary 1')).toHaveValue('72000.00');
 });
 
-it.each(['read failure', 'leaving Owner'] as const)('clears remembered saved salaries after %s', async reset => {
+it.each(['revocation', 'leaving Owner'] as const)('clears remembered saved salaries after %s', async reset => {
   const committed = { ...compensation, version: 4, terms: [{ ...compensation.terms[0], annualSalaryCents: 7_100_000 }] };
   h.save.mockResolvedValue({ data: { ok: true, compensation: committed } });
   const view = render(<OwnerProfitability />); await openPay();
@@ -322,10 +319,10 @@ it.each(['read failure', 'leaving Owner'] as const)('clears remembered saved sal
   fireEvent.click(screen.getByRole('button', { name: 'Save pay settings' }));
   await screen.findByText('Pay settings saved.');
   expect(screen.getByLabelText('Annual salary 1')).toHaveValue('71000.00');
-  if (reset === 'read failure') {
+  if (reset === 'revocation') {
     fireEvent.click(screen.getByRole('button', { name: 'Manage pay settings' }));
-    h.query.mockRejectedValueOnce(new Error('Report temporarily unavailable'));
-    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    h.query.mockRejectedValueOnce(Object.assign(new Error('Report temporarily unavailable'), { name: 'Unauthorized' }));
+    await invalidateLiveUpdates();
     expect(await screen.findByRole('alert')).toHaveTextContent('Report temporarily unavailable');
     expect(screen.queryByRole('table')).toBeNull();
     expect(screen.queryByLabelText('Annual salary 1')).toBeNull();
@@ -341,4 +338,25 @@ it.each(['read failure', 'leaving Owner'] as const)('clears remembered saved sal
   fireEvent.click(screen.getByRole('button', { name: 'Save pay settings' }));
   await waitFor(() => expect(h.save).toHaveBeenCalledTimes(2));
   expect(h.save).toHaveBeenLastCalledWith(expect.objectContaining({ version: 3 }));
+});
+
+it('retains confirmed pay version memory through a transient live failure and an older report', async () => {
+  const committed = { ...compensation, version: 4, terms: [{ ...compensation.terms[0], annualSalaryCents: 7_100_000 }] };
+  h.save.mockResolvedValue({ data: { ok: true, compensation: committed } });
+  render(<OwnerProfitability />); await openPay();
+  fireEvent.change(screen.getByLabelText('Annual salary 1'), { target: { value: '71000' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save pay settings' }));
+  await screen.findByText('Pay settings saved.');
+  fireEvent.click(screen.getByRole('button', { name: 'Manage pay settings' }));
+  h.query.mockRejectedValueOnce(new Error('Temporary report outage'));
+  await invalidateLiveUpdates(['OWNER']);
+  expect(screen.getByText(/Temporary report outage/)).toBeVisible();
+  expect(screen.getByRole('table')).toBeVisible();
+  await invalidateLiveUpdates(['OWNER']);
+  await openPay();
+  expect(screen.getByLabelText('Annual salary 1')).toHaveValue('71000.00');
+  fireEvent.change(screen.getByLabelText('Annual salary 1'), { target: { value: '72000' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save pay settings' }));
+  await waitFor(() => expect(h.save).toHaveBeenCalledTimes(2));
+  expect(h.save).toHaveBeenLastCalledWith(expect.objectContaining({ version: 4 }));
 });

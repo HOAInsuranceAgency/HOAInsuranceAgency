@@ -1,3 +1,5 @@
+import { useLiveMembership } from "./lib/useLiveMembership";
+import { LiveUpdatesProvider } from "./lib/LiveUpdatesProvider";
 import { Button } from "./components/ui/Button";
 import { Select } from "./components/ui/Select";
 import Relationships from "./pages/Relationships";
@@ -104,7 +106,7 @@ function ProfileGate({ user, signOut }: { user: AuthUser; signOut: () => void })
   // admin status after first paint would flash the admin-only controls
   // into (or out of) a page that's already on screen. That is why this is a
   // single hook over a tuple rather than one hook per read.
-  const { data, loading, error, refetch, setData } = useAsyncResource(
+  const { data, loading, error, refetch, setData, invalidate } = useAsyncResource(
     async () => {
       // A queued action belongs to the membership snapshot that requested it.
       cancelPending();
@@ -142,6 +144,10 @@ function ProfileGate({ user, signOut }: { user: AuthUser; signOut: () => void })
   const { profile, groups, activeRole, producerLicenses } = data;
   const latestMembership = useRef(data);
   latestMembership.current = data;
+  useLiveMembership({ enabled: !loading && !!profile && !error, groups,
+    onChanged: () => { void refetch(); },
+    onDenied: failure => { ++roleSessionVersion.current; cancelPending(); clearActiveRole(); invalidate(failure); },
+  });
   useEffect(() => {
     sessionMounted.current = true;
     const refreshRoles = () => { void refetch(); };
@@ -218,7 +224,9 @@ function ProfileGate({ user, signOut }: { user: AuthUser; signOut: () => void })
     <OwnerContext.Provider value={activeRole === "OWNER" && groups.includes("OWNER")}>
       <AdminContext.Provider value={(activeRole === "OWNER" || activeRole === "ADMIN") && groups.includes(activeRole)}>
         <LeadDraftScope key={`${user.userId}:${activeRole}`} userId={user.userId} role={activeRole}>
+          <LiveUpdatesProvider userId={user.userId} role={activeRole}>
           <Shell key={activeRole} profile={profile} signOut={guardedSignOut} activeRole={activeRole} roles={rolesFromGroups(groups)} onRoleChange={switchRole} />
+          </LiveUpdatesProvider>
         </LeadDraftScope>
       </AdminContext.Provider>
     </OwnerContext.Provider>

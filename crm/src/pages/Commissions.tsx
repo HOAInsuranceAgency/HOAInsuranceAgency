@@ -1,17 +1,19 @@
+import { LiveStatus } from "../components/LiveStatus";
+import { useLiveUpdateBlock } from "../lib/useLiveUpdates";
 import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
 import { Table } from "../components/ui/Table";
 import { Select } from "../components/ui/Select";
 import { Textarea } from "../components/ui/Textarea";
 import { Tabs } from "../components/ui/Tabs";
-import { useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { createContext, useContext, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { useIsOwner } from '../lib/auth';
 import { useAsyncResource } from '../lib/useAsyncResource';
 import { client, listAllPages, fmtMoney } from '../lib/client';
 import { communicationRequest, type TeamEligibility } from '../lib/communications';
 import { commissionAction, readCommissions } from '../lib/commissions';
 import AccountPicker from '../components/AccountPicker';
-import { ReportDownload } from '../components/ReportDownload';
+import { ReportContext, ReportDownload } from '../components/ReportDownload';
 import {
   COMMISSION_BASES,
   ACCOUNT_COMMISSION_CLASSES,
@@ -35,6 +37,8 @@ import {
 } from '../../../shared/commissions';
 import './Commissions.css';
 
+const FinancialStale = createContext(false);
+
 const money = (cents: number) => fmtMoney(cents / 100);
 const today = () =>
   new Intl.DateTimeFormat('en-CA', {
@@ -52,10 +56,12 @@ function CommissionView({ owner }: { owner: boolean }) {
   const resource = useAsyncResource(readCommissions, [], {
     errorMessage: 'Could not load commissions.',
     clearDataOnError: () => true,
-  });
+   live: { topics: ['CRM', 'OWNER', 'PERSONAL'] } });
   const [tab, setTab] = useState('ledger');
   const snapshot = resource.data;
   return (
+    <FinancialStale.Provider value={!!resource.refreshError || !!resource.error}>
+    <ReportContext.Provider value={{ disabled: resource.loading || !!resource.refreshing || !!resource.refreshError || !!resource.error, asOf: resource.updatedAt ? new Date(resource.updatedAt) : null }}>
     <div className="commissions">
       <header>
         <p className="muted small">
@@ -74,13 +80,8 @@ function CommissionView({ owner }: { owner: boolean }) {
           { value: 'settings', label: 'Agreements & carriers' },
         ]} />
       )}
-      <Button variant="secondary"
 
-        disabled={resource.loading}
-        onClick={() => void resource.refetch()}
-      >
-        Refresh commissions
-      </Button>
+      <LiveStatus resource={resource} />
       {resource.error && (
         <p className="error-text" role="alert">
           {resource.error}
@@ -102,6 +103,8 @@ function CommissionView({ owner }: { owner: boolean }) {
       )}
       </div>
     </div>
+    </ReportContext.Provider>
+    </FinancialStale.Provider>
   );
 }
 function Ledger({
@@ -307,28 +310,38 @@ function ActionForm({
   onDone,
   button = 'Save',
   disabled = false,
+  draft,
 }: {
   title: string;
   submit: () => Promise<unknown>;
   children: ReactNode;
-  onDone: () => Promise<void>;
+  // A callback that resets visible fields must return that acknowledged draft.
+  // Otherwise keep the submitted baseline, preserving edits made while saving.
+  onDone: () => Promise<void | { savedDraft: unknown }>;
   button?: string;
   disabled?: boolean;
+  draft?: unknown;
 }) {
   const [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
     [saved, setSaved] = useState(false);
   const lock = useRef(false);
+  const stale = useContext(FinancialStale);
+  const serialized = JSON.stringify(draft);
+  const baseline = useRef(serialized);
+  useLiveUpdateBlock(busy || serialized !== baseline.current);
   async function run(e: FormEvent) {
     e.preventDefault();
-    if (lock.current) return;
+    if (lock.current || stale) return;
     lock.current = true;
     setBusy(true);
     setError('');
     setSaved(false);
+    const submitted = serialized;
     try {
       await submit();
-      await onDone();
+      const completed = await onDone();
+      baseline.current = completed ? JSON.stringify(completed.savedDraft) : submitted;
       setSaved(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not save.');
@@ -340,7 +353,7 @@ function ActionForm({
   return (
     <form className="card" onSubmit={(e) => void run(e)}>
       <h2>{title}</h2>
-      <fieldset disabled={busy}>
+      <fieldset disabled={busy || stale}>
         {children}
         <div className="form-actions">
           <Button variant="primary"  type="submit" disabled={disabled}>
@@ -385,7 +398,7 @@ function Settings({ data, refresh }: { data: CommissionOverview; refresh: () => 
       return { team: team.team, carriers };
     },
     [],
-    { clearDataOnError: () => true },
+    { clearDataOnError: () => true , live: { topics: ['CRM', 'OWNER', 'PERSONAL'] } },
   );
   const [producer, setProducer] = useState(''),
     [carrier, setCarrier] = useState('');
@@ -485,6 +498,7 @@ function PlanEditor({
   return (
     <ActionForm
       title={`${name} · commission agreement`}
+      draft={{ accountBoundFrom, receiptsFrom, terms }}
       button="Save producer agreement"
       onDone={refresh}
       submit={() =>
@@ -684,7 +698,7 @@ function AccountClassificationResource({ id }: { id: string }) {
         accountName: string;
       }>('getAccountClassification', { id }),
     [id],
-    { clearDataOnError: () => true },
+    { clearDataOnError: () => true , live: { topics: ['CRM', 'OWNER', 'PERSONAL'] } },
   );
   if (resource.error)
     return (
@@ -735,6 +749,7 @@ function AccountClassificationEditor({
   return (
     <ActionForm
       title={`${name} · commission classification`}
+      draft={{ history, firstBoundOn, bindingEvidence, periods }}
       button="Save classification"
       onDone={refresh}
       submit={() =>
@@ -920,6 +935,7 @@ function CarrierEditor({
   return (
     <ActionForm
       title="Carrier commission payment terms"
+      draft={arrangements}
       button="Save carrier payment terms"
       disabled={!arrangements.length}
       onDone={refresh}
@@ -1286,6 +1302,7 @@ function ReceiptForecastEditor({
   return (
     <ActionForm
       title="Expected carrier receipts"
+      draft={{ items, evidence, confirmed, complete }}
       button="Save receipt forecast"
       onDone={refresh}
       submit={() =>
@@ -1468,6 +1485,7 @@ function StatementEditor({
   return (
     <ActionForm
       title="Match a carrier statement"
+      draft={{ carrierId, reference, source, receivedOn, settlementRef, total, settlementType, lines, uploading }}
       button="Save draft for review"
       onDone={done}
       submit={async () => {
@@ -1797,6 +1815,7 @@ function StatementCard({
   return (
     <ActionForm
       title={s.reference}
+      draft={confirmed}
       disabled={!confirmed}
       button="Post reconciled statement"
       onDone={refresh}
@@ -1837,6 +1856,7 @@ function Payroll({ data, refresh }: { data: CommissionOverview; refresh: () => P
       </p>
       <ActionForm
         title="Approve a producer payroll batch"
+      draft={{ producerId, cutoff, payDate }}
         button="Approve batch"
         onDone={async () => {
           setRequest(crypto.randomUUID());
@@ -1947,6 +1967,7 @@ function BatchCard({
   return (
     <ActionForm
       title="Approved payroll batch"
+      draft={{ reference, date, action }}
       onDone={refresh}
       button="Record payroll outcome"
       submit={() =>
@@ -2009,7 +2030,7 @@ function LegacyPolicies({
       return page;
     },
     [query, cursor],
-    { clearDataOnError: () => true },
+    { clearDataOnError: () => true , live: { topics: ['CRM', 'OWNER', 'PERSONAL'] } },
   );
   const [premium, setPremium] = useState(''),
     [agencyRate, setAgencyRate] = useState(''),
@@ -2022,13 +2043,16 @@ function LegacyPolicies({
     [evidence, setEvidence] = useState('');
   const options = resource.data?.data ?? [],
     selected = options.find((p) => p.id === policyId);
+  const draft = { policyId, producerId, boundOn, transaction, evidence, premium, agencyRate, effectiveDate, expirationDate };
   return (
     <ActionForm
       title="Add an existing policy to commission tracking"
+      draft={draft}
       onDone={async () => {
         setPolicy('');
         await refresh();
         await resource.refetch();
+        return { savedDraft: { ...draft, policyId: '' } };
       }}
       submit={() =>
         commissionAction('adoptPolicy', {
@@ -2186,6 +2210,7 @@ function PolicyNumber({
       <summary>Update carrier policy number</summary>
       <ActionForm
         title="Carrier policy number"
+      draft={number}
         onDone={refresh}
         submit={() =>
           commissionAction('updatePolicyNumber', {

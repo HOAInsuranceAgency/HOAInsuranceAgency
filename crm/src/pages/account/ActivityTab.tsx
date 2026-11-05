@@ -101,7 +101,7 @@ function AccountChanges({ accountId }: { accountId: string }) {
         )
       ),
     [accountId],
-    { initialData: [] as Activity[], errorMessage: "Failed to load activity" }
+    { initialData: [] as Activity[], errorMessage: "Failed to load activity" , live: true }
   );
 
   const [subjectFilter, setSubjectFilter] = useState("");
@@ -126,7 +126,7 @@ function AccountChanges({ accountId }: { accountId: string }) {
       entries.push([userId, name || profile?.email || "Unknown teammate"]);
     }
     return Object.fromEntries(entries);
-  }, [unresolvedActors], { initialData: {} as Record<string, string>, errorMessage: "Teammate names could not be loaded." });
+  }, [unresolvedActors], { initialData: {} as Record<string, string>, errorMessage: "Teammate names could not be loaded." , live: true });
   const actorLabel = (r: Activity) => needsName(r)
     ? names.data[r.actor!] || "Unknown teammate"
     : r.actorName || (r.actor ? "Unknown teammate" : "System");
@@ -279,7 +279,7 @@ function InternalNoteContent({ accountId, noteId }: { accountId: string; noteId:
       throw new Error("Could not load this note.");
     }
     return typeof communication.text === "string" && communication.text.trim() ? communication.text : null;
-  }, [accountId, noteId], { initialData: null, errorMessage: "Could not load this note.", clearDataOnError: isAuthorizationError });
+  }, [accountId, noteId], { initialData: null, errorMessage: "Could not load this note.", clearDataOnError: isAuthorizationError , live: true });
 
   return (
     <div className="account-change-note">

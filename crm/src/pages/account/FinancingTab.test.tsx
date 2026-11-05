@@ -1,3 +1,4 @@
+import { invalidateLiveUpdates } from "../../test/liveUpdates";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -220,6 +221,20 @@ describe("servicing reliability", () => {
     expect(await screen.findByLabelText("Certificate number")).toHaveValue("");
     expect(screen.getByLabelText("Notice")).toHaveValue("");
     expect(screen.getByRole("button", { name: "Request cancellation" })).toBeDisabled();
+  });
+
+  it("withholds servicing notices after a failed live read without repeating financial commands", async () => {
+    models.PfLoan.list.mockResolvedValue({data:[{...activeLoan,status:"DEFAULTED"}]});
+    await openServicing();
+    expect(screen.getByRole("button", {name:"Record notice of intent to cancel"})).toBeEnabled();
+    models.PfNotice.list.mockRejectedValueOnce(new Error("Notice updates delayed"));
+    await invalidateLiveUpdates();
+    expect(await screen.findByText("Notice updates delayed")).toBeVisible();
+    expect(screen.getByRole("button", {name:"Record notice of intent to cancel"})).toBeDisabled();
+    expect(screen.getByText("$68,570.32")).toBeVisible();
+    expect(mutations.servicePfLoan).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", {name:"Retry notices"}));
+    expect(screen.getByRole("button", {name:"Record notice of intent to cancel"})).toBeEnabled();
   });
 
   it("surfaces notice and bound-policy read failures and retries without hiding the loan", async () => {

@@ -19,11 +19,11 @@ export interface CommercialData {
 }
 /** Load attribution alongside report data so a failed assignment read cannot
  * silently turn an entire report into "Unassigned". */
-export async function loadCommercial(ids: string[], snoozeAccountIds: string[] = []): Promise<CommercialData> {
+export async function loadCommercial(ids: string[], snoozeAccountIds: string[] = [], knownTeam?: TeamEligibility[]): Promise<CommercialData> {
   const accounts = [...new Set(ids)].sort();
   const snoozeIds = new Set(snoozeAccountIds);
   if (!accounts.length) return { entries: {}, team: [] };
-  const roster = await communicationRequest<{ team: TeamEligibility[] }>('team', {});
+  const roster = knownTeam ? { team: knownTeam } : await communicationRequest<{ team: TeamEligibility[] }>('team', {});
   if (!Array.isArray(roster.team)) throw new Error('Could not load teammates');
   const entries: Record<string, CommercialEntry> = {};
   // Load up to four batches together; every batch must settle before a failed
@@ -66,6 +66,7 @@ export function useCommercial(ids: string[], revision?: unknown, snoozeAccountId
       },
       errorMessage: 'Could not load assignments and commission estimates',
       clearDataOnError: isAuthorizationError,
+      live: true,
     },
   );
 }

@@ -1,3 +1,4 @@
+import { invalidateLiveUpdates } from "../test/liveUpdates";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -166,6 +167,21 @@ describe("paged team roster", () => {
   const later = { userId: "u-later", email: "later@example.com", createdAt: null, groups: ["PRODUCER"] };
   const laterProfile = { ...teammateProfile, id: "p-later", userId: later.userId, email: later.email, firstName: "Later", lastName: "Member" };
 
+  it("revalidates every loaded page without dropping later members on a live event", async () => {
+    combinedSetup();
+    listTeamUsers.mockImplementation(async (args?: {nextToken?: string}) => args?.nextToken
+      ? {data:{users:[later],profiles:[laterProfile],nextToken:null}}
+      : {data:{users:[teammate],profiles:[teammateProfile],nextToken:"page-2"}});
+    renderPage(); await screen.findByText("Casey Staff");
+    await waitFor(() => expect(screen.getByRole("button", {name:"Load more team members"})).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", {name:"Load more team members"}));
+    await screen.findByText("Later Member");
+    await invalidateLiveUpdates();
+    expect(screen.getByText("Later Member")).toBeVisible();
+    expect(screen.getByText("Casey Staff")).toBeVisible();
+    expect(listTeamUsers.mock.calls).toEqual([[{nextToken:undefined}],[{nextToken:"page-2"}],[{nextToken:undefined}],[{nextToken:"page-2"}]]);
+  });
+
   it("loads the next roster page only on request, with profile decorations in the same response", async () => {
     let finishSettings!: (value: unknown) => void;
     communicationRequest.mockImplementationOnce(() => new Promise(resolve => { finishSettings = resolve; }));
@@ -194,7 +210,7 @@ describe("paged team roster", () => {
     renderPage();
     fireEvent.click(await screen.findByRole("button", { name: "Edit roles for Casey Staff" }));
     const modal = screen.getByRole("dialog");
-    expect(screen.getByRole("button", { name: "Refresh team" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Refresh team" })).toBeNull();
     fireEvent.click(within(modal).getByRole("checkbox", { name: "Producer" }));
     fireEvent.click(within(modal).getByRole("button", { name: "Save roles" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
@@ -209,7 +225,7 @@ describe("paged team roster", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Retry loading more" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "Retry loading more" }));
     expect(screen.getByRole("button", { name: "Loading more…" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Refresh team" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Refresh team" })).toBeNull();
     expect(within(row).getByText("PRODUCER")).toBeVisible();
     await act(async () => finish({ data: { users: [teammate, later], nextToken: null } }));
     expect(await screen.findByText(later.email)).toBeVisible();
@@ -317,18 +333,22 @@ describe("combined team and assignment settings", () => {
     fireEvent.change(within(card).getByRole("textbox", { name: "Email" }), { target: { value: incomplete.email } });
     fireEvent.click(within(card).getByRole("button", { name: "Send invite" }));
     expect(await within(card).findByText(error)).toBeVisible();
-    expect(screen.getByRole("button", { name: "Refresh team" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Refresh team" })).toBeNull();
     await act(async () => finishRefresh({ data: { ok: true, users: [teammate, incomplete] } }));
     expect(await screen.findByText(incomplete.email)).toBeVisible();
     expect(within(card).getByText(error)).toBeVisible();
     expect(within(card).getByRole("textbox", { name: "Email" })).toHaveValue(incomplete.email);
-    expect(screen.getByRole("button", { name: "Refresh team" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Refresh team" })).toBeNull();
 
     listTeamUsers.mockResolvedValue({ data: { users: [teammate] } });
-    fireEvent.click(screen.getByRole("button", { name: "Refresh team" }));
+    await invalidateLiveUpdates();
+    expect(listTeamUsers).toHaveBeenCalledTimes(2);
+    expect(within(card).getByRole("textbox", { name: "Email" })).toHaveValue(incomplete.email);
+    expect(within(card).getByText(error)).toBeVisible();
+    // Returning the invite draft to its baseline releases the deferred read.
+    fireEvent.change(within(card).getByRole("textbox", { name: "Email" }), { target: { value: "" } });
     await waitFor(() => expect(screen.queryByText(incomplete.email)).toBeNull());
     expect(listTeamUsers).toHaveBeenCalledTimes(3);
-    expect(within(card).getByText(error)).toBeVisible();
   });
 
   it("disables repeated assignment edits while saving and retains the original choice on failure", async () => {
@@ -555,13 +575,16 @@ it('retains an unsaved phone draft through roster refresh but adopts refreshes w
   combinedSetup(); renderPage();
   const phone = await screen.findByRole('textbox', { name: 'Mobile number for Casey Staff' });
   listTeamUsers.mockResolvedValue({ data: { users: [teammate], profiles: [{ ...teammateProfile, mobilePhone: '5085550200' }] } });
-  fireEvent.click(screen.getByRole('button', { name: 'Refresh team' }));
+  await invalidateLiveUpdates();
   await waitFor(() => expect(phone).toHaveValue('5085550200'));
   fireEvent.change(phone, { target: { value: '5085550300' } });
   listTeamUsers.mockResolvedValue({ data: { users: [teammate], profiles: [{ ...teammateProfile, mobilePhone: '5085550400' }] } });
-  fireEvent.click(screen.getByRole('button', { name: 'Refresh team' }));
-  await waitFor(() => expect(listTeamUsers).toHaveBeenCalledTimes(3));
+  await invalidateLiveUpdates();
+  expect(listTeamUsers).toHaveBeenCalledTimes(2);
   expect(phone).toHaveValue('5085550300');
+  fireEvent.change(phone, { target: { value: '5085550200' } });
+  await waitFor(() => expect(phone).toHaveValue('5085550400'));
+  expect(listTeamUsers).toHaveBeenCalledTimes(3);
 });
 
 

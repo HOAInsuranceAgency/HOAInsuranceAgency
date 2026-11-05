@@ -1,3 +1,4 @@
+import { batchLiveChanges } from "../live-write";
 import { monitorHandler } from "../monitoring";
 import { handler as originalHandler } from "./handler";
-export const handler = monitorHandler(originalHandler, "pf-autopay.handler");
+export const handler = monitorHandler(batchLiveChanges(originalHandler), "pf-autopay.handler");

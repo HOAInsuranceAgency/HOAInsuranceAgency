@@ -1,3 +1,4 @@
+import { invalidateLiveUpdates } from "../../test/liveUpdates";
 import { beforeEach, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
@@ -93,7 +94,7 @@ it('clears the visible selection and blocks exports when a salesperson disappear
     entries: { 'alice-lead': { accountId: 'alice-lead', salespersonId: 'bob', plan: emptyCommercialPlan('alice-lead') } },
     team: [{ userId: 'bob', name: 'Bob', salesperson: true }],
   });
-  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+  await invalidateLiveUpdates();
   await waitFor(() => expect(picker).toHaveValue(''));
   expect(screen.getByRole('combobox', { name: 'Download Lead work list' })).toBeDisabled();
   expect(screen.getByText('Choose a salesperson to view their lead work list.')).toBeInTheDocument();
@@ -189,12 +190,12 @@ it('retains lead data for transient failures but clears denied charts and work r
   fireEvent.change(await screen.findByRole('combobox', { name: 'Salesperson' }), { target: { value: 'alice' } });
   expect(await screen.findByText('Alice account')).toBeVisible();
   h.assignments.mockRejectedValueOnce(new Error('Report temporarily unavailable'));
-  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+  await invalidateLiveUpdates();
   await screen.findByText(/Report temporarily unavailable/);
   expect(screen.getByText('Alice account')).toBeVisible();
   expect(screen.getByRole('combobox', { name: 'Download Lead work list' })).toBeDisabled();
   h.assignments.mockRejectedValueOnce(Object.assign(new Error('Credentials changed'), { name: 'Unauthorized' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+  await invalidateLiveUpdates();
   expect(await screen.findByRole('alert')).toHaveTextContent('Credentials changed');
   expect(screen.queryByText('Alice account')).toBeNull();
   expect(screen.queryByRole('group', { name: 'Open leads per person' })).toBeNull();
@@ -215,7 +216,7 @@ it('keeps denied lead details unavailable while retrying the selected work list'
   fireEvent.change(await screen.findByRole('combobox', { name: 'Salesperson' }), { target: { value: 'alice' } });
   expect(await screen.findByText('Alice account')).toBeVisible();
   h.commercial.mockRejectedValueOnce(Object.assign(new Error('Credentials changed'), { name: 'Unauthorized' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+  await invalidateLiveUpdates();
   expect(await screen.findByRole('alert')).toHaveTextContent('Credentials changed');
   expect(screen.queryByText('Alice account')).toBeNull();
   let finish!: (value: unknown) => void;

@@ -1,3 +1,4 @@
+import { useLiveUpdateBlock } from "../../lib/useLiveUpdates";
 import { Button } from "../../components/ui/Button";
 import { Select } from "../../components/ui/Select";
 import { Input } from "../../components/ui/Input";
@@ -38,6 +39,7 @@ function LoanActions({ loan, onChanged, refreshRequired, setRefreshRequired }: {
   const [certDate, setCertDate] = useState("");
   const [certNumber, setCertNumber] = useState("");
   const [cancelDate, setCancelDate] = useState("");
+  useLiveUpdateBlock(!!certNoticeId || !!certDate || !!certNumber || !!cancelDate || status.busy);
   const postedInstallment = useRef<number>();
   const actionPending = useRef(false);
   const notices = useAsyncResource(
@@ -49,7 +51,7 @@ function LoanActions({ loan, onChanged, refreshRequired, setRefreshRequired }: {
         })
       ),
     [loan.id, loan.status],
-    { initialData: [] as PfNotice[], errorMessage: "Failed to load notices", clearDataOnError: isAuthorizationError }
+    { initialData: [] as PfNotice[], errorMessage: "Failed to load notices", clearDataOnError: isAuthorizationError , live: true }
   );
   /**
    * W8 rollover repair. The bind flow rolls quote-anchored loans onto the
@@ -70,7 +72,7 @@ function LoanActions({ loan, onChanged, refreshRequired, setRefreshRequired }: {
           ).then((ps) => (ps as Policy[])[0] ?? null)
         : Promise.resolve(null),
     [loan.id, loan.quoteId, loan.policyId],
-    { initialData: null as Policy | null, errorMessage: "Failed to check the bound policy", clearDataOnError: isAuthorizationError }
+    { initialData: null as Policy | null, errorMessage: "Failed to check the bound policy", clearDataOnError: isAuthorizationError , live: true }
   );
 
   async function refreshAfterAction() {
@@ -130,7 +132,7 @@ function LoanActions({ loan, onChanged, refreshRequired, setRefreshRequired }: {
     ); } finally { actionPending.current = false; }
   }
   const busy = status.busy || refreshRequired;
-  const noticesUnavailable = !notices.loaded || notices.loading || Boolean(notices.error);
+  const noticesUnavailable = !notices.loaded || notices.loading || !!notices.refreshing || Boolean(notices.error || notices.refreshError);
 
   const uncertifiedIntents = notices.data.filter(
     (n) =>
@@ -152,8 +154,8 @@ function LoanActions({ loan, onChanged, refreshRequired, setRefreshRequired }: {
           Refresh financing
         </Button>
       </p>}
-      {notices.error && <p className="error-text" role="alert">
-        {notices.error}{" "}
+      {(notices.error || notices.refreshError) && <p className="error-text" role="alert">
+        {notices.error || notices.refreshError}{" "}
         <Button variant="secondary" type="button"  disabled={notices.loading || busy} onClick={() => void notices.refetch()}>Retry notices</Button>
       </p>}
       {rollTarget.error && <p className="error-text" role="alert">
@@ -377,7 +379,7 @@ function AccountFinancing({ account }: { account: Account }) {
   const res = useAsyncResource(
     () => readFinancing(account.id),
     [account.id],
-    { initialData: null, errorMessage: "Failed to load financing", clearDataOnError: isAuthorizationError }
+    { initialData: null, errorMessage: "Failed to load financing", clearDataOnError: isAuthorizationError , live: true }
   );
 
   const agreementStatus = useSaveStatus({ autoClearMs: 6000 });

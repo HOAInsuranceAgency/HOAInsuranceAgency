@@ -1,3 +1,4 @@
+import { useLiveUpdateBlock } from "../lib/useLiveUpdates";
 import { Input } from "./ui/Input";
 import { Button } from "./ui/Button";
 import { Textarea } from "./ui/Textarea";
@@ -33,6 +34,7 @@ export default function ManagementChangeForm({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  useLiveUpdateBlock(true);
   const [partyId, setParty] = useState(initialPartyId ?? ''),
     [effectiveOn, setEffective] = useState(agencyDay(new Date().toISOString())),
     [generalPartyId, setGeneral] = useState(''),

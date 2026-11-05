@@ -480,7 +480,7 @@ function ExtractionPanelContent({
         })
       ),
     [account.id],
-    { initialData: [] as Contact[], clearDataOnError: isAuthorizationError }
+    { initialData: [] as Contact[], clearDataOnError: isAuthorizationError , live: true }
   );
 
   // Same shape and the same reason as the contacts read: a candidate has to
@@ -495,7 +495,7 @@ function ExtractionPanelContent({
         })
       ),
     [account.id],
-    { initialData: [] as Loss[], clearDataOnError: isAuthorizationError }
+    { initialData: [] as Loss[], clearDataOnError: isAuthorizationError , live: true }
   );
 
   // Buildings were the original bug: they were created unconditionally on
@@ -509,7 +509,7 @@ function ExtractionPanelContent({
         })
       ),
     [account.id],
-    { initialData: [] as Building[], clearDataOnError: isAuthorizationError }
+    { initialData: [] as Building[], clearDataOnError: isAuthorizationError , live: true }
   );
 
   /**

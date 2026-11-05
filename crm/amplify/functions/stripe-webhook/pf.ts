@@ -1,3 +1,4 @@
+import { sendCrmWrite } from '../live-write';
 import { agencyDay } from "../../../../shared/leadActionGuidance";
 import { feeAllocations, type BrokerFeeAllocation } from "../../../../shared/brokerFees";
 import { syncBrokerFeePayment } from "../broker-fees/payments";
@@ -104,7 +105,7 @@ async function logRow(row: {
   if (!table) return;
   const now = new Date().toISOString();
   try {
-    await ddb.send(
+    await sendCrmWrite(ddb.send(
       new PutCommand({
         TableName: table,
         Item: {
@@ -120,7 +121,7 @@ async function logRow(row: {
           occurredAt: now,
         },
       })
-    );
+    ));
   } catch (err) {
     console.error("stripe-webhook: pf log write failed", err);
   }
@@ -230,7 +231,7 @@ async function applyDownPayment(d: PfEventDecision, loan: LoanRow): Promise<stri
   const receipt = initialPaymentReceipt(loan, d.amount, d.billingVersion ?? null);
   const now = new Date().toISOString();
   try {
-    await ddb.send(
+    await sendCrmWrite(ddb.send(
       new UpdateCommand({
         TableName: table,
         Key: { id: loan.id },
@@ -252,7 +253,7 @@ async function applyDownPayment(d: PfEventDecision, loan: LoanRow): Promise<stri
           ":pm": d.paymentMethodId,
         },
       })
-    );
+    ));
   } catch (err) {
     if ((err as { name?: string }).name !== "ConditionalCheckFailedException") throw err;
     /**
@@ -361,7 +362,7 @@ async function applyDownPayment(d: PfEventDecision, loan: LoanRow): Promise<stri
       );
       for (const sib of Items ?? []) {
         try {
-          await ddb.send(
+          await sendCrmWrite(ddb.send(
             new UpdateCommand({
               TableName: table,
               Key: { id: sib.id },
@@ -374,7 +375,7 @@ async function applyDownPayment(d: PfEventDecision, loan: LoanRow): Promise<stri
                 ":now": new Date().toISOString(),
               },
             })
-          );
+          ));
         } catch (err) {
           if ((err as { name?: string }).name === "ConditionalCheckFailedException") continue;
           throw err;
@@ -433,7 +434,7 @@ async function clearPending(loanId: string, intentId: string) {
   const table = process.env.PF_LOAN_TABLE;
   if (!table) return;
   try {
-    await ddb.send(
+    await sendCrmWrite(ddb.send(
       new UpdateCommand({
         TableName: table,
         Key: { id: loanId },
@@ -442,7 +443,7 @@ async function clearPending(loanId: string, intentId: string) {
         ConditionExpression: "autopayPendingIntentId = :pi",
         ExpressionAttributeValues: { ":pi": intentId, ":now": new Date().toISOString() },
       })
-    );
+    ));
   } catch (err) {
     if ((err as { name?: string }).name !== "ConditionalCheckFailedException") {
       console.error(`stripe-webhook: could not clear the pending debit on ${loanId}`, err);
@@ -461,7 +462,7 @@ async function failInstallment(loanId: string, intentId: string, installment: nu
   const table = process.env.PF_LOAN_TABLE;
   if (!table) return;
   const patch = (condition: string, values: Record<string, unknown>) =>
-    ddb.send(
+    sendCrmWrite(ddb.send(
       new UpdateCommand({
         TableName: table,
         Key: { id: loanId },
@@ -474,7 +475,7 @@ async function failInstallment(loanId: string, intentId: string, installment: nu
           ...values,
         },
       })
-    );
+    ));
   try {
     await patch("autopayPendingIntentId = :pi", { ":pi": intentId });
     return;
@@ -497,14 +498,14 @@ async function failInstallment(loanId: string, intentId: string, installment: nu
     // Neither matched: the marker already moved on. The stand-down field
     // still matters — write it alone, unconditionally.
     try {
-      await ddb.send(
+      await sendCrmWrite(ddb.send(
         new UpdateCommand({
           TableName: table,
           Key: { id: loanId },
           UpdateExpression: "SET autopayFailedInstallment = :n, updatedAt = :now",
           ExpressionAttributeValues: { ":n": installment, ":now": new Date().toISOString() },
         })
-      );
+      ));
     } catch (err2) {
       console.error(`stripe-webhook: could not record the failed installment on ${loanId}`, err2);
     }
@@ -683,7 +684,7 @@ export async function applyPfEvent(d: PfEventDecision): Promise<string> {
      */
     if (d.kind === "down" && loan.status === "QUOTED" && !loan.downPaymentIntentId) {
       try {
-        await ddb.send(
+        await sendCrmWrite(ddb.send(
           new UpdateCommand({
             TableName: process.env.PF_LOAN_TABLE as string,
             Key: { id: loan.id },
@@ -696,7 +697,7 @@ export async function applyPfEvent(d: PfEventDecision): Promise<string> {
               ":now": new Date().toISOString(),
             },
           })
-        );
+        ));
       } catch (err) {
         if ((err as { name?: string }).name !== "ConditionalCheckFailedException") throw err;
       }
@@ -714,7 +715,7 @@ export async function applyPfEvent(d: PfEventDecision): Promise<string> {
        * the invoice rule that PROCESSING refuses everything.
        */
       try {
-        await ddb.send(
+        await sendCrmWrite(ddb.send(
           new UpdateCommand({
             TableName: process.env.PF_LOAN_TABLE as string,
             Key: { id: loan.id },
@@ -727,7 +728,7 @@ export async function applyPfEvent(d: PfEventDecision): Promise<string> {
               ":now": new Date().toISOString(),
             },
           })
-        );
+        ));
       } catch (err) {
         if ((err as { name?: string }).name !== "ConditionalCheckFailedException") throw err;
         // The loan moved; whatever won knows more than this event does.
@@ -768,7 +769,7 @@ export async function applyPfEvent(d: PfEventDecision): Promise<string> {
      * mirror of PROCESSING → SENT on the invoice.
      */
     try {
-      await ddb.send(
+      await sendCrmWrite(ddb.send(
         new UpdateCommand({
           TableName: process.env.PF_LOAN_TABLE as string,
           Key: { id: loan.id },
@@ -781,7 +782,7 @@ export async function applyPfEvent(d: PfEventDecision): Promise<string> {
             ":now": new Date().toISOString(),
           },
         })
-      );
+      ));
     } catch (err) {
       if ((err as { name?: string }).name !== "ConditionalCheckFailedException") throw err;
     }

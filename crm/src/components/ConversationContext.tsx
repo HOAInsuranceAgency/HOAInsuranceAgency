@@ -13,7 +13,7 @@ export default function ConversationContext(props: Props) {
   return <ContextEditor key={`${props.accountId}:${props.conversationId}`} {...props} />;
 }
 function ContextEditor({ accountId, conversationId, bound, saved, onSaved }: Props) {
-  const policies = useAsyncResource(() => listAllPages(token => client.models.Policy.list({ filter: { accountId: { eq: accountId } }, nextToken: token })), [accountId], { initialData: [] });
+  const policies = useAsyncResource(() => listAllPages(token => client.models.Policy.list({ filter: { accountId: { eq: accountId } }, nextToken: token })), [accountId], { initialData: [] , live: true });
   const initial = { context: saved?.context ?? (bound ? "SERVICE" : "LEAD"), purpose: saved?.purpose ?? "PROSPECT", policyId: saved?.policyId ?? "" };
   const editor = useFormState(initial);
   const { context, purpose, policyId } = editor.form;

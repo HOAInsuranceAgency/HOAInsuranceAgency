@@ -41,6 +41,23 @@ import { marketingReportApi } from "../functions/marketing-report/resource";
  */
 const schema = a
   .schema({
+    // Payload-free signals. IAM-only publishing is enforced again in the
+    // resolver; subscriptions only prompt ordinary, authorized data reads.
+    CrmChange: a.customType({ revision: a.string().required() }),
+    OwnerChange: a.customType({ revision: a.string().required() }),
+    PersonalChange: a.customType({ revision: a.string().required(), userId: a.string().required() }),
+    publishCrmChange: a.mutation().returns(a.ref('CrmChange'))
+      .handler(a.handler.custom({ entry: './live-publish.js' })).authorization(allow => [allow.authenticated()]),
+    publishOwnerChange: a.mutation().returns(a.ref('OwnerChange'))
+      .handler(a.handler.custom({ entry: './live-publish.js' })).authorization(allow => [allow.authenticated()]),
+    publishPersonalChange: a.mutation().arguments({ userId: a.string().required() }).returns(a.ref('PersonalChange'))
+      .handler(a.handler.custom({ entry: './live-publish.js' })).authorization(allow => [allow.authenticated()]),
+    onCrmChange: a.subscription().for(a.ref('publishCrmChange'))
+      .handler(a.handler.custom({ entry: './live-subscribe.js' })).authorization(allow => [allow.authenticated()]),
+    onOwnerChange: a.subscription().for(a.ref('publishOwnerChange'))
+      .handler(a.handler.custom({ entry: './live-subscribe.js' })).authorization(allow => [allow.authenticated()]),
+    onPersonalChange: a.subscription().for(a.ref('publishPersonalChange'))
+      .handler(a.handler.custom({ entry: './live-subscribe.js' })).authorization(allow => [allow.authenticated()]),
     // ── Lifecycle enums ────────────────────────────────────────────────
     AccountStage: a.enum(["LEAD", "CLIENT"]),
     AccountType: a.enum(["ASSOCIATION", "PERSONAL", "COMMERCIAL_OTHER"]),

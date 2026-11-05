@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { QueryCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
+import { sendCrmWrite } from '../live-write';
 import { assertBrokerFeeAgencyBilling, brokerFeeCents, feeAllocations, type BrokerFeeAllocation, type BrokerFeeRecord, type BrokerFeeInvoiceSendClaim } from '../../../../shared/brokerFees';
 import { authorizedQuoteTerms } from '../../../../shared/quoteAuthorization';
 import { appendEntry, type CommissionPolicy, type CommissionStatement, type StatementLine } from '../../../../shared/commissions';
@@ -280,7 +281,7 @@ async function allocatePayment(id: string) {
     }
     const complete=payment.allocations.every(a=>posted[a.quoteId]);
     extras.push(feePut({...payment,posted,pending:complete?undefined:'PENDING'},payment));
-    try { await commissions.commit(changes,'broker-fee-payment',extras);return; }
+    try { await sendCrmWrite(commissions.commit(changes,'broker-fee-payment',extras));return; }
     catch(error){if(!retryable(error)||attempt===4)throw error;}
   }
 }

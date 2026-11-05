@@ -24,7 +24,6 @@ import { ReportDownload } from '../components/ReportDownload';
 import { LeadSnoozeControl } from '../components/LeadSnoozeControl';
 import { leadSnoozeStatus } from '../../../shared/leadSnooze';
 import { useAgencyDay } from '../lib/useAgencyDay';
-import { useRefreshOnReturn } from '../lib/useRefreshOnReturn';
 import { acquisitionLabel, websiteFormLabel } from '../../../shared/leadSource';
 import { formatCommission, pendingCommission } from '../../../shared/quotePackages';
 import { accountStateCode, LEAD_VIEWS, US_STATE_NAMES, type AccountListStage, type AccountListView, type LeadView } from '../lib/accountListView';
@@ -48,7 +47,7 @@ function AccountList({ stage, viewScope }: AccountsListProps) {
 
   const resource = useAccountsListData(stage);
   const { accounts, contacts, policies } = resource.data;
-  const { loading, loaded, error, refreshError, refetch: refetchAccounts } = resource;
+  const { loading, loaded, refreshing, error, refreshError, refetch: refetchAccounts } = resource;
   const commercial = {
     data: resource.data.commercial,
     refetch: resource.refreshCommercial,
@@ -65,7 +64,6 @@ function AccountList({ stage, viewScope }: AccountsListProps) {
   useAccountListPosition(view.storageKey, currentView, loaded && !error);
   // Keep authorized rows on screen while checking for changes.
   // Native selects and other row editors still defer focus-triggered refreshes.
-  const onInteractionChange = useRefreshOnReturn(refetchAccounts, true, loading);
   const today = useAgencyDay();
   const snoozeOf = (a: Account) => commercial.data.entries[a.id]?.snooze;
   const snoozeStatus = (a: Account) => a.stage === 'LEAD' ? leadSnoozeStatus(snoozeOf(a), today) : 'ACTIVE';
@@ -155,10 +153,10 @@ function AccountList({ stage, viewScope }: AccountsListProps) {
       <AccountSavedViews storageKey={view.storageKey} current={currentView} stage={stage} admin={isAdmin} onApply={view.update} onReset={view.reset} />
 
       <div className="toolbar">
-        <Button variant="secondary"  disabled={loading} onClick={() => void refetchAccounts()} aria-label={`Refresh ${label.toLowerCase()}`}>{loading && loaded ? 'Refreshing…' : 'Refresh'}</Button>
+
         <label className="field">State<Select value={view.state} onChange={event => view.update({ state: event.target.value })}><option value="">All states</option>{Object.entries(US_STATE_NAMES).sort((a, b) => a[1].localeCompare(b[1])).map(([code, name]) => <option key={code} value={code}>{name} ({code})</option>)}</Select></label>
         {isAdmin && <label className="field">Salesperson<Select value={salesperson} onChange={e => setSalesperson(e.target.value)}><option value="">All salespeople</option>{commercial.data.team.filter(t => t.salesperson).map(t => <option key={t.userId} value={t.userId}>{t.name}</option>)}</Select></label>}
-        <ReportDownload disabled={loading || !loaded || !!error || !!refreshError || stage === 'LEAD' && !!quoteResource.error} report={{ title: label, filters: [isAdmin ? `Salesperson: ${commercial.data.team.find(t => t.userId === salesperson)?.name ?? 'All'}` : 'All displayed data', ...(stage === 'LEAD' ? [`View: ${leadView}`] : []), ...(view.state ? [`State: ${US_STATE_NAMES[view.state]}`] : [])].join(' · '), sections: [{ title: label, columns: ['Name', 'Type', 'Contact', 'City', 'State', ...(isAdmin ? ['Salesperson'] : []), ...(stage === 'LEAD' ? [ 'Lead source', 'Website form', 'Estimated opportunity (USD)', 'Pending commission (USD)', 'Commission basis', 'Entered', 'Follow-up date', 'Follow-up note'] : []), 'Units', 'TIV (USD)', stage === 'LEAD' ? 'Incumbent expires' : 'Renewal'], rows: sorted.map(a => { const f = forecastOf(a), estimate = commercial.data.entries[a.id]?.plan.estimatedCents; return [a.name, a.type, contactOf(a)?.name, a.city, a.state, ...(isAdmin ? [assignee(a, 'salespersonId')] : []), ...(stage === 'LEAD' ? [ acquisitionLabel(a.leadSource, a.source), websiteFormLabel(a.source), estimate == null ? null : estimate / 100, f?.cents == null ? null : f.cents / 100, f?.label, a.createdAt?.slice(0,10), a.stage === 'LEAD' ? snoozeOf(a)?.followUpOn : null, a.stage === 'LEAD' ? snoozeOf(a)?.note : null] : []), a.unitCount, a.totalInsuredValue, renewalOf(a)]; }) }] }} />
+        <ReportDownload disabled={loading || refreshing || !loaded || !!error || !!refreshError || stage === 'LEAD' && !!quoteResource.error} report={{ title: label, filters: [isAdmin ? `Salesperson: ${commercial.data.team.find(t => t.userId === salesperson)?.name ?? 'All'}` : 'All displayed data', ...(stage === 'LEAD' ? [`View: ${leadView}`] : []), ...(view.state ? [`State: ${US_STATE_NAMES[view.state]}`] : [])].join(' · '), sections: [{ title: label, columns: ['Name', 'Type', 'Contact', 'City', 'State', ...(isAdmin ? ['Salesperson'] : []), ...(stage === 'LEAD' ? [ 'Lead source', 'Website form', 'Estimated opportunity (USD)', 'Pending commission (USD)', 'Commission basis', 'Entered', 'Follow-up date', 'Follow-up note'] : []), 'Units', 'TIV (USD)', stage === 'LEAD' ? 'Incumbent expires' : 'Renewal'], rows: sorted.map(a => { const f = forecastOf(a), estimate = commercial.data.entries[a.id]?.plan.estimatedCents; return [a.name, a.type, contactOf(a)?.name, a.city, a.state, ...(isAdmin ? [assignee(a, 'salespersonId')] : []), ...(stage === 'LEAD' ? [ acquisitionLabel(a.leadSource, a.source), websiteFormLabel(a.source), estimate == null ? null : estimate / 100, f?.cents == null ? null : f.cents / 100, f?.label, a.createdAt?.slice(0,10), a.stage === 'LEAD' ? snoozeOf(a)?.followUpOn : null, a.stage === 'LEAD' ? snoozeOf(a)?.note : null] : []), a.unitCount, a.totalInsuredValue, renewalOf(a)]; }) }] }} />
         {stage === "LEAD" && (
           <Link to="/leads/new">
             <Button variant="primary" >+ New lead</Button>
@@ -167,6 +165,7 @@ function AccountList({ stage, viewScope }: AccountsListProps) {
       </div>
 
       <div className="card">
+        {refreshing && <p className="muted small" role="status">Updating the account list… Showing the last complete results. Downloads will resume when the update finishes.</p>}
         {refreshError && <p className="error-text" role="alert">Some details may be out of date. {refreshError} <Button disabled={loading} onClick={() => void refetchAccounts()}>Retry</Button></p>}
         {stage === 'LEAD' && quoteResource.error && !refreshError && <p className="error-text" role="alert">{quoteResource.error} <Button onClick={() => void refetchAccounts()}>Retry</Button></p>}
         {stage === 'LEAD' && <p className="muted small">Commission estimates are for the agency. Client accounts with a selected package still being bound remain here until the package is finished.</p>}
@@ -231,7 +230,7 @@ function AccountList({ stage, viewScope }: AccountsListProps) {
                       <td>{a.city || '—'}</td><td>{a.state || '—'}</td>
                       {isAdmin && <td>{assignment?.workflowVersion != null ? (
                         <AccountSalespersonSelect
-                          onInteractionChange={onInteractionChange}
+
                           accountId={a.id}
                           accountName={a.name}
                           salespersonId={assignment.salespersonId}
@@ -245,7 +244,7 @@ function AccountList({ stage, viewScope }: AccountsListProps) {
                           onRefresh={commercial.refetch}
                         />
                       ) : assignee(a, 'salespersonId')}</td>}
-                      {stage === 'LEAD' && <td>{a.stage === 'LEAD' && snooze ? <LeadSnoozeControl onInteractionChange={onInteractionChange} accountName={a.name} snooze={snooze} today={today} onRefresh={commercial.refetch} onSaved={saved => {
+                      {stage === 'LEAD' && <td>{a.stage === 'LEAD' && snooze ? <LeadSnoozeControl accountName={a.name} snooze={snooze} today={today} onRefresh={commercial.refetch} onSaved={saved => {
                         commercial.setData(current => {
                           const entry = current.entries[a.id];
                           if (!entry || (entry.snooze?.version ?? -1) >= saved.version) return current;
@@ -253,7 +252,7 @@ function AccountList({ stage, viewScope }: AccountsListProps) {
                         });
                         setNotice(saved.followUpOn ? `${a.name} snoozed until ${fmtDate(saved.followUpOn)}.` : `${a.name} is back in Active.`);
                       }} /> : '—'}</td>}
-                      {stage === 'LEAD' && <><td>{acquisitionLabel(a.leadSource, a.source)}</td><td>{websiteFormLabel(a.source)}</td><td>{commercial.data.entries[a.id] ? <OpportunityEstimate onInteractionChange={onInteractionChange} plan={commercial.data.entries[a.id].plan} onSaved={plan => commercial.setData(data => {
+                      {stage === 'LEAD' && <><td>{acquisitionLabel(a.leadSource, a.source)}</td><td>{websiteFormLabel(a.source)}</td><td>{commercial.data.entries[a.id] ? <OpportunityEstimate plan={commercial.data.entries[a.id].plan} onSaved={plan => commercial.setData(data => {
                         const entry = data.entries[a.id];
                         if (!entry || entry.plan.version >= plan.version) return data;
                         return { ...data, entries: { ...data.entries, [a.id]: { ...entry, plan } } };

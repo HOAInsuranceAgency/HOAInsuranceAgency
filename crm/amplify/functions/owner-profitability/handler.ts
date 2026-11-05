@@ -1,4 +1,5 @@
 import { assertPreviewRead } from "../migration-readonly";
+import { sendOwnerWrite } from '../live-write';
 import { randomUUID } from 'node:crypto';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, GetCommand, QueryCommand, ScanCommand, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
@@ -171,7 +172,7 @@ export function createHandler(store: ProfitabilityRepository) {
         const terms = typeof args.terms === 'string' ? JSON.parse(args.terms) : args.terms;
         const compensation = validateCompensationRecord({ userId: args.userId, version: args.version, terms });
         if (!/^[a-zA-Z0-9_-]{1,128}$/.test(compensation.userId)) throw new Error('Choose an existing employee.');
-        return { ok: true, compensation: await store.save(compensation, actor) };
+        return { ok: true, compensation: await sendOwnerWrite(store.save(compensation, actor)) };
       }
       throw new Error('Unknown owner reporting request.');
     } catch (error) {

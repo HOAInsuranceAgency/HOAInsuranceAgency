@@ -178,6 +178,8 @@ try {
   if (statusEnv.variables.HONEYCOMB_ENVIRONMENT !== environment) throw new Error("Honeycomb public status must label the correct environment");
   const { checkAccountAccess } = await import("./check-account-access");
   checkAccountAccess(backend, outdir);
+  const { checkLiveChanges } = await import('./check-live-changes');
+  checkLiveChanges(backend);
   const { checkOwnerProfitability } = await import("./check-owner-profitability");
   checkOwnerProfitability(backend);
   const { checkBrokerFeeCallerAccess } = await import('./check-broker-fee-access');

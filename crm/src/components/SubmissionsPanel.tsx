@@ -48,7 +48,7 @@ function SubmissionsPanelContent({ account, initialEstimateId }: { account: Acco
     ]);
     const environment = object(settings.data).environment;
     return { submissions: submissions.sort((a, b) => b.createdAt.localeCompare(a.createdAt)), estimates: estimates.sort((a, b) => b.createdAt.localeCompare(a.createdAt)), environment, enabled: object(settings.data).enabled === true && isHoneycombEnvironment(environment) };
-  }, [account.id], { clearDataOnError: isAuthorizationError });
+  }, [account.id], { clearDataOnError: isAuthorizationError, live: { protectEdits: false } });
   const records = resource.data?.submissions ?? [];
   // Decide the initial empty-state composer once. Later history refreshes
   // must not close a draft just because another submission appeared.
@@ -71,16 +71,16 @@ function SubmissionsPanelContent({ account, initialEstimateId }: { account: Acco
       {resource.data?.enabled && account.type === "ASSOCIATION" && <Button variant="primary"  onClick={() => { setRetry(undefined); setOpen(true); }}>New submission</Button>}
     </div>
     <p className="hc-notice">{resource.data?.environment === "staging" && "Staging · For testing. "}Partial submissions stay on this account; they do not create a bindable quote or change a Lead to a Client.</p>
-    {resource.error && <p role="alert" className="error-text">{resource.error} <Button variant="secondary"  onClick={() => void resource.refetch()}>Refresh</Button></p>}
+    {(resource.error || resource.refreshError) && <p role="alert" className="error-text">{resource.error || resource.refreshError} <Button variant="secondary"  onClick={() => void resource.refetch()}>Retry submissions</Button></p>}
     {!resource.loaded && <p role="status">Loading submissions…</p>}
     {resource.data && !resource.data.enabled && <p>Honeycomb submissions are not enabled in this environment.</p>}
     {account.type !== "ASSOCIATION" && <p>This Honeycomb workflow supports association accounts.</p>}
     {resource.data?.enabled && account.type === "ASSOCIATION" && (open ?? (!records.length && !queuedId)) && <Composer
-      key={retry ? `${retry.id}:${retry.attempt}` : "new"} staging={resource.data.environment === "staging"} blocked={!!resource.error || resource.loading} account={account} estimates={resource.data.estimates} records={records} retry={retry}
+      key={retry ? `${retry.id}:${retry.attempt}` : "new"} staging={resource.data.environment === "staging"} blocked={!!resource.error || !!resource.refreshError || resource.loading || !!resource.refreshing} account={account} estimates={resource.data.estimates} records={records} retry={retry}
       initialEstimateId={retry?.sourceEstimateId ?? initialEstimateId} onCancel={() => { setOpen(false); setRetry(undefined); }}
       onQueued={id => { setQueuedId(id); setOpen(false); setRetry(undefined); void resource.refetch(); }} />}
-    {queuedId && !records.some(r => r.id === queuedId) && <p role="status">Request saved. Loading its status… <Button variant="secondary"  onClick={() => void resource.refetch()}>Refresh</Button></p>}
-    {resource.loaded && <div className="hc-heading"><h3>Submission history</h3><Button variant="secondary"  disabled={resource.loading} onClick={() => void resource.refetch()}>Refresh</Button></div>}
+    {queuedId && !records.some(r => r.id === queuedId) && <p role="status">Request saved. Loading its status… <Button variant="secondary"  onClick={() => void resource.refetch()}>Check status</Button></p>}
+    {resource.loaded && <div className="hc-heading"><h3>Submission history</h3></div>}
     {records.map(record => <SubmissionCard key={record.id} record={record} environment={resource.data?.environment} enabled={resource.data?.enabled === true} refresh={resource.refetch}
       onRetry={() => { setRetry(record); setOpen(true); }} />)}
   </section>;

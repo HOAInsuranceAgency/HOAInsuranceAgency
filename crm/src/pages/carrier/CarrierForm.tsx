@@ -17,7 +17,7 @@ export function CarrierForm({
   // `useSaveStatus` owns the confirmation; `useFormState`'s `saved` is left
   // unread so there is exactly one answer to "did that save land".
   const saveStatus = useSaveStatus();
-  const { form, setF } = useFormState({
+  const { form, setF, markSaved } = useFormState({
     name: carrier.name,
     appointed: carrier.appointed,
     marketType: carrier.marketType ?? "",
@@ -48,6 +48,7 @@ export function CarrierForm({
   }
 
   async function save() {
+    const submitted = form;
     await saveStatus.run(
       async () => {
         const { data, errors } = await client.models.Carrier.update({
@@ -83,6 +84,7 @@ export function CarrierForm({
           notes: form.notes.trim() || null,
         });
         if (errors?.length || !data) throw new Error(errors?.[0]?.message);
+        markSaved(submitted);
         onChange(data);
       },
       { errorMessage: "Save failed" }

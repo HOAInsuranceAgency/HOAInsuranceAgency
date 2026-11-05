@@ -22,7 +22,8 @@ import FinanceTab from '../pages/dashboard/FinanceTab';
 beforeEach(() => { h.list.mockReset().mockResolvedValue({ data: [] }); h.retiredTasks.mockReset().mockRejectedValue(new Error('Retired task storage must not be read')); });
 it.each([PerformanceTab, LeadsTab, FinanceTab])('loads %s without querying retired task storage', async Component => {
   render(<MemoryRouter><Component /></MemoryRouter>);
-  await screen.findByRole('button', { name: 'Refresh' });
+  await screen.findByText(/^Updated /);
+  expect(screen.queryByRole('button', { name: 'Refresh' })).toBeNull();
   expect(h.list).toHaveBeenCalled();
   expect(h.retiredTasks).not.toHaveBeenCalled();
   expect(screen.queryByText(/task open|tasks open|Window missed|Submit by/)).toBeNull();

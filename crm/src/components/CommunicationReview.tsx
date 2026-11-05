@@ -1,3 +1,4 @@
+import { useLiveUpdateBlock } from "../lib/useLiveUpdates";
 import { Button } from "./ui/Button";
 import { Input } from "./ui/Input";
 import { Select } from "./ui/Select";
@@ -9,6 +10,7 @@ import { isAuthorizationError } from "../lib/authorizationError";
 
 function useReviewMutation() {
   const [busy, setBusy] = useState(false), [error, setError] = useState("");
+  useLiveUpdateBlock(busy);
   const pending = useRef(false), mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   async function run(action: () => Promise<unknown>, onSaved: () => void) {
@@ -27,7 +29,7 @@ export function ActivityReview(props: ActivityProps) {
   return <ActivityEditor key={`${props.id}:${props.accountId ?? ""}:${props.conversationId ?? ""}`} {...props} />;
 }
 function ActivityEditor({ id, onSaved, accountId, conversationId }: ActivityProps) {
-  const resource = useAsyncResource(() => request<{ communication: Communication }>("activity", { id }), [id], { initialData: null });
+  const resource = useAsyncResource(() => request<{ communication: Communication }>("activity", { id }), [id], { initialData: null , live: true });
   const [name, setName] = useState(""), [matches, setMatches] = useState<{ id: string; name: string }[]>([]), [purpose, setPurpose] = useState("PROSPECT");
   const [searching, setSearching] = useState(false), [searchError, setSearchError] = useState(""), [searched, setSearched] = useState(false);
   const [nextToken, setNextToken] = useState<string>(), [continued, setContinued] = useState(false);
@@ -75,6 +77,7 @@ function ActivityEditor({ id, onSaved, accountId, conversationId }: ActivityProp
 }
 export function ReviewAction({ id, version, onSaved, event = false }: { id: string; version: number; onSaved: () => void; event?: boolean }) {
   const [reason, setReason] = useState("");
+  useLiveUpdateBlock(!!reason.trim());
   const [reviewedVersion, setReviewedVersion] = useState(version);
   const { busy, error, run } = useReviewMutation();
   useEffect(() => { if (!reason && !busy) setReviewedVersion(version); }, [version, reason, busy]);
@@ -84,6 +87,7 @@ export function ReviewAction({ id, version, onSaved, event = false }: { id: stri
 }
 export function DeliveryReview({ item, onSaved }: { item: { id: string; version: number; state?: string }; onSaved: () => void }) {
   const [action, setAction] = useState("resolve"), [uid, setUid] = useState(""), [reason, setReason] = useState(""), [checked, setChecked] = useState(false);
+  useLiveUpdateBlock(!!uid.trim() || !!reason.trim() || checked || action !== "resolve");
   const [reviewed, setReviewed] = useState({ version: item.version, state: item.state });
   const { busy, error, run } = useReviewMutation();
   const changed = item.version !== reviewed.version || item.state !== reviewed.state;
@@ -110,7 +114,7 @@ export function SidebarActivityLinker(props: LinkerProps) {
 }
 function ActivityLinker({ accountId, conversationId, onSaved }: LinkerProps) {
   const [id, setId] = useState(""), [error, setError] = useState(""), [loadingMore, setLoadingMore] = useState(false);
-  const rows = useAsyncResource(() => request<{ items: { id: string; communicationId: string; phone?: string; at?: string; resolved?: boolean }[]; nextToken?: string }>("work", { kind: "TRIAGE" }), [accountId, conversationId], { initialData: { items: [] } });
+  const rows = useAsyncResource(() => request<{ items: { id: string; communicationId: string; phone?: string; at?: string; resolved?: boolean }[]; nextToken?: string }>("work", { kind: "TRIAGE" }), [accountId, conversationId], { initialData: { items: [] } , live: true });
   const currentRows = useRef(rows.data); currentRows.current = rows.data;
   const pending = useRef(false), mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);

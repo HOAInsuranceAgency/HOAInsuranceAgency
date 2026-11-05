@@ -1,3 +1,4 @@
+import { LiveStatus } from "../components/LiveStatus";
 import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
 import { Select } from "../components/ui/Select";
@@ -49,7 +50,7 @@ export default function Carriers() {
   // Persistent: a successful create navigates away, so what this is really
   // for is the failure that used to be swallowed entirely.
   const saveStatus = useSaveStatus();
-  const { form, setF } = useFormState(
+  const { form, setF, markSaved, reset } = useFormState(
     { name: "", appointed: true },
     { onEdit: saveStatus.markDirty }
   );
@@ -62,7 +63,7 @@ export default function Carriers() {
       return page;
     }),
     [],
-    { initialData: [] as Carrier[], errorMessage: "Failed to load carriers" }
+    { initialData: [] as Carrier[], errorMessage: "Failed to load carriers" , live: true }
   );
   const carriers = carrierRes.data;
 
@@ -76,14 +77,14 @@ export default function Carriers() {
       return page;
     }),
     [],
-    { initialData: [] as AppetiteGuide[], errorMessage: "Failed to load appetite guides" }
+    { initialData: [] as AppetiteGuide[], errorMessage: "Failed to load appetite guides" , live: true }
   );
   const guides = guideRes.data;
 
   // Keep the finder mounted after its first successful read so refreshes and
   // retries retain risk answers. Cached data must not produce a fresh verdict.
   const appetiteAvailable = carrierRes.loaded && guideRes.loaded
-    && !carrierRes.loading && !guideRes.loading && !carrierRes.error && !guideRes.error;
+    && !carrierRes.loading && !guideRes.loading && !carrierRes.error && !guideRes.error && !carrierRes.refreshError && !guideRes.refreshError;
   useEffect(() => {
     if (appetiteAvailable) setFinderReady(true);
   }, [appetiteAvailable]);
@@ -97,7 +98,7 @@ export default function Carriers() {
   );
   const appointedCount = carriers.filter((carrier) => carrier.appointed).length;
   const filtersActive = Boolean(query || statusFilter !== "all" || coverageState || marketType);
-  const guidesAvailable = guideRes.loaded && !guideRes.loading && !guideRes.error;
+  const guidesAvailable = guideRes.loaded && !guideRes.loading && !guideRes.error && !guideRes.refreshError;
 
   function clearFilters() {
     setSearch("");
@@ -120,6 +121,7 @@ export default function Carriers() {
   );
 
   async function create() {
+    const submitted = form;
     if (creating.current || !form.name.trim()) return;
     creating.current = true;
     try {
@@ -130,6 +132,7 @@ export default function Carriers() {
             appointed: form.appointed,
           });
           if (errors?.length || !data) throw new Error(errors?.[0]?.message);
+          markSaved(submitted);
           navigate(`/carriers/${data.id}`);
         },
         { errorMessage: "Couldn't create that carrier." }
@@ -141,17 +144,15 @@ export default function Carriers() {
 
   return (
     <div className="carriers-page">
+      <LiveStatus resource={carrierRes} />
       <header className="carriers-header">
         <div>
           <h1>Carriers</h1>
           <p className="sub">Manage your markets and find the right fit for a risk.</p>
         </div>
         <div className="carriers-header-actions">
-          <Button variant="secondary"  disabled={carrierRes.loading || guideRes.loading} onClick={() => {
-            void carrierRes.refetch();
-            void guideRes.refetch();
-          }}>Refresh</Button>
-          <Button variant="primary"  disabled={saveStatus.busy} onClick={() => setShowForm(!showForm)} aria-expanded={showForm} aria-controls="add-carrier-form">
+
+          <Button variant="primary"  disabled={saveStatus.busy} onClick={() => { if (showForm) reset({ name: "", appointed: true }); setShowForm(!showForm); }} aria-expanded={showForm} aria-controls="add-carrier-form">
             {showForm ? "Cancel" : "+ Add carrier"}
           </Button>
         </div>
@@ -194,7 +195,7 @@ export default function Carriers() {
       {finderReady && (
         <AppetiteFinder carriers={carriers} guides={guides} available={appetiteAvailable} />
       )}
-      {guideRes.error && <p className="error-text" role="alert">{guideRes.error} <Button variant="secondary"  disabled={guideRes.loading} onClick={() => void guideRes.refetch()}>Retry appetite guides</Button></p>}
+      {(guideRes.error || guideRes.refreshError) && <p className="error-text" role="alert">{guideRes.error || guideRes.refreshError} <Button variant="secondary"  disabled={guideRes.loading} onClick={() => void guideRes.refetch()}>Retry appetite guides</Button></p>}
 
       <section className="card carrier-directory" aria-labelledby="carrier-directory-title">
         <div className="carrier-directory-head">
@@ -237,7 +238,7 @@ export default function Carriers() {
         {!carrierRes.loaded ? (
           <p className="muted small">Loading…</p>
         ) : carrierRes.error ? (
-          <p className="error-text" role="alert">{carrierRes.error} <Button variant="secondary"  disabled={carrierRes.loading} onClick={() => void carrierRes.refetch()}>Retry carriers</Button></p>
+          <p className="error-text" role="alert">{carrierRes.error || carrierRes.refreshError} <Button variant="secondary"  disabled={carrierRes.loading} onClick={() => void carrierRes.refetch()}>Retry carriers</Button></p>
         ) : carriers.length === 0 ? (
           <p className="muted small">No carriers yet.</p>
         ) : filtered.length === 0 ? (

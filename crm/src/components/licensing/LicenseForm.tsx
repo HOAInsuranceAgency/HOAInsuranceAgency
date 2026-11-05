@@ -34,7 +34,7 @@ export default function LicenseForm({
   onSaved: (l: License) => void;
   onSaving?: (saving: boolean) => void;
 }) {
-  const { form, setF } = useFormState({
+  const { form, setF, markSaved } = useFormState({
     userProfileId: existing?.userProfileId ?? "",
     state: existing?.state ?? "",
     licenseNumber: existing?.licenseNumber ?? "",
@@ -60,6 +60,7 @@ export default function LicenseForm({
   const [error, setError] = useState("");
 
   async function save() {
+    const submitted = form;
     if (inFlight.current) return;
     if (!form.state || !form.licenseNumber.trim()) {
       setError("State and license number are required.");
@@ -107,6 +108,7 @@ export default function LicenseForm({
         ? await client.models.License.update({ id: existing.id, ...payload })
         : await client.models.License.create(payload);
       if (errors?.length || !data) throw new Error(errors?.[0]?.message || "Save failed");
+      markSaved(submitted);
       onSaved(data);
     } catch (error) {
       setError(friendlyError(error, "Save failed"));

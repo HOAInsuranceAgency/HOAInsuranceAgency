@@ -1,4 +1,5 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { sendCrmWrite } from '../live-write';
 import { DynamoDBDocumentClient, BatchGetCommand, GetCommand, QueryCommand, TransactWriteCommand, type TransactWriteCommandInput } from '@aws-sdk/lib-dynamodb';
 import type { BrokerFeeAgreement, BrokerFeeRecord } from '../../../../shared/brokerFees';
 export type Write = NonNullable<TransactWriteCommandInput['TransactItems']>[number];
@@ -31,7 +32,8 @@ export function versionCheck(name: string, row: { id: string; version?: number; 
 }
 export async function transact(items: Write[]) {
   if (items.length > 100 || Buffer.byteLength(JSON.stringify(items)) > 3_500_000) throw new Error('This fee agreement is too large. Use a smaller package.');
-  await db.send(new TransactWriteCommand({ TransactItems: items }));
+  const write = db.send(new TransactWriteCommand({ TransactItems: items }));
+  if (items.some(item => item.Put || item.Update || item.Delete)) await sendCrmWrite(write); else await write;
 }
 /** Bounded complete reads; an unavailable payment list is never represented as empty. */
 export async function accountModels<T>(model: string, accountId: string): Promise<T[]> {

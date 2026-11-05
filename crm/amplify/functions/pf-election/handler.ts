@@ -1,3 +1,4 @@
+import { sendCrmWrite } from '../live-write';
 import { captureHandledFailure } from "../monitoring";
 import { zeroFeeQuoteClaimWrites } from "../quote-source-billing";
 import { assertBrokerFeeSigned } from "../broker-fees/bindValidation";
@@ -195,7 +196,7 @@ async function logElection(row: {
   if (!table) return;
   const now = new Date().toISOString();
   try {
-    await ddb.send(
+    await sendCrmWrite(ddb.send(
       new PutCommand({
         TableName: table,
         Item: {
@@ -215,7 +216,7 @@ async function logElection(row: {
           occurredAt: now,
         },
       })
-    );
+    ));
   } catch (err) {
     console.error("[pf-election] log write failed", err);
   }
@@ -406,7 +407,7 @@ async function handleAccept(
      * post-dates a committed disable, and the Checkout mint below only
      * follows a stamp that transacted with the flag.
      */
-    await ddb.send(
+    await sendCrmWrite(ddb.send(
       new TransactWriteCommand({
         TransactItems: [
           {
@@ -459,7 +460,7 @@ async function handleAccept(
           },
         ],
       })
-    );
+    ));
   } catch (err) {
     if ((err as { name?: string }).name !== "TransactionCanceledException") throw err;
     const reasons = (err as { CancellationReasons?: { Code?: string }[] }).CancellationReasons;
@@ -612,7 +613,7 @@ async function handleAccept(
      * transaction sees the first's slot and cancels. One premium, one
      * payable session, whichever token it rides.
      */
-    await ddb.send(
+    await sendCrmWrite(ddb.send(
       new TransactWriteCommand({
         TransactItems: [
           {
@@ -659,7 +660,7 @@ async function handleAccept(
           ...feeClaimGuards,
         ],
       })
-    );
+    ));
   } catch (err) {
     if ((err as { name?: string }).name !== "TransactionCanceledException") throw err;
     const reasons = (err as { CancellationReasons?: { Code?: string }[] }).CancellationReasons;
@@ -809,7 +810,7 @@ async function handleAccept(
    * because only one URL is ever handed out per slot.
    */
   try {
-    await ddb.send(
+    await sendCrmWrite(ddb.send(
       new UpdateCommand({
         TableName: loanTable,
         Key: { id: loan.id },
@@ -824,7 +825,7 @@ async function handleAccept(
           ":now": new Date().toISOString(),
         },
       })
-    );
+    ));
   } catch (err) {
     if ((err as { name?: string }).name !== "ConditionalCheckFailedException") {
       console.error("[pf-election] could not store the checkout session", err);
@@ -843,7 +844,7 @@ async function handleAccept(
 /** Free a claimed session slot, if we still hold it. Best effort. */
 async function releaseSessionClaim(loanTable: string, loanId: string, claim: string) {
   try {
-    await ddb.send(
+    await sendCrmWrite(ddb.send(
       new UpdateCommand({
         TableName: loanTable,
         Key: { id: loanId },
@@ -852,7 +853,7 @@ async function releaseSessionClaim(loanTable: string, loanId: string, claim: str
         ConditionExpression: "electionCheckoutUrl = :claim",
         ExpressionAttributeValues: { ":claim": claim, ":now": new Date().toISOString() },
       })
-    );
+    ));
   } catch (err) {
     if ((err as { name?: string }).name !== "ConditionalCheckFailedException") {
       console.error(`[pf-election] could not release the session claim on ${loanId}`, err);

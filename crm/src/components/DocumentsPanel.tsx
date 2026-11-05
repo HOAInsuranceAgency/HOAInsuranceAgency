@@ -1,3 +1,4 @@
+import { useLiveUpdateBlock } from "../lib/useLiveUpdates";
 import { Select } from "./ui/Select";
 import { Button } from "./ui/Button";
 import { Table } from "./ui/Table";
@@ -89,10 +90,6 @@ function DocumentsPanelContent({
   sourceCommunicationId?: string;
 }) {
   const controlId = useId();
-  const [docs, setDocs] = useState<CrmDocument[]>([]);
-  // Hold the table until all authorized pages have loaded.
-  const [docsSynced, setDocsSynced] = useState(false);
-  const [loadError, setLoadError] = useState("");
   const [category, setCategory] = useState<Category>(DEFAULT_DOCUMENT_CATEGORY);
   const [view, setView] = useState(
     initialLink && /^(policy|quote):.+$/.test(initialLink) ? initialLink : ""
@@ -135,7 +132,7 @@ function DocumentsPanelContent({
       };
     },
     [linkAccountId],
-    { initialData: { options: [] }, clearDataOnError: isAuthorizationError }
+    { initialData: { options: [] }, clearDataOnError: isAuthorizationError , live: true }
   );
   const linkOptions = linkTargets.data.options;
   const linkLabel = (key: string) =>
@@ -163,41 +160,23 @@ function DocumentsPanelContent({
   const [matchCount, setMatchCount] = useState(0);
   const viewerRef = useRef<HTMLDivElement>(null);
 
-  const reloadDocuments = useRef<() => Promise<void>>(async () => {});
+  useLiveUpdateBlock(uploading || rowStatus.busy || !!renameId);
+  const documents = useAsyncResource(() => listAllPages(async nextToken => {
+    const page = await client.models.Document.listDocumentByEntityId({ entityId }, { filter: { entityType: { eq: entityType } }, nextToken });
+    if (page.errors?.length) {
+      const denied = page.errors.find(isAuthorizationError);
+      throw Object.assign(new Error((denied ?? page.errors[0]).message), denied ? { name: 'Unauthorized' } : {});
+    }
+    return page;
+  }), [entityId, entityType], { initialData: [] as CrmDocument[], errorMessage: 'Could not load documents.', clearDataOnError: isAuthorizationError, live: { intervalMs: 15_000 } });
+  const docs = documents.data;
+  const docsSynced = documents.loaded && (!documents.error || docs.length > 0);
+  const loadError = documents.error || documents.refreshError || '';
+  const reloadDocuments = useRef(documents.refetch);
+  reloadDocuments.current = documents.refetch;
   useEffect(() => {
-    let active = true, generation = 0;
-    setDocs([]);
-    setDocsSynced(false);
-    setLoadError("");
-    const refresh = async () => {
-      const request = ++generation;
-      try {
-        const items = await listAllPages(async nextToken => {
-          const page = await client.models.Document.listDocumentByEntityId({ entityId }, { filter: { entityType: { eq: entityType } }, nextToken });
-          if (page.errors?.length) {
-            const denied = page.errors.find(isAuthorizationError);
-            throw Object.assign(new Error((denied ?? page.errors[0]).message), denied ? { name: 'Unauthorized' } : {});
-          }
-          return page;
-        });
-        if (active && request === generation) {
-          setDocs(items); setDocsSynced(true); setLoadError("");
-          setPreviewDoc(current => current && items.some(item => item.id === current.id) ? current : null);
-        }
-      } catch (err) {
-        if (active && request === generation) {
-          if (isAuthorizationError(err)) { setDocs([]); setDocsSynced(false); setPreviewDoc(null); }
-          setLoadError(friendlyError(err, "Could not load documents."));
-        }
-      }
-    };
-    reloadDocuments.current = refresh;
-    void refresh();
-    const timer = window.setInterval(() => { if (document.visibilityState === "visible") void refresh(); }, 15_000);
-    const focused = () => { void refresh(); };
-    window.addEventListener("focus", focused);
-    return () => { active = false; window.clearInterval(timer); window.removeEventListener("focus", focused); };
-  }, [entityId, entityType]);
+    setPreviewDoc(current => current && docs.some(item => item.id === current.id) ? current : null);
+  }, [docs]);
 
   async function handleUpload(files: File[] | null) {
     if (!files?.length || uploadLock.current) return;

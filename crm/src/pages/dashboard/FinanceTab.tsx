@@ -51,7 +51,7 @@ export default function FinanceTab() {
   const res = useAsyncResource<FinanceData>(
     loadFinanceDashboard,
     [],
-    { initialData: EMPTY, errorMessage: "Failed to load the finance view", clearDataOnError: isAuthorizationError }
+    { initialData: EMPTY, errorMessage: "Failed to load the finance view", clearDataOnError: isAuthorizationError , live: true }
   );
   const { invoices, pfLoans, accounts, payments, policies, invoiceLines, commercial, asOf } = res.data;
   const feePolicies = res.data.brokerFeePolicies ?? [];

@@ -36,7 +36,9 @@ export const handler = async (event: Event) => {
     // Generic Error/Unauthorized are expected validation/access responses.
     // Report named service/runtime failures, excluding normal write conflicts.
     if (error instanceof Error && !['Error', 'Unauthorized', 'ConditionalCheckFailedException', 'TransactionCanceledException'].includes(error.name)) captureHandledFailure(error);
-    const message = error instanceof Error && error.name === 'Error' ? error.message : 'This broker fee request could not be completed. Please retry.';
-    return { ok: false, error: message };
+    const denied = error instanceof Error && error.name === 'Unauthorized';
+    const message = denied ? 'Unauthorized: this broker fee request is no longer available to your account.'
+      : error instanceof Error && error.name === 'Error' ? error.message : 'This broker fee request could not be completed. Please retry.';
+    return { ok: false, error: message, ...(denied ? { errorType: 'Unauthorized' } : {}) };
   }
 };

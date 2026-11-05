@@ -1,3 +1,4 @@
+import { useLiveUpdateBlock } from "../lib/useLiveUpdates";
 import { Button } from "./ui/Button";
 import { Table } from "./ui/Table";
 import { Input } from "./ui/Input";
@@ -328,6 +329,7 @@ function InvoiceEditorContent({
   useEffect(() => { onBusyChange?.(pending > 0); }, [pending, onBusyChange]);
   useEffect(() => () => onBusyChange?.(false), [onBusyChange]);
   const dirty = Object.keys(invoiceDraft).length > 0 || Object.keys(lineDrafts).length > 0;
+  useLiveUpdateBlock(dirty || pending > 0 || actionBusy || !!sendAttempt.current);
 
   function editInvoice(patch: Partial<Invoice>) {
     invoiceDraftRef.current = { ...invoiceDraftRef.current, ...patch };

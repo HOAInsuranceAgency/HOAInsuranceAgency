@@ -14,6 +14,8 @@ vi.mock('../lib/reportDownload', async original => ({ ...await original<typeof i
 import { accounts, plans } from '../../scripts/commercial-preview/fixtures';
 import { AdminContext } from '../lib/auth';
 import AccountsList from './AccountsList';
+import { enableLiveUpdates } from '../test/liveUpdates';
+import { liveUpdates } from '../lib/liveUpdates';
 
 const willow = 'Willow Court Condominium';
 const pine = 'Pine Grove Association';
@@ -25,6 +27,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime('2026-10-01T16:00:00Z');
+  enableLiveUpdates();
   snoozes = Object.fromEntries(['willow', 'pine', 'cedar'].map(id => [id, emptyLeadSnooze(id)]));
   currentAccounts = structuredClone(accounts);
   h.listAccounts.mockImplementation(async () => ({ data: structuredClone(currentAccounts) }));
@@ -63,8 +66,13 @@ function returnToPage(trigger: 'focus' | 'visibility' | 'both' = 'both') {
   if (trigger !== 'focus') document.dispatchEvent(new Event('visibilitychange'));
 }
 async function allowReturnRefresh() {
-  // The hook coalesces browser focus/visibility events for 100 ms.
-  await act(async () => { await new Promise(resolve => window.setTimeout(resolve, 150)); });
+  // A completed account-book cycle is rate limited; advance the Date-only
+  // clock without executing a minute of unrelated interval work.
+  await act(async () => {
+    vi.setSystemTime(Date.now() + 61_100);
+    liveUpdates.wake();
+    await new Promise(resolve => window.setTimeout(resolve, 150));
+  });
 }
 
 it('lets an owned producer snooze, find, export, and bring back a lead without navigating', async () => {
@@ -308,8 +316,7 @@ it.each(['snooze', 'estimate'] as const)('preserves the %s draft across return e
     expect(row(willow).getByLabelText('Follow-up note')).toHaveValue('Do not lose this draft');
   } else expect(row(willow).getByLabelText('Estimated agency commission')).toHaveValue('2375.50');
   fireEvent.click(row(willow).getByRole('button', { name: 'Cancel' }));
-  await allowReturnRefresh();
-  expect(h.listAccounts).toHaveBeenCalledTimes(2);
+  await waitFor(() => expect(h.listAccounts).toHaveBeenCalledTimes(2));
   expect(screen.getByRole('button', { name: `Snooze ${willow}` })).toBeInTheDocument();
   expect(h.request.mock.calls.some(([op]) => op === 'saveLeadSnooze' || op === 'saveCommercial')).toBe(false);
 });
@@ -336,8 +343,7 @@ it.each(['snooze', 'clear'] as const)('defers refresh until the %s save finishes
     followUpOn: action === 'snooze' ? '2026-10-09' : null,
     note: action === 'snooze' ? 'Confirmed follow-up' : '',
   } }));
-  await allowReturnRefresh();
-  expect(h.listAccounts).toHaveBeenCalledTimes(2);
+  await waitFor(() => expect(h.listAccounts).toHaveBeenCalledTimes(2));
   chooseView(action === 'snooze' ? 'Snoozed' : 'Active');
   expect(screen.getByText(willow)).toBeInTheDocument();
   expect(row(willow).getByRole('button', { name: action === 'snooze' ? `Edit follow-up for ${willow}` : `Snooze ${willow}` })).toBeInTheDocument();
@@ -357,8 +363,7 @@ it('waits for an estimated opportunity save before refreshing', async () => {
   expect(h.listAccounts).toHaveBeenCalledTimes(1);
   expect(row(willow).getByLabelText('Estimated agency commission')).toBeDisabled();
   await act(async () => finishSave({ plan: { ...plans.willow, version: 2, estimatedCents: 240000 } }));
-  await allowReturnRefresh();
-  expect(h.listAccounts).toHaveBeenCalledTimes(2);
+  await waitFor(() => expect(h.listAccounts).toHaveBeenCalledTimes(2));
   expect(row(willow).queryByLabelText('Estimated agency commission')).not.toBeInTheDocument();
 });
 
@@ -399,8 +404,7 @@ it('defers return refresh while an admin changes a snoozed lead owner and retain
   expect(screen.getByLabelText('Current route')).toHaveTextContent('/leads');
 
   await act(async () => finishAssignment({ workflow: { accountId: 'willow', salespersonId: 'bob', version: 8 } }));
-  await allowReturnRefresh();
-  expect(h.listAccounts).toHaveBeenCalledTimes(2);
+  await waitFor(() => expect(h.listAccounts).toHaveBeenCalledTimes(2));
   expect(h.request.mock.calls.filter(([operation]) => operation === 'commercialTable')).toHaveLength(2);
   expect(screen.getByRole('button', { name: 'Snoozed' })).toHaveAttribute('aria-pressed', 'true');
   const refreshedPicker = screen.getByRole('combobox', { name: `Salesperson for ${willow}` });

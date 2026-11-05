@@ -1,8 +1,9 @@
+import { useLiveUpdateBlock } from "../lib/useLiveUpdates";
 import { Button } from "./ui/Button";
 import { Select } from "./ui/Select";
 import { Input } from "./ui/Input";
 import { Textarea } from "./ui/Textarea";
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { client, US_STATES } from '../lib/client';
 import { useAsyncResource } from '../lib/useAsyncResource';
 import { useSaveStatus, SaveStatus } from './SaveStatus';
@@ -17,7 +18,7 @@ export default function BrokerFeeSettings() {
     if(result.errors?.length)throw new Error(result.errors[0].message);
     const raw=result.data?.brokerFeeJurisdictions;
     return {version:result.data?.brokerFeeJurisdictionsVersion??0,rules:(typeof raw==='string'?JSON.parse(raw):raw??{}) as Record<string,BrokerFeeJurisdictionRule>};
-  },[]);
+  },[], { live: true });
   return <div className="card"><h2>Broker fee disclosures</h2><p className="muted small">Configure the fee eligibility and disclosure wording reviewed for each state. Quotes use these rules automatically. A state without configured rules cannot charge a broker fee.</p>
     {data.error?<p className="error-text">{data.error} <Button variant="link"  onClick={()=>void data.refetch()}>Retry</Button></p>:!data.loaded?<p>Loading disclosure settings…</p>:<>
       <label className="field">State<Select disabled={saving} value={state} onChange={e=>setState(e.target.value)}>{US_STATES.map(s=><option key={s}>{s}</option>)}</Select></label>
@@ -28,10 +29,12 @@ export default function BrokerFeeSettings() {
 }
 function JurisdictionForm({state,existing,version,onSaved,onBusy}:{state:string;existing?:BrokerFeeJurisdictionRule;version:number;onSaved:()=>void;onBusy:(busy:boolean)=>void}) {
   const [rule,setRule]=useState({version:existing?.version??'',reviewedBy:existing?.reviewedBy??'',reviewedAt:existing?.reviewedAt?.slice(0,10)??'',evidenceUrl:existing?.evidenceUrl??'',lines:existing?.allowedLines.join(', ')??'',maxFee:existing?.maxFeeCents==null?'':String(existing.maxFeeCents/100),approved:!!existing,discloseCarrierCommission:existing?.discloseCarrierCommission??false,requiresBrokerSignature:existing?.requiresBrokerSignature??false,signerName:existing?.agencySigner?.name??'',signerTitle:existing?.agencySigner?.title??'',signerLicense:existing?.agencySigner?.licenseNumber??'',signerAuthorized:existing?.agencySigner?.authorized??false,forms:existing?.forms??[]});
+  const baseline=useRef(JSON.stringify(rule));
+  useLiveUpdateBlock(JSON.stringify(rule)!==baseline.current);
   const status=useSaveStatus();
   useEffect(()=>{onBusy(status.busy);},[status.busy,onBusy]);
   function edit<T extends keyof typeof rule>(key:T,value:typeof rule[T]) {setRule(old=>({...old,[key]:value,...(['signerName','signerTitle','signerLicense'].includes(key)||key==='requiresBrokerSignature'&&value?{signerAuthorized:false}:{})}));status.markDirty();}
-  async function save() {await status.run(async()=>{
+  async function save() {const submitted=rule;await status.run(async()=>{
     const maxFeeCents=rule.maxFee.trim()===''?null:brokerFeeCents(Number(rule.maxFee));
     if(rule.approved&&(!rule.version.trim()||!rule.reviewedBy.trim()||!rule.reviewedAt||!rule.evidenceUrl.startsWith('https://')||!rule.lines.trim()||maxFeeCents!==null&&(!Number.isSafeInteger(maxFeeCents)||maxFeeCents<0)))throw new Error('Complete the reviewed fee rules and source reference.');
     const next:BrokerFeeJurisdictionRule={approved:true,version:rule.version.trim(),reviewedBy:rule.reviewedBy.trim(),reviewedAt:`${rule.reviewedAt}T12:00:00Z`,evidenceUrl:rule.evidenceUrl.trim(),allowedLines:rule.lines.split(',').map(s=>s.trim()).filter(Boolean),allowedBillTypes:['AGENCY'],allowsCarrierCommission:true,maxFeeCents,forms:rule.forms,discloseCarrierCommission:rule.discloseCarrierCommission,requiresBrokerSignature:rule.requiresBrokerSignature,...(rule.requiresBrokerSignature?{agencySigner:{name:rule.signerName.trim(),title:rule.signerTitle.trim(),licenseNumber:rule.signerLicense.trim(),authorized:rule.signerAuthorized as true}}:{})};
@@ -39,6 +42,7 @@ function JurisdictionForm({state,existing,version,onSaved,onBusy}:{state:string;
     if(result.errors?.length)throw new Error(result.errors[0].message);
     const answer=typeof result.data==='string'?JSON.parse(result.data):result.data;
     if(!answer?.ok)throw new Error(answer?.error??'Disclosure settings could not be saved.');
+    baseline.current=JSON.stringify(submitted);
     onSaved();
   },{errorMessage:'Could not save disclosure settings.',savedMessage:'Disclosure settings saved.'});}
   return <fieldset disabled={status.busy} style={{border:0,padding:0,minWidth:0}}>
