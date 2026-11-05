@@ -1,5 +1,6 @@
+import { account as accountFixture } from '../../fixtures/builders';
 /** Fictional, in-memory preview only. Never import a runtime CRM or storage API. */
-import type { Account, UserProfile } from '../../src/lib/client';
+import type { UserProfile } from '../../src/lib/client';
 export type { Account, UserProfile, CrmDocument, Policy, Quote, Contact, Building, Loss } from '../../src/lib/client';
 export type { AcordFormDef } from '../../src/lib/acordRegistry';
 export type { AiFilledField } from '../../src/lib/acord';
@@ -30,7 +31,7 @@ const extraction = {
   losses: [{ dateOfLoss: '2024-02-11', lineOfBusiness: 'Commercial Property', typeOfLoss: 'Water damage', description: 'Pipe leak in Building B; repairs completed.', amountPaid: '14500', claimOpen: 'No' }],
 };
 
-export const account = {
+export const account = accountFixture({
   id: 'fictional-willow', name: 'Willow Court Condominium', stage: isClient ? 'CLIENT' : 'LEAD', type: 'ASSOCIATION',
   address: '100 Example St', city: 'Boston', state: 'MA', zip: '02110', unitCount: 28, totalInsuredValue: 5400000,
   currentPolicyExpiration: '2026-10-01', firewallsVerified: null, milesToCoast: null,
@@ -38,7 +39,7 @@ export const account = {
   extractionStatus: scenario === 'empty' ? undefined : scenario === 'loading' ? 'PROCESSING' : scenario === 'error' ? 'FAILED' : 'COMPLETE',
   extractionError: scenario === 'error' ? 'Preview: extraction could not be completed. Try again.' : null,
   aiExtraction: scenario === 'empty' || scenario === 'loading' || scenario === 'error' ? null : JSON.stringify(extraction),
-} as unknown as Account;
+});
 export const profile = { id: 'fictional-avery', firstName: 'Avery', lastName: 'Brooks', email: 'avery@example.test' } as UserProfile;
 
 type Row = Record<string, unknown> & { id: string };

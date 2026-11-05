@@ -1,6 +1,6 @@
 import { Select } from '../../src/components/ui/Select';
 import { useEffect, useState } from 'react';
-import { createRoot } from 'react-dom/client';
+import { mountPreview } from '../preview-support/mount';
 import { BrowserRouter } from 'react-router-dom';
 import FrontSidebar from '../../src/pages/FrontSidebar';
 import { role, scenario, team } from './fixtures';
@@ -15,4 +15,4 @@ function Preview() {
     <label className="field" style={{ maxWidth: 240 }}>Panel width<Select value={width} onChange={e => setWidth(Number(e.target.value))}>{[260, 340, 360, 440, 768].map(w => <option key={w} value={w}>{w} pixels</option>)}</Select></label><div style={{ width, maxWidth: '100%', border: '1px solid #dce3ed', borderRadius: 12, overflow: 'hidden', marginTop: 16 }}><FrontSidebar /></div>
   </div>;
 }
-createRoot(document.getElementById('root')!).render(<BrowserRouter><Preview /></BrowserRouter>);
+mountPreview(<BrowserRouter><Preview /></BrowserRouter>);

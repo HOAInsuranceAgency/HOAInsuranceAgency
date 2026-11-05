@@ -1,3 +1,4 @@
+import { resetCommercialFixtures } from '../test/fixtures/commercialClient';
 import { beforeEach, afterEach, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { Link, MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
@@ -6,7 +7,7 @@ import { emptyCommercialPlan } from '../../../shared/quotePackages';
 import { emptyLeadSnooze } from '../../../shared/leadSnooze';
 
 const h = vi.hoisted(() => ({ resource: null as any }));
-vi.mock('../lib/client', () => import('../../scripts/commercial-preview/fixtures'));
+vi.mock('../lib/client', () => import('../test/fixtures/commercialClient'));
 vi.mock('../lib/accountsListData', () => ({ useAccountsListData: () => h.resource }));
 vi.mock('../components/ReportDownload', () => ({ ReportDownload: () => null }));
 import { AdminContext } from '../lib/auth';
@@ -16,6 +17,7 @@ import { normalizeAccountView } from '../lib/accountListView';
 import AccountsList from './AccountsList';
 
 beforeEach(() => {
+  resetCommercialFixtures();
   for (const name of ['localStorage', 'sessionStorage']) {
     const values = new Map<string, string>();
     vi.stubGlobal(name, { getItem: (k: string) => values.get(k) ?? null, setItem: (k: string, v: string) => values.set(k, v), removeItem: (k: string) => values.delete(k), clear: () => values.clear() });

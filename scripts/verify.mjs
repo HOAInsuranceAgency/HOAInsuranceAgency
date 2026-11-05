@@ -58,7 +58,7 @@ export function verificationPlan(scope = 'all') {
   if (scope === 'all' || scope === 'architecture') plan.push({ name: 'audit publisher safeguards', command: 'python3',
     args: ['-m', 'unittest', 'discover', '-s', '.github/scripts', '-p', 'test_*.py', '-v'], cwd: repository, env: {} });
   if (scope === 'architecture') plan.push(script('crm', 'test:architecture'));
-  if (scope === 'all' || scope === 'crm') plan.push(script('crm', 'test:run'), script('crm', 'build'));
+  if (scope === 'all' || scope === 'crm') plan.push(script('crm', 'test:run'), script('crm', 'build'), script('crm', 'preview:check'));
   if (['all', 'crm', 'backend'].includes(scope)) {
     plan.push(script('crm', 'typecheck:backend'));
     for (const target of ['main', 'staging']) {

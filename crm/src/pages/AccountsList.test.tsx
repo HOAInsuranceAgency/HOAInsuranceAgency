@@ -1,10 +1,11 @@
+import { resetCommercialFixtures } from '../test/fixtures/commercialClient';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { Link, MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { emptyCommercialPlan } from '../../../shared/quotePackages';
 
 const h = vi.hoisted(() => ({ request: vi.fn(), saveReport: vi.fn() }));
-vi.mock('../lib/client', () => import('../../scripts/commercial-preview/fixtures'));
+vi.mock('../lib/client', () => import('../test/fixtures/commercialClient'));
 vi.mock('../lib/communications', () => ({ communicationRequest: h.request }));
 vi.mock('../lib/reportDownload', async original => ({ ...await original<typeof import('../lib/reportDownload')>(), saveReport: h.saveReport }));
 import { AdminContext } from '../lib/auth';
@@ -23,6 +24,7 @@ const team = [
 let owner: string | undefined;
 let version: number;
 beforeEach(() => {
+  resetCommercialFixtures();
   enableLiveUpdates();
   vi.resetAllMocks();
   owner = 'alice'; version = 7;

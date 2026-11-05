@@ -6,12 +6,12 @@ import { emptyCommercialPlan } from '../../../shared/quotePackages';
 
 const h = vi.hoisted(() => ({ request: vi.fn(), saveReport: vi.fn(), listAccounts: vi.fn() }));
 vi.mock('../lib/client', async () => {
-  const fixtures = await import('../../scripts/commercial-preview/fixtures');
+  const fixtures = await import('../test/fixtures/commercialClient');
   return { ...fixtures, client: { ...fixtures.client, models: { ...fixtures.client.models, Account: { list: h.listAccounts } } } };
 });
 vi.mock('../lib/communications', () => ({ communicationRequest: h.request }));
 vi.mock('../lib/reportDownload', async original => ({ ...await original<typeof import('../lib/reportDownload')>(), saveReport: h.saveReport }));
-import { accounts, plans } from '../../scripts/commercial-preview/fixtures';
+import { commercialFixtures, resetCommercialFixtures } from '../test/fixtures/commercialClient';
 import { AdminContext } from '../lib/auth';
 import AccountsList from './AccountsList';
 import { enableLiveUpdates } from '../test/liveUpdates';
@@ -21,20 +21,21 @@ const willow = 'Willow Court Condominium';
 const pine = 'Pine Grove Association';
 const cedar = 'Cedar House — partially bound';
 let snoozes: Record<string, LeadSnooze>;
-let currentAccounts: typeof accounts;
+let currentAccounts: typeof commercialFixtures.accounts;
 
 beforeEach(() => {
+  resetCommercialFixtures();
   vi.resetAllMocks();
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime('2026-10-01T16:00:00Z');
   enableLiveUpdates();
   snoozes = Object.fromEntries(['willow', 'pine', 'cedar'].map(id => [id, emptyLeadSnooze(id)]));
-  currentAccounts = structuredClone(accounts);
+  currentAccounts = structuredClone(commercialFixtures.accounts);
   h.listAccounts.mockImplementation(async () => ({ data: structuredClone(currentAccounts) }));
   h.request.mockImplementation(async (operation, input) => {
     if (operation === 'team') return { team: [{ userId: 'sales', name: 'Avery Brooks', enabled: true, salesperson: true }] };
     if (operation === 'commercialTable') return { items: input.accountIds.map((accountId: string) => ({
-      accountId, salespersonId: 'sales', plan: structuredClone(plans[accountId] ?? emptyCommercialPlan(accountId)),
+      accountId, salespersonId: 'sales', plan: structuredClone(commercialFixtures.plans[accountId] ?? emptyCommercialPlan(accountId)),
       ...(input.snoozeAccountIds?.includes(accountId) ? { snooze: { ...(snoozes[accountId] ?? emptyLeadSnooze(accountId)) } } : {}),
     })) };
     if (operation === 'saveLeadSnooze') {
@@ -362,7 +363,7 @@ it('waits for an estimated opportunity save before refreshing', async () => {
   await allowReturnRefresh();
   expect(h.listAccounts).toHaveBeenCalledTimes(1);
   expect(row(willow).getByLabelText('Estimated agency commission')).toBeDisabled();
-  await act(async () => finishSave({ plan: { ...plans.willow, version: 2, estimatedCents: 240000 } }));
+  await act(async () => finishSave({ plan: { ...commercialFixtures.plans.willow, version: 2, estimatedCents: 240000 } }));
   await waitFor(() => expect(h.listAccounts).toHaveBeenCalledTimes(2));
   expect(row(willow).queryByLabelText('Estimated agency commission')).not.toBeInTheDocument();
 });

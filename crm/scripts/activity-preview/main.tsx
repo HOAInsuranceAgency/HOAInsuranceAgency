@@ -1,7 +1,7 @@
 import { Tabs, TabPanel } from '../../src/components/ui/Tabs';
 import { Input } from '../../src/components/ui/Input';
 import '../../src/components/UniversalSearch.css';
-import { createRoot } from 'react-dom/client';
+import { mountPreview } from '../preview-support/mount';
 import { MemoryRouter } from 'react-router-dom';
 import '../../src/styles.css';
 import { ActivityTab } from '../../src/pages/account/ActivityTab';
@@ -33,4 +33,4 @@ function Preview() {
     </main>
   </div>;
 }
-createRoot(document.getElementById('root')!).render(<MemoryRouter><Preview /></MemoryRouter>);
+mountPreview(<MemoryRouter><Preview /></MemoryRouter>);

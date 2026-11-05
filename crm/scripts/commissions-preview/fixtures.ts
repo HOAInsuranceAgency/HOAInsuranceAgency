@@ -1,4 +1,4 @@
-import { commissionPolicy, line, statement } from '../../src/test/commissionFixtures';
+import { commissionPolicy, line, statement } from '../../fixtures/commissions';
 import { appendEntry, carrierReconciliationBalances, type CommissionOverview, type CommissionPolicy } from '../../../shared/commissions';
 const base = commissionPolicy();
 base.producerName = 'Avery Brooks';

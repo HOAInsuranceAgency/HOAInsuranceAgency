@@ -1,15 +1,16 @@
+import { resetCommercialFixtures } from './fixtures/commercialClient';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 vi.mock(
   '../lib/client',
-  () => import('../../scripts/commercial-preview/fixtures'),
+  () => import('./fixtures/commercialClient'),
 );
 vi.mock('../lib/communications', async () => {
-  const fixtures = await import('../../scripts/commercial-preview/fixtures');
+  const fixtures = await import('./fixtures/commercialClient');
   return { ...fixtures, communicationRequest: async (operation: string, input: Record<string, unknown>) => {
-    const result = await fixtures.communicationRequest<{ team: import('../../../shared/leadWorkflow').TeamEligibility[] }>(operation, input);
-    return operation === 'team' ? { team: [...result.team, { userId: 'other-sales', name: 'Another producer', enabled: true, salesperson: true }] } : result;
+    if (operation === 'team') return { team: [...fixtures.commercialFixtures.team, { userId: 'other-sales', name: 'Another producer', enabled: true, salesperson: true }] };
+    return fixtures.communicationRequest(operation, input);
   } };
 });
 import { AdminContext } from '../lib/auth';
@@ -18,6 +19,7 @@ vi.mock('../lib/reportDownload', async original => ({ ...await original<typeof i
 import AccountsList from '../pages/AccountsList';
 
 beforeEach(() => {
+  resetCommercialFixtures();
   saveReport.mockClear();
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime('2026-09-14T13:00:00Z');
