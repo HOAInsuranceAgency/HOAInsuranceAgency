@@ -24,12 +24,14 @@ export const ACCOUNT_REFERENCES: Record<string, Record<string, string>> = {
 };
 /** Listing partitions follow authoritative parents, including historical rows
  * that predate writable accountId mirrors on invoice lines. */
-export const LIST_PARENTS: Record<string, { model: string; field: string }> = {
+const listParents = {
   InvoiceLine: { model: "Invoice", field: "invoiceId" },
   PfLoanPayment: { model: "PfLoan", field: "loanId" },
   PfNotice: { model: "PfLoan", field: "loanId" },
   PfOverride: { model: "Policy", field: "policyId" },
-};
+} as const;
+export type ParentListPartitions = { [Model in keyof typeof listParents]: typeof listParents[Model]["field"] };
+export const LIST_PARENTS: Record<string, { model: string; field: string }> = listParents;
 export const listPartition = (model: string) => model === "Document" || model === "Activity" ? "entityId" : LIST_PARENTS[model]?.field ?? "accountId";
 export type RecordData = Record<string, unknown>;
 export type Identity = { sub?: string; groups?: string[]; claims?: Record<string, unknown> };

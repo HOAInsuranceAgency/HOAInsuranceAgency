@@ -1,3 +1,5 @@
+import { parseAccessIndexes, resolveAccessIndex } from '../storage/index-config';
+import { modelIndexKey } from '../storage/model-indexes';
 import { agencyDay } from '../../../../shared/agencyTime';
 import Stripe from 'stripe';
 import { QueryCommand } from '@aws-sdk/lib-dynamodb';
@@ -31,8 +33,8 @@ export async function confirmInvoicePayment(event:{identity?:Identity;request?:R
   await assertInitialInvoiceAvailable(invoice);
   const adjustmentProof=await assertAdjustmentInvoiceProof(invoice);
   if(adjustmentProof)source=adjustmentProof.policy;
-  const index=(JSON.parse(process.env.ACCESS_INDEXES??'{}') as Record<string,string>)['InvoiceLine.invoiceId'];
-  if(!index)throw new Error('Invoice line access is not configured.');
+  const indexError = () => new Error('Invoice line access is not configured.');
+  const index = resolveAccessIndex(parseAccessIndexes(process.env.ACCESS_INDEXES, indexError), modelIndexKey('InvoiceLine', 'invoiceId'), { error: indexError });
   const lines = await collectCompletePages<Record<string, unknown>>(async cursor => {
     const result=await db.send(new QueryCommand({TableName:modelTable('InvoiceLine'),IndexName:index,KeyConditionExpression:'invoiceId = :invoice',ExpressionAttributeValues:{':invoice':invoice.id},ExclusiveStartKey:cursor,Limit:100}));
     const items: Record<string, unknown>[] = [];

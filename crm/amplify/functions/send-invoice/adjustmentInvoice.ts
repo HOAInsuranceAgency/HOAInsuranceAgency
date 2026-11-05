@@ -1,3 +1,5 @@
+import { parseAccessIndexes, resolveAccessIndex } from '../storage/index-config';
+import { modelIndexKey } from '../storage/model-indexes';
 import { isPaidOriginalPremium, type AdjustmentPolicy, type OriginalInvoice, type OriginalPremiumLine } from '../../../../shared/invoiceAdjustments';
 import { QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { accountModels, db, getModel, modelTable, versionCheck, type Write } from '../broker-fees/store';
@@ -6,8 +8,8 @@ type Row = Record<string, unknown>;
 type Reader = (model: string, id: string) => Promise<Row | undefined>;
 const key = (value: unknown) => typeof value === 'string' && value.length > 0 && value.length <= 512 ? value : '';
 async function premiumCandidateIds(invoiceId:string):Promise<string[]> {
-  const index=(JSON.parse(process.env.ACCESS_INDEXES??'{}') as Record<string,string>)['InvoiceLine.invoiceId'];
-  if(!index)throw new Error('Original invoice line access is not configured.');
+  const indexError = () => new Error('Original invoice line access is not configured.');
+  const index = resolveAccessIndex(parseAccessIndexes(process.env.ACCESS_INDEXES, indexError), modelIndexKey('InvoiceLine', 'invoiceId'), { error: indexError });
   const ids = await collectCompletePages<string>(async cursor => {
     const result=await db.send(new QueryCommand({TableName:modelTable('InvoiceLine'),IndexName:index,KeyConditionExpression:'invoiceId = :invoice',ExpressionAttributeValues:{':invoice':invoiceId},ProjectionExpression:'id',ExclusiveStartKey:cursor,Limit:100}));
     const items = (result.Items ?? []).map(row => { const id = key(row.id); if (!id) throw new Error('An original invoice line could not be identified.'); return id; });
