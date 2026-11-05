@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { listAllPages } from "../lib/pagination";
+import { listAllPages } from "../../../shared/pagination";
 
 const h = vi.hoisted(() => ({ quotes: vi.fn(), accounts: vi.fn(), carriers: vi.fn() }));
 vi.mock("../lib/client", () => ({

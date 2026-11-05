@@ -2,7 +2,7 @@ import type { ChartRow, ChartSeries } from '../components/StackedBars';
 import type { CommercialEntry } from './commercial';
 import { isInLast30Days, salespersonKey } from './dashboardPeople';
 import { leadQuoteStanding } from './dashboardStats';
-import { isOpenQuoteStatus } from './quoteStatus';
+import { isOpenQuoteStatus } from '../../../shared/quoteStatus';
 import { alternativeQuoteIds } from '../../../shared/quotePackages';
 import type { DashboardLeadSelection } from '../../../shared/dashboardLeadSelection';
 

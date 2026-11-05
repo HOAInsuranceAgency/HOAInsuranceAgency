@@ -12,7 +12,7 @@ import {
   resolveEntityId,
   subjectLabel,
   type ActivityAction,
-} from "./diff";
+} from "../../../../shared/activity";
 
 /**
  * One Activity row per streamed change. See ./resource.ts for why streams,

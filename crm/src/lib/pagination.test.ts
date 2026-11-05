@@ -1,6 +1,6 @@
 import { expect, it, vi } from 'vitest';
-import { listAllPages } from './pagination';
-import { isAuthorizationError } from './authorizationError';
+import { listAllPages } from '../../../shared/pagination';
+import { isAuthorizationError } from '../../../shared/authorizationError';
 
 it('rejects GraphQL failure on the first page instead of returning an empty list', async () => {
   await expect(listAllPages(async () => ({ data: [], errors: [{ message: 'Service unavailable' }] })))

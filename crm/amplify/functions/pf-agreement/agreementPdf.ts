@@ -1,7 +1,7 @@
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
 import { AGENCY, AGENCY_FMT } from "../../../../shared/agency";
-import { formatMoney } from "../../../src/lib/invoiceTotals";
-import type { ScheduleRow } from "../../../src/lib/premiumFinance/quote";
+import { formatMoney } from "../../../../shared/invoiceTotals";
+import type { ScheduleRow } from "../../../../shared/premiumFinance/quote";
 
 /**
  * The single premium finance agreement signed at deposit.

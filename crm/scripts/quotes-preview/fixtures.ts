@@ -4,7 +4,7 @@ import { authorizedQuoteTerms } from '../../../shared/quoteAuthorization';
 import type { Account, Carrier, Quote } from '../../src/lib/client';
 export type { Account, Carrier, Quote, Policy } from '../../src/lib/client';
 export type { TeamEligibility } from '../../../shared/leadWorkflow';
-export { listAllPages } from '../../src/lib/pagination';
+export { listAllPages } from '../../../shared/pagination';
 
 // Mirrors src/lib/client.ts exactly; importing that module would initialize Amplify.
 export const LINES_OF_BUSINESS = ['Commercial Property', 'Crime/Fidelity', 'D&O', 'Earthquake', 'Flood', 'General Liability', 'HO-6', 'Residential Property', 'Umbrella', 'Workers Comp'];

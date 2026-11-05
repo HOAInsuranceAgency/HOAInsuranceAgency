@@ -5,12 +5,13 @@ import { DateRangeFilter } from "../../components/DateRangeFilter";
 import { dateRangeError, type DateRange } from "../../lib/dateRange";
 import { useReportDateRange } from "../../lib/useReportDateRange";
 import { StackedBars, type ChartRow, type ChartSeries } from "../../components/StackedBars";
-import { client, fmtMoney, listAllPages, type Carrier, type Policy, type Quote } from "../../lib/client";
+import { client, fmtMoney, type Carrier, type Policy, type Quote } from "../../lib/client";
+import { listAllPages } from "../../../../shared/pagination";
 import { loadAssignments, type AssignmentData } from "../../lib/dashboardAssignments";
 import { salespersonSeries } from "../../lib/dashboardPeople";
 import { effectiveInWindow, performanceBySalesperson, type PerformanceMoneyRow } from "../../lib/dashboardPerformance";
 import { useAsyncResource } from "../../lib/useAsyncResource";
-import { isAuthorizationError } from "../../lib/authorizationError";
+import { isAuthorizationError } from "../../../../shared/authorizationError";
 import { allWithAuthorizationPriority } from "../../lib/allWithAuthorizationPriority";
 import { TabFrame } from "./common";
 

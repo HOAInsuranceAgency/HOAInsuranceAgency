@@ -11,7 +11,7 @@ import {
   LICENSE_RESIDENCY_OPTIONS,
   USER_ROLE_LABELS,
   type LicenseResidency,
-} from "../lib/enums";
+} from "../../../shared/enums";
 
 interface LicenseDraft {
   state: string;

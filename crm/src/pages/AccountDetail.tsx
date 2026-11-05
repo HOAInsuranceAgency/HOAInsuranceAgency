@@ -32,7 +32,7 @@ import { ActivityTab } from "./account/ActivityTab";
 import { CertificatesTab } from "./account/CertificatesTab";
 import { useIsAdmin } from "../lib/auth";
 import { communicationRequest, type LeadWorkflow, type WorkflowContext } from "../lib/communications";
-import { isAuthorizationError } from "../lib/authorizationError";
+import { isAuthorizationError } from "../../../shared/authorizationError";
 import { AccountSalespersonSelect } from "../components/AccountSalespersonSelect";
 import "./AccountDetail.css";
 

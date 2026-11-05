@@ -2,24 +2,14 @@ import { Button } from "../../components/ui/Button";
 import { Select } from "../../components/ui/Select";
 import { Table } from "../../components/ui/Table";
 import { useRef, useState } from "react";
-import {
-  client,
-  fmtDate,
-  fmtMoney,
-  listAllPages,
-  type Account,
-  type Contact,
-  type Invoice,
-  type InvoiceLine,
-  type Policy,
-  type Quote,
-} from "../../lib/client";
-import { isAuthorizationError } from "../../lib/authorizationError";
+import { client, fmtDate, fmtMoney, type Account, type Contact, type Invoice, type InvoiceLine, type Policy, type Quote } from "../../lib/client";
+import { listAllPages } from "../../../../shared/pagination";
+import { isAuthorizationError } from "../../../../shared/authorizationError";
 import { allWithAuthorizationPriority } from "../../lib/allWithAuthorizationPriority";
 import { useAsyncResource } from "../../lib/useAsyncResource";
 import { SaveStatus, useSaveStatus } from "../../components/SaveStatus";
 import { InvoiceEditor } from "../../components/InvoiceEditor";
-import { invoiceTotals, premiumLineFromPolicy } from "../../lib/invoiceTotals";
+import { invoiceTotals, premiumLineFromPolicy } from "../../../../shared/invoiceTotals";
 import {
   brokerFeeLineFromSource,
   findAdjustmentOriginal,
@@ -31,7 +21,7 @@ import {
   seededQuoteLineDescription,
   unbilledAgencyPolicies,
 } from "../../lib/invoiceSeed";
-import { isOpenQuoteStatus } from "../../lib/quoteStatus";
+import { isOpenQuoteStatus } from "../../../../shared/quoteStatus";
 import { Badge, INVOICE_STATUS_BADGE, statusBadge } from "../../lib/badges";
 
 /**

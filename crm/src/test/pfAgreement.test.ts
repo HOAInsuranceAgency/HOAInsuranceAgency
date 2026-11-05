@@ -11,7 +11,7 @@ import {
   SECURITY_INTEREST_AND_AUTHORITY,
   type AgreementView,
 } from "../../amplify/functions/pf-agreement/agreementPdf";
-import { buildQuote } from "../lib/premiumFinance/quote";
+import { buildQuote } from "../../../shared/premiumFinance/quote";
 
 /**
  * The agreement is a legal document; these tests pin its load-bearing text.

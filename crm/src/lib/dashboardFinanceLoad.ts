@@ -1,4 +1,5 @@
-import { client, listAllPages } from './client';
+import { client } from "./client";
+import { listAllPages } from "../../../shared/pagination";
 import { communicationRequest } from './communications';
 import { loadAssignments } from './dashboardAssignments';
 import { hasFinancingReceivable, outstandingPrincipal } from './dashboardFinance';

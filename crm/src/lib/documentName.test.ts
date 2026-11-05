@@ -3,7 +3,7 @@ import {
   MAX_NAME_CHARS,
   splitExtension,
   withExtension,
-} from "../../amplify/functions/process-document/name";
+} from "../../../shared/documentName";
 
 /**
  * `withExtension` is the one rule the rename box and the Lambda's auto-namer

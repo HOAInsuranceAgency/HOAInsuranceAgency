@@ -7,20 +7,11 @@ import { useEffect, useRef, useState } from "react";
 import QuotePackages from "./QuotePackages";
 import "./QuotesPanel.css";
 import { packageTerms } from '../../../shared/quotePackages';
-import {
-  client,
-  fmtDate,
-  fmtMoney,
-  friendlyError,
-  listAllPages,
-  type Account,
-  type Carrier,
-  type Quote,
-  type Policy,
-} from "../lib/client";
+import { client, fmtDate, fmtMoney, friendlyError, type Account, type Carrier, type Quote, type Policy } from "../lib/client";
+import { listAllPages } from "../../../shared/pagination";
 import { Badge, statusBadge, QUOTE_STATUS_BADGE } from "../lib/badges";
 import { useAsyncResource } from "../lib/useAsyncResource";
-import { isAuthorizationError } from "../lib/authorizationError";
+import { isAuthorizationError } from "../../../shared/authorizationError";
 import { useSort, SortTh } from "../lib/useSort";
 import CoverageForm from "./CoverageForm";
 import { communicationRequest } from "../lib/communications";
@@ -29,8 +20,8 @@ import { SaveStatus, useSaveStatus } from "./SaveStatus";
 import {
   isOpenQuoteStatus,
   SELECTABLE_QUOTE_STATUSES,
-} from "../lib/quoteStatus";
-import { BILL_TYPE_OPTIONS, type BillType } from "../lib/enums";
+} from "../../../shared/quoteStatus";
+import { BILL_TYPE_OPTIONS, type BillType } from "../../../shared/enums";
 import QuoteOfferExpiry from "./QuoteOfferExpiry";
 import { quoteOfferDate } from "../lib/quoteOfferExpiry";
 import { useAgencyDay } from "../lib/useAgencyDay";

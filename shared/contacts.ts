@@ -1,4 +1,4 @@
-import { relationshipCurrent, type DatedRelationship } from '../../../shared/relationships';
+import { relationshipCurrent, type DatedRelationship } from './relationships';
 /**
  * Which of an account's contacts stands for the account.
  *

@@ -1,11 +1,11 @@
 import { captureHandledFailure } from "../monitoring";
-import { estimateInput, PUBLIC_WINDOW_MS } from "../honeycomb/contract";
+import { estimateInput, PUBLIC_WINDOW_MS } from "../../../../shared/honeycomb/estimate";
 import { cleanAttribution, websiteLeadSource } from "../../../../shared/leadSource";
 import { webLeadPropertyType } from "../../../../shared/propertyType";
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import type { Schema } from "../../data/resource";
-import { DEFAULT_ACCOUNT_TYPE, DEFAULT_CONTACT_TYPE, isAccountType } from "../../../src/lib/enums";
-import { contactKey, priorCarrierKey } from "../../../src/lib/extractionKeys";
+import { DEFAULT_ACCOUNT_TYPE, DEFAULT_CONTACT_TYPE, isAccountType } from "../../../../shared/enums";
+import { contactKey, priorCarrierKey } from "../../../../shared/extractionKeys";
 import { NO_UPLOAD_WINDOW_MINUTES } from "../../../../shared/leadUpload";
 import { parsePolicyExpiration, parseUnitCount } from "./fields";
 import { canonical, hash, get, row, put, commit, conflict, retryableStorage, type Write } from "../communications/store";

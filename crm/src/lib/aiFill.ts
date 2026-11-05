@@ -4,7 +4,7 @@ import { applySuggestions, type EmptyField } from "./acordPdf";
 // The Lambda's own cap, imported rather than restated. `sanitise.ts` imports
 // nothing, so it costs the browser bundle a number and no dependency — the
 // same arrangement `ActivityTab` has with the stream handler's `diff.ts`.
-import { MAX_FIELDS } from "../../amplify/functions/form-filler/sanitise";
+import { MAX_FIELDS } from "../../../shared/formSuggestions";
 
 /**
  * W8's AI gap-fill, from the browser's side.

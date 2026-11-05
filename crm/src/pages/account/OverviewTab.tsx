@@ -15,7 +15,7 @@ import { useFormState } from "../../lib/useFormState";
 import { useUnsavedChanges } from "../../lib/editProtection";
 import { inputValue, num, str } from "../../lib/formCodec";
 import { DateInput, FeinInput, MoneyInput } from "../../components/inputs";
-import { LEGAL_ENTITY_OPTIONS } from "../../lib/enums";
+import { LEGAL_ENTITY_OPTIONS } from "../../../../shared/enums";
 import "./OverviewTab.css";
 
 export function OverviewTab({

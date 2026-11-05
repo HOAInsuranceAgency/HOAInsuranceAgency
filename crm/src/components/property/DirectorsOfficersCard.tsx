@@ -2,14 +2,8 @@ import { Select } from "../ui/Select";
 import { Button } from "../ui/Button";
 import { Table } from "../ui/Table";
 import { useEffect, useRef } from "react";
-import {
-  assertNoErrors,
-  client,
-  listAllPages,
-  unwrap,
-  type DoApplication,
-  type DoCoveragePart,
-} from "../../lib/client";
+import { assertNoErrors, client, unwrap, type DoApplication, type DoCoveragePart } from "../../lib/client";
+import { listAllPages } from "../../../../shared/pagination";
 import { bool, boolValue, inputValue, num, str } from "../../lib/formCodec";
 import { useAsyncResource } from "../../lib/useAsyncResource";
 import { useFormState } from "../../lib/useFormState";
@@ -20,7 +14,7 @@ import {
   DO_PARTS,
   DO_PART_LABELS,
   type DoPart,
-} from "../../lib/enums";
+} from "../../../../shared/enums";
 import { SaveStatus, useSaveStatus } from "../SaveStatus";
 import { DateInput, MoneyInput, YesNoRadio } from "../inputs";
 

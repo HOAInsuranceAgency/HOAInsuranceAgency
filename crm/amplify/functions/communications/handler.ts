@@ -1,5 +1,5 @@
 import { assertPreviewRead } from "../migration-readonly";
-import { currentContacts } from "../../../src/lib/contacts";
+import { currentContacts } from "../../../../shared/contacts";
 import { RELATIONSHIP_READS, RELATIONSHIP_WRITES, relationshipOperation } from "./relationships";
 import { receivesNewLeads, salespersonEligibility, salespersonWorkflow } from "../../../../shared/salespersonOwnership";
 import { retiredTaskOperation } from "../../../../shared/retiredTaskOperations";

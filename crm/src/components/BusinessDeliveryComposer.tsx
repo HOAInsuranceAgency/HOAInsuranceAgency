@@ -7,7 +7,7 @@ import type { BusinessDeliveryAttempt, BusinessDeliveryContext, BusinessDelivery
 import { isBusinessDeliveryFile } from "../../../shared/frontBusinessDelivery";
 import { communicationRequest as request } from "../lib/communications";
 import { fmtDate, fmtDateTime, fmtMoney, friendlyError } from "../lib/client";
-import { isAuthorizationError } from "../lib/authorizationError";
+import { isAuthorizationError } from "../../../shared/authorizationError";
 import { useAsyncResource } from "../lib/useAsyncResource";
 import Modal from "./Modal";
 import "./BusinessDeliveryComposer.css";

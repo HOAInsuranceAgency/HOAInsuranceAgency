@@ -4,7 +4,7 @@ import { Amplify } from "aws-amplify";
 import { generateClient } from "aws-amplify/data";
 import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtime";
 import type { Schema } from "../../data/resource";
-import { safeSegment } from "../../../src/lib/storageKeys";
+import { safeSegment } from "../../../../shared/storageKeys";
 import { operationOf } from "./dispatch";
 import {
   IDLE_AFTER_UPLOAD_MINUTES,

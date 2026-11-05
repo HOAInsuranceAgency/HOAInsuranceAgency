@@ -11,7 +11,7 @@ import { generateClient } from "aws-amplify/data";
 import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtime";
 import type { Schema } from "../../data/resource";
 import { suggestDocumentName } from "./autoName";
-import { withExtension } from "./name";
+import { withExtension } from "../../../../shared/documentName";
 
 /**
  * Textract OCR pipeline.

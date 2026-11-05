@@ -1,4 +1,4 @@
-import { isAuthorizationError } from './authorizationError';
+import { isAuthorizationError } from '../../../shared/authorizationError';
 import { useEffect, useMemo, useRef, useState, type DependencyList } from 'react';
 import { liveUpdates } from './liveUpdates';
 import { useLiveRefresh } from './useLiveUpdates';

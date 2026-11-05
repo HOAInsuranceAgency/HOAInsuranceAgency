@@ -3,7 +3,7 @@ import { communicationRequest, type TeamEligibility } from './communications';
 import type { CommercialPlan } from '../../../shared/quotePackages';
 import type { LeadWorkflow } from '../../../shared/leadWorkflow';
 import type { LeadSnooze } from '../../../shared/leadSnooze';
-import { isAuthorizationError } from './authorizationError';
+import { isAuthorizationError } from '../../../shared/authorizationError';
 export interface CommercialEntry {
   accountId: string;
   plan: CommercialPlan;

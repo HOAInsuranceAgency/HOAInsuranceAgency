@@ -1,7 +1,7 @@
 import { Input } from "./ui/Input";
 import { Select } from "./ui/Select";
 import { useAgencyDay } from "../lib/useAgencyDay";
-import { currentContacts, primaryContact } from "../lib/contacts";
+import { currentContacts, primaryContact } from "../../../shared/contacts";
 import { relationshipCurrent } from "../../../shared/relationships";
 import { useId, useRef } from "react";
 import {
@@ -12,10 +12,10 @@ import {
   type Contact,
 } from "../lib/client";
 import { inputValue, str } from "../lib/formCodec";
-import { contactKey } from "../lib/extractionKeys";
+import { contactKey } from "../../../shared/extractionKeys";
 import { useChildRows } from "../lib/useChildRows";
 import type { FormState } from "../lib/useFormState";
-import { CONTACT_TYPE_LABELS, CONTACT_TYPE_OPTIONS } from "../lib/enums";
+import { CONTACT_TYPE_LABELS, CONTACT_TYPE_OPTIONS } from "../../../shared/enums";
 import ChildRowsCard from "./ChildRowsCard";
 import { SaveStatus, useSaveStatus } from "./SaveStatus";
 import { PhoneInput } from "./inputs";

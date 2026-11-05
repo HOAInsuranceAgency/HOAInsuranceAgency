@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { LineLike } from "./invoiceTotals";
+import type { LineLike } from "../../../shared/invoiceTotals";
 import {
   directBillWarning,
   financeableInvoiceTotal,
@@ -10,7 +10,7 @@ import {
   missingRemittanceCost,
   premiumLineFromPolicy,
   remittanceSplit,
-} from "./invoiceTotals";
+} from "../../../shared/invoiceTotals";
 
 describe("invoiceTotals", () => {
   it("adds retail and cost, and calls the difference margin", () => {

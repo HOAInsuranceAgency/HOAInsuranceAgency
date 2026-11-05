@@ -1,10 +1,11 @@
-import { client, listAllPages, type Account, type Policy, type Quote } from './client';
+import { client, type Account, type Policy, type Quote } from "./client";
+import { listAllPages } from "../../../shared/pagination";
 import { communicationRequest } from './communications';
 import { loadAssignments } from './dashboardAssignments';
 import type { CommercialData } from './commercial';
 import { activeLeadQuotes } from './dashboardLeads';
 import { isInLast30Days } from './dashboardPeople';
-import { isOpenQuoteStatus, OPEN_QUOTE_STATUSES } from './quoteStatus';
+import { isOpenQuoteStatus, OPEN_QUOTE_STATUSES } from '../../../shared/quoteStatus';
 import { unfinishedSelectedPackage, type DashboardLeadSelection } from '../../../shared/dashboardLeadSelection';
 import { allWithAuthorizationPriority } from './allWithAuthorizationPriority';
 

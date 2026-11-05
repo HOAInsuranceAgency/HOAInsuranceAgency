@@ -10,7 +10,7 @@ import {
   type Loss,
 } from "../../lib/client";
 import { bool, boolValue, inputValue, num, str } from "../../lib/formCodec";
-import { lossKey } from "../../lib/extractionKeys";
+import { lossKey } from "../../../../shared/extractionKeys";
 import { useChildRows } from "../../lib/useChildRows";
 import type { FormState } from "../../lib/useFormState";
 import ChildRowsCard from "../../components/ChildRowsCard";

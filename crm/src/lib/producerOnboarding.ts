@@ -1,4 +1,5 @@
-import { client, listAllPages, type License } from "./client";
+import { client, type License } from "./client";
+import { listAllPages } from "../../../shared/pagination";
 
 export type SavedProducerLicense = Pick<License, "id" | "state" | "licenseNumber">;
 

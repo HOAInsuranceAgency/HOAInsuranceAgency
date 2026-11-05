@@ -9,9 +9,10 @@ import {
   type ReactNode,
   type SetStateAction,
 } from 'react';
-import { client, friendlyError, listAllPages, type Account, type Contact, type Policy, type Quote } from './client';
+import { client, friendlyError, type Account, type Contact, type Policy, type Quote } from "./client";
+import { listAllPages } from "../../../shared/pagination";
 import { loadCommercial, type CommercialData, type CommercialEntry } from './commercial';
-import { isAuthorizationError } from './authorizationError';
+import { isAuthorizationError } from '../../../shared/authorizationError';
 import { useIsAdmin } from './auth';
 import { liveUpdates } from './liveUpdates';
 import { useLiveRefresh } from './useLiveUpdates';

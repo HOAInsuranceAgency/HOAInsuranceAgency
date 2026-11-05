@@ -9,7 +9,7 @@ import {
   type PriorCarrier,
 } from "../../lib/client";
 import { inputValue, num, str } from "../../lib/formCodec";
-import { priorCarrierKey } from "../../lib/extractionKeys";
+import { priorCarrierKey } from "../../../../shared/extractionKeys";
 import { useChildRows } from "../../lib/useChildRows";
 import type { FormState } from "../../lib/useFormState";
 import ChildRowsCard from "../../components/ChildRowsCard";

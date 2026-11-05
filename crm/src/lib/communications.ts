@@ -1,5 +1,5 @@
 import { client } from "./client";
-import { isAuthorizationError } from './authorizationError';
+import { isAuthorizationError } from '../../../shared/authorizationError';
 export async function communicationRequest<T>(operation: string, input: unknown = {}, write = false): Promise<T> {
   const response = await (write
     ? client.mutations.communicationWrite({ operation, input: JSON.stringify(input) })

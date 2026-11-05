@@ -1,5 +1,5 @@
 import { AGENCY, AGENCY_FMT } from "../../../../shared/agency";
-import { formatMoney, invoiceTotals, type LineLike } from "../../../src/lib/invoiceTotals";
+import { formatMoney, invoiceTotals, type LineLike } from "../../../../shared/invoiceTotals";
 
 /**
  * The emailed invoice. Pure: no SES, no data client.

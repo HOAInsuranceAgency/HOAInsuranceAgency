@@ -18,12 +18,12 @@
  *
  * This is a hand-written copy of a schema enum, which is exactly what the rest
  * of this migration deletes — it survives only because the import is
- * impossible. It does not drift, because `crm/src/lib/enums.ts` asserts this
+ * impossible. It does not drift, because `crm/src/lib/schemaContracts.test.ts` asserts this
  * list against `Schema["AccountType"]["type"]` in both directions, so crm's
  * `tsc` fails if the schema and this file disagree. Edit the schema first.
  */
 
-/** The schema's `AccountType`, in schema order (resource.ts:24). */
+/** The schema's `AccountType`, in schema order. */
 export const ACCOUNT_TYPES = [
   "ASSOCIATION",
   "PERSONAL",

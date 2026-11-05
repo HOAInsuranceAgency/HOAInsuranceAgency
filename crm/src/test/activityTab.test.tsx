@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { listAllPages } from "../lib/pagination";
+import { listAllPages } from "../../../shared/pagination";
 
 const h = vi.hoisted(() => ({ activity: vi.fn(), profiles: vi.fn(), communication: vi.fn() }));
 vi.mock("../components/LeadWorkflowPanel", () => ({ default: () => null }));

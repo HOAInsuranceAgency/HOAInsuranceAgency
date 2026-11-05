@@ -17,7 +17,7 @@ import {
 } from '../lib/relationships';
 import { useAsyncResource } from '../lib/useAsyncResource';
 import { useIsAdmin } from '../lib/auth';
-import { isAuthorizationError } from '../lib/authorizationError';
+import { isAuthorizationError } from '../../../shared/authorizationError';
 import { RELATIONSHIP_LABELS, relationshipCurrent } from '../../../shared/relationships';
 import { fmtDate } from '../lib/client';
 import { communicationRequest } from '../lib/communications';

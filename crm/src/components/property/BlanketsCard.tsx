@@ -1,7 +1,7 @@
 import { Input } from "../ui/Input";
 import { client, fmtMoney, type Blanket } from "../../lib/client";
 import { inputValue, num, str } from "../../lib/formCodec";
-import { blanketKey } from "../../lib/extractionKeys";
+import { blanketKey } from "../../../../shared/extractionKeys";
 import { useChildRows } from "../../lib/useChildRows";
 import type { FormState } from "../../lib/useFormState";
 import ChildRowsCard from "../ChildRowsCard";

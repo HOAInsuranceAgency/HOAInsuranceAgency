@@ -4,7 +4,7 @@ import { publishCrmChange } from "../live-changes";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { estimate, type CarrierResult } from "./client";
-import { PROCESSING_WINDOW_MS, type EstimateInput, type EstimateRecord } from "./contract";
+import { PROCESSING_WINDOW_MS, type EstimateInput, type EstimateRecord } from "../../../../shared/honeycomb/estimate";
 const db = DynamoDBDocumentClient.from(new DynamoDBClient(), { marshallOptions: { removeUndefinedValues: true } });
 const table = () => process.env.HONEYCOMB_ESTIMATE_TABLE!;
 const conditional = (e: unknown) => e instanceof Error && e.name === "ConditionalCheckFailedException";

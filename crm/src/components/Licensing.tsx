@@ -3,13 +3,8 @@ import { Input } from "./ui/Input";
 import { SegmentedControl } from "./ui/SegmentedControl";
 import { Tabs, TabPanel } from "./ui/Tabs";
 import { Suspense, lazy, useMemo, useState } from "react";
-import {
-  client,
-  listAllPages,
-  licenseHealth,
-  type License,
-  type UserProfile,
-} from "../lib/client";
+import { client, licenseHealth, type License, type UserProfile } from "../lib/client";
+import { listAllPages } from "../../../shared/pagination";
 import { useAsyncResource } from "../lib/useAsyncResource";
 import { useIsAdmin } from "../lib/auth";
 import Modal from "./Modal";

@@ -1,28 +1,8 @@
-/**
- * The one classification of `QuoteStatus`.
- *
- * The "which statuses are still open" list was written four times — three
- * hand-typed arrays plus a GraphQL `or:` filter — and the fourth copy had
- * already drifted into a different (larger) set under a name that gave no
- * hint of the difference. Everything a caller needs about a quote status is
- * derived here from ONE table.
- *
- * How drift is prevented: `QUOTE_STATUS_KIND` is `satisfies
- * Record<QuoteStatus, QuoteStatusKind>`, where `QuoteStatus` is the schema
- * enum itself. Add a status to `amplify/data/resource.ts` and this file stops
- * compiling until the new status is classified; delete one and the now-excess
- * key stops compiling too. There is no way to add a status and have it be
- * silently omitted from these lists — the lists are computed from the table,
- * not written out a second time.
- *
- * Type-only import of `Schema`, so nothing from `amplify/` — and in
- * particular no `generateClient()` call, the way `client.ts` has at module
- * scope — is pulled into a bundle or a test run.
+/** Shared quote lifecycle classification, without a data-client dependency.
+ * The table is checked against the generated schema in schemaContracts.test.ts.
  */
-import type { Schema } from "../../amplify/data/resource";
-
-/** The schema's `QuoteStatus` enum. Ground truth for what statuses exist. */
-export type QuoteStatus = Schema["QuoteStatus"]["type"];
+/** Literal table keys, checked against the schema by CRM's compile-time guard. */
+export type QuoteStatus = keyof typeof QUOTE_STATUS_KIND;
 
 /**
  * - `OPEN`   — still being worked; shows in the pipeline.
@@ -37,7 +17,7 @@ type QuoteStatusKind = "OPEN" | "BOUND" | "CLOSED";
  * The single table. Every list below is derived from it.
  *
  * `satisfies` (not `:`) so the literal key/value types survive for the
- * mapped types below, while still forcing exhaustiveness against the enum.
+ * mapped types below. The separate schema equality check enforces exhaustiveness.
  */
 const QUOTE_STATUS_KIND = {
   DRAFT: "OPEN",
@@ -47,7 +27,7 @@ const QUOTE_STATUS_KIND = {
   BOUND: "BOUND",
   DECLINED: "CLOSED",
   LOST: "CLOSED",
-} as const satisfies Record<QuoteStatus, QuoteStatusKind>;
+} as const satisfies Record<string, QuoteStatusKind>;
 
 type StatusesOfKind<K extends QuoteStatusKind> = {
   [S in QuoteStatus]: (typeof QUOTE_STATUS_KIND)[S] extends K ? S : never;
@@ -61,8 +41,8 @@ export type ClosedQuoteStatus = Exclude<QuoteStatus, OpenQuoteStatus>;
 export type SelectableQuoteStatus = StatusesOfKind<"OPEN" | "CLOSED">;
 
 /**
- * Safe cast: `satisfies Record<QuoteStatus, …>` above rejects both a missing
- * key and an excess one, so the table's keys are exactly the enum's members.
+ * Safe cast: QuoteStatus is derived from these exact keys. The CRM's schema
+ * equality check rejects missing or excess members relative to Amplify.
  * Declaration order matches the enum's order in the schema.
  */
 const ALL = Object.keys(QUOTE_STATUS_KIND) as QuoteStatus[];

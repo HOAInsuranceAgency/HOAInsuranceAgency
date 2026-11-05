@@ -3,7 +3,7 @@ import { generateClient } from "aws-amplify/data";
 import { getCurrentUser } from "aws-amplify/auth";
 import type { Schema } from "../../amplify/data/resource";
 import { urgencyBadge, LICENSE_EXPIRY_SCALE, type BadgeClass } from "./badges";
-import { LICENSE_STATUS_LABELS } from "./enums";
+import { LICENSE_STATUS_LABELS } from "../../../shared/enums";
 import { activeRoleHeaders } from "./activeRole";
 
 /**
@@ -165,9 +165,6 @@ export type License = Schema["License"]["type"];
 export type AgencySettings = Schema["AgencySettings"]["type"];
 export type MarketingTask = Schema["MarketingTask"]["type"];
 
-/** The one paginated-list helper. Defined in pagination.ts so the Lambdas
- *  can import it without dragging generateClient() into their bundle. */
-export { listAllPages } from "./pagination";
 
 // Lines of authority are the licensing counterpart to lines of business —
 // they're what a state license actually grants. Alphabetical.

@@ -12,7 +12,7 @@ import { friendlyError } from "./client";
 import { mergeLiveSnapshot } from "./liveSnapshot";
 import { liveUpdates, type LiveRefreshOptions } from "./liveUpdates";
 import { useLiveRefresh } from "./useLiveUpdates";
-import { isAuthorizationError } from "./authorizationError";
+import { isAuthorizationError } from "../../../shared/authorizationError";
 
 /**
  * One async read, one state machine.

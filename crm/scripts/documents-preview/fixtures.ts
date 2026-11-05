@@ -4,7 +4,7 @@ export type { Account, UserProfile, CrmDocument, Policy, Quote, Contact, Buildin
 export type { AcordFormDef } from '../../src/lib/acordRegistry';
 export type { AiFilledField } from '../../src/lib/acord';
 export { ACORD_FORMS } from '../../src/lib/acordRegistry';
-export { listAllPages } from '../../src/lib/pagination';
+export { listAllPages } from '../../../shared/pagination';
 
 export const scenario = new URLSearchParams(location.search).get('scenario') || 'lead';
 export const isClient = scenario === 'client';

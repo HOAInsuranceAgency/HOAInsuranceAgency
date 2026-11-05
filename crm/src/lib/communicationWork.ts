@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { communicationRequest as request, type LeadTask, type LeadWorkflow } from "./communications";
 import { useAsyncResource } from "./useAsyncResource";
-import { isAuthorizationError } from './authorizationError';
+import { isAuthorizationError } from '../../../shared/authorizationError';
 import { readLoadedPages } from './usePagedList';
 import { liveUpdates } from './liveUpdates';
 

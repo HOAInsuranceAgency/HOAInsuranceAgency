@@ -8,7 +8,7 @@ import { amt, fmtUs, todayUs } from "./acordFormat";
 import {
   ACORD25_AGGREGATE_FIELDS,
   DEFAULT_AGGREGATE_APPLIES_TO,
-} from "./enums";
+} from "../../../shared/enums";
 import {
   fillTemplate,
   type FieldValues,

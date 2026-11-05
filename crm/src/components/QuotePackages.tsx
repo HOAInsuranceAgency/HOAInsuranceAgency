@@ -19,7 +19,7 @@ import {
   type PackageOption,
 } from '../../../shared/quotePackages';
 import { OpportunityEstimate } from './OpportunityEstimate';
-import { formatMoney } from '../lib/invoiceTotals';
+import { formatMoney } from '../../../shared/invoiceTotals';
 import BusinessDraftButton from './BusinessDraftButton';
 import './QuotePackages.css';
 

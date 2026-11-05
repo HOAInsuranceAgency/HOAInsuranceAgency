@@ -1,12 +1,12 @@
 import { Button } from "./ui/Button";
 import { Link } from "react-router-dom";
-import { eligibleEstimate } from "../../amplify/functions/honeycomb/submission-contract";
-import { listAllPages } from "../lib/pagination";
+import { eligibleEstimate } from "../../../shared/honeycomb/submission";
+import { listAllPages } from "../../../shared/pagination";
 import { useEffect } from "react";
 import { client } from "../lib/client";
 import { useAsyncResource } from "../lib/useAsyncResource";
-import { isAuthorizationError } from "../lib/authorizationError";
-import { visibleStatus } from "../../amplify/functions/honeycomb/contract";
+import { isAuthorizationError } from "../../../shared/authorizationError";
+import { visibleStatus } from "../../../shared/honeycomb/estimate";
 
 export default function HoneycombEstimates({ accountId }: { accountId: string }) {
   const resource = useAsyncResource(async () => {

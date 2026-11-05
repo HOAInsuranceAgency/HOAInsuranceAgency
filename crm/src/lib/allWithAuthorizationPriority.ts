@@ -1,4 +1,4 @@
-import { isAuthorizationError } from './authorizationError';
+import { isAuthorizationError } from '../../../shared/authorizationError';
 
 /** A transient failure must not hide an access denial from another report
  * read: the UI may retain a snapshot after the former, never the latter. */

@@ -7,7 +7,7 @@ vi.mock("@aws-sdk/lib-dynamodb", async original => ({
   DynamoDBDocumentClient: { from: () => ({ send: h.send }) },
 }));
 import { estimate, parseResult, signature, ESTIMATE_PATH } from "../../amplify/functions/honeycomb/client";
-import { estimateInput, publicEstimate, type EstimateRecord } from "../../amplify/functions/honeycomb/contract";
+import { estimateInput, publicEstimate, type EstimateRecord } from "../../../shared/honeycomb/estimate";
 import { processEstimate } from "../../amplify/functions/honeycomb/worker";
 import { handler as status } from "../../amplify/functions/honeycomb/status";
 const input = { type: "ASSOCIATION", propertyKind: "condominium", address: "1 Main St", city: "Juneau", state: "AK", grossSquareFeet: "10000", replacementValue: "2500000", unitCount: "12" };

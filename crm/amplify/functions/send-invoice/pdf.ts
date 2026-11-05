@@ -1,6 +1,6 @@
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
 import { AGENCY, AGENCY_FMT } from "../../../../shared/agency";
-import { formatMoney, invoiceTotals } from "../../../src/lib/invoiceTotals";
+import { formatMoney, invoiceTotals } from "../../../../shared/invoiceTotals";
 import { formatDay, invoiceTerms, type InvoiceView } from "./invoice";
 
 /**

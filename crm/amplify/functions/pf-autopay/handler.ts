@@ -7,9 +7,9 @@ import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import Stripe from "stripe";
 import type { Schema } from "../../data/resource";
-import { listAllPages } from "../../../src/lib/pagination";
-import { parseScheduleJson } from "../../../src/lib/premiumFinance/quote";
-import { PF_CONFIG_SHA256 } from "../../../src/lib/premiumFinance/jurisdictions";
+import { listAllPages } from "../../../../shared/pagination";
+import { parseScheduleJson } from "../../../../shared/premiumFinance/quote";
+import { PF_CONFIG_SHA256 } from "../../../../shared/premiumFinance/jurisdictions";
 import { postInstallment } from "../pfPosting";
 import { activateSettledElection } from "../pfAutomaticActivation";
 

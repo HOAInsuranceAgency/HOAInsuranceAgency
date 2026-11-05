@@ -1,5 +1,5 @@
 import { QueryCommand } from '@aws-sdk/lib-dynamodb';
-import { isOpenQuoteStatus } from '../../../src/lib/quoteStatus';
+import { isOpenQuoteStatus } from '../../../../shared/quoteStatus';
 import { resolveModelTable, type StoredModel } from '../storage/models';
 import { db } from './store';
 import { reportBatchGet, reportIds } from './dashboardStore';

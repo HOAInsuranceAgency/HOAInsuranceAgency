@@ -1,6 +1,6 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 import { AccessDenied } from '../../amplify/functions/crm-access/policy';
-import { isAuthorizationError } from './authorizationError';
+import { isAuthorizationError } from '../../../shared/authorizationError';
 
 const api = vi.hoisted(() => ({ read: vi.fn(), write: vi.fn() }));
 vi.mock('./client', () => ({ client: {

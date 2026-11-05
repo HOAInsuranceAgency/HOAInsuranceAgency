@@ -10,7 +10,7 @@ import {
 import { Badge, statusBadge, INVOICE_STATUS_BADGE } from "../../lib/badges";
 import { useSort, SortTh } from "../../lib/useSort";
 import { useAsyncResource } from "../../lib/useAsyncResource";
-import { isAuthorizationError } from "../../lib/authorizationError";
+import { isAuthorizationError } from "../../../../shared/authorizationError";
 import {
   invoiceAging,
   type AgingBucket,

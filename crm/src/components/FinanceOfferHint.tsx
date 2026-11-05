@@ -1,6 +1,7 @@
 import { Button } from "./ui/Button";
 import { useMemo } from "react";
-import { client, listAllPages, type Account } from "../lib/client";
+import { client, type Account } from "../lib/client";
+import { listAllPages } from "../../../shared/pagination";
 import type { Schema } from "../../amplify/data/resource";
 import { useAsyncResource } from "../lib/useAsyncResource";
 import {
@@ -9,15 +10,15 @@ import {
   jurisdictionFor,
   minPrincipalViolation,
   originationGate,
-} from "../lib/premiumFinance/gate";
-import { evaluateEligibility } from "../lib/premiumFinance/eligibility";
+} from "../../../shared/premiumFinance/gate";
+import { evaluateEligibility } from "../../../shared/premiumFinance/eligibility";
 import {
   buildQuote,
   PF_DEFAULT_APR,
   PF_DEFAULT_DOWN_PCT,
   PF_DEFAULT_MONTHS,
-} from "../lib/premiumFinance/quote";
-import { formatMoney } from "../lib/invoiceTotals";
+} from "../../../shared/premiumFinance/quote";
+import { formatMoney } from "../../../shared/invoiceTotals";
 
 type PfLoan = Schema["PfLoan"]["type"];
 

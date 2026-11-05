@@ -16,7 +16,7 @@ import {
   LICENSE_CLASS_LABELS,
   LICENSE_RESIDENCY_OPTIONS,
   LICENSE_STATUS_LABELS,
-} from "../../lib/enums";
+} from "../../../../shared/enums";
 import { useFormState } from "../../lib/useFormState";
 import type { HolderType } from "./holder";
 

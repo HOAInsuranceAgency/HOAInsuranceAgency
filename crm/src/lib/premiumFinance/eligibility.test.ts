@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { eligibilityBlocked, evaluateEligibility } from "./eligibility";
-import { PERSONAL_LINES_WARNING } from "./coverage";
+import { eligibilityBlocked, evaluateEligibility } from "../../../../shared/premiumFinance/eligibility";
+import { PERSONAL_LINES_WARNING } from "../../../../shared/premiumFinance/coverage";
 
 /** A placement that passes everything, to mutate one screen at a time. */
 const clean = {

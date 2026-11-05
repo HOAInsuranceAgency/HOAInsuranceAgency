@@ -10,7 +10,7 @@ import {
   PF_DEFAULT_DOWN_PCT,
   PF_DEFAULT_MONTHS,
   PF_ORIGINATION_FEE,
-} from "./quote";
+} from "../../../../shared/premiumFinance/quote";
 
 /** The signed reference case: $1M premium, 25% down, 9 months. */
 const base = {
@@ -91,7 +91,7 @@ describe("defaults and the fee", () => {
   });
 
   it("refuses a down payment under the 25% floor", async () => {
-    const { downPctViolation, PF_MIN_DOWN_PCT } = await import("./quote");
+    const { downPctViolation, PF_MIN_DOWN_PCT } = await import("../../../../shared/premiumFinance/quote");
     expect(PF_MIN_DOWN_PCT).toBe(25);
     expect(downPctViolation(25)).toBeNull();
     expect(downPctViolation(30)).toBeNull();
@@ -150,7 +150,7 @@ describe("prepayment — actuarial method", () => {
  * charges get invented ad hoc.
  */
 describe("what the module must never contain", () => {
-  const dir = resolve(process.cwd(), "src/lib/premiumFinance");
+  const dir = resolve(process.cwd(), "../shared/premiumFinance");
   const sources = readdirSync(dir).filter(
     // Hand-written sources only: the generated module's SHA hex can contain
     // any digit pair, and the signed YAML notes are not code.
@@ -194,7 +194,7 @@ describe("what the module must never contain", () => {
 
 describe("parseScheduleJson — the AWSJSON trap, again", () => {
   it("reads the array, the string, and the string wrapping the string", async () => {
-    const { parseScheduleJson, buildQuote } = await import("./quote");
+    const { parseScheduleJson, buildQuote } = await import("../../../../shared/premiumFinance/quote");
     const rows = buildQuote({
       premium: 1000, downPct: 25, months: 3, apr: 12, effectiveDate: "2026-09-01",
     }).schedule;
@@ -206,7 +206,7 @@ describe("parseScheduleJson — the AWSJSON trap, again", () => {
   });
 
   it("returns empty for garbage rather than characters", async () => {
-    const { parseScheduleJson } = await import("./quote");
+    const { parseScheduleJson } = await import("../../../../shared/premiumFinance/quote");
     for (const bad of [null, undefined, "", "not json", "42", {}]) {
       expect(parseScheduleJson(bad), String(bad)).toEqual([]);
     }

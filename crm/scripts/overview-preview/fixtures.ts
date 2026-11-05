@@ -1,7 +1,7 @@
 /** Fictional local data only. Type imports never initialize the CRM client. */
 import type { Account, Contact } from '../../src/lib/client';
 export type { Account, Contact } from '../../src/lib/client';
-export { listAllPages } from '../../src/lib/pagination';
+export { listAllPages } from '../../../shared/pagination';
 export { validateAccountFields } from '../../src/lib/accountValidation';
 
 export const scenario = new URLSearchParams(location.search).get('scenario') || 'populated';

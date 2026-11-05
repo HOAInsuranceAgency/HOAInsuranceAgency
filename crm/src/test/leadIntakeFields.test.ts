@@ -5,7 +5,7 @@ import {
 } from "../../amplify/functions/lead-intake/fields";
 import { flattenExtraction } from "../../amplify/functions/lead-reply/extraction";
 import { WORD_BUDGET, countWords, systemPrompt } from "../../amplify/functions/lead-reply/email";
-import { priorCarrierKey } from "../lib/extractionKeys";
+import { priorCarrierKey } from "../../../shared/extractionKeys";
 
 describe("parseUnitCount", () => {
   it("takes what a form actually sends", () => {

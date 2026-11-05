@@ -18,8 +18,8 @@ import {
 } from "@aws-sdk/lib-dynamodb";
 import Stripe from "stripe";
 import type { Schema } from "../../data/resource";
-import { listAllPages } from "../../../src/lib/pagination";
-import { PF_CONFIG_SHA256 } from "../../../src/lib/premiumFinance/jurisdictions";
+import { listAllPages } from "../../../../shared/pagination";
+import { PF_CONFIG_SHA256 } from "../../../../shared/premiumFinance/jurisdictions";
 import { looksLikeElectionToken } from "../pfElectionToken";
 import { initialPaymentTotals, PF_CHECKOUT_BILLING_VERSION } from "../pfInitialPayment";
 import { handler as voidInvoice } from "../void-invoice/handler";

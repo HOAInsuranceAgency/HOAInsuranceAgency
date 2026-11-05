@@ -1,7 +1,7 @@
 import type { Account, Contact, Policy, Quote } from './client';
 import type { CommercialData } from './commercial';
 import type { AccountsListData } from './accountsListData';
-import { isAuthorizationError } from './authorizationError';
+import { isAuthorizationError } from '../../../shared/authorizationError';
 
 export const ACCOUNT_REFRESH_PAGE_SIZE = 100;
 export const ACCOUNT_REFRESH_COMMERCIAL_SIZE = 25;

@@ -3,7 +3,7 @@ import { Select } from "./ui/Select";
 import { Input } from "./ui/Input";
 import { Button } from "./ui/Button";
 import { Textarea } from "./ui/Textarea";
-import { listAllPages } from "../lib/pagination";
+import { listAllPages } from "../../../shared/pagination";
 import { useAsyncResource } from "../lib/useAsyncResource";
 import { useState } from "react";
 import { useSaveStatus } from "./SaveStatus";
@@ -15,18 +15,18 @@ import {
   type Quote,
 } from "../lib/client";
 import { useFormState } from "../lib/useFormState";
-import { SELECTABLE_QUOTE_STATUSES } from "../lib/quoteStatus";
+import { SELECTABLE_QUOTE_STATUSES } from "../../../shared/quoteStatus";
 import {
   AGGREGATE_APPLIES_TO_OPTIONS,
   BILL_TYPE_OPTIONS,
   POLICY_STATUSES,
   REPLACEMENT_COST_OPTIONS,
-} from "../lib/enums";
+} from "../../../shared/enums";
 import { DateInput, MoneyInput, PercentInput } from "./inputs";
 import { brokerFeeCents } from "../../../shared/brokerFees";
 import { clientChargeBreakdown } from "../../../shared/clientCharges";
 import { normalizeClientConditions, normalizePassThroughCharges, type PassThroughCharge } from "../../../shared/passThroughCharges";
-import { formatMoney } from "../lib/invoiceTotals";
+import { formatMoney } from "../../../shared/invoiceTotals";
 
 // Draft monetary inputs preserve invalid intermediate text as NaN, so charge
 // validation cannot mistake an unfinished amount for an absent stored value.

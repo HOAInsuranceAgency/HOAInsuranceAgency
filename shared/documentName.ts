@@ -13,9 +13,8 @@
  * Preview button appears by reading the extension off `name`, so a name that
  * loses or changes it silently removes a button the user was using yesterday.
  *
- * This module imports nothing, and that is load-bearing rather than tidy: the
- * browser imports it for the rename box (the same direction
- * `form-filler/sanitise.ts` is imported by `lib/aiFill.ts`), and the Claude
+ * This shared module imports nothing: the browser uses it for the rename box,
+ * and the Claude
  * call that produced the suggestion lives one file over precisely so that
  * `@anthropic-ai/sdk` — 166KB of it — stays out of the app bundle.
  */

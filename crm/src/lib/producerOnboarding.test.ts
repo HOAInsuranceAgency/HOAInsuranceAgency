@@ -8,7 +8,7 @@ vi.mock("./client", async () => ({
     License: { listLicenseByUserProfileId: indexedLicenses, list: scanLicenses },
     ProducerLicense: { list: scanLegacyLicenses },
   } },
-  listAllPages: (await import("./pagination")).listAllPages,
+  listAllPages: (await import("../../../shared/pagination")).listAllPages,
 }));
 
 import { loadProducerLicenses } from "./producerOnboarding";

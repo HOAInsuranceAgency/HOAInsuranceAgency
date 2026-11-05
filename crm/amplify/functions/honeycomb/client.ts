@@ -1,5 +1,5 @@
 import { createHmac } from "node:crypto";
-import type { EstimateInput } from "./contract";
+import type { EstimateInput } from "../../../../shared/honeycomb/estimate";
 import { configuredHoneycomb, HONEYCOMB_USER_AGENT } from "./runtime-config";
 export const ESTIMATE_PATH = "/v1/estimations/eligibility-and-price-indication";
 export function signature(method: string, body: string, path: string, key: string) {

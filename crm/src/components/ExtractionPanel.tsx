@@ -3,21 +3,10 @@ import { Button } from "./ui/Button";
 import { Table } from "./ui/Table";
 import { relationshipCurrent } from "../../../shared/relationships";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import {
-  client,
-  fmtDate,
-  fmtMoney,
-  fmtNum,
-  fmtPhone,
-  friendlyError,
-  listAllPages,
-  type Account,
-  type Building,
-  type Contact,
-  type Loss,
-} from "../lib/client";
+import { client, fmtDate, fmtMoney, fmtNum, fmtPhone, friendlyError, type Account, type Building, type Contact, type Loss } from "../lib/client";
+import { listAllPages } from "../../../shared/pagination";
 import { Badge, statusBadge, CONFIDENCE_BADGE } from "../lib/badges";
-import { CONSTRUCTION_LABELS, CONTACT_TYPE_LABELS } from "../lib/enums";
+import { CONSTRUCTION_LABELS, CONTACT_TYPE_LABELS } from "../../../shared/enums";
 import { str } from "../lib/formCodec";
 import {
   buildingAliases,
@@ -26,14 +15,14 @@ import {
   contactKey,
   lossAliases,
   lossKey,
-} from "../lib/extractionKeys";
+} from "../../../shared/extractionKeys";
 import {
   VERDICT_LABEL,
   classifyCandidate,
   type Match,
 } from "../lib/extractionMatch";
 import { useAsyncResource } from "../lib/useAsyncResource";
-import { isAuthorizationError } from "../lib/authorizationError";
+import { isAuthorizationError } from "../../../shared/authorizationError";
 import { SaveStatus, useSaveStatus } from "./SaveStatus";
 import "./ExtractionPanel.css";
 

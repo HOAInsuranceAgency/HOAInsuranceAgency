@@ -1,6 +1,6 @@
 import { normalizePassThroughCharges } from "../../../shared/passThroughCharges";
 import { clientChargeBreakdown } from "../../../shared/clientCharges";
-import { formatMoney } from "../lib/invoiceTotals";
+import { formatMoney } from "../../../shared/invoiceTotals";
 
 /** Client charges stay separate from base premium and agency revenue. */
 export default function PolicyCharges({ source }: { source: { premium?: number | null; brokerFee?: number | null; passThroughCharges?: unknown } }) {

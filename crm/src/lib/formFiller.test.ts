@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   PLACEHOLDER_RE,
   sanitiseSuggestions,
-} from "../../amplify/functions/form-filler/sanitise";
+} from "../../../shared/formSuggestions";
 
 /**
  * The AI form filler's output gate.
@@ -169,7 +169,7 @@ describe("the field cap", () => {
     // nobody told — a silent cap, which is the one thing this feature's
     // reporting exists to prevent.
     const { MAX_FIELDS } = await import(
-      "../../amplify/functions/form-filler/sanitise"
+      "../../../shared/formSuggestions"
     );
     expect(MAX_FIELDS).toBeGreaterThan(0);
 

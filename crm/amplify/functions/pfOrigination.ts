@@ -8,10 +8,10 @@ import {
   hasCurrentOpinion,
   minPrincipalViolation,
   originationGate,
-} from "../../src/lib/premiumFinance/gate";
-import { evaluateEligibility } from "../../src/lib/premiumFinance/eligibility";
-import { buildQuote, downPctViolation } from "../../src/lib/premiumFinance/quote";
-import { PF_CONFIG_SHA256 } from "../../src/lib/premiumFinance/jurisdictions";
+} from "../../../shared/premiumFinance/gate";
+import { evaluateEligibility } from "../../../shared/premiumFinance/eligibility";
+import { buildQuote, downPctViolation } from "../../../shared/premiumFinance/quote";
+import { PF_CONFIG_SHA256 } from "../../../shared/premiumFinance/jurisdictions";
 
 /**
  * The one way a loan originates.

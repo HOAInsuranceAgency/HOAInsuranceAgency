@@ -1,89 +1,40 @@
-/**
- * The one place the schema's enums are named.
- *
- * `amplify/data/resource.ts` declares 19 `a.enum(...)` types. Before this
- * module they were re-typed by hand all over the app — as `Record<string, …>`
- * label maps, literal unions, runtime `Set`s, `[value, label]` tuples and
- * inline `<option>` lists — none of it checked against the schema. Adding or
- * renaming a member compiled clean everywhere and failed at runtime. It had
- * already happened once: the Documents panel's category list was missing
- * `ACORD_FORM`, so an ACORD document rendered with no category label at all.
- *
- * How drift is prevented, following `quoteStatus.ts`: every table below is
- * `satisfies Record<TheEnum, …>`, where the enum is `Schema["X"]["type"]` —
- * the schema's own type. Add a member in `resource.ts` and this file stops
- * compiling until the member is given a label; remove one and the now-excess
- * key stops compiling too. Ordered lists are *derived* from those tables by
- * sorting, never written out a second time, so a display order cannot fall out
- * of step with the member set.
- *
- * `satisfies` rather than `:` on purpose — it enforces exhaustiveness while
- * leaving the literal key types intact for the derivations below. The exported
- * label maps are then widened to `Record<string, string>` so callers can keep
- * indexing them with a loose `string | null` straight off a model row.
- *
- * `QuoteStatus` is not here: `quoteStatus.ts` already owns it, with a
- * classification this module has no business duplicating.
- *
- * ─ Import constraints ────────────────────────────────────────────────────────
- * Type-only import of `Schema`, so nothing from `amplify/` reaches a bundle or
- * a test run. Combined with importing no runtime value except the
- * dependency-free `shared/accountType`, that makes this module safe for a
- * Lambda handler to import — the `pagination.ts` convention. It must never
- * import `client.ts`, which calls `generateClient()` at module scope.
+/** Shared, SDK-free enum classifications, labels and options.
+ * Runtime tables define their own literal key types. schemaContracts.test.ts
+ * checks every exported enum type against Amplify's schema during TypeScript
+ * compilation; schema-specific types never enter this cross-runtime module.
  */
-import type { Schema } from "../../amplify/data/resource";
-import { ACCOUNT_TYPES, type AccountType } from "../../../shared/accountType";
-import { PROPERTY_TYPES, PROPERTY_TYPE_LABELS, type PropertyType } from "../../../shared/propertyType";
+import { ACCOUNT_TYPES, type AccountType } from "./accountType";
+import { PROPERTY_TYPES, PROPERTY_TYPE_LABELS, type PropertyType } from "./propertyType";
 
 // ── Derived enum types ───────────────────────────────────────────────────────
 
-export type AccountStage = Schema["AccountStage"]["type"];
-export type PolicyStatus = Schema["PolicyStatus"]["type"];
-export type InvoiceStatus = Schema["InvoiceStatus"]["type"];
-export type BillType = Schema["BillType"]["type"];
-export type DocumentCategory = NonNullable<Schema["DocumentCategory"]["type"]>;
-export type OcrStatus = Schema["OcrStatus"]["type"];
-export type UserRole = Schema["UserRole"]["type"];
-export type MarketingTaskResolution = Schema["MarketingTaskResolution"]["type"];
-export type MarketingTaskSource = Schema["MarketingTaskSource"]["type"];
-export type LicenseHolderType = Schema["LicenseHolderType"]["type"];
-export type LicenseClass = Schema["LicenseClass"]["type"];
-export type LicenseResidency = Schema["LicenseResidency"]["type"];
-export type LicenseStatus = Schema["LicenseStatus"]["type"];
-export type ConstructionType = Schema["ConstructionType"]["type"];
-export type ReplacementCostType = Schema["ReplacementCostType"]["type"];
-export type BuildingDeductibleType = NonNullable<
-  Schema["BuildingDeductibleType"]["type"]
->;
-export type CauseOfLoss = NonNullable<Schema["CauseOfLoss"]["type"]>;
-export type AggregateAppliesTo = Schema["AggregateAppliesTo"]["type"];
-export type ContactType = NonNullable<Schema["ContactType"]["type"]>;
-export type LegalEntityType = NonNullable<Schema["LegalEntityType"]["type"]>;
-export type GlDeductibleType = NonNullable<Schema["GlDeductibleType"]["type"]>;
-export type GlPremiumBasis = NonNullable<Schema["GlPremiumBasis"]["type"]>;
-export type DoPart = NonNullable<Schema["DoPart"]["type"]>;
-export type DoCoverageType = NonNullable<Schema["DoCoverageType"]["type"]>;
-export type DefenseLimitPosition = NonNullable<
-  Schema["DefenseLimitPosition"]["type"]
->;
-export type MarketType = NonNullable<Schema["MarketType"]["type"]>;
-export type PaperType = NonNullable<Schema["PaperType"]["type"]>;
-
-/**
- * `AccountType` is re-exported from `shared/` rather than derived here: `web`
- * needs it too and cannot reach the schema. These two assertions are what stop
- * the shared copy drifting — they fail compilation if the shared list gains,
- * loses or renames a member relative to the schema.
- */
-type SchemaAccountType = Schema["AccountType"]["type"];
-type SharedCoversSchema = [SchemaAccountType] extends [AccountType] ? true : never;
-type SchemaCoversShared = [AccountType] extends [SchemaAccountType] ? true : never;
-const _sharedMatchesSchema: [SharedCoversSchema, SchemaCoversShared] = [true, true];
-void _sharedMatchesSchema;
-type SchemaPropertyType = Schema["PropertyType"]["type"];
-const _sharedPropertyTypeMatches: [[SchemaPropertyType] extends [PropertyType] ? true : never, [PropertyType] extends [SchemaPropertyType] ? true : never] = [true, true];
-void _sharedPropertyTypeMatches;
+export type AccountStage = "LEAD" | "CLIENT";
+export type PolicyStatus = keyof typeof POLICY_STATUS;
+export type InvoiceStatus = "DRAFT" | "SENT" | "PROCESSING" | "PAID" | "VOID";
+export type BillType = keyof typeof BILL_TYPE;
+export type DocumentCategory = keyof typeof DOCUMENT_CATEGORY;
+export type OcrStatus = "PENDING" | "PROCESSING" | "COMPLETE" | "FAILED" | "SKIPPED";
+export type UserRole = keyof typeof USER_ROLE;
+export type MarketingTaskResolution = "QUOTED" | "OUT_OF_APPETITE" | "OUT_OF_AGENCY_APPETITE" | "NOT_SUBMITTED_ON_TIME" | "SUPERSEDED";
+export type MarketingTaskSource = "POLICY" | "LEAD";
+export type LicenseHolderType = "FIRM" | "PRODUCER";
+export type LicenseClass = keyof typeof LICENSE_CLASS;
+export type LicenseResidency = keyof typeof LICENSE_RESIDENCY;
+export type LicenseStatus = keyof typeof LICENSE_STATUS;
+export type ConstructionType = keyof typeof CONSTRUCTION;
+export type ReplacementCostType = keyof typeof REPLACEMENT_COST;
+export type BuildingDeductibleType = keyof typeof BUILDING_DEDUCTIBLE_TYPE;
+export type CauseOfLoss = keyof typeof CAUSE_OF_LOSS;
+export type AggregateAppliesTo = keyof typeof AGGREGATE_APPLIES_TO;
+export type ContactType = keyof typeof CONTACT_TYPE;
+export type LegalEntityType = keyof typeof LEGAL_ENTITY;
+export type GlDeductibleType = keyof typeof GL_DEDUCTIBLE_TYPE;
+export type GlPremiumBasis = keyof typeof GL_PREMIUM_BASIS;
+export type DoPart = keyof typeof DO_PART;
+export type DoCoverageType = keyof typeof DO_COVERAGE_TYPE;
+export type DefenseLimitPosition = keyof typeof DEFENSE_LIMIT_POSITION;
+export type MarketType = keyof typeof MARKET_TYPE;
+export type PaperType = keyof typeof PAPER_TYPE;
 
 export { ACCOUNT_TYPES, type AccountType };
 export { PROPERTY_TYPES, PROPERTY_TYPE_LABELS, type PropertyType };
@@ -133,7 +84,7 @@ const CONSTRUCTION = {
     phrase: "modified fire-resistive",
   },
   FIRE_RESISTIVE: { label: "Fire Resistive", phrase: "fire-resistive" },
-} satisfies Record<ConstructionType, { label: string; phrase: string }>;
+} satisfies Record<string, { label: string; phrase: string }>;
 
 /** Every construction class, in schema order. */
 export const CONSTRUCTION_TYPES: readonly ConstructionType[] = Object.freeze(
@@ -167,7 +118,7 @@ const POLICY_STATUS = {
   EXPIRED: true,
   CANCELLED: true,
   NON_RENEWED: true,
-} satisfies Record<PolicyStatus, true>;
+} satisfies Record<string, true>;
 
 /**
  * Alphabetical, which is the order both hand-written copies used — the
@@ -190,7 +141,7 @@ export const POLICY_STATUSES: readonly PolicyStatus[] = Object.freeze(
 const BILL_TYPE = {
   AGENCY: "Agency bill — we collect and remit",
   DIRECT: "Direct bill — the carrier collects",
-} satisfies Record<BillType, string>;
+} satisfies Record<string, string>;
 
 export const BILL_TYPE_LABELS: Record<string, string> = Object.freeze(BILL_TYPE);
 
@@ -208,7 +159,7 @@ const REPLACEMENT_COST = {
   RC: "RC — Replacement Cost",
   ERC: "ERC — Extended Replacement Cost",
   GRC: "GRC — Guaranteed Replacement Cost",
-} satisfies Record<ReplacementCostType, string>;
+} satisfies Record<string, string>;
 
 export const REPLACEMENT_COST_OPTIONS = optionsByLabel(REPLACEMENT_COST);
 
@@ -227,7 +178,7 @@ export const REPLACEMENT_COST_OPTIONS = optionsByLabel(REPLACEMENT_COST);
 const BUILDING_DEDUCTIBLE_TYPE = {
   PER_OCCURRENCE: "Per occurrence",
   OTHER: "Other",
-} satisfies Record<BuildingDeductibleType, string>;
+} satisfies Record<string, string>;
 
 export const BUILDING_DEDUCTIBLE_TYPE_OPTIONS = optionsByLabel(
   BUILDING_DEDUCTIBLE_TYPE
@@ -241,7 +192,7 @@ const CAUSE_OF_LOSS = {
   SPECIAL: "Special",
   BASIC: "Basic",
   BROAD: "Broad",
-} satisfies Record<CauseOfLoss, string>;
+} satisfies Record<string, string>;
 
 export const CAUSE_OF_LOSS_OPTIONS = optionsByLabel(CAUSE_OF_LOSS);
 
@@ -288,7 +239,7 @@ const AGGREGATE_APPLIES_TO = {
     acord25Field:
       "GeneralLiability_GeneralAggregate_LimitAppliesToOtherIndicator_A",
   },
-} satisfies Record<AggregateAppliesTo, { label: string; acord25Field: string }>;
+} satisfies Record<string, { label: string; acord25Field: string }>;
 
 /** The member every caller falls back to when the column is unset. */
 export const DEFAULT_AGGREGATE_APPLIES_TO = "POLICY" satisfies AggregateAppliesTo;
@@ -372,7 +323,7 @@ const LEGAL_ENTITY = {
     acord125Fields: ["NamedInsured_LegalEntity_TrustIndicator_A"],
   },
 } satisfies Record<
-  LegalEntityType,
+  string,
   { label: string; acord125Fields: readonly string[] }
 >;
 
@@ -437,7 +388,7 @@ const CONTACT_TYPE = {
   DIRECTOR: "Director",
   PRESIDENT: "President",
   OTHER: "Other",
-} satisfies Record<ContactType, string>;
+} satisfies Record<string, string>;
 
 /**
  * Every role, in schema order. The extraction Lambda interpolates this into
@@ -466,7 +417,7 @@ export const DEFAULT_CONTACT_TYPE = "OTHER" satisfies ContactType;
 const GL_DEDUCTIBLE_TYPE = {
   PER_OCCURRENCE: "Per occurrence",
   PER_CLAIM: "Per claim",
-} satisfies Record<GlDeductibleType, string>;
+} satisfies Record<string, string>;
 
 export const GL_DEDUCTIBLE_TYPE_OPTIONS = optionsByLabel(GL_DEDUCTIBLE_TYPE);
 
@@ -483,7 +434,7 @@ export const GL_DEDUCTIBLE_TYPE_LABELS: Record<string, string> = Object.freeze({
 const GL_PREMIUM_BASIS = {
   UNIT: "Per unit",
   OTHER: "Other",
-} satisfies Record<GlPremiumBasis, string>;
+} satisfies Record<string, string>;
 
 export const GL_PREMIUM_BASIS_OPTIONS = optionsByLabel(GL_PREMIUM_BASIS);
 
@@ -511,7 +462,7 @@ const DO_PART = {
   A: "Part A",
   B: "Part B",
   C: "Part C",
-} satisfies Record<DoPart, string>;
+} satisfies Record<string, string>;
 
 /** Schema order — A, B, C — which is the order the form prints them in. */
 export const DO_PARTS: readonly DoPart[] = Object.freeze(
@@ -525,7 +476,7 @@ export const DO_PART_LABELS: Record<string, string> = Object.freeze({
 const DO_COVERAGE_TYPE = {
   PRIMARY: "Primary",
   EXCESS: "Excess",
-} satisfies Record<DoCoverageType, string>;
+} satisfies Record<string, string>;
 
 export const DO_COVERAGE_TYPE_OPTIONS = optionsByLabel(DO_COVERAGE_TYPE);
 
@@ -541,7 +492,7 @@ export const DO_COVERAGE_TYPE_LABELS: Record<string, string> = Object.freeze({
 const DEFENSE_LIMIT_POSITION = {
   INSIDE: "Inside the limit",
   OUTSIDE: "Outside the limit",
-} satisfies Record<DefenseLimitPosition, string>;
+} satisfies Record<string, string>;
 
 export const DEFENSE_LIMIT_POSITION_OPTIONS = optionsByLabel(
   DEFENSE_LIMIT_POSITION
@@ -624,7 +575,7 @@ const DOCUMENT_CATEGORY = {
    */
   OTHER: { label: "Other", extractionPriority: 4, extractable: true },
 } satisfies Record<
-  DocumentCategory,
+  string,
   { label: string | null; extractionPriority: number; extractable: boolean }
 >;
 
@@ -674,7 +625,7 @@ const USER_ROLE = {
   ADMIN: "Admin",
   STAFF: "Staff",
   PRODUCER: "Producer",
-} satisfies Record<UserRole, string>;
+} satisfies Record<string, string>;
 
 export const USER_ROLES: readonly UserRole[] = Object.freeze(
   Object.keys(USER_ROLE) as UserRole[]
@@ -691,7 +642,7 @@ export const DEFAULT_USER_ROLE = "STAFF" satisfies UserRole;
 
 /**
  * Is this one of the schema's roles? These are also the Cognito group names —
- * `amplify/auth/resource.ts` declares the same three — which is why the team
+ * `amplify/auth/resource.ts` declares the same groups — which is why the team
  * admin Lambda can validate an invite's role and then pass it straight to
  * `AdminAddUserToGroupCommand`.
  */
@@ -732,7 +683,7 @@ const LICENSE_CLASS = {
   SURPLUS_LINES: "Surplus lines",
   ADJUSTER: "Adjuster",
   CONSULTANT: "Consultant",
-} satisfies Record<LicenseClass, string>;
+} satisfies Record<string, string>;
 
 export const LICENSE_CLASS_LABELS: Record<string, string> = Object.freeze({
   ...LICENSE_CLASS,
@@ -744,7 +695,7 @@ const LICENSE_STATUS = {
   INACTIVE: "Inactive",
   LAPSED: "Lapsed",
   EXPIRED: "Expired",
-} satisfies Record<LicenseStatus, string>;
+} satisfies Record<string, string>;
 
 export const LICENSE_STATUS_LABELS: Record<string, string> = Object.freeze({
   ...LICENSE_STATUS,
@@ -753,7 +704,7 @@ export const LICENSE_STATUS_LABELS: Record<string, string> = Object.freeze({
 const LICENSE_RESIDENCY = {
   RESIDENT: "Resident",
   NON_RESIDENT: "Non-resident",
-} satisfies Record<LicenseResidency, string>;
+} satisfies Record<string, string>;
 
 export const LICENSE_RESIDENCY_OPTIONS = optionsByLabel(LICENSE_RESIDENCY);
 
@@ -788,7 +739,7 @@ const MARKET_TYPE = {
   MGA: "MGA",
   WHOLESALER: "Wholesaler",
   PROGRAM_ADMINISTRATOR: "Program administrator",
-} satisfies Record<MarketType, string>;
+} satisfies Record<string, string>;
 
 export const MARKET_TYPE_OPTIONS = optionsByLabel(MARKET_TYPE);
 
@@ -804,7 +755,7 @@ export const MARKET_TYPE_LABELS: Record<string, string> = Object.freeze({
 const PAPER_TYPE = {
   ADMITTED: "Admitted",
   SURPLUS_LINES: "E&S",
-} satisfies Record<PaperType, string>;
+} satisfies Record<string, string>;
 
 export const PAPER_TYPE_OPTIONS = optionsByLabel(PAPER_TYPE);
 

@@ -5,7 +5,7 @@ import type { Account } from "../lib/client";
 const h = vi.hoisted(() => ({ list: vi.fn(), estimates: vi.fn(), settings: vi.fn(), start: vi.fn(), resolve: vi.fn() }));
 vi.mock("../lib/client", () => ({ client: { models: { HoneycombSubmission: { listHoneycombSubmissionByAccountId: h.list }, HoneycombEstimate: { listHoneycombEstimateByAccountId: h.estimates } }, queries: { honeycombSubmissionSettings: h.settings }, mutations: { startHoneycombSubmission: h.start, resolveHoneycombSubmission: h.resolve } }, friendlyError: (e: Error) => e.message }));
 import SubmissionsPanel, { initialDetails } from "./SubmissionsPanel";
-import { businessDate } from "../../amplify/functions/honeycomb/submission-contract";
+import { businessDate } from "../../../shared/honeycomb/submission";
 const account = { id: "account", name: "Example Association", type: "ASSOCIATION", stage: "LEAD", address: "9 Changed St", city: "Chicago", state: "IL", zip: "60601", unitCount: 12, totalInsuredValue: 9000000, currentPolicyExpiration: businessDate() } as Account;
 const estimate = { id: "estimate", accountId: "account", status: "READY", price: 1234, estimationId: "carrier-id", createdAt: "2026-09-23T12:00:00Z", input: JSON.stringify({ address: "1 Original St, Chicago, IL", submissionData: { buildingType: "condominium", grossSQFeet: 15000, replacementValue: 2500000, numUnits: 12 } }), result: '{"isOkToSubmit":true}' };
 const job = { id: "job", accountId: "account", effectiveDate: businessDate(), status: "PENDING", attempt: 1, input: JSON.stringify({ address: "Address", submissionData: { effectiveDate: businessDate(), nameInsured: "Example Association" } }), requestedAt: new Date().toISOString(), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };

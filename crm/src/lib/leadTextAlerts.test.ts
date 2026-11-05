@@ -6,7 +6,7 @@ import {
   toE164,
   unreachableOptIns,
   type NotifiableProfile,
-} from "../../amplify/functions/lead-intake/sms";
+} from "../../../shared/leadTextAlerts";
 
 /**
  * Who gets a lead text, and what it says.
