@@ -104,6 +104,9 @@ it('rejects oversize UTF-8 envelopes and duplicate keyed transaction targets', (
   expect(() => assertTransactionEnvelope([put, { ConditionCheck: { TableName: 'T', Key: { id: 'a' }, ConditionExpression: 'attribute_exists(id)' } }],
     { keyFields: () => ['id'], error })).toThrow('incomplete');
 });
+it('does not impose JSON encoding on a count-only transaction guard', () => {
+  expect(() => assertTransactionEnvelope([{ Put: { TableName: 'T', Item: { id: 'a', n: 1n } } }], { error })).not.toThrow();
+});
 it('preserves table-map, caller-specific environment and retained API namespace precedence', () => {
   const environment = { ACCESS_TABLES: '{"Policy":"explicit-policy"}', ACCESS_API_ID: 'retained-api', POLICY_TABLE: 'environment-policy' };
   expect(resolveModelTable('Policy', { environment, envNames: ['POLICY_TABLE'], error })).toBe('explicit-policy');

@@ -5,8 +5,8 @@ type Write = NonNullable<TransactWriteCommandInput['TransactItems']>[number];
 export function assertTransactionEnvelope(items: Write[], options: {
   maxBytes?: number; maxItemBytes?: number; keyFields?: (table: string) => readonly string[] | undefined; error: () => Error;
 }) {
-  if (items.length > 100 || Buffer.byteLength(JSON.stringify(items), 'utf8') > (options.maxBytes ?? Infinity) ||
-      items.some(item => Buffer.byteLength(JSON.stringify(item), 'utf8') > (options.maxItemBytes ?? Infinity))) throw options.error();
+  if (items.length > 100 || options.maxBytes != null && Buffer.byteLength(JSON.stringify(items), 'utf8') > options.maxBytes ||
+      options.maxItemBytes != null && items.some(item => Buffer.byteLength(JSON.stringify(item), 'utf8') > options.maxItemBytes!)) throw options.error();
   const targets = new Set<string>();
   for (const item of items) {
     const operation = item.Put ?? item.Update ?? item.Delete ?? item.ConditionCheck;
