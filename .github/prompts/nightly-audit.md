@@ -56,11 +56,19 @@ Re-read scripts before execution. Use relevant existing tests, type checks, lint
 and builds. Add a focused regression test for a behavior fix when supported, show the
 failure before the fix and success after it, and avoid tests mirroring implementation.
 
-- CRM: `npm run test:run`, `npm run typecheck`, and `npm run build` from `crm/`, as relevant.
-- Backend infrastructure: also run local synthesis with `AWS_BRANCH=staging npm run synth:check`
-  and `AWS_BRANCH=main npm run synth:check` from `crm/`.
-- Shared: validate affected consumers.
-- Web: `npm run typecheck`, `npm run build`, and `npm run seo:check` for generated page/SEO changes.
+Use the repository's maintained verification entry point when it exists:
+`npm run verify:crm`, `npm run verify:backend`, `npm run verify:web`, or
+`npm run verify:architecture` from that worktree's root, as relevant. Shared
+changes must validate their affected consumers. These scopes share one plan;
+CRM verification supplies and removes its offline configuration and build fixture,
+and synthesis uses the retained main/staging deployment contracts without deploying.
+Do not replace those synth settings with AWS_BRANCH alone.
+
+Older staging snapshots may predate the root verifier. For those snapshots only,
+follow crm/README.md and run `npm run test:verification` and
+`npm run verify:offline` from crm when generated configuration is absent. Use the
+existing web package checks for website changes. Do not invent backend outputs,
+copy production configuration, or skip checks to accommodate the older checkout.
 
 Use local or mocked validation only. Never run deployment, migration, data-sync, live
 integration, customer messaging, `ampx sandbox`, `pipeline-deploy`, web sync, live

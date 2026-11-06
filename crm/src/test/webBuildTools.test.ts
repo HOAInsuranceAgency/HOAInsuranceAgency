@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, mkdtempSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,9 +13,23 @@ let directory: string;
 let build: string;
 let baseline: string;
 const html = (title: string) => `<html><head><title>${title}</title><meta name="description" content="Agency"><link rel="canonical" href="https://www.protectmyhoa.com/"><script type="application/ld+json">{"@graph":[{"@type":"InsuranceAgency"}]}</script></head><body><h1>ProtectMyHOA</h1></body></html>`;
-const run = (...args: string[]) => spawnSync(process.execPath, [
-  script, "--root", build, "--baseline", baseline, ...args,
-], { encoding: "utf8" });
+const run = (...args: string[]) => {
+  const stdout = join(directory, "stdout.log"), stderr = join(directory, "stderr.log");
+  const descriptors: number[] = [];
+  try {
+    // Regular files retain child diagnostics when a sandbox restricts Node's
+    // socket-backed pipe introspection. Keep stdout and stderr separate.
+    descriptors.push(openSync(stdout, "w"));
+    descriptors.push(openSync(stderr, "w"));
+    const result = spawnSync(process.execPath, [
+      script, "--root", build, "--baseline", baseline, ...args,
+    ], { encoding: "utf8", stdio: ["ignore", descriptors[0], descriptors[1]] });
+    if (result.error) throw result.error;
+    return { ...result, stdout: readFileSync(stdout, "utf8"), stderr: readFileSync(stderr, "utf8") };
+  } finally {
+    descriptors.forEach(closeSync);
+  }
+};
 
 describe("cross-platform SEO fingerprint", () => {
   beforeEach(() => {
@@ -28,12 +42,18 @@ describe("cross-platform SEO fingerprint", () => {
   afterEach(() => rmSync(directory, { recursive: true, force: true }));
 
   it("round-trips UTF-8 and matches an unchanged build", () => {
-    expect(run("--save").status).toBe(0);
+    const saved = run("--save");
+    expect(saved.status).toBe(0);
+    expect(saved.stdout).toContain("Saved reviewed SEO baseline: 1 HTML pages");
+    expect(saved.stderr).toBe("");
     const rows = JSON.parse(readFileSync(baseline, "utf8"));
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ url: "/", title: "HOA — Insurance", h1: 1 });
     expect(JSON.parse(rows[0].jsonld)["@graph"][0]["@type"]).toBe("InsuranceAgency");
-    expect(run().status).toBe(0);
+    const unchanged = run();
+    expect(unchanged.status).toBe(0);
+    expect(unchanged.stdout).toContain("PASS: SEO baseline matches all 1 HTML pages.");
+    expect(unchanged.stderr).toBe("");
   });
 
   it("fails with the affected route when an SEO field changes", () => {
@@ -42,6 +62,7 @@ describe("cross-platform SEO fingerprint", () => {
     const result = run();
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("SEO changed on 1 page(s):\n/");
+    expect(result.stdout).toBe("");
   });
 
   it("detects a newly generated route", () => {
@@ -51,11 +72,16 @@ describe("cross-platform SEO fingerprint", () => {
     const result = run();
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("/new-page");
+    expect(result.stderr).toContain("SEO changed on 1 page(s):\n/new-page");
+    expect(result.stdout).toBe("");
   });
 
   it("refuses to save an empty build as the reviewed baseline", () => {
     rmSync(join(build, "index.html"));
-    expect(run("--save").status).toBe(1);
+    const empty = run("--save");
+    expect(empty.status).toBe(1);
+    expect(empty.stderr).toContain("Production build contains no index.html pages.");
+    expect(empty.stdout).toBe("");
   });
 });
 

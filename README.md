@@ -45,6 +45,12 @@ at the first failure. It never deploys, signs in, sends mail, or calls payment A
 build monitoring uploads and ambient deployment credentials are removed from its
 child-process environment.
 
+The verifier uses one command plan and one cancellation-safe runner for local,
+CI, and audit checks. CRM validation preserves existing generated configuration
+and build output, removes only its own temporary fixture/bundle, and stops its
+owned descendant process group before restoring files. The CRM `verify:offline`
+alias delegates to this same root plan. Never deploy its temporary build output.
+
 Scoped commands are `verify:crm`, `verify:web`, `verify:backend`, and
 `verify:architecture`. Both apps' dependencies are needed for the shared tooling.
 See [maintained code boundaries](docs/CODE-BOUNDARIES.md).

@@ -12,10 +12,12 @@
     "test:run": "vitest run",
     "test:architecture": "vitest run src/components/ui/ControlArchitecture.test.ts",
     "typecheck:backend": "tsc -p amplify/tsconfig.json --noEmit",
-    "synth:check": "tsx scripts/synth-check.ts",
+    "synth:check": "node --import tsx scripts/synth-check.ts",
     "typecheck": "tsc -b && npm run typecheck:backend",
     "pf:generate": "tsx scripts/generate-pf-config.ts",
-    "preview:check": "tsx scripts/preview-support/check.ts"
+    "preview:check": "node --import tsx scripts/preview-support/check.ts",
+    "verify:offline": "node ../scripts/verify.mjs --scope=crm",
+    "test:verification": "node --test --experimental-test-isolation=none ../scripts/*.test.mjs"
   },
   "overrides": {
     "@opentelemetry/core": "^2.0.0",
