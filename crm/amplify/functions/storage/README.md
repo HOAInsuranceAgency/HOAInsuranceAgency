@@ -39,6 +39,12 @@ explicit at each caller:
 | Marketing report collection | 2,000 shared | 100,000 rows, 48 MiB and 180 seconds across sources |
 | Original invoice premium-line discovery | 20 | 500 candidate line IDs |
 | Manual invoice-payment line discovery | 100 | 70 current verified lines |
+| Business-delivery context, four collections combined | 100 | 10,000 rows, 32 MiB and 8 seconds |
+
+Business-delivery context starts its shared budget after the optional personal
+mailbox lookup. Contacts, quotes, account files and certificates must all finish
+within that one budget, including the final page; a failure retains the source's
+existing friendly error and `BUSINESS_DRAFT_NOT_DISPATCHED` classification.
 
 The manual-payment read previously had a row bound but no page/cursor bound;
 it now fails after 100 pages or a cycle instead of allowing an endless empty

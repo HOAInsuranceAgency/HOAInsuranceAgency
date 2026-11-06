@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { readCompleteModels, readCompleteRows } from '../../amplify/functions/communications/completeReads';
+import { createCompleteReadBudget, readCompleteModels, readCompleteRows } from '../../amplify/functions/communications/completeReads';
 
 const message = 'The complete communication read could not be verified';
 
@@ -48,5 +48,17 @@ describe('communication complete-read budgets', () => {
     const fetch = vi.fn().mockRejectedValue(error);
     await expect(readCompleteModels(fetch, 'relations', message)).rejects.toBe(error);
     expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['rows', 'bytes'] as const)('retains the shared %s budget across separate model collections', async dimension => {
+    const budget = createCompleteReadBudget();
+    budget.rows = dimension === 'rows' ? 9_999 : 0;
+    budget.bytes = dimension === 'bytes' ? 32 * 1024 * 1024 - 3 : 0;
+    const first = vi.fn(async () => ({ data: dimension === 'rows' ? [{ id: 'last-permitted' }] : [] }));
+    const second = vi.fn(async () => ({ data: [{ id: 'over-budget' }] }));
+    const options = { budget, error: (message: string) => Object.assign(new Error(message), { code: 'CONTEXT_NOT_COMPLETE' }) };
+    await expect(readCompleteModels(first, 'relations', message, options)).resolves.toHaveLength(dimension === 'rows' ? 1 : 0);
+    await expect(readCompleteModels(second, 'relations', message, options)).rejects.toMatchObject({ message, code: 'CONTEXT_NOT_COMPLETE' });
+    expect(first).toHaveBeenCalledTimes(1); expect(second).toHaveBeenCalledTimes(1);
   });
 });
