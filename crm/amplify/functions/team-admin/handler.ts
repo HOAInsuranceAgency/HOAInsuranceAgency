@@ -27,6 +27,7 @@ import { isUserRole, type UserRole } from "../../../../shared/enums";
 import { isActiveAdmin, isActiveOwner } from "../crm-access/active-role";
 import { listTeamUsers, loadTeamProfile, type TeamRosterArgs } from "./roster";
 import { assertUserSession, readUserAccess } from "../crm-access/user-status";
+import { collectCompletePages } from '../storage/pages';
 
 /**
  * Team administration for active Admin and Owner views. Only an active Owner
@@ -61,18 +62,17 @@ const ROLE_ERROR = "Choose one or two different roles: Owner, Admin, Staff, or P
 const OWNER_ERROR = "Only an Owner can assign or change Owner access.";
 
 async function groupsFor(username: string) {
-  const groups: string[] = [];
-  let nextToken: string | undefined;
-  do {
+  const groups = await collectCompletePages(async (nextToken?: string) => {
     const result = await cognito.send(new AdminListGroupsForUserCommand({
       UserPoolId: POOL_ID,
       Username: username,
       NextToken: nextToken,
     }));
-    groups.push(...(result.Groups ?? []).flatMap(group => group.GroupName ? [group.GroupName] : []));
-    nextToken = result.NextToken;
-  } while (nextToken);
-  return groups;
+    return { items: result.Groups ?? [], next: result.NextToken };
+  }, { maxPages: 20, maxRows: 1_000, maxBytes: 2 * 1024 * 1024,
+    budget: { pages: 0, rows: 0, bytes: 0, deadline: Date.now() + 5_000 },
+    error: () => new Error('Team group membership could not be verified completely') });
+  return groups.flatMap(group => group.GroupName ? [group.GroupName] : []);
 }
 
 async function inviteUser(args: InviteArgs, invitedBy: string, owner: boolean) {

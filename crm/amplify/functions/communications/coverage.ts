@@ -7,13 +7,9 @@ import type { ConversationLink } from "./events";
 import { get, row, save, put, commit, check, issue, type Row } from "./store";
 import { accountRows, ensureWorkflow } from "./workflow";
 import { resolveIssue } from "./routing";
+import { readCompleteModels } from './completeReads';
 
 type Account = { id: string; name: string; stage?: string | null; currentPolicyExpiration?: string | null; createdAt: string; updatedAt: string };
-async function all<T>(fetch: (nextToken?: string) => Promise<{ data: T[]; errors?: unknown[]; nextToken?: string | null }>) {
-  const items: T[] = []; let cursor: string | undefined;
-  do { const p = await fetch(cursor); if (p.errors?.length) throw new Error("Account records could not be verified"); items.push(...p.data); cursor = p.nextToken ?? undefined; } while (cursor);
-  return items;
-}
 
 /** Preserve quote/package context and the real post-bind conversation handoff. */
 export async function reconcileAccountWork(account: Account, workflow?: Row<LeadWorkflow>) {
@@ -24,8 +20,8 @@ export async function reconcileAccountWork(account: Account, workflow?: Row<Lead
   if (sourceAccount.errors?.length || !sourceAccount.data) throw new Error("Could not load this account's records");
   const related = sourceAccount.data;
   const [rawQuotes, policies] = await Promise.all([
-    all(token => related.quotes({ nextToken: token, limit: 100 })),
-    all(token => related.policies({ nextToken: token, limit: 100 })),
+    readCompleteModels(token => related.quotes({ nextToken: token, limit: 100 }), 'relations', 'Account records could not be verified'),
+    readCompleteModels(token => related.policies({ nextToken: token, limit: 100 }), 'relations', 'Account records could not be verified'),
   ]);
   const commercial = await get<CommercialPlan>(`commercial:${account.id}`), alternativeIds = alternativeQuoteIds(commercial?.data);
   const selectedPackage = commercial?.data.options.find(o => o.id === commercial.data.selectedOptionId);

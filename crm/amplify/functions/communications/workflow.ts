@@ -7,6 +7,7 @@ import { operationRow } from "./outbox";
 import { dataClient } from "./data";
 import { tasksRemoved } from "./retiredTasks";
 import { activeTeamUserCheck, teamUserDisabled } from "../crm-access/user-status";
+import { readCompleteRows } from './completeReads';
 
 const cognito = new CognitoIdentityProviderClient();
 export class UnavailableTeammateError extends Error {}
@@ -82,10 +83,9 @@ export async function syncProducerEligibility(userId: string, initial?: Row<Team
   }
 }
 export async function team() {
-  const out: TeamEligibility[] = [];
-  let cursor: string | undefined;
-  do { const page = await query<TeamEligibility>("kind", "ELIGIBILITY", cursor); out.push(...page.items.map(r => ({ ...salespersonEligibility(r.data), version: r.version }))); cursor = page.nextToken; } while (cursor);
-  return out;
+  const rows = await readCompleteRows(cursor => query<TeamEligibility>("kind", "ELIGIBILITY", cursor),
+    'team', 'Team eligibility records could not be loaded completely');
+  return rows.map(record => ({ ...salespersonEligibility(record.data), version: record.version }));
 }
 export async function validRole(userId: string, role: Responsibility) {
   if (role !== "SALESPERSON") throw new Error("Choose an enabled teammate with the Producer role eligible for this responsibility");
@@ -140,9 +140,8 @@ export async function ensureWorkflow(accountId: string): Promise<Row<LeadWorkflo
   return next;
 }
 export async function accountRows<T>(accountId: string, kind: string): Promise<Row<T>[]> {
-  const rows: Row<T>[] = []; let cursor: string | undefined;
-  do { const page = await query<T>("account", accountId, cursor, 100, `${kind}#`); rows.push(...page.items); cursor = page.nextToken; } while (cursor);
-  return rows;
+  return readCompleteRows(cursor => query<T>("account", accountId, cursor, 100, `${kind}#`),
+    'account', 'Account communication records could not be loaded completely');
 }
 export function expected(old: Row<unknown>, version: unknown) {
   if (old.version !== version) throw new Error("This record changed. Refresh before saving.");

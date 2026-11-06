@@ -1,7 +1,7 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import type { Communication, IntegrationConfig, LeadWorkflow } from "../../../shared/leadWorkflow";
 const h = vi.hoisted(() => ({ records: new Map<string, Record<string, any>>(), transactions: [] as any[][], inFlight: 0, maxInFlight: 0, fail: false, failAt: undefined as number | undefined, writeError: undefined as Error | undefined, writeErrors: [] as Error[], accountError: false, userEnabled: true, disabledUsers: new Set<string>(), nonProducers: new Set<string>(), deactivatedUsers: new Set<string>(),
-  reads: [] as string[], readFailureId: undefined as string | undefined, beforeWrite: undefined as (() => void) | undefined, userReads: [] as string[], groupReads: [] as string[], userError: undefined as Error | undefined, queries: [] as any[], queryError: undefined as Error | undefined, dueQueryDelayMs: 0, cognitoList: vi.fn(), deletionQuery: vi.fn(), batch: vi.fn(), producerEmail: vi.fn(), front: vi.fn(), dialpad: vi.fn(), update: vi.fn(), accountList: vi.fn(), profileList: vi.fn(), profileByUser: vi.fn(), c: {} as IntegrationConfig }));
+  reads: [] as string[], readFailureId: undefined as string | undefined, beforeWrite: undefined as (() => void) | undefined, userReads: [] as string[], groupReads: [] as string[], userError: undefined as Error | undefined, queries: [] as any[], queryError: undefined as Error | undefined, completeQuery: vi.fn(), dueQueryDelayMs: 0, cognitoList: vi.fn(), deletionQuery: vi.fn(), batch: vi.fn(), producerEmail: vi.fn(), front: vi.fn(), dialpad: vi.fn(), update: vi.fn(), accountList: vi.fn(), profileList: vi.fn(), profileByUser: vi.fn(), c: {} as IntegrationConfig }));
 vi.mock("@aws-sdk/lib-dynamodb", async importOriginal => {
   const actual = await importOriginal<typeof import("@aws-sdk/lib-dynamodb")>();
   return { ...actual, DynamoDBDocumentClient: { from: () => ({ send: async (command: any) => {
@@ -10,6 +10,8 @@ vi.mock("@aws-sdk/lib-dynamodb", async importOriginal => {
     if (command.constructor.name === "BatchGetCommand") return h.batch(p);
     if (command.constructor.name === "QueryCommand") {
       h.queries.push(p);
+      const completePage = await h.completeQuery(p);
+      if (completePage !== undefined) return completePage;
       if (p.IndexName === "due" && h.dueQueryDelayMs) vi.setSystemTime(new Date(Date.now() + h.dueQueryDelayMs));
       if (p.Select === 'COUNT') {
         const override = await h.deletionQuery(p);
@@ -146,6 +148,7 @@ beforeEach(async () => {
   h.reads.length = 0; h.readFailureId = undefined; h.beforeWrite = undefined; h.userReads.length = 0; h.queries.length = 0; h.userError = undefined; h.queryError = undefined;
   h.producerEmail.mockReset().mockImplementation(async member => emailIdentity(member.userId));
   h.deletionQuery.mockReset();
+  h.completeQuery.mockReset();
   delete process.env.ACCESS_API_ID;
   h.cognitoList.mockReset().mockResolvedValue(undefined);
   h.batch.mockReset().mockImplementation((p: { RequestItems: Record<string, { Keys: { id: string }[] }> }) => ({
@@ -165,6 +168,104 @@ beforeEach(async () => {
   h.front.mockImplementation(async (path: string) => path.includes("/messages") && path.includes("/conversations") ? { _results: [] } : {});
 });
 afterEach(() => vi.useRealTimers());
+describe('complete communications reads', () => {
+  const accountReadError = 'Account communication records could not be loaded completely';
+  const teamReadError = 'Team eligibility records could not be loaded completely';
+  function repeatedPrivatePages(index: string) {
+    let calls = 0;
+    h.completeQuery.mockImplementation(async request => {
+      if (request.IndexName !== index) return;
+      calls++;
+      if (calls > 2) throw new Error('An unsafe third page was fetched');
+      return { Items: [], LastEvaluatedKey: { id: 'repeated' } };
+    });
+  }
+  function repeatedRelation() {
+    return vi.fn().mockResolvedValueOnce({ data: [], nextToken: 'repeated' })
+      .mockResolvedValueOnce({ data: [], nextToken: 'repeated' })
+      .mockRejectedValue(new Error('An unsafe third page was fetched'));
+  }
+  it('rejects a repeated private-account cursor without returning a partial history', async () => {
+    repeatedPrivatePages('account');
+    const { accountRows } = await import('../../amplify/functions/communications/workflow');
+    await expect(accountRows('a1', 'COMMUNICATION')).rejects.toThrow(accountReadError);
+    expect(h.completeQuery).toHaveBeenCalledTimes(2);
+    expect(h.queries.every(query => query.ExpressionAttributeValues[':k'] === 'a1' && query.ExpressionAttributeValues[':prefix'] === 'COMMUNICATION#' && query.Limit === 100)).toBe(true);
+  });
+  it('rejects a repeated eligibility cursor instead of routing with an incomplete team', async () => {
+    repeatedPrivatePages('kind');
+    const { team } = await import('../../amplify/functions/communications/workflow');
+    await expect(team()).rejects.toThrow(teamReadError);
+    expect(h.completeQuery).toHaveBeenCalledTimes(2);
+  });
+  it('stops an advancing team cursor at the page budget', async () => {
+    let calls = 0;
+    h.completeQuery.mockImplementation(async () => {
+      if (++calls > 20) throw new Error('An unsafe twenty-first page was fetched');
+      return { Items: [], LastEvaluatedKey: { id: `page-${calls}` } };
+    });
+    const { team } = await import('../../amplify/functions/communications/workflow');
+    await expect(team()).rejects.toThrow(teamReadError);
+    expect(calls).toBe(20);
+  });
+  it('stops before another account page when its read deadline is exhausted', async () => {
+    h.completeQuery.mockImplementationOnce(async () => {
+      vi.setSystemTime(Date.now() + 8001);
+      return { Items: [], LastEvaluatedKey: { id: 'next' } };
+    }).mockRejectedValue(new Error('An unsafe page after the deadline was fetched'));
+    const { accountRows } = await import('../../amplify/functions/communications/workflow');
+    await expect(accountRows('a1', 'COMMUNICATION')).rejects.toThrow(accountReadError);
+    expect(h.completeQuery).toHaveBeenCalledTimes(1);
+  });
+  it('keeps empty filtered pages and all subsequent contact data in order', async () => {
+    const contacts = vi.fn().mockResolvedValueOnce({ data: [], nextToken: 'empty' })
+      .mockResolvedValueOnce({ data: [{ email: 'first@example.com' }], nextToken: 'last' })
+      .mockResolvedValueOnce({ data: [{ phone: '+15085550123' }] });
+    h.records.set('Account:a1', { contacts });
+    const { accountContactPairs } = await import('../../amplify/functions/communications/contactProgress');
+    expect(await accountContactPairs('a1')).toEqual([{ email: 'first@example.com' }, { phone: '+15085550123' }]);
+    expect(contacts.mock.calls).toEqual([[{ limit: 100, nextToken: undefined }], [{ limit: 100, nextToken: 'empty' }], [{ limit: 100, nextToken: 'last' }]]);
+  });
+  it('rejects repeated contact pages before they can become identity evidence', async () => {
+    const contacts = repeatedRelation();
+    h.records.set('Account:a1', { contacts });
+    const { accountContactPairs } = await import('../../amplify/functions/communications/contactProgress');
+    await expect(accountContactPairs('a1')).rejects.toThrow("The lead's contacts could not be loaded");
+    expect(contacts).toHaveBeenCalledTimes(2);
+  });
+  it('preserves a late GraphQL page error instead of publishing partial contact evidence', async () => {
+    const contacts = vi.fn().mockResolvedValueOnce({ data: [{ email: 'first@example.com' }], nextToken: 'next' })
+      .mockResolvedValueOnce({ data: [], errors: [{ message: 'Unauthorized' }] });
+    h.records.set('Account:a1', { contacts });
+    const { accountContactPairs } = await import('../../amplify/functions/communications/contactProgress');
+    await expect(accountContactPairs('a1')).rejects.toThrow("The lead's contacts could not be loaded");
+  });
+  it('refuses routing reconciliation when quote pagination repeats, without committing a partial quote state', async () => {
+    const wf = await lead(), quotes = repeatedRelation();
+    h.records.set('Account:a1', { quotes });
+    const before = h.transactions.length;
+    const { reconcileAccountWork } = await import('../../amplify/functions/communications/coverage');
+    await expect(reconcileAccountWork({ id: 'a1', name: 'Willow HOA', createdAt: NOW, updatedAt: NOW }, wf)).rejects.toThrow('Account records could not be verified');
+    expect(quotes).toHaveBeenCalledTimes(2);
+    expect(h.transactions).toHaveLength(before);
+  });
+  it('refuses a commercial-package write when its complete quote read repeats', async () => {
+    const quotes = repeatedRelation();
+    h.records.set('Account:a1', { quotes });
+    const before = h.transactions.length;
+    const { saveCommercial } = await import('../../amplify/functions/communications/commercial');
+    await expect(saveCommercial({ accountId: 'a1', version: 0, action: 'SAVE_OPTION', quoteIds: ['q1'], name: 'Property', requiredLines: ['Property'], reviewed: true }, 'brian')).rejects.toThrow('Could not load quotes');
+    expect(quotes).toHaveBeenCalledTimes(2);
+    expect(h.transactions).toHaveLength(before);
+  });
+  it('fails the team API without returning profiles from repeated pages', async () => {
+    h.profileList.mockImplementation(repeatedRelation());
+    const { handler } = await import('../../amplify/functions/communications/handler');
+    expect(await handler({ arguments: { readOperation: 'team' }, identity: { sub: 'brian', groups: ['ADMIN'] } as never })).toMatchObject({ ok: false, error: 'Could not load teammates' });
+    expect(h.profileList).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe('producer lead snoozes', () => {
   const input = { accountId: 'a1', version: 0, followUpOn: '2026-09-10', note: '  Call after the board meeting  ' };
   async function setup() {
