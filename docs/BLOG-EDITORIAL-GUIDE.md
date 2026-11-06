@@ -236,8 +236,12 @@ The workflows live in `.github/workflows/blog-*.yml` and their scripts in
    `/title` takes 1, 2 or 3, or your own wording. `/photo` crops the photo to
    1600 × 900, replaces the temporary cover and marks the article ready. The
    workflow re-runs the site build and replies on the pull request.
-4. **Merge.** Approve and merge. A draft merged without `/photo` stays
-   unpublished.
+4. **Checks and merge.** When the bot opens or updates an article pull request,
+   a reviewer with write access selects **Approve workflows to run** in the
+   merge box. Wait for repository verification to pass on the latest commit,
+   then approve and merge. This is GitHub's approval step for
+   [pull requests created with `GITHUB_TOKEN`](https://docs.github.com/en/actions/concepts/security/github_token).
+   A draft merged without `/photo` stays unpublished.
 5. **Publishing.** "Blog publishing" runs a few minutes after each category's
    slot and asks Amplify to rebuild when an article's time has just passed.
    Expect the article live within about 15 minutes of its slot.

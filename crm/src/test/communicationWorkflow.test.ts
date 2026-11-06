@@ -955,6 +955,28 @@ describe("durable public capture", () => {
     expect(entries("WORKFLOW")[0].data).toMatchObject({ salespersonId: "brian" });
     expect(h.front).not.toHaveBeenCalled();
   });
+  it.each(["website-blog-briefing", " website-blog-briefing "])("captures briefing signup %s without queuing a sales document-request reply", async source => {
+    const result = await submit({ source }) as any;
+    expect(result.ok).toBe(true);
+    expect(h.records.get(`Account:${result.id}`)).toMatchObject({ stage: "LEAD", source: "website-blog-briefing", name: args.name });
+    expect([...h.records.values()].filter(r => r.__typename === "Contact")).toMatchObject([{ accountId: result.id, email: args.contactEmail, isPrimary: true }]);
+    expect(entries("SUBMISSION")).toHaveLength(1);
+    expect(entries("OPERATION").filter(o => o.data.type === "IMPORT")).toHaveLength(1);
+    expect(entries("WEB_LEAD_ASSIGNMENT")).toHaveLength(1);
+    expect([...h.records.values()].filter(r => r.__typename === "LeadReply")).toHaveLength(0);
+    expect(await submit({ source })).toMatchObject({ ok: true, duplicate: true, id: result.id });
+    expect([...h.records.keys()].filter(k => k.startsWith("Account:"))).toHaveLength(1);
+    expect([...h.records.values()].filter(r => r.__typename === "LeadReply")).toHaveLength(0);
+    expect(h.front).not.toHaveBeenCalled();
+  });
+  it.each(["website-blog", "website-quote", "website-contact"])("keeps the sales reply for %s enquiries", async source => {
+    const result = await submit({ source }) as any;
+    expect(result.ok).toBe(true);
+    expect(h.records.get(`LeadReply:reply:${args.submissionId}`)).toMatchObject({
+      accountId: result.id, contactEmail: args.contactEmail, status: "WAITING", uploadToken: result.uploadToken,
+      dueAt: "2026-09-08T14:08:00.000Z", uploadCount: 0,
+    });
+  });
   it("cleans cached quote-page assignment metadata without changing its original answers or replay identity", async () => {
     const notes = "Role: Board Member / Trustee\nAssigned agent: Brian Cole\nBrian Cole previously helped us.\nAssigned agent: Daniel Rocha";
     const answerSnapshot = JSON.stringify({ "Website Agent": "Brian Cole", Role: "Board Member / Trustee" });
