@@ -169,12 +169,22 @@ describe("paged team roster", () => {
 
   it("revalidates every loaded page without dropping later members on a live event", async () => {
     combinedSetup();
+    // The roster can render enabled before the effect starts its settings read.
+    // Hold that read to synchronize on settled settings, rather than that transient render.
+    let finishSettings!: (value: { team: TeamEligibility[] }) => void;
+    communicationRequest.mockImplementationOnce(() => new Promise(resolve => { finishSettings = resolve; }));
     listTeamUsers.mockImplementation(async (args?: {nextToken?: string}) => args?.nextToken
       ? {data:{users:[later],profiles:[laterProfile],nextToken:null}}
       : {data:{users:[teammate],profiles:[teammateProfile],nextToken:"page-2"}});
     renderPage(); await screen.findByText("Casey Staff");
-    await waitFor(() => expect(screen.getByRole("button", {name:"Load more team members"})).toBeEnabled());
-    fireEvent.click(screen.getByRole("button", {name:"Load more team members"}));
+    const more = screen.getByRole("button", {name:"Load more team members"});
+    await waitFor(() => expect(more).toBeDisabled());
+    fireEvent.click(more);
+    expect(listTeamUsers).toHaveBeenCalledTimes(1);
+    await act(async () => finishSettings({ team: [{ ...eligibility, receiveNewLeads: false }] }));
+    await screen.findByText("tea_casey");
+    await waitFor(() => expect(more).toBeEnabled());
+    fireEvent.click(more);
     await screen.findByText("Later Member");
     await invalidateLiveUpdates();
     expect(screen.getByText("Later Member")).toBeVisible();
