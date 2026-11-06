@@ -107,6 +107,15 @@ it('finishes selected-account quote pages before returning full terms and reject
   await expect(loadDashboardAccountQuotes(['a'])).rejects.toThrow('could not finish loading');
 });
 
+it('does not publish earlier quote rows when the final account page fails or loses authorization', async () => {
+  const quote = { id: 'q', accountId: 'a', status: 'QUOTED' };
+  for (const error of [new Error('Last quote page failed'), Object.assign(new Error('Account access revoked'), { name: 'Unauthorized' })]) {
+    h.request.mockReset().mockResolvedValueOnce({ items: [quote], nextToken: 'final' }).mockRejectedValueOnce(error);
+    await expect(loadDashboardAccountQuotes(['a'])).rejects.toBe(error);
+    expect(h.request).toHaveBeenCalledTimes(2);
+  }
+});
+
 it('batches selected states and requires each reference to be returned or explicitly missing exactly once', async () => {
   const ids = Array.from({ length: 502 }, (_, index) => `q-${index}`);
   h.request.mockImplementation(async (_operation, { quoteIds }) => ({ items: [], missingIds: quoteIds }));

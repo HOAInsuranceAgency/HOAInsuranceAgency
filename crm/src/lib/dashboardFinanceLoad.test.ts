@@ -69,6 +69,13 @@ it('rejects incomplete or repeating fee-index pages instead of publishing partia
   expect(h.forbidden).not.toHaveBeenCalled();
 });
 
+it('preserves GraphQL authorization classification on the final broker-fee index page', async () => {
+  h.feePolicies.mockResolvedValueOnce({ data: [{ id: 'fee', accountId: 'a', brokerFee: 500 }], nextToken: 'final' })
+    .mockResolvedValueOnce({ data: [], errors: [{ message: 'Access revoked', errorType: 'Unauthorized' }] });
+  await expect(loadFinanceBrokerFeePolicies()).rejects.toMatchObject({ name: 'Unauthorized' });
+  expect(h.feePolicies).toHaveBeenCalledTimes(2);
+});
+
 it('reads batched line anchors only for open invoices on outstanding-loan accounts and fetches referenced policy anchors', async () => {
   const relatedLines = vi.fn().mockRejectedValue(new Error('Per-invoice relation reads are forbidden'));
   const unrelatedLines = vi.fn().mockRejectedValue(new Error('Unrelated lines must not load'));
