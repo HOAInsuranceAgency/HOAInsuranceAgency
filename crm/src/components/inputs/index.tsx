@@ -4,6 +4,7 @@ import {
   useEffect,
   useRef,
   useState,
+  type AriaAttributes,
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import { fmtNum, normalizePhone } from "../../lib/client";
@@ -59,7 +60,7 @@ import { fmtNum, normalizePhone } from "../../lib/client";
  * behaviour of `type="number"` is a bonus.
  */
 
-export interface FormattedInputProps {
+export interface FormattedInputProps extends AriaAttributes {
   /** Raw value as the form holds it — digits, not the formatted rendering. */
   value: string;
   /** Called with the raw value. Never called with a formatted string. */
@@ -159,6 +160,7 @@ function FormattedInput({
   commitOnBlur = false,
   inputMode,
   type,
+  ...aria
 }: BaseProps) {
   const [focused, setFocused] = useState(false);
   const ref = useRef<HTMLInputElement>(null);
@@ -173,6 +175,7 @@ function FormattedInput({
 
   return (
     <Input
+      {...aria}
       ref={ref}
       id={id}
       type={type}
@@ -320,9 +323,11 @@ export function DateInput({
   placeholder,
   onKeyDown,
   id,
+  ...aria
 }: FormattedInputProps) {
   return (
     <Input
+      {...aria}
       id={id}
       type="date"
       disabled={disabled}

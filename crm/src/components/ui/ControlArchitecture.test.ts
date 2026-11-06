@@ -12,14 +12,14 @@ const sharedRoots = new Set([
   'ui-button', 'ui-input', 'ui-select', 'ui-textarea', 'ui-table', 'ui-tabs', 'ui-segmented-control',
   'ui-tabs__tab', 'ui-segmented-control__option', 'ui-segmented-control__radio',
   'ui-suggestion-list', 'ui-suggestion-option',
-  'ui-metric-button',
+  'ui-metric-button', 'ui-field',
 ]);
 const chrome = /^(?:font(?:-.+)?|line-height|color|text-transform|letter-spacing|text-decoration(?:-.+)?|text-shadow|padding(?:-.+)?|border(?:-.+)?|background(?:-.+)?|(?:-\w+-)?(?:appearance|filter|backdrop-filter)|opacity|(?:min-)?height|(?:min-)?block-size|outline(?:-.+)?|box-shadow|--control-(?:radius|height|font)(?:-.+)?|--field-(?:height|font))$/;
 const componentTags: Record<string, readonly string[]> = {
   Button: ['button'], ButtonLink: ['a'], ButtonSummary: ['summary'], Input: ['input'], Select: ['select'],
   Textarea: ['textarea'], Table: ['table'], Tabs: ['div'], SegmentedControl: ['div'], SegmentedRadioControl: ['div'], FilePicker: ['label'],
   SuggestionList: ['div'], SuggestionOption: ['div'],
-  MetricButton: ['button'],
+  MetricButton: ['button'], Field: ['div'],
 };
 type ControlClasses = { names: Set<string>; tags: readonly string[] }[];
 
@@ -278,6 +278,13 @@ describe('shared control architecture', () => {
       <div className="usearch-foot on" /><tr className="summary-row on" /></>;`,'sample.tsx');
     expect(controlChrome('.usearch-hit.on, .usearch-foot.on, .summary-row.on { background: blue; opacity: .8; }','sample.css',classes)).toEqual([]);
     expect(controlChrome('.filter-option.on, :is(.filter-option).on { background: blue; }','sample.css',classes)).toHaveLength(1);
+  });
+
+  it('keeps field composition styling shared while allowing field layout classes', () => {
+    const classes = controlClasses(`import { Field as FormField } from './ui/Field';
+      const view=<FormField label="Name" className="contact-field full">{control=><Input {...control}/>}</FormField>;`, 'sample.tsx');
+    expect(controlChrome('.contact-field { color: red; padding: 4px; } .ui-field { font-size: 10px; }', 'sample.css', classes)).toHaveLength(3);
+    expect(controlChrome('.contact-field.full { grid-column: 1 / -1; min-width: 0; } .contact-field .error-text { color: red; }', 'sample.css', classes)).toEqual([]);
   });
 
   it('rejects inline visual styles on aliased, default and namespaced shared controls while leaving content styles alone', () => {

@@ -6,6 +6,8 @@ export { Select } from './Select';
 export type { SelectProps } from './Select';
 export { Textarea } from './Textarea';
 export type { TextareaProps } from './Textarea';
+export { Field } from './Field';
+export type { FieldProps, FieldControlProps } from './Field';
 export { FilePicker } from './FilePicker';
 export { Table } from './Table';
 export { Tabs, TabPanel } from './Tabs';
