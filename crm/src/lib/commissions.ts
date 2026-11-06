@@ -6,11 +6,17 @@ export interface CarrierPaymentPreview {
   payment?: Pick<CarrierPaymentArrangement,
     'id' | 'payor' | 'trigger' | 'cadence' | 'lagDays' | 'cutoffDay' | 'paymentDay' | 'earningMethod'>;
 }
+import { isAuthorizationError } from './authorizationError';
 export function commissionResponse<T>(response: {
   data?: unknown;
   errors?: readonly { message: string }[];
 }): T {
-  if (response.errors?.length) throw new Error(response.errors[0].message);
+  if (response.errors?.length) {
+    const denial = response.errors.find(isAuthorizationError);
+    const error = new Error((denial ?? response.errors[0]).message);
+    if (denial) error.name = 'Unauthorized';
+    throw error;
+  }
   const value = typeof response.data === 'string' ? JSON.parse(response.data) : response.data;
   if (!value?.ok) throw new Error(value?.error ?? 'Commission request failed.');
   return value as T;

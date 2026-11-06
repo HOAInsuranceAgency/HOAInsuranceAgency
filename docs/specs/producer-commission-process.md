@@ -1,8 +1,12 @@
 # Producer commission process and CRM implementation plan
 
+> Current local implementation: the previously pending agreement terms were confirmed by Ethan on November 5. Policy-level shared allocations, explicit departure reviews, and compensation adjustments are implemented. The historical draft comparison below remains background; the [exception guide](../COMMISSION-EXCEPTIONS-AND-SHARED-CREDIT.md) documents current behavior. Actual employee/policy configuration and staging acceptance remain pending.
+
 Status: process accepted for implementation. Initial operational release implemented on the isolated branch; see [the implementation and rollout guide](../PRODUCER-COMMISSIONS.md) for supported behavior and remaining extensions. Not deployed.
 Prepared October 28, 2026, from repository commit `8fdbf02` and the two supplied drafts.
 Isolated branch: `codex/producer-commissions`.
+
+> November 5 implementation clarification from Ethan: reusable plan definitions with dated, non-overlapping producer assignments; one shared schedule; Friday EOD carrier receipt cutoff before Monday-morning processing; approved HR report Monday at 8 AM Eastern; Friday payday; start October 2026. HR receives a summary and separate employee earnings PDFs for manual payroll entry, not an import file. These confirmed operating choices supersede the earlier tentative cutoff/report examples below. See the [current payroll guide](../COMMISSION-PAYROLL-AUTOMATION.md).
 
 ## Confirmed requirements
 
@@ -68,7 +72,7 @@ Show a bind summary with carrier/payor, policy term, transaction classification,
 - Prefill from the quote but require confirmation. Changed client-facing premium/coverage terms must follow existing client reauthorization rules before binding.
 - Identify NEW BUSINESS, RENEWAL, or excluded/nonstandard transaction explicitly. Use renewal-policy linkage as evidence, not the account's current LEAD/CLIENT status alone.
 - Save original producer(s), their applicable agreement versions/rates, and written split evidence. Account reassignment later changes servicing access, not compensation ownership.
-- Proposed shared-production convention: allocate the agency revenue between producers using written attribution weights totaling 100%, then apply each producer's own rate to their allocation. If agreements split a producer commission pool instead, record that different convention explicitly; never interpret one percentage as both kinds of split.
+- Confirmed November 5 shared-production convention: eligible agency cash × employee policy share × that employee's applicable frozen plan rate. Employee shares plus any explicit house share total 100%. A common commission-pool method is outside this implementation. See the current exception guide for approved allocation versions and historical correction controls.
 - A selected package has policy-level amounts and terms. Sum those records for its display; do not create an additional payable package commission. Allow different carriers, rates, and payment schedules within the package.
 - A missing policy number may be resolved later through a unique internal bind reference, but block automatic statement matching until identity is unambiguous.
 - Binding records expected commission only. It does not record a carrier receipt or create a payroll payment.
@@ -181,7 +185,7 @@ The individual-rate approach is confirmed. These remaining choices must be settl
 
 1. Implementation was authorized by Jake. Reconciliation must remain Owner-only. Actual agreements and deployment acceptance remain necessary before use.
 2. Identify each producer's actual signed rates, effective dates, and eligibility terms. Confirm the date used to select a renewal's rate and correct the draft's effective-date typo.
-3. Confirm payout cadence and the actual payroll calendar/cutoff. If using the Business Development draft's rule, resolve processing date versus payday and calendar versus business days.
+3. Payout cadence is confirmed: monthly commissions on the last Friday payroll, processed Monday, with receipts through the preceding Friday EOD Eastern and HR delivery Monday at 8 AM. All active Owners may approve. Dates remain editable for an off-cycle run; no special holiday automation is required.
 4. Confirm whether carrier receipts for retained earned premium arriving after cancellation earn a producer share. The Business Development draft currently excludes pre-receipt cancellations. Also clarify eligibility for later installments after cancellation and post-separation renewal receipts; do not infer these outcomes from the account's current status.
 5. Confirm endorsement/midterm/new-line exclusions, the definition of actively managed renewals, shared-production allocation convention, and whether any house-account exceptions apply.
 6. Finalize the lawful chargeback/recovery procedure and treatment of earned-but-unpaid commissions with counsel. A proportional CRM calculation alone does not settle payroll deduction rights.

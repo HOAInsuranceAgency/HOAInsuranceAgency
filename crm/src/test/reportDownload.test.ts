@@ -43,3 +43,64 @@ describe("dashboard exports", () => {
     } finally { open.mockRestore(); }
   });
 });
+
+describe("branded commission ledger", () => {
+  const ledger: DashboardReport = {
+    title: "Producer commission ledger",
+    commissionLedger: {
+      scope: "All displayed employees", agencyReceivedCents: 250000, earnedCents: 50400, paidCents: 0,
+      proposedPaidRecoveryCents: 0, unpaidAdjustmentCents: 8000, partialAdjustmentCents: 0,
+    },
+    sections: [
+      { title: "Transactions", columns: [], rows: [
+        ["Avery Brooks", "Cedar HOA", "POL-1", "2026-10-01", "RECEIPT", "Carrier commission", 2000, 16, 320, ""],
+        ["Avery Brooks", "Cedar HOA", "POL-1", "2026-10-01", "REVERSAL", "Carrier commission", -500, 16, -80, ""],
+        ["Avery Brooks", "Maple Court HOA", "SHARED-102", "2026-10-01", "RECEIPT · shared allocation", "Carrier commission", 1000, "", "", ""],
+      ] },
+      { title: "Employee earnings allocations", columns: [], rows: [
+        ["Avery Brooks", "Maple Court HOA", "SHARED-102", "2026-10-01", "SHARED_RECEIPT", 60, 20, 120, "PAYABLE", "", 'receipt:["shared","avery"]', "shared-receipt"],
+        ["Jordan Hayes", "Maple Court HOA", "SHARED-102", "2026-10-01", "SHARED_RECEIPT", 40, 16, 64, "PAYABLE", "batch-2", 'receipt:["shared","jordan"]', "shared-receipt"],
+      ] },
+    ],
+  };
+  it("retains ledger totals, allocation basis and traceability without counting agency cash twice", () => {
+    const doc = new DOMParser().parseFromString(reportHtml(ledger, snapshot), "text/html");
+    const totals = doc.querySelector(".amount-panel")!.textContent;
+    expect(totals).toContain("$504.00");
+    expect(totals).toContain("$2,500.00");
+    expect(totals).not.toContain("$424.00");
+    expect(doc.querySelector(".adjustments")!.textContent).toContain("$80.00");
+    expect(doc.querySelectorAll(".transactions tbody tr")).toHaveLength(3);
+    expect(doc.querySelector(".transactions tbody tr")!.textContent).toContain("$2,000.00");
+    expect(doc.querySelector(".transactions tbody tr")!.textContent).toContain("$320.00");
+    expect(doc.querySelector(".transactions tbody tr")!.textContent).toContain("16% frozen rate");
+    expect(doc.querySelectorAll(".allocation-group")).toHaveLength(2);
+    expect(doc.querySelector(".allocations")!.textContent).toContain("60% share × 20% plan rate");
+    expect(doc.querySelector(".allocations")!.textContent).toContain("40% share × 16% plan rate");
+    expect(doc.querySelector(".allocations")!.textContent).toContain("$120.00");
+    expect(doc.querySelector(".allocations")!.textContent).toContain("$64.00");
+    expect(doc.querySelector(".allocations")!.textContent).not.toContain("$1,000.00");
+    expect(doc.querySelector(".allocations")!.textContent).toContain('receipt:["shared","jordan"]');
+    expect(doc.querySelector(".allocations")!.textContent).toContain("shared-receipt");
+    expect(doc.querySelector(".allocations")!.textContent).toContain("batch-2");
+    expect(doc.querySelectorAll(".transactions tr")[3].textContent).toContain("See employee allocations");
+    expect(doc.querySelector(".notice")!.textContent).toContain("Not a payroll approval");
+  });
+  it("escapes names and references, marks only test copies, and formats the stated time zone", () => {
+    const unsafe = structuredClone(ledger);
+    unsafe.commissionLedger!.scope = '<img src=x onerror="bad()">';
+    unsafe.sections[1].rows[0][0] = "José 王 <script>alert(1)</script>";
+    unsafe.sections[1].rows[0][10] = '<svg onload="bad()">';
+    const live = reportHtml(unsafe, snapshot);
+    const test = reportHtml(unsafe, { ...snapshot, isTest: true });
+    expect(live).not.toContain("TEST DATA — DO NOT PAY");
+    expect(test).toContain("TEST DATA — DO NOT PAY");
+    expect(test).toContain("José 王 &lt;script&gt;alert(1)&lt;/script&gt;");
+    expect(test).not.toContain('<svg onload="bad()">');
+    const doc = new DOMParser().parseFromString(test, "text/html");
+    expect(doc.querySelectorAll("script,svg")).toHaveLength(0);
+    expect(doc.querySelectorAll("img")).toHaveLength(2);
+    expect(doc.querySelector(".facts")!.textContent).toContain("11:00 AM EDT");
+    expect(doc.querySelector(".facts")!.textContent).toContain("America/New_York");
+  });
+});

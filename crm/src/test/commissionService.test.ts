@@ -1,3 +1,4 @@
+import { payrollPreview } from '../../../shared/commissionPayroll';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { commissionPolicy, commissionAccount, line, statement } from './commissionFixtures';
 import {
@@ -158,6 +159,20 @@ it('rejects disabled and revoked sessions even for an Owner', async () => {
   });
   expect(h.get).not.toHaveBeenCalled();
 });
+it('keeps monthly payroll operations within existing Owner access', async () => {
+  for (const operation of ['payrollWorkspace', 'downloadPayrollCycle', 'confirmPayrollCycle', 'approvePayrollCycle', 'savePayrollSettings']) {
+    const event = request(operation, {}, 'STAFF');
+    expect(await handler(event)).toMatchObject({ ok: false });
+  }
+  expect(h.get).not.toHaveBeenCalled();
+  expect(h.commit).not.toHaveBeenCalled();
+});
+it('does not expose a separate HR payroll endpoint', async () => {
+  const event = request('payrollWorkspace', {}, 'STAFF');
+  event.fieldName = 'commissionPayroll';
+  expect(await handler(event)).toMatchObject({ ok: false, error: expect.stringMatching(/Unknown commission request/) });
+  expect(h.list).not.toHaveBeenCalled();
+});
 it('posts a statement atomically with source deduplication and safely retries', async () => {
   const s = { ...statement(), lines: [line()] };
   records.set('STATEMENT:s', s);
@@ -219,55 +234,16 @@ it('rechecks aggregate reversal limits at posting and makes no partial write', a
   ).toMatchObject({ ok: false, error: expect.stringMatching(/exceed/) });
   expect(h.commit).not.toHaveBeenCalled();
 });
-it('prepares positive earned payroll only, locks entries, cancels safely and confirms payment', async () => {
-  const p = appendEntry(
-    appendEntry(commissionPolicy(), line(), statement(), 'original'),
-    line({ kind: 'REVERSAL', originalId: 'original', agencyCents: -10000 }),
-    statement(),
-    'reversal',
-  );
+it('releases unpaid legacy allocations but cannot bypass approved payroll reports', async () => {
+  const p = appendEntry(commissionPolicy(), line(), statement(), 'original');
+  p.entries[0].batchId = 'legacy';
   records.set('POLICY:p', p);
-  const input = {
-    producerId: 'producer',
-    cutoff: '2026-10-01',
-    payDate: '2026-10-15',
-    requestId: 'batch',
-  };
-  expect(await handler(request('preparePayroll', input))).toEqual({ ok: true });
-  expect(records.get('BATCH:batch')).toMatchObject({
-    totalCents: 16000,
-    status: 'APPROVED',
-  });
-  expect(await handler(request('preparePayroll', { ...input, requestId: 'other' }))).toMatchObject({
-    ok: false,
-  });
-  expect(
-    await handler(
-      request('cancelPayroll', {
-        id: 'batch',
-        version: 1,
-        reference: 'Export rejected',
-      }),
-    ),
-  ).toEqual({ ok: true });
+  records.set('BATCH:legacy', { id: 'legacy', version: 1, producerId: 'producer', producerName: 'Avery', cutoff: '2026-10-01', payDate: '2026-10-15', status: 'APPROVED', totalCents: 16000, lines: [{ policyId: 'p', entryId: 'original', amountCents: 16000 }] });
+  expect(await handler(request('preparePayroll', { producerId: 'producer', cutoff: '2026-10-01', payDate: '2026-10-15', requestId: 'new' }))).toMatchObject({ ok: false, error: expect.stringMatching(/off-cycle/) });
+  expect(await handler(request('payPayroll', { id: 'legacy', version: 1, reference: 'PAY', payDate: '2026-10-15' }))).toMatchObject({ ok: false, error: expect.stringMatching(/off-cycle/) });
+  expect(await handler(request('cancelPayroll', { id: 'legacy', version: 1, reference: 'Move to reviewed off-cycle report' }))).toEqual({ ok: true });
   expect((records.get('POLICY:p') as CommissionPolicy).entries[0].batchId).toBeUndefined();
-  expect(await handler(request('preparePayroll', { ...input, requestId: 'replacement' }))).toEqual({
-    ok: true,
-  });
-  expect(
-    await handler(
-      request('payPayroll', {
-        id: 'replacement',
-        version: 1,
-        reference: 'PAY-10',
-        payDate: '2026-10-15',
-      }),
-    ),
-  ).toEqual({ ok: true });
-  expect(records.get('BATCH:replacement')).toMatchObject({
-    status: 'PAID',
-    totalCents: 16000,
-  });
+  expect(records.get('BATCH:legacy')).toMatchObject({ status: 'CANCELLED' });
 });
 it('returns only the authenticated producer’s records and excludes reconciliation data', async () => {
   const own = commissionPolicy();
@@ -405,30 +381,12 @@ it('retains carrier-reported comparison values and refuses an unbalanced settlem
   expect(h.commit).not.toHaveBeenCalled();
 });
 
-it('prepares payroll from only the selected producer partition with fresh batched records', async () => {
+it('refuses the retired manual approval endpoint without reserving any earnings', async () => {
   const own = appendEntry(commissionPolicy(), line(), statement(), 'e');
   records.set('POLICY:p', own);
-  records.set('POLICY:other', {
-    ...own,
-    id: 'other',
-    producerId: 'someone-else',
-  });
-  records.set('PLAN:producer', { id: 'producer', producerId: 'producer' });
-  expect(
-    await handler(
-      request('preparePayroll', {
-        producerId: 'producer',
-        cutoff: '2026-10-01',
-        payDate: '2026-10-15',
-        requestId: 'batch',
-      }),
-    ),
-  ).toEqual({ ok: true });
-  expect(h.list).toHaveBeenCalledExactlyOnceWith('producer', true, 'POLICY');
-  expect(h.getMany).toHaveBeenCalledExactlyOnceWith([{ kind: 'POLICY', id: 'p' }]);
-  expect(records.get('BATCH:batch')).toMatchObject({
-    lines: [{ policyId: 'p' }],
-  });
+  expect(await handler(request('preparePayroll', { producerId: 'producer', cutoff: '2026-10-01', payDate: '2026-10-15', requestId: 'batch' }))).toMatchObject({ ok: false });
+  expect(h.commit).not.toHaveBeenCalled();
+  expect(records.get('POLICY:p')).toEqual(own);
 });
 it('updates shared and private policy numbers in the same version-guarded transaction', async () => {
   records.set('POLICY:p', commissionPolicy());
@@ -784,10 +742,7 @@ it('revises only the receipt forecast and records which receipt history the Owne
     policyId: 'p', version: 1, receiptForecast,
   }))).toMatchObject({ ok: false, error: expect.stringMatching(/changed/) });
   expect(h.commit).toHaveBeenCalledTimes(1);
-  expect(await handler(request('preparePayroll', {
-    producerId: 'producer', cutoff: '2026-10-01', payDate: '2026-10-15', requestId: 'actual-earnings',
-  }))).toEqual({ ok: true });
-  expect(records.get('BATCH:actual-earnings')).toMatchObject({ totalCents: 16000 });
+  expect(payrollPreview([records.get('POLICY:p') as CommissionPolicy], '2026-10-01')).toMatchObject([{ amountCents: 16000 }]);
 });
 
 it.each([

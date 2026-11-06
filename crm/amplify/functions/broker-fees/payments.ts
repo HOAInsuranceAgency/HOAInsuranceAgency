@@ -4,6 +4,7 @@ import { assertBrokerFeeAgencyBilling, brokerFeeCents, feeAllocations, type Brok
 import { authorizedQuoteTerms } from '../../../../shared/quoteAuthorization';
 import { appendEntry, type CommissionPolicy, type CommissionStatement, type StatementLine } from '../../../../shared/commissions';
 import * as commissions from '../commissions/store';
+import { receiptEarnings, type CommissionEarning } from '../../../../shared/commissionExceptions';
 import { db, table, getRow, getFee, getModel, feePut, transact, versionCheck, type Write, modelTable } from './store';
 
 export interface BrokerFeePaymentInput {
@@ -270,7 +271,21 @@ async function allocatePayment(id: string) {
         if(!next.entries.some(e=>e.id===reversalId)) next=applyStatementLine(next,{...statement,receivedOn:payment.refundedOn??day()}, {policyId:policy.id,lineRef:`${payment.sourceId}:refund:${refund}`,kind:'REVERSAL',revenueKind:'BROKER_FEE',agencyCents:-(refund-priorRefund),originalId:receiptId,eligible,eligibilityNote:'Actual broker fee refund; original producer allocation retained.'},reversalId);
         posted[a.quoteId]={refundedCents:refund}; changed=true;
       }
-      if(next!==old) changes.push({kind:'POLICY',value:next as unknown as commissions.Data&{id:string},previous:old as unknown as commissions.Data});
+      if(next!==old) {
+        const added = next.entries.filter(entry => !old.entries.some(previous => previous.id === entry.id));
+        if (added.some(entry => entry.allocationId)) {
+          const earnings = await commissions.list<CommissionEarning>('EARNING');
+          for (const entry of added) {
+            // Rebuild the incremental receipt snapshot so a same-event refund
+            // cannot change the receipt's original cumulative rounding.
+            const throughEntry = { ...next, entries: next.entries.slice(0, next.entries.indexOf(entry) + 1) };
+            const allocated = receiptEarnings(throughEntry, entry, earnings);
+            earnings.push(...allocated);
+            changes.push(...allocated.map(value => ({ kind: 'EARNING', value: value as unknown as commissions.Data & { id: string } })));
+          }
+        }
+        changes.push({kind:'POLICY',value:next as unknown as commissions.Data&{id:string},previous:old as unknown as commissions.Data});
+      }
       extras.push({ConditionCheck:{TableName:table(),Key:{id:fee.id},ConditionExpression:'#v = :v',ExpressionAttributeNames:{'#v':'version'},ExpressionAttributeValues:{':v':fee.version}}});
       extras.push({Update:{TableName:modelTable('Policy'),Key:{id:policy.id},UpdateExpression:'SET brokerFeeCollected = :gross, brokerFeeRefunded = :refund, brokerFeeCollectedAt = :at',ConditionExpression:'accountId = :account AND quoteId = :quote',ExpressionAttributeValues:{':gross':fee.collectedCents/100,':refund':fee.refundedCents/100,':at':`${payment.receivedOn}T12:00:00Z`,':account':payment.accountId,':quote':a.quoteId}}});
     }
@@ -278,6 +293,8 @@ async function allocatePayment(id: string) {
       if(payment.pending && payment.allocations.every(a=>posted[a.quoteId]))await transact([feePut({...payment,pending:undefined},payment)]);
       return;
     }
+    const reconciliation = await commissions.get<{ id: string; version: number }>('PAYROLL_STATE', 'reconciliation');
+    changes.push({kind:'PAYROLL_STATE',value:{id:'reconciliation'},...(reconciliation ? {previous:reconciliation} : {})});
     const complete=payment.allocations.every(a=>posted[a.quoteId]);
     extras.push(feePut({...payment,posted,pending:complete?undefined:'PENDING'},payment));
     try { await commissions.commit(changes,'broker-fee-payment',extras);return; }

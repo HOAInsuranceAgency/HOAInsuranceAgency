@@ -1,3 +1,4 @@
+import { receiptEarnings } from '../../../shared/commissionExceptions';
 import { createHash } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { commissionPolicy, line, statement } from './commissionFixtures';
@@ -7,7 +8,7 @@ import { BROKER_FEE_TERMS_VERSION, type BrokerFeeAgreement, type BrokerFeeRecord
 
 type Row = Record<string, any>;
 const h = vi.hoisted(() => ({
-  rows: new Map<string, Row>(), models: new Map<string, Row>(), ledger: new Map<string, CommissionPolicy>(),
+  rows: new Map<string, Row>(), models: new Map<string, Row>(), ledger: new Map<string, CommissionPolicy>(), commissionRows: new Map<string, Row>(),
   transact: vi.fn(), commit: vi.fn(), session: vi.fn(), s3: vi.fn(), db: vi.fn(),
   deactivate: vi.fn(), sessions: vi.fn(), expire: vi.fn(),
 }));
@@ -22,7 +23,9 @@ vi.mock('../../amplify/functions/broker-fees/store', async original => ({
   transact: h.transact, db: { send: h.db },
 }));
 vi.mock('../../amplify/functions/commissions/store', () => ({
-  get: async (_kind: string, id: string) => structuredClone(h.ledger.get(id)), commit: h.commit,
+  get: async (kind: string, id: string) => structuredClone(kind === 'POLICY' ? h.ledger.get(id) : h.commissionRows.get(kind + ':' + id)),
+  list: async (kind: string) => structuredClone([...h.commissionRows.entries()].filter(([key]) => key.startsWith(kind + ':')).map(([, value]) => value)),
+  commit: h.commit,
 }));
 vi.mock('../../amplify/functions/crm-access/user-status', async original => ({ ...await original<typeof import('../../amplify/functions/crm-access/user-status')>(), assertUserSession: h.session }));
 vi.mock('@aws-sdk/client-s3', async original => ({
@@ -107,7 +110,7 @@ function seedSigned(bound = true) {
 
 beforeEach(() => {
   vi.resetAllMocks(); vi.useFakeTimers(); vi.setSystemTime(new Date('2026-11-04T15:00:00Z'));
-  h.rows.clear(); h.models.clear(); h.ledger.clear();
+  h.rows.clear(); h.models.clear(); h.ledger.clear(); h.commissionRows.clear();
   process.env.BROKER_FEE_TABLE = 'fee-table'; process.env.SITE_URL = 'https://agency.example.test'; process.env.STRIPE_SECRET_KEY = 'fixture';
   process.env.ACCESS_TABLES = JSON.stringify(Object.fromEntries(['Account','Quote','Policy','Invoice','InvoiceLine','PfLoan','Document','AgencySettings','Communication'].map(name => [name, name])));
   process.env.COMMUNICATION_TABLE = 'Communication';
@@ -118,9 +121,16 @@ beforeEach(() => {
   h.sessions.mockImplementation(async function* () {});
   h.transact.mockImplementation(async writes => applyWrites(writes));
   h.commit.mockImplementation(async (changes, _actor, extras) => {
-    for (const change of changes) if (h.ledger.get(change.value.id)?.version !== change.previous.version) throw Object.assign(new Error('Ledger changed'), { name: 'TransactionCanceledException' });
+    for (const change of changes) {
+      const current = change.kind === 'POLICY' ? h.ledger.get(change.value.id) : h.commissionRows.get(change.kind + ':' + change.value.id);
+      if ((current?.version ?? 0) !== (change.previous?.version ?? 0)) throw Object.assign(new Error('Ledger changed'), { name: 'TransactionCanceledException' });
+    }
     applyWrites(extras ?? []);
-    for (const change of changes) h.ledger.set(change.value.id, clone({ ...change.value, version: change.previous.version + 1 }));
+    for (const change of changes) {
+      const next = clone({ ...change.value, version: (change.previous?.version ?? 0) + 1 });
+      if (change.kind === 'POLICY') h.ledger.set(change.value.id, next);
+      else h.commissionRows.set(change.kind + ':' + change.value.id, next);
+    }
   });
   seedSigned();
   h.models.set('InvoiceLine:fee-line', { id: 'fee-line', invoiceId: 'i', accountId: 'a', kind: 'BROKER_FEE', brokerFeeQuoteId: 'q', retailAmount: 500, costAmount: 0, updatedAt: quote.updatedAt });
@@ -411,4 +421,34 @@ describe('invoice reservations versus known financing checkout URLs',()=>{
     seedOffer();h.models.delete('PfLoan:loan');
     await expect(assertNoFeeLoanCheckout(fee())).rejects.toThrow('could not be verified');
   });
+});
+
+ it('posts shared broker-fee earnings once, fences payroll, and retains each original refund share', async () => {
+  h.ledger.get('p')!.allocations = [{id:'split',from:'2026-10-01',agreement:'Confirmed policy split',approvedBy:'owner',approvedAt:'2026-10-01T12:00:00Z',method:'INDIVIDUAL_PLAN_RATE',houseBps:0,participants:[
+    {producerId:'producer',producerName:'Avery',shareBps:6000,producerBps:2000,planVersion:1,agreement:'Plan A',eligible:true},
+    {producerId:'jordan',producerName:'Jordan',shareBps:4000,producerBps:1600,planVersion:1,agreement:'Plan B',eligible:true},
+  ]}];
+  await sync('PAID', {receivedOn:'2026-10-04'});
+  await sync('PAID', {receivedOn:'2026-10-04'});
+  expect(entries()).toHaveLength(1);
+  expect(entries()[0]).toMatchObject({agencyCents:50000,producerCents:0,allocationId:'split'});
+  const earnings = [...h.commissionRows.entries()].filter(([key])=>key.startsWith('EARNING:')).map(([,value])=>value);
+  expect(earnings.map(e=>e.amountCents)).toEqual([6000,3200]);
+  expect(h.commissionRows.get('PAYROLL_STATE:reconciliation')).toMatchObject({version:1});
+  await sync('REFUNDED', {receivedOn:'2026-10-10',refundedCents:10000});
+  const reversals = [...h.commissionRows.values()].filter(e=>e.originalEarningId);
+  expect(reversals.map(e=>e.amountCents)).toEqual([-1200,-640]);
+  expect(reversals.every(e=>e.status==='REVIEW')).toBe(true);
+  expect(h.commissionRows.get('PAYROLL_STATE:reconciliation')).toMatchObject({version:2});
+});
+
+it('rounds shared carrier and broker-fee revenue independently', () => {
+  let policy = commissionPolicy();
+  policy.allocations = [{id:'split',from:'2026-10-01',agreement:'Confirmed split',approvedBy:'owner',approvedAt:'2026-10-01T12:00:00Z',method:'INDIVIDUAL_PLAN_RATE',houseBps:4000,participants:[{producerId:'producer',producerName:'Avery',shareBps:6000,producerBps:2000,planVersion:1,agreement:'Plan',eligible:true}]}];
+  policy = appendEntry(policy, line({agencyCents:5}), statement(), 'carrier');
+  const carrier = receiptEarnings(policy, policy.entries.at(-1)!, []);
+  policy = appendEntry(policy, line({agencyCents:5,revenueKind:'BROKER_FEE'}), statement(), 'fee');
+  const feeEarnings = receiptEarnings(policy, policy.entries.at(-1)!, carrier);
+  expect(carrier[0].amountCents).toBe(1);
+  expect(feeEarnings[0].amountCents).toBe(1);
 });

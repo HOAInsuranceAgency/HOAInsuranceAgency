@@ -1,13 +1,21 @@
-import { useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { createContext, useContext, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { useIsOwner } from '../lib/auth';
 import { useAsyncResource } from '../lib/useAsyncResource';
 import { client, listAllPages, fmtMoney } from '../lib/client';
 import { communicationRequest, type TeamEligibility } from '../lib/communications';
 import { commissionAction, readCommissions } from '../lib/commissions';
+import { attachCommissionStatement } from '../lib/commissionStatementAttachment';
 import AccountPicker from '../components/AccountPicker';
+import CommissionPayroll from '../components/CommissionPayroll';
+import CommissionExceptions from '../components/CommissionExceptions';
+import CommissionPlanSettings from '../components/CommissionPlanSettings';
+import CommissionStatementImport from '../components/CommissionStatementImport';
+import CommissionPanel from '../components/CommissionPanel';
+import { isAuthorizationError } from '../lib/authorizationError';
 import { ReportDownload } from '../components/ReportDownload';
 import {
   COMMISSION_BASES,
+  COMMISSION_REVIEW_CATEGORIES,
   ACCOUNT_COMMISSION_CLASSES,
   type CommissionAccount,
   type AccountCommissionClass,
@@ -15,10 +23,10 @@ import {
   policyTotals,
   recoveryBalances,
   carrierReconciliationBalances,
+  batchPaidCents,
   ratio,
   sum,
   type CommissionOverview,
-  type CommissionPlan,
   type CarrierCommissionTerms,
   type CarrierPaymentArrangement,
   type CommissionReconciliationBalances,
@@ -30,6 +38,7 @@ import {
 import './Commissions.css';
 
 const money = (cents: number) => fmtMoney(cents / 100);
+const CommissionAccessContext = createContext<(error: unknown) => void>(() => {});
 const today = () =>
   new Intl.DateTimeFormat('en-CA', {
     timeZone: 'America/New_York',
@@ -50,7 +59,7 @@ function CommissionView({ owner }: { owner: boolean }) {
   const [tab, setTab] = useState('ledger');
   const snapshot = resource.data;
   return (
-    <div className="commissions">
+    <CommissionAccessContext.Provider value={resource.invalidate}><div className="commissions">
       <header>
         <p className="muted small">
           {owner ? 'Owner · private commission management' : 'Your commission statements'}
@@ -66,6 +75,7 @@ function CommissionView({ owner }: { owner: boolean }) {
             ['ledger', 'Ledger'],
             ['statements', 'Reconciliation'],
             ['payroll', 'Payroll'],
+            ['exceptions', 'Shared & exceptions'],
             ['settings', 'Agreements & carriers'],
           ].map(([id, label]) => (
             <button
@@ -101,11 +111,12 @@ function CommissionView({ owner }: { owner: boolean }) {
           {owner && tab === 'statements' && (
             <Statements data={snapshot} refresh={resource.refetch} />
           )}
+          {owner && tab === 'exceptions' && <CommissionExceptions refreshLedger={resource.refetch} onAccessDenied={resource.invalidate} />}
           {owner && tab === 'payroll' && <Payroll data={snapshot} refresh={resource.refetch} />}
           {!owner && <BatchList batches={snapshot.batches} />}
         </>
       )}
-    </div>
+    </div></CommissionAccessContext.Provider>
   );
 }
 function Ledger({
@@ -120,8 +131,9 @@ function Ledger({
   const [asOf, setAsOf] = useState(today);
   const totals = data.policies.map(policyTotals),
     recoveries = data.policies.map((p) => recoveryBalances(p, data.batches)),
-    paid = sum(data.batches.filter((b) => b.status === 'PAID').map((b) => b.totalCents));
-  const earned = sum(totals.map((t) => t.earned));
+    paid = sum(data.batches.map(batchPaidCents));
+  const earningRows = data.earnings ?? [];
+  const earned = sum([...totals.map((t) => t.earned), ...earningRows.filter(e=>e.status==='PAYABLE').map(e=>e.amountCents)]);
   return (
     <>
       <div className="stat-row">
@@ -130,8 +142,9 @@ function Ledger({
           ['Producer earned', earned],
           ['Paid', paid],
           ['Unpaid earnings', earned - paid],
-          ['Proposed paid recoveries', sum(recoveries.map((t) => t.paidRecovery))],
+          ['Proposed paid recoveries', sum([...recoveries.map((t) => t.paidRecovery),...earningRows.filter(e=>e.source==='ADJUSTMENT'&&e.status==='REVIEW'&&e.amountCents<0).map(e=>-e.amountCents)])],
           ['Unpaid adjustments to review', sum(recoveries.map((t) => t.unpaidAdjustment))],
+          ['Partially paid adjustments to review', sum(recoveries.map(t => t.partialAdjustment ?? 0))],
         ].map(([label, value]) => (
           <div className="stat" key={label}>
             <span className="l">{label}</span>
@@ -148,6 +161,14 @@ function Ledger({
       <ReportDownload
         report={{
           title: 'Producer commission ledger',
+          commissionLedger: {
+            scope: owner ? 'All displayed employees' : 'Your displayed earnings',
+            agencyReceivedCents: sum(totals.map(t => t.receivedAgency)),
+            earnedCents: earned, paidCents: paid,
+            proposedPaidRecoveryCents: sum([...recoveries.map(t => t.paidRecovery), ...earningRows.filter(e => e.source === 'ADJUSTMENT' && e.status === 'REVIEW' && e.amountCents < 0).map(e => -e.amountCents)]),
+            unpaidAdjustmentCents: sum(recoveries.map(t => t.unpaidAdjustment)),
+            partialAdjustmentCents: sum(recoveries.map(t => t.partialAdjustment ?? 0)),
+          },
           filters:
             'USD · actual receipts and frozen producer rates · proposed recoveries excluded from payroll',
           sections: [
@@ -171,19 +192,25 @@ function Ledger({
                   p.accountName,
                   p.policyNumber,
                   e.receivedOn,
-                  e.kind,
+                  e.kind + (e.allocationId ? ' · shared allocation' : '') + (e.supersededBy ? ' · corrected' : '') + (e.excludedByCase ? ' · excluded' : ''),
                   e.revenueKind === "BROKER_FEE" ? "Broker fee" : "Carrier commission",
                   e.agencyCents / 100,
-                  p.producerBps / 100,
-                  e.producerCents / 100,
+                  e.allocationId ? '' : p.producerBps / 100,
+                  e.allocationId ? '' : e.producerCents / 100,
                   e.batchId ?? '',
                 ]),
               ),
             },
+            {
+              title: 'Employee earnings allocations (agency cash is recorded above)',
+              columns: ['Employee', 'Account', 'Policy', 'Date', 'Source', 'Policy share (%)', 'Plan rate (%)', 'Employee amount (USD)', 'Status', 'Payment batch', 'Earning ID', 'Original receipt / adjustment ID'],
+              rows: earningRows.map(e => [e.producerName, e.accountName, e.policyNumber, e.receivedOn, e.source, e.shareBps === undefined ? '' : e.shareBps / 100, e.source === 'ADJUSTMENT' ? '' : e.producerBps / 100, e.amountCents / 100, e.status, e.batchId ?? '', e.id, e.entryId]),
+            },
           ],
         }}
       />
-      {!data.policies.length && (
+      {!!earningRows.length && <section className="card"><h2>Shared commission & adjustment earnings</h2><div className="commission-scroll"><table><thead><tr>{owner&&<th>Employee</th>}<th>Policy</th><th>Date</th><th>Source</th><th>Share / rate</th><th>Employee amount</th><th>Status</th></tr></thead><tbody>{earningRows.map(e=><tr key={e.id}>{owner&&<td>{e.producerName}</td>}<td>{e.accountName}<div className="small muted">{e.policyNumber}</div></td><td>{e.receivedOn}</td><td>{e.source==='ADJUSTMENT'?'Approved adjustment':'Shared receipt'}</td><td>{e.shareBps===undefined?'—':e.shareBps/100+'% share · '+e.producerBps/100+'% rate'}</td><td>{money(e.amountCents)}</td><td>{e.batchId?(data.batches.find(b=>b.id===e.batchId)?.status??'Allocated'):e.status}</td></tr>)}</tbody></table></div><p className="small muted">Shared earnings reference one carrier receipt. Compensation adjustments do not change agency cash received.</p></section>}
+      {!data.policies.length && !earningRows.length && (
         <div className="card">
           No commission snapshots yet.{' '}
           {owner
@@ -204,6 +231,9 @@ function Ledger({
       )}
       {data.policies.map((p) => {
         const t = policyTotals(p);
+        const allocatedEarnings = earningRows.filter(e => e.policyId === p.id && e.status === 'PAYABLE');
+        const employeeEarned = t.earned + sum(allocatedEarnings.map(e => e.amountCents));
+        const hasSharedReceipts = p.entries.some(e => e.allocationId);
         return (
           <section className="card" key={p.id}>
             <h2>
@@ -214,8 +244,9 @@ function Ledger({
               {p.transaction === 'NEW' ? 'New business' : 'Renewal'} · {p.producerName}
             </p>
             <p>
-              Premium {money(p.premiumCents)} · Agency {p.agencyRateUnits / 10000}% · Producer{' '}
+              Premium {money(p.premiumCents)} · Agency {p.agencyRateUnits / 10000}% · {hasSharedReceipts ? 'Original producer rate' : 'Producer'}{' '}
               {p.producerBps / 100}% of agency commission
+              {hasSharedReceipts && ' · Shared receipts use the individual shares and rates shown above.'}
             </p>
             {p.eligibility && (
               <p className="small">
@@ -234,21 +265,21 @@ function Ledger({
             )}
             <p className="small">
               Full-term agency estimate {money(t.expectedAgency)} · Agency received{' '}
-              {money(t.receivedAgency)} · Producer earned {money(t.earned)} · Proposed adjustments{' '}
+              {money(t.receivedAgency)} · {owner ? 'Employee earnings' : 'Your earnings'} {money(employeeEarned)} · Proposed adjustments{' '}
               {money(t.proposedRecovery)}
             </p>
             {owner ? (
               <>
                 <CarrierBalances balances={carrierReconciliationBalances(p, asOf)} />
-                <details className="commission-forecast-editor">
-                  <summary>Manage expected receipts</summary>
+                <CommissionPanel title="Manage expected receipts">
                   <ReceiptForecastEditor
                     key={`${p.id}:${p.version}`}
                     policy={p}
                     refresh={refresh}
                   />
-                </details>
+                </CommissionPanel>
                 <PolicyNumber key={`${p.id}:${p.version}`} policy={p} refresh={refresh} />
+                <PolicyReview key={`review:${p.id}:${p.version}`} policy={p} refresh={refresh} />
               </>
             ) : p.reconciliationBalances ? (
               <CarrierBalances balances={p.reconciliationBalances} />
@@ -271,14 +302,14 @@ function Ledger({
                       <tr key={e.id}>
                         <td>{e.receivedOn}</td>
                         <td>
-                          {e.kind}
+                          {e.kind}{e.allocationId ? ' · shared allocation' : ''}{e.supersededBy ? ' · corrected' : ''}{e.excludedByCase ? ' · excluded' : ''}
                           <div className="small">{e.revenueKind === "BROKER_FEE" ? "Broker fee" : "Carrier commission"}</div>
                           <div className="small muted">{e.lineRef}</div>
                         </td>
                         <td>{money(e.agencyCents)}</td>
-                        <td>{money(e.producerCents)}</td>
+                        <td>{e.allocationId ? 'See employee allocations' : money(e.producerCents)}</td>
                         <td>
-                          {e.kind !== 'RECEIPT'
+                          {e.supersededBy ? 'Replaced by correction' : e.excludedByCase ? 'Excluded by approved review' : e.allocationId ? 'See employee allocations' : e.kind !== 'RECEIPT'
                             ? 'Proposed adjustment'
                             : e.batchId
                               ? (data.batches.find((b) => b.id === e.batchId)?.status ??
@@ -304,6 +335,24 @@ function Ledger({
     </>
   );
 }
+function PolicyReview({ policy, refresh }: { policy: CommissionPolicy; refresh: () => Promise<void> }) {
+  const [category, setCategory] = useState<string>('DOCUMENTATION'), [note, setNote] = useState(''), [dueOn, setDueOn] = useState(today());
+  const [resolutions, setResolutions] = useState<Record<string, string>>({});
+  const holds = policy.reviewHolds ?? [];
+  return <CommissionPanel open={holds.some(h => h.status === 'OPEN')} title={<>Commission review items ({holds.filter(h => h.status === 'OPEN').length} open)</>}>
+    <p>Open items require review before including this policy in new payroll. Record agreement evidence for licensing, documentation, splits, cancellation, separation, or disputes. A new item also holds affected approved cycles for fresh approval. Check delivery history and coordinate with HR if a report already started sending. Resolving an item does not change a rate or collect a recovery.</p>
+    {holds.map(h => <section className="commission-review-item" key={h.id}>
+      <p><strong>{h.category} / {h.status}</strong> — Due {h.dueOn}</p><p>{h.note}</p>
+      {h.status === 'RESOLVED' ? <p>Resolution: {h.resolution}</p> : <ActionForm title="Resolve review item" button="Resolve with evidence" onDone={refresh} submit={() => commissionAction('resolveCommissionReview', { id: policy.id, version: policy.version, holdId: h.id, resolution: resolutions[h.id] ?? '' })}>
+        <Field label={`Resolution for ${h.category}`} value={resolutions[h.id] ?? ''} change={value => setResolutions(r => ({ ...r, [h.id]: value }))} />
+      </ActionForm>}
+    </section>)}
+    <ActionForm title="Add commission review item" onDone={refresh} submit={() => commissionAction('addCommissionReview', { id: policy.id, version: policy.version, category, note, dueOn })}>
+      <label className="field">Review category<select value={category} onChange={e => setCategory(e.target.value)}>{COMMISSION_REVIEW_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}</select></label>
+      <Field label="Issue and supporting evidence" value={note} change={setNote} /><Field label="Review due date" type="date" value={dueOn} change={setDueOn} />
+    </ActionForm>
+  </CommissionPanel>;
+}
 function ActionForm({
   title,
   submit,
@@ -319,6 +368,7 @@ function ActionForm({
   button?: string;
   disabled?: boolean;
 }) {
+  const invalidate = useContext(CommissionAccessContext);
   const [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
     [saved, setSaved] = useState(false);
@@ -336,16 +386,17 @@ function ActionForm({
       setSaved(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not save.');
+      if (isAuthorizationError(err)) invalidate(err);
     } finally {
       lock.current = false;
       setBusy(false);
     }
   }
   return (
-    <form className="card" onSubmit={(e) => void run(e)}>
+    <form className="card commission-form" onSubmit={(e) => void run(e)}>
       <h2>{title}</h2>
       <fieldset disabled={busy}>
-        {children}
+        <div className="commission-form-body">{children}</div>
         <div className="form-actions">
           <button className="primary" type="submit" disabled={disabled}>
             {busy ? 'Saving…' : button}
@@ -357,7 +408,7 @@ function ActionForm({
           {error}
         </p>
       )}
-      {saved && <p role="status">Saved.</p>}
+      {saved && <p className="commission-saved" role="status">Saved.</p>}
     </form>
   );
 }
@@ -391,8 +442,8 @@ function Settings({ data, refresh }: { data: CommissionOverview; refresh: () => 
     [],
     { clearDataOnError: () => true },
   );
-  const [producer, setProducer] = useState(''),
-    [carrier, setCarrier] = useState('');
+  const invalidate = useContext(CommissionAccessContext);
+  const [carrier, setCarrier] = useState('');
   if (!references.data)
     return (
       <p role={references.error ? 'alert' : undefined}>
@@ -400,31 +451,11 @@ function Settings({ data, refresh }: { data: CommissionOverview; refresh: () => 
       </p>
     );
   return (
-    <>
-      <p>
-        Rates are set for each producer. New business uses the bind date; renewals use the term
-        effective date. Saved policy snapshots keep their original rates when agreements change.
-      </p>
-      <label className="field">
-        Producer
-        <select value={producer} onChange={(e) => setProducer(e.target.value)}>
-          <option value="">Choose a producer…</option>
-          {references.data.team.map((t) => (
-            <option key={t.userId} value={t.userId}>
-              {t.name}
-            </option>
-          ))}
-        </select>
-      </label>
-      {producer && (
-        <PlanEditor
-          key={`${producer}:${data.plans.find((p) => p.id === producer)?.version ?? 0}`}
-          producerId={producer}
-          name={references.data.team.find((t) => t.userId === producer)?.name ?? producer}
-          plan={data.plans.find((p) => p.id === producer)}
-          refresh={refresh}
-        />
-      )}
+    <section className="commission-settings">
+      <CommissionPlanSettings definitions={data.planDefinitions ?? []} plans={data.plans} team={references.data.team} refresh={refresh} denied={invalidate} />
+      <section className="card commission-setting-section">
+      <h2>Carrier payment terms</h2>
+      <p className="muted">Review the carrier’s commission basis, remittance schedule, and agreement reference.</p>
       <label className="field">
         Carrier
         <select value={carrier} onChange={(e) => setCarrier(e.target.value)}>
@@ -444,249 +475,35 @@ function Settings({ data, refresh }: { data: CommissionOverview; refresh: () => 
           refresh={refresh}
         />
       )}
+      {!carrier && <div className="commission-empty">Choose a carrier to review its payment terms.</div>}
+      </section>
       <AccountClassifications />
       <LegacyPolicies data={data} refresh={refresh} />
-    </>
-  );
-}
-function PlanEditor({
-  producerId,
-  name,
-  plan,
-  refresh,
-}: {
-  producerId: string;
-  name: string;
-  plan?: CommissionPlan;
-  refresh: () => Promise<void>;
-}) {
-  const [accountBoundFrom, setAccountBoundFrom] = useState(plan?.accountBoundFrom ?? '');
-  const [receiptsFrom, setReceiptsFrom] = useState(plan?.receiptsFrom ?? '');
-  const [terms, setTerms] = useState(
-    plan?.terms.map((t) => ({
-      ...t,
-      to: t.to ?? '',
-      newRate: String(t.newBps / 100),
-      renewalRate: String(t.renewalBps / 100),
-      gimEnabled: !!t.gim,
-      gimNewRate: t.gim ? String(t.gim.newBps / 100) : '',
-      gimRenewalRate: t.gim ? String(t.gim.renewalBps / 100) : '',
-      gimAgreement: t.gim?.agreement ?? '',
-    })) ?? [
-      {
-        from: '',
-        to: '',
-        newRate: '',
-        renewalRate: '',
-        agreement: '',
-        gimEnabled: false,
-        gimNewRate: '',
-        gimRenewalRate: '',
-        gimAgreement: '',
-      },
-    ],
-  );
-  return (
-    <ActionForm
-      title={`${name} · commission agreement`}
-      button="Save producer agreement"
-      onDone={refresh}
-      submit={() =>
-        commissionAction('savePlan', {
-          producerId,
-          name,
-          version: plan?.version ?? 0,
-          ...(accountBoundFrom ? { accountBoundFrom } : {}),
-          ...(receiptsFrom ? { receiptsFrom } : {}),
-          terms: terms.map((t) => ({
-            from: t.from,
-            ...(t.to ? { to: t.to } : {}),
-            newBps: decimal(t.newRate),
-            renewalBps: decimal(t.renewalRate),
-            agreement: t.agreement,
-            ...(t.gimEnabled
-              ? {
-                  gim: {
-                    newBps: decimal(t.gimNewRate),
-                    renewalBps: decimal(t.gimRenewalRate),
-                    agreement: t.gimAgreement,
-                  },
-                }
-              : {}),
-          })),
-        })
-      }
-    >
-      <div className="form-grid">
-        <label className="field">
-          Account first-bind cutoff (optional)
-          <input
-            type="date"
-            value={accountBoundFrom}
-            onChange={(e) => setAccountBoundFrom(e.target.value)}
-          />
-        </label>
-        <label className="field">
-          Agency receipt eligibility begins (optional)
-          <input
-            type="date"
-            value={receiptsFrom}
-            onChange={(e) => setReceiptsFrom(e.target.value)}
-          />
-        </label>
-      </div>
-      <p className="small muted">
-        Accounts first bound before the cutoff earn no producer commission, including later
-        renewals. The cutoff date itself is eligible. This rule uses the account’s original first
-        bind, not the current policy’s bind or effective date. Blank means no cutoff for this
-        producer.
-      </p>
-      {terms.map((t, i) => (
-        <div key={i} className="commission-period">
-          <div className="form-grid">
-            <Field
-              label={`Effective from ${i + 1}`}
-              type="date"
-              value={t.from}
-              change={(v) => setTerms(terms.map((r, j) => (i === j ? { ...r, from: v } : r)))}
-            />
-            <label className="field">
-              Through (optional)
-              <input
-                type="date"
-                value={t.to}
-                onChange={(e) =>
-                  setTerms(terms.map((r, j) => (i === j ? { ...r, to: e.target.value } : r)))
-                }
-              />
-            </label>
-            <Field
-              label={`New business % ${i + 1}`}
-              value={t.newRate}
-              change={(v) => setTerms(terms.map((r, j) => (i === j ? { ...r, newRate: v } : r)))}
-            />
-            <Field
-              label={`Renewal % ${i + 1}`}
-              value={t.renewalRate}
-              change={(v) =>
-                setTerms(terms.map((r, j) => (i === j ? { ...r, renewalRate: v } : r)))
-              }
-            />
-          </div>
-          <Field
-            label={`Agreement reference ${i + 1}`}
-            value={t.agreement}
-            change={(v) => setTerms(terms.map((r, j) => (i === j ? { ...r, agreement: v } : r)))}
-          />
-          <h3>GIM Property Management · house-account rates</h3>
-          <label className="checkbox-field">
-            <input
-              type="checkbox"
-              checked={t.gimEnabled}
-              onChange={(e) =>
-                setTerms(
-                  terms.map((r, j) => (i === j ? { ...r, gimEnabled: e.target.checked } : r)),
-                )
-              }
-            />
-            {`Configure GIM rates for period ${i + 1}`}
-          </label>
-          {t.gimEnabled ? (
-            <>
-              <div className="form-grid">
-                <Field
-                  label={`GIM new business % ${i + 1}`}
-                  value={t.gimNewRate}
-                  change={(v) =>
-                    setTerms(terms.map((r, j) => (i === j ? { ...r, gimNewRate: v } : r)))
-                  }
-                />
-                <Field
-                  label={`GIM renewal % ${i + 1}`}
-                  value={t.gimRenewalRate}
-                  change={(v) =>
-                    setTerms(terms.map((r, j) => (i === j ? { ...r, gimRenewalRate: v } : r)))
-                  }
-                />
-              </div>
-              <Field
-                label={`GIM agreement reference ${i + 1}`}
-                value={t.gimAgreement}
-                change={(v) =>
-                  setTerms(terms.map((r, j) => (i === j ? { ...r, gimAgreement: v } : r)))
-                }
-              />
-              <p className="small muted">
-                GIM rates use this period’s dates. Add a rate period when either schedule changes.
-              </p>
-            </>
-          ) : (
-            <p className="small muted">
-              GIM terms pending. GIM policies cannot be bound under this period until both rates and
-              the agreement reference are configured.
-            </p>
-          )}
-          <button
-            type="button"
-            className="secondary"
-            disabled={terms.length === 1}
-            onClick={() => setTerms(terms.filter((_, j) => j !== i))}
-          >
-            Remove period
-          </button>
-        </div>
-      ))}
-      <button
-        type="button"
-        className="secondary"
-        onClick={() =>
-          setTerms([
-            ...terms,
-            {
-              from: '',
-              to: '',
-              newRate: '',
-              renewalRate: '',
-              agreement: '',
-              gimEnabled: false,
-              gimNewRate: '',
-              gimRenewalRate: '',
-              gimAgreement: '',
-            },
-          ])
-        }
-      >
-        Add rate period
-      </button>
-      <p className="small muted">
-        Both rates are percentages of agency commission received. Explicit 0% means no commission;
-        blank is not zero. Salary remains in private pay settings.
-      </p>
-    </ActionForm>
+    </section>
   );
 }
 function AccountClassifications() {
   const [accountId, setAccountId] = useState('');
   return (
-    <section>
+    <section className="card commission-setting-section">
       <h2>Account commission classification</h2>
-      <p>
+      <p className="muted">
         GIM Property Management is the only house-account program. Review each account as Standard
         or GIM before binding. Classification is an Owner decision; changing a management
         relationship does not change commission terms.
       </p>
       <AccountPicker value={accountId} onChange={setAccountId} disabled={false} />
-      {accountId && <AccountClassificationResource key={accountId} id={accountId} />}
+      {accountId ? <AccountClassificationResource key={accountId} id={accountId} /> : <div className="commission-empty">Select an account to review its classification history.</div>}
     </section>
   );
 }
 function AccountClassificationResource({ id }: { id: string }) {
+  const invalidate = useContext(CommissionAccessContext);
   const resource = useAsyncResource(
-    () =>
-      commissionAction<{
-        classification: CommissionAccount | null;
-        accountName: string;
-      }>('getAccountClassification', { id }),
+    async () => {
+      try { return await commissionAction<{ classification: CommissionAccount | null; accountName: string }>('getAccountClassification', { id }); }
+      catch (error) { if (isAuthorizationError(error)) invalidate(error); throw error; }
+    },
     [id],
     { clearDataOnError: () => true },
   );
@@ -1387,7 +1204,7 @@ function Statements({ data, refresh }: { data: CommissionOverview; refresh: () =
           }}
         />
       )}
-      {data.statements.length === 0 && <p className="muted">No statements yet.</p>}
+      {data.statements.length === 0 && <div className="commission-empty">No statements yet.</div>}
       {data.statements.map((s) => (
         <StatementCard
           key={`${s.id}:${s.version}`}
@@ -1411,6 +1228,7 @@ const blankLine = (): LineDraft => ({
   kind: 'RECEIPT',
   amount: '',
   eligible: false,
+  reviewStatus: 'PENDING',
   eligibilityNote: '',
 });
 function StatementEditor({
@@ -1422,6 +1240,7 @@ function StatementEditor({
   statement?: CommissionStatement;
   done: () => Promise<void>;
 }) {
+  const invalidate = useContext(CommissionAccessContext);
   const [carrierId, setCarrier] = useState(statement?.carrierId ?? ''),
     [reference, setReference] = useState(statement?.reference ?? ''),
     [source, setSource] = useState(statement?.source ?? ''),
@@ -1432,12 +1251,14 @@ function StatementEditor({
   const [lines, setLines] = useState<LineDraft[]>(
     statement?.lines.map((l) => ({
       ...l,
+      reviewStatus: l.reviewStatus ?? (l.eligible ? 'ELIGIBLE' : 'INELIGIBLE'),
       amount: String(l.agencyCents / 100),
       reportedPremium: l.reportedPremiumCents == null ? '' : String(l.reportedPremiumCents / 100),
       reportedRate: l.reportedRateUnits == null ? '' : String(l.reportedRateUnits / 10000),
     })) ?? [blankLine()],
   );
   const [uploading, setUploading] = useState(false),
+    [importFile, setImportFile] = useState<File | null>(null),
     [fileError, setFileError] = useState(''),
     [fileName, setFileName] = useState(statement ? 'Previously attached statement' : '');
   const update = (index: number, change: Partial<LineDraft>) =>
@@ -1446,25 +1267,16 @@ function StatementEditor({
     setUploading(true);
     setFileError('');
     setSource('');
+    setImportFile(null);
+    setFileName('');
     try {
-      const contentType =
-        file.type || (file.name.endsWith('.csv') ? 'text/csv' : 'application/pdf');
-      const result = await commissionAction<{ key: string; url: string }>('file', {
-        action: 'upload',
-        size: file.size,
-        contentType,
-        filename: file.name,
-      });
-      const response = await fetch(result.url, {
-        method: 'PUT',
-        headers: { 'Content-Type': contentType, 'If-None-Match': '*' },
-        body: file,
-      });
-      if (!response.ok) throw new Error('Statement upload failed.');
+      const result = await attachCommissionStatement(file);
       setSource(result.key);
-      setFileName(file.name);
+      setFileName(result.uploaded ? file.name : file.name + ' · Local preview only — not uploaded or saved');
+      setImportFile(file);
     } catch (e) {
       setFileError((e as Error).message);
+      if (isAuthorizationError(e)) invalidate(e);
     } finally {
       setUploading(false);
     }
@@ -1548,7 +1360,7 @@ function StatementEditor({
           </select>
         </label>
       </div>
-      <label className="field">
+      <label className="field commission-file-field">
         Original carrier statement
         <input
           type="file"
@@ -1560,7 +1372,8 @@ function StatementEditor({
           }}
         />
       </label>
-      <p className="small">{uploading ? 'Uploading privately…' : fileName}</p>
+      <p className="commission-file-status small">{uploading ? 'Preparing statement…' : fileName}</p>
+      <CommissionStatementImport key={`${source}:${carrierId}:${importFile?.name}:${importFile?.lastModified}`} file={importFile} carrierId={carrierId} policies={data.policies} disabled={uploading || !importFile} apply={imported => setLines(imported.map(l => ({ ...l, amount: (l.agencyCents / 100).toFixed(2) })))} />
       {fileError && (
         <p className="error-text" role="alert">
           {fileError}
@@ -1586,6 +1399,8 @@ function StatementEditor({
                     update(i, {
                       policyId: e.target.value,
                       originalId: undefined,
+                      reviewStatus: 'PENDING',
+                      eligible: false,
                     })
                   }
                 >
@@ -1612,6 +1427,8 @@ function StatementEditor({
                     update(i, {
                       kind: e.target.value as LineDraft['kind'],
                       originalId: undefined,
+                      reviewStatus: 'PENDING',
+                      eligible: false,
                     })
                   }
                 >
@@ -1682,17 +1499,13 @@ function StatementEditor({
                 </select>
               </label>
             )}
-            {l.kind === 'RECEIPT' && (
-              <label>
-                <input
-                  type="checkbox"
-                  checked={l.eligible}
-                  onChange={(e) => update(i, { eligible: e.target.checked })}
-                />{' '}
-                Producer eligibility verified (license, qualifying transaction, documentation, and
-                applicable agreement)
-              </label>
-            )}
+            <label className="field">Eligibility decision {i + 1}
+              <select value={l.reviewStatus ?? 'PENDING'} onChange={e => update(i, { reviewStatus: e.target.value as StatementLine['reviewStatus'], eligible: e.target.value === 'ELIGIBLE' })}>
+                <option value="PENDING">Pending review - cannot post</option>
+                {l.kind === 'RECEIPT' && <option value="ELIGIBLE">Eligible - agreement requirements verified</option>}
+                <option value="INELIGIBLE">{l.kind === 'RECEIPT' ? 'Not eligible - explain in review notes' : 'Adjustment - original allocation verified'}</option>
+              </select>
+            </label>
             <Field
               label={`Eligibility and variance review notes ${i + 1}`}
               value={l.eligibilityNote}
@@ -1731,13 +1544,17 @@ function StatementCard({
   edit: () => void;
   refresh: () => Promise<void>;
 }) {
+  const invalidate = useContext(CommissionAccessContext);
   const [confirmed, setConfirmed] = useState(false),
     [fileError, setFileError] = useState('');
   const body = (
     <>
-      <p>
-        {s.receivedOn} · {s.status} · Settlement {s.settlementRef} · {money(s.totalCents)}
-      </p>
+      <dl className="commission-facts">
+        <div><dt>Receipt date</dt><dd>{s.receivedOn}</dd></div>
+        <div><dt>Status</dt><dd><span className={'badge ' + (s.status === 'POSTED' ? 'green' : 'amber')}>{s.status}</span></dd></div>
+        <div><dt>Settlement reference</dt><dd>{s.settlementRef}</dd></div>
+        <div><dt>Agency amount</dt><dd>{money(s.totalCents)}</dd></div>
+      </dl>
       <button
         type="button"
         className="secondary"
@@ -1749,6 +1566,7 @@ function StatementCard({
             window.location.assign(r.url);
           } catch (e) {
             setFileError((e as Error).message);
+            if (isAuthorizationError(e)) invalidate(e);
           }
         }}
       >
@@ -1782,7 +1600,7 @@ function StatementCard({
                   </div>
                 </td>
                 <td>
-                  {l.eligible ? 'Eligible' : 'Not eligible / adjustment'} · {l.eligibilityNote}
+                  {l.reviewStatus === 'PENDING' ? 'Pending review' : l.eligible ? 'Eligible' : 'Not eligible / adjustment'} · {l.eligibilityNote}
                 </td>
               </tr>
             ))}
@@ -1801,7 +1619,7 @@ function StatementCard({
   return (
     <ActionForm
       title={s.reference}
-      disabled={!confirmed}
+      disabled={!confirmed || s.lines.some(l => l.reviewStatus === 'PENDING')}
       button="Post reconciled statement"
       onDone={refresh}
       submit={() =>
@@ -1816,7 +1634,7 @@ function StatementCard({
       <button className="secondary" type="button" onClick={edit}>
         Edit draft
       </button>
-      <label className="commission-confirm">
+      <label className="commission-check">
         <input
           type="checkbox"
           checked={confirmed}
@@ -1829,58 +1647,14 @@ function StatementCard({
   );
 }
 function Payroll({ data, refresh }: { data: CommissionOverview; refresh: () => Promise<void> }) {
-  const [producerId, setProducer] = useState(''),
-    [cutoff, setCutoff] = useState(''),
-    [payDate, setDate] = useState(''),
-    [requestId, setRequest] = useState(() => crypto.randomUUID());
-  return (
-    <>
-      <p>
-        Choose the receipt cutoff and pay date from the applicable agreement and payroll calendar.
-        Proposed recoveries are excluded. Exporting a batch does not mark it paid.
-      </p>
-      <ActionForm
-        title="Approve a producer payroll batch"
-        button="Approve batch"
-        onDone={async () => {
-          setRequest(crypto.randomUUID());
-          await refresh();
-        }}
-        submit={() =>
-          commissionAction('preparePayroll', {
-            producerId,
-            cutoff,
-            payDate,
-            requestId,
-          })
-        }
-      >
-        <div className="form-grid">
-          <label className="field">
-            Producer
-            <select required value={producerId} onChange={(e) => setProducer(e.target.value)}>
-              <option value="">Choose…</option>
-              {[...new Map(data.policies.map((p) => [p.producerId, p.producerName])).entries()].map(
-                ([id, name]) => (
-                  <option key={id} value={id}>
-                    {name}
-                  </option>
-                ),
-              )}
-            </select>
-          </label>
-          <Field
-            label="Include receipts through (inclusive)"
-            type="date"
-            value={cutoff}
-            change={setCutoff}
-          />
-          <Field label="Scheduled pay date" type="date" value={payDate} change={setDate} />
-        </div>
-      </ActionForm>
-      <BatchList batches={data.batches} refresh={refresh} />
-    </>
-  );
+  const invalidate = useContext(CommissionAccessContext);
+  return <>
+    <CommissionPayroll owner refreshLedger={refresh} onAccessDenied={invalidate} />
+    <CommissionPanel title="Legacy payroll batch history">
+      <p>New payments use monthly or off-cycle payroll above. Cancel an unpaid legacy batch to release its receipts before preparing a new approved report.</p>
+      <BatchList batches={data.batches.filter(b => !b.cycleId)} refresh={refresh} />
+    </CommissionPanel>
+  </>;
 }
 function BatchList({
   batches,
@@ -1891,6 +1665,7 @@ function BatchList({
 }) {
   return (
     <>
+      {!batches.length && <div className="commission-empty">{refresh ? 'No legacy payroll batches.' : 'No payroll statements yet.'}</div>}
       {batches.map((b) => (
         <BatchCard key={`${b.id}:${b.version}`} batch={b} refresh={refresh} />
       ))}
@@ -1906,13 +1681,17 @@ function BatchCard({
 }) {
   const [reference, setReference] = useState(''),
     [date, setDate] = useState(today()),
-    [action, setAction] = useState('payPayroll');
+    [action, setAction] = useState('cancelPayroll');
   const body = (
     <>
-      <p>
-        {b.producerName} · {b.status} · {money(b.totalCents)} · Pay date {b.payDate} · Receipt
-        cutoff {b.cutoff}
-      </p>
+      <dl className="commission-facts">
+        <div><dt>Employee</dt><dd>{b.producerName}</dd></div>
+        <div><dt>Status</dt><dd><span className={'badge ' + (b.status === 'PAID' ? 'green' : b.status === 'APPROVED' ? 'blue' : 'gray')}>{b.status}</span></dd></div>
+        <div><dt>Approved amount</dt><dd>{money(b.totalCents)}</dd></div>
+        <div><dt>Pay date</dt><dd>{b.payDate}</dd></div>
+        <div><dt>Receipt cutoff</dt><dd>{b.cutoff}</dd></div>
+        <div><dt>Recorded paid / remaining</dt><dd>{money(batchPaidCents(b))} / {money(b.totalCents - batchPaidCents(b))}</dd></div>
+      </dl>
       {b.reference && <p>Confirmation: {b.reference}</p>}
       <ReportDownload
         report={{
@@ -1941,7 +1720,7 @@ function BatchCard({
       />
     </>
   );
-  if (!refresh || b.status !== 'APPROVED')
+  if (!refresh || b.status !== 'APPROVED' || b.cycleId)
     return (
       <section className="card">
         <h2>Payroll statement</h2>
@@ -1966,7 +1745,6 @@ function BatchCard({
       <label className="field">
         Outcome
         <select value={action} onChange={(e) => setAction(e.target.value)}>
-          <option value="payPayroll">Confirm the full batch was paid</option>
           <option value="cancelPayroll">Cancel an unpaid batch</option>
         </select>
       </label>
@@ -1979,8 +1757,7 @@ function BatchCard({
         <Field label="Actual payment date" type="date" value={date} change={setDate} />
       )}
       <p className="small muted">
-        Only confirm a fully paid batch. For a rejected payroll export, cancel the unpaid batch
-        before preparing a replacement.
+        Cancel only an unpaid legacy batch. Review and approve its released earnings in the payroll workspace.
       </p>
     </ActionForm>
   );
@@ -2186,8 +1963,7 @@ function PolicyNumber({
     policy.policyNumber === policy.id ? '' : policy.policyNumber,
   );
   return (
-    <details>
-      <summary>Update carrier policy number</summary>
+    <CommissionPanel title="Update carrier policy number">
       <ActionForm
         title="Carrier policy number"
         onDone={refresh}
@@ -2201,7 +1977,7 @@ function PolicyNumber({
       >
         <Field label="Carrier policy number" value={number} change={setNumber} />
       </ActionForm>
-    </details>
+    </CommissionPanel>
   );
 }
 

@@ -4,6 +4,10 @@ The **Commissions** page separates policy forecasts, actual agency receipts,
 producer earnings, payroll allocations, and proposed adjustments. All ledger
 amounts are USD cents. No producer rates are seeded.
 
+The local November 4-5 update adds reusable plans with dated employee assignments, a monthly payroll workspace, source-file
+imports, eligibility reviews, and individual PDF earnings records for the HR handoff. See [Commission payroll and HR handoff](COMMISSION-PAYROLL-AUTOMATION.md)
+for setup, delivery controls, validation limits, and remaining work.
+
 ## Access
 
 Only the **active Owner role** can configure agreements/carrier terms, upload or
@@ -13,10 +17,16 @@ assigned Admin view has no reconciliation authority in that view. The schema,
 request guards, and service handler enforce this independently of the interface.
 Disabled/revoked sessions are checked before financial access.
 
+Approved monthly payroll reports can be emailed automatically to a configured HR
+inbox before payroll processing. The recipient does not need a new CRM permission
+or an acknowledgement step. Existing CRM access controls continue to apply.
+
 Other roles can read/export their own commission records. The authenticated user
 ID controls that scope; a caller cannot select another producer. Their response
-excludes agreements, source statement files, owner review notes, and carrier
-contract evidence. Historical commission ownership survives account reassignment.
+excludes agreements, source statement files, owner review notes, payroll IDs,
+internal payment references, and carrier contract evidence. Current records are
+rechecked after index lookup; exports use the same employee-only data. Historical
+commission ownership survives account reassignment.
 
 The ledger and statement files use separate private storage, encryption,
 retention, and backups/versioning. Shared policies contain only the snapshot ID.
@@ -24,14 +34,17 @@ Private statement uploads are immutable and download links last sixty seconds.
 
 ## Setup and binding
 
-1. In **Agreements & carriers**, choose a teammate and enter dated new-business
-   and renewal rates and an agreement reference. Periods cannot overlap; explicit
-   zero is permitted. Salary remains in the existing owner pay settings.
-2. For each producer period, optionally enable **GIM Property Management** rates
-   and enter both percentages plus the GIM agreement reference. An unchecked GIM
-   section means terms are pending, never standard-rate fallback. Explicit zero
-   is allowed; blank is not zero. Both schedules use the period's dates; add a
-   new period when either schedule changes.
+1. In **Agreements & carriers**, create a reusable named commission plan with
+   new-business/renewal rates and its source reference. Optionally include separate
+   GIM house-account rates and a reference. Missing GIM terms never fall back to
+   standard rates. Explicit zero is allowed; blank is not zero.
+2. Assign a plan version to each producer with inclusive effective dates, their
+   individual agreement reference, eligibility cutoffs, and optional notes. Only
+   one assignment can cover any date; end the prior assignment before starting
+   another. Editing a reusable plan does not update existing assignments. Assign
+   a new version when compensation changes. Existing individual agreements remain
+   readable and can transition without losing historical rates. Salary remains
+   in the existing Owner pay settings.
 3. In **Account commission classification**, search for the insured account.
    Only the selected classification is loaded; a failed read offers a retry,
    never an empty replacement form. Record dated **Standard** or **GIM Property
@@ -138,8 +151,11 @@ remain clearly labeled estimates and do not drive payroll.
 ## Reconciliation
 
 An Owner uploads the original PDF/CSV/XLSX/image and enters reviewed statement
-lines. Uploads preserve the source; this release does not automatically extract
-or map carrier files. Each reconciliation batch supports up to twenty lines.
+lines. CSV/XLSX sources can be read and mapped in the editor, preserving source
+row numbers. Exact carrier/policy/effective-date matches are suggested; ambiguous
+matches require manual selection. Imports check duplicate transaction references
+and start with pending eligibility. They do not post earnings. PDF/image sources
+still require manual entry. Each reconciliation batch supports up to twenty lines.
 
 Each line identifies a specific policy term, unique carrier transaction reference,
 signed agency commission, transaction type, and eligibility/variance evidence.
@@ -162,9 +178,14 @@ without partial posting. Posted statements cannot be edited. Corrected carrier
 transactions use new references and linked adjustments, never overwritten history.
 
 Eligibility is reviewed against the applicable agreement, including licensing,
-documentation, cancellations, separation, and transaction exclusions. No draft's
-eligibility language or global rate is silently applied. An ineligible receipt
-still records agency revenue and zero producer earnings with an explanation.
+documentation, cancellations, separation, and transaction exclusions. Pending
+lines cannot be posted. No draft's eligibility language or global rate is silently
+applied. An ineligible receipt still records agency revenue and zero producer
+earnings with an explanation. Owner-only policy reviews record due dates and
+evidence for issues such as splits, disputes, and separation. Open reviews block
+relevant approval, and due reviews also prevent approving a misleading zero report.
+Resolving a review requires evidence; no entitlement or recovery is inferred from
+the selected category.
 
 ## Earnings and payroll
 
@@ -173,20 +194,34 @@ Cumulative integer arithmetic prevents installment rounding drift. Binding alone
 creates no earnings. Agency-bill retained commission is recorded once as its own
 settlement type; a later statement describing it is not another receipt.
 
-An Owner selects the inclusive receipt-date cutoff and pay date using the actual
-agreement/payroll calendar. The app does not guess a monthly payroll date or
-calculate the draft's ambiguous “one week before processing” cutoff. Late
-reconciliation retains the original receipt date; review any overdue obligations.
+All employees share Monday-morning processing and Friday payday. Monthly
+commissions target the last regular Friday payroll. The receipt cutoff includes
+EOD the preceding Friday in America/New_York, with approved reports due Monday
+at 8 AM. For November 2026: cutoff November 20, report/processing November 23,
+payday November 27. Holiday dates remain editable. Start with October 2026;
+initialize missing calendars from October through next month without overwriting
+existing records. Reconcile historical payments before approving October.
+Late reconciliation retains the original receipt date; review overdue obligations.
 
-Approving a batch reserves positive, unpaid earnings. Export its itemized CSV/PDF
-for payroll. Export is not payment. Record the actual pay date and confirmation
-reference only after the full batch has been paid. An unpaid/rejected batch can
-be cancelled to release its allocations. Duplicate confirmations do not pay an
-entry again. Partial payroll payment tracking is not available in this release;
-use batches that payroll will settle in full.
+Approving a monthly or off-cycle run reserves positive, unpaid earnings. Download the HR summary and separate itemized employee PDFs
+for pay files, or receive them by scheduled email. HR enters totals manually;
+no employee-ID mapping, earnings code, or import template is required. Export is not payment. Record the actual pay date and confirmation
+reference only after payment occurs. Record partial employee amounts as separate
+payments; remaining balances stay open until fully paid. An unpaid cycle can be
+cancelled before delivery to release its allocations. Duplicate payment IDs cannot
+create another payment. A full-cycle confirmation records only remaining balances
+and retains the earlier employee dates and payroll references.
 
-Payroll discovers policies within the selected producer's index partition and
-loads current records in consistent batches of up to 100. Producer self-service
+A new policy review after approval holds outstanding affected monthly cycles,
+blocks current report export/delivery, and prompts the Owner. Resolve the issue,
+reopen the unpaid report with a reason, and approve a new revision. After email
+acceptance, record that HR held the original before replacing it. In-progress or
+uncertain sends block replacement, as does any recorded payment. Original PDFs,
+approval, delivery evidence, and payment history remain intact.
+
+Payroll reviews consistent ledger records and scopes off-cycle drafts to selected
+employees. Producer self-service discovers only the authenticated producer's index
+partition and loads authoritative records in consistent batches of up to 100. It
 uses the same bounded batch reads; a throttled read fails rather than returning
 partial totals.
 
@@ -234,11 +269,9 @@ both Owner and Producer sessions. Backend deployment requires the new private
 ledger, private statement bucket, function, and API operations before the new
 frontend can use them. Refresh existing browser sessions after release.
 
-The initial release supports one producer per policy. Written multi-producer
-splits, separately identified program-specific arrangements beyond the supported
-coverage-line/business/billing scopes, automatic statement extraction/import,
-automatic payroll-calendar scheduling, partial payroll settlements, and authorized
-recovery collection remain separate extensions from the broader process design.
+The local implementation supports single-producer history and approved policy-level shared allocations. The monthly payroll form suggests Friday-EOD receipt cutoffs, Monday-morning reports/processing, and the last Friday payday. Departure cases and explicit additional earnings, unpaid corrections, and paid-recovery reviews are available in **Shared & exceptions**. The confirmed shared calculation applies each employee's own frozen plan rate to their policy share.
+
+Account transfers/house ownership transitions, carrier-program overrides, unattended carrier feeds or PDF/OCR extraction, unattended creation of future payroll cycles beyond initialization, automatic final-pay deadlines, and recovery collection remain outside this release. Actual agreement references, assignments, and historical opening balances still require configuration and acceptance testing.
 
 ## Local verification
 
@@ -260,12 +293,21 @@ the production components without authentication, CRM requests, or money movemen
 See [the design and draft comparison](specs/producer-commission-process.md) for
 business decisions and the original document differences.
 
-Verification for this implementation: 3,449 tests across 198 files passed; frontend
+Historical verification before the November 4-5 payroll/import changes: 3,449 tests across 198 files passed; frontend
 and backend type checks, the production build, backend synthesis, and whitespace
 checks passed. Focused bind/service tests also passed after the final retry guard.
 The existing frontend bundle-size advisory remains. The Owner reconciliation and
 Producer statement views were visually checked using fictional data. No live
 carrier receipt, payroll payment, recovery, or cloud deployment was performed.
+
+Current validation results for the November 4-5 changes are recorded in the
+payroll handoff guide. The updated native suite has 128 passing checks, including
+shared earnings, explicit adjustments, departure rules, and report integrity. Backend type checking also passes. Fictional
+summary/employee PDFs were rendered and visually checked, including pagination.
+The complete suite and build are not yet cleared: generated
+Amplify configuration, existing Windows test-portability failures, and an execution-environment
+folder-access restriction still need resolution. See the payroll handoff guide
+for the current validation evidence and release gates.
 
 ## Account-first-bind eligibility cutoff
 
@@ -299,3 +341,9 @@ rates are 10% new / 5% renewal; accounts originally bound before October 1 remai
 excluded from commissions on all later renewals. October 1 itself is eligible.
 These are configuration requirements, not seeded global defaults. Other
 producers' agreements remain independently configurable.
+
+## Exception workflows and confirmed compensation rules
+
+All active CRM Owners retain approval authority. The local payroll workspace now supports scoped off-cycle drafts, partial payments, corrected unpaid report revisions, exact archived PDF bytes, delivery/bounce tracking with individual copies to active Owners, and a paged private audit history including older-format records. Direct manual batch approval/payment is retired; actual payments prevent report replacement.
+
+See [Commission exceptions, shared credit, and departures](COMMISSION-EXCEPTIONS-AND-SHARED-CREDIT.md) for the implemented policy-level splits, departure cases, compensation adjustments, and acceptance steps. Shared entitlement arithmetic and departure rules are not automatically inferred from ownership or disabled login access. Account transfers/house transitions remain future scope.

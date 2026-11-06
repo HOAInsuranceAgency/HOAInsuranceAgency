@@ -59,7 +59,7 @@ export function installTransactionalMail(backend: any, alerts: any) {
   // send mail, edit counters/receipts, or access saved envelopes.
   for(const fn of [backend.voidInvoice,backend.crmAccess,backend.pfElection])fn.addEnvironment('HOA_TRANSACTIONAL_MAIL_TABLE',table);
   if(permissionsStack)new ManagedPolicy(backend.createStack('InvoiceSendRetirementPermissions'),'InvoiceVoidMailRetirement',{roles:[backend.voidInvoice.resources.lambda.role!,backend.crmAccess.resources.lambda.role!,backend.pfElection.resources.lambda.role!],statements:[new PolicyStatement({actions:['dynamodb:GetItem','dynamodb:UpdateItem'],resources:[tableArn],conditions:{'ForAllValues:StringLike':{'dynamodb:LeadingKeys':[`OP#hoa/${businessBranch}/invoice/*`]}}})]});
-  const senderNames = ["magicLinkVerify", "teamAdmin", "sendInvoice", "marketingReportWorker", "stripeWebhook", "mailVerification", "mailRecovery"];
+  const senderNames = ["magicLinkVerify", "teamAdmin", "sendInvoice", "marketingReportWorker", "commissionPayrollWorker", "stripeWebhook", "mailVerification", "mailRecovery"];
   for (const name of senderNames) {
     const fn = backend[name];
     for (const [key, value] of Object.entries({ HOA_TRANSACTIONAL_MAIL_PROVIDER: "ses", HOA_TRANSACTIONAL_MAIL_TABLE: table, HOA_TRANSACTIONAL_MAIL_BUCKET: bucket, HOA_TRANSACTIONAL_MAIL_RELEASE: process.env.HOA_TRANSACTIONAL_MAIL_RELEASE ?? "false", HOA_SES_IDENTITY_ARN: SES_IDENTITY_ARN, HOA_SES_CONFIGURATION_SET: configurationSet, HOA_SES_DAILY_LIMIT: String(sesDailyLimit), HOA_SES_MONTHLY_LIMIT: String(sesMonthlyLimit) })) fn.addEnvironment(key, value);

@@ -31,6 +31,14 @@ export interface CommissionRates {
   renewalBps: number;
   agreement: string;
 }
+/** Reusable configuration; assignment dates and employee eligibility belong to PLAN terms. */
+export interface CommissionPlanDefinition extends CommissionRates {
+  id: string; version: number; name: string; archived: boolean; gim?: CommissionRates;
+}
+export interface CommissionAssignment {
+  id: string; planId: string; planVersion: number; planName: string; planReference: string;
+  notes?: string;
+}
 export interface CommissionPlan {
   id: string;
   version: number;
@@ -42,6 +50,9 @@ export interface CommissionPlan {
     from: string;
     to?: string;
     gim?: CommissionRates;
+    assignment?: CommissionAssignment;
+    accountBoundFrom?: string;
+    receiptsFrom?: string;
   })[];
 }
 /** Commission basis is independent of the frequency at which the payor remits it. */
@@ -96,6 +107,9 @@ export interface CommissionReconciliationBalances {
   adjustmentReview: boolean;
 }
 export interface CommissionEntry {
+  allocationId?: string;
+  supersededBy?: string;
+  excludedByCase?: string;
   id: string;
   statementId: string;
   lineRef: string;
@@ -110,6 +124,8 @@ export interface CommissionEntry {
   batchId?: string;
 }
 export interface CommissionPolicy {
+  allocations?: import('./commissionExceptions').CommissionAllocation[];
+  reviewHolds?: CommissionReviewHold[];
   id: string;
   version: number;
   accountId: string;
@@ -130,6 +146,7 @@ export interface CommissionPolicy {
   producerBps: number;
   agreement: string;
   planVersion: number;
+  assignment?: CommissionAssignment & { from: string; to?: string };
   // Optional only for snapshots created before account classification was introduced.
   accountClassification?: CommissionAccount['periods'][number] & {
     version: number;
@@ -147,6 +164,8 @@ export interface CommissionPolicy {
   entries: CommissionEntry[];
 }
 export interface StatementLine {
+  sourceRow?: number;
+  reviewStatus?: 'PENDING' | 'ELIGIBLE' | 'INELIGIBLE';
   reportedPremiumCents?: number;
   reportedRateUnits?: number;
   policyId: string;
@@ -173,7 +192,22 @@ export interface CommissionStatement {
   postedAt?: string;
   postedBy?: string;
 }
+export const COMMISSION_REVIEW_CATEGORIES = ['LICENSING', 'DOCUMENTATION', 'SPLIT', 'SEPARATION', 'CANCELLATION', 'DISPUTE', 'LATE_RECEIPT', 'OTHER'] as const;
+export interface CommissionReviewHold {
+  id: string; category: typeof COMMISSION_REVIEW_CATEGORIES[number]; note: string; dueOn: string;
+  status: 'OPEN' | 'RESOLVED'; openedAt: string; openedBy: string;
+  resolvedAt?: string; resolvedBy?: string; resolution?: string;
+}
+export function assertCommissionReviewed(policy: CommissionPolicy) {
+  if (policy.reviewHolds?.some(h => h.status === 'OPEN')) throw new Error(`Resolve the commission review items for ${policy.policyNumber || policy.id} before payroll approval.`);
+}
 export interface CommissionBatch {
+  payments?: { id: string; amountCents: number; paidOn: string; reference: string; recordedAt: string; recordedBy: string }[];
+  /** Safe aggregate for the employee projection; payment references remain private. */
+  paidCents?: number;
+  cycleId?: string;
+  cycleRevision?: number;
+  actualPaidOn?: string;
   id: string;
   version: number;
   producerId: string;
@@ -184,6 +218,11 @@ export interface CommissionBatch {
   reference?: string;
   totalCents: number;
   lines: {
+    earningId?: string;
+    source?: 'SHARED_RECEIPT' | 'ADJUSTMENT';
+    shareBps?: number;
+    receivedOn?: string;
+    transaction?: 'NEW' | 'RENEWAL';
     policyId: string;
     entryId: string;
     accountName: string;
@@ -194,11 +233,17 @@ export interface CommissionBatch {
   }[];
 }
 export interface CommissionOverview {
+  earnings?: import('./commissionExceptions').CommissionEarning[];
+  planDefinitions?: CommissionPlanDefinition[];
   plans: CommissionPlan[];
   carriers: CarrierCommissionTerms[];
   policies: CommissionPolicy[];
   statements: CommissionStatement[];
   batches: CommissionBatch[];
+}
+export function batchPaidCents(batch: CommissionBatch): number {
+  const amount = batch.payments ? sum(batch.payments.map(p => p.amountCents)) : batch.paidCents ?? (batch.status === 'PAID' ? batch.totalCents : 0);
+  return integer(amount, 0, batch.totalCents, 'recorded commission payment');
 }
 export function day(value: unknown): string {
   if (
@@ -280,8 +325,15 @@ export function validatePlan(plan: CommissionPlan): CommissionPlan {
       ...(t.to ? { to: t.to } : {}),
       ...validateRates(t),
       ...(t.gim !== undefined ? { gim: validateRates(t.gim) } : {}),
+      ...(t.accountBoundFrom ? { accountBoundFrom: day(t.accountBoundFrom) } : {}),
+      ...(t.receiptsFrom ? { receiptsFrom: day(t.receiptsFrom) } : {}),
+      ...(t.assignment ? { assignment: { id: required(t.assignment.id, 'an assignment ID', 128), planId: required(t.assignment.planId, 'a commission plan', 128), planVersion: integer(t.assignment.planVersion, 1, Number.MAX_SAFE_INTEGER, 'plan version'), planName: required(t.assignment.planName, 'a plan name', 200), planReference: required(t.assignment.planReference, 'the plan reference'), ...(t.assignment.notes ? { notes: required(t.assignment.notes, 'assignment notes', 2000) } : {}) } } : {}),
     })),
   };
+}
+export function validatePlanDefinition(plan: CommissionPlanDefinition): CommissionPlanDefinition {
+  if (typeof plan.archived !== 'boolean') throw new Error('Choose whether the plan is archived.');
+  return { id: required(plan.id, 'a plan ID', 128), version: integer(plan.version, 0, Number.MAX_SAFE_INTEGER, 'plan version'), name: required(plan.name, 'a plan name', 200), archived: plan.archived, ...validateRates(plan), ...(plan.gim ? { gim: validateRates(plan.gim) } : {}) };
 }
 export function validateCommissionAccount(account: CommissionAccount): CommissionAccount {
   if (account.neverBound !== undefined && account.neverBound !== true)
@@ -326,26 +378,25 @@ export function selectCommissionTerms(
     throw new Error(
       `An Owner must classify this account as Standard or GIM Property Management for ${rateDate} in Agreements & carriers.`,
     );
-  if (plan.accountBoundFrom && !accountFirstBoundOn)
+  // Legacy producer agreements remain readable. New assignment terms keep
+  // eligibility boundaries with the selected plan instead of on the employee.
+  let term = plan.terms.find(t => t.from <= rateDate && (!t.to || t.to >= rateDate));
+  const earliest = plan.terms[0], historicalCutoff = earliest?.accountBoundFrom ?? plan.accountBoundFrom;
+  if (!term && earliest && historicalCutoff && accountFirstBoundOn && accountFirstBoundOn < historicalCutoff && rateDate < historicalCutoff && earliest.from <= historicalCutoff && (!earliest.to || earliest.to >= historicalCutoff)) term = earliest;
+  if (!term) throw new Error(`An Owner must assign a commission plan covering ${rateDate}.`);
+  const accountBoundFrom = term.accountBoundFrom ?? (term.assignment ? undefined : plan.accountBoundFrom);
+  const receiptsFrom = term.receiptsFrom ?? (term.assignment ? undefined : plan.receiptsFrom);
+  if (accountBoundFrom && !accountFirstBoundOn)
     throw new Error(
       'An Owner must confirm this account’s original first bind history in Agreements & carriers.',
     );
-  const eligibility = plan.accountBoundFrom
+  const eligibility = accountBoundFrom
     ? {
         accountFirstBoundOn: day(accountFirstBoundOn),
-        accountBoundFrom: plan.accountBoundFrom,
-        eligible: accountFirstBoundOn! >= plan.accountBoundFrom,
+        accountBoundFrom,
+        eligible: accountFirstBoundOn! >= accountBoundFrom,
       }
     : undefined;
-  // Historical pre-cutoff policies may still need agency receipt tracking. Use
-  // the cutoff agreement only to document their explicit zero entitlement.
-  const agreementDate =
-    eligibility?.eligible === false && rateDate < eligibility.accountBoundFrom
-      ? eligibility.accountBoundFrom
-      : rateDate;
-  const term = plan.terms.find((t) => t.from <= agreementDate && (!t.to || t.to >= agreementDate));
-  if (!term)
-    throw new Error(`An Owner must configure a commission agreement covering ${rateDate}.`);
   const rates = classification.classification === 'GIM' ? term.gim : term;
   if (!rates)
     throw new Error(
@@ -353,7 +404,8 @@ export function selectCommissionTerms(
     );
   return {
     ...(eligibility ? { eligibility } : {}),
-    ...(plan.receiptsFrom ? { receiptsFrom: plan.receiptsFrom } : {}),
+    ...(receiptsFrom ? { receiptsFrom } : {}),
+    ...(term.assignment ? { assignment: { ...term.assignment, from: term.from, ...(term.to ? { to: term.to } : {}) } } : {}),
     producerBps:
       eligibility?.eligible === false ? 0 : transaction === 'NEW' ? rates.newBps : rates.renewalBps,
     agreement: rates.agreement,
@@ -376,23 +428,27 @@ export function appendEntry(
   required(line.lineRef, 'a carrier transaction reference');
   required(line.eligibilityNote, 'eligibility / variance review evidence');
   if (typeof line.eligible !== 'boolean') throw new Error('Review commission eligibility.');
+  if (line.reviewStatus && !['PENDING', 'ELIGIBLE', 'INELIGIBLE'].includes(line.reviewStatus)) throw new Error('Choose a valid eligibility decision.');
+  if (line.reviewStatus === 'PENDING') throw new Error('Resolve pending eligibility before posting this receipt.');
+  if (line.reviewStatus && (line.reviewStatus === 'ELIGIBLE') !== line.eligible) throw new Error('The eligibility decision and amount treatment disagree.');
   if (!['RECEIPT', 'REVERSAL', 'RESTORATION'].includes(line.kind))
     throw new Error('Choose a statement transaction type.');
+  const allocation = line.kind === 'RECEIPT' ? policy.allocations?.filter(a => a.from <= statement.receivedOn).at(-1) : policy.allocations?.find(a => a.id === policy.entries.find(e => e.id === line.originalId)?.allocationId);
   let producerCents = 0;
   if (line.kind === 'RECEIPT') {
     if (line.agencyCents < 0 || line.originalId)
       throw new Error('Receipts must be positive and have no reversal link.');
-    if (line.eligible && policy.eligibility?.eligible === false)
+    if (!allocation && line.eligible && policy.eligibility?.eligible === false)
       throw new Error(
         'This account was first bound before the producer agreement cutoff. New business and later renewals are noncommissionable. Record the agency receipt as ineligible.',
       );
-    if (line.eligible && policy.receiptsFrom && statement.receivedOn < policy.receiptsFrom)
+    if (!allocation && line.eligible && policy.receiptsFrom && statement.receivedOn < policy.receiptsFrom)
       throw new Error(
         `Agency commission received before ${policy.receiptsFrom} is not eligible under this agreement.`,
       );
-    const prior = policy.entries.filter((e) => e.kind === 'RECEIPT' && e.eligible && (e.revenueKind ?? 'CARRIER_COMMISSION') === (line.revenueKind ?? 'CARRIER_COMMISSION'));
+    const prior = policy.entries.filter((e) => e.kind === 'RECEIPT' && e.eligible && !e.allocationId && (e.revenueKind ?? 'CARRIER_COMMISSION') === (line.revenueKind ?? 'CARRIER_COMMISSION'));
     const received = sum(prior.map((e) => e.agencyCents));
-    producerCents = line.eligible
+    producerCents = line.eligible && !allocation
       ? ratio(sum([received, line.agencyCents]), policy.producerBps, 10000) -
         sum(prior.map((e) => e.producerCents))
       : 0;
@@ -428,6 +484,7 @@ export function appendEntry(
       ...policy.entries,
       {
         id: entryId,
+        ...(allocation ? { allocationId: allocation.id } : {}),
         statementId: statement.id,
         lineRef: line.lineRef,
         receivedOn: statement.receivedOn,
@@ -444,7 +501,7 @@ export function appendEntry(
 }
 export function policyTotals(policy: CommissionPolicy) {
   const earned = sum(
-    policy.entries.filter((e) => e.kind === 'RECEIPT').map((e) => e.producerCents),
+    policy.entries.filter((e) => e.kind === 'RECEIPT' && !e.supersededBy && !e.excludedByCase).map((e) => e.producerCents),
   );
   const recovery =
     0 - sum(policy.entries.filter((e) => e.kind !== 'RECEIPT').map((e) => e.producerCents));
@@ -454,7 +511,7 @@ export function policyTotals(policy: CommissionPolicy) {
     earned,
     proposedRecovery: recovery,
     unbatched: sum(
-      policy.entries.filter((e) => e.kind === 'RECEIPT' && !e.batchId).map((e) => e.producerCents),
+      policy.entries.filter((e) => e.kind === 'RECEIPT' && !e.batchId && !e.supersededBy && !e.excludedByCase).map((e) => e.producerCents),
     ),
   };
 }
@@ -463,6 +520,8 @@ export function policyTotals(policy: CommissionPolicy) {
  * not money already collected from the producer. Recovery remains disabled. */
 export function recoveryBalances(policy: CommissionPolicy, batches: readonly CommissionBatch[]) {
   const paid = new Set(batches.filter((b) => b.status === 'PAID').map((b) => b.id));
+  const partial = new Set(batches.filter(b => batchPaidCents(b) > 0 && batchPaidCents(b) < b.totalCents).map(b => b.id));
+  let partialAdjustment = 0;
   let paidRecovery = 0,
     unpaidAdjustment = 0;
   for (const entry of policy.entries.filter((e) => e.kind !== 'RECEIPT')) {
@@ -473,11 +532,12 @@ export function recoveryBalances(policy: CommissionPolicy, batches: readonly Com
       original = prior;
     }
     if (original.kind !== 'RECEIPT') throw new Error('Invalid commission adjustment chain.');
-    if (original.batchId && paid.has(original.batchId))
+    if (original.batchId && partial.has(original.batchId)) partialAdjustment = sum([partialAdjustment, -entry.producerCents]);
+    else if (original.batchId && paid.has(original.batchId))
       paidRecovery = sum([paidRecovery, -entry.producerCents]);
     else unpaidAdjustment = sum([unpaidAdjustment, -entry.producerCents]);
   }
-  return { paidRecovery, unpaidAdjustment };
+  return { paidRecovery, unpaidAdjustment, ...(partialAdjustment ? { partialAdjustment } : {}) };
 }
 
 /** Queries across multiple partitions can straddle a concurrent payroll write.
@@ -485,6 +545,7 @@ export function recoveryBalances(policy: CommissionPolicy, batches: readonly Com
 export function validateAllocationSnapshot(
   policies: readonly CommissionPolicy[],
   batches: readonly CommissionBatch[],
+  earnings: readonly import('./commissionExceptions').CommissionEarning[] = [],
 ) {
   const batchById = new Map(batches.map((b) => [b.id, b]));
   const entryById = new Map(
@@ -495,6 +556,10 @@ export function validateAllocationSnapshot(
       'Commission records changed while loading. Refresh to load consistent balances.',
     );
   };
+  for (const earning of earnings) if (earning.batchId) {
+    const batch = batchById.get(earning.batchId);
+    if (!batch || batch.status === 'CANCELLED' || batch.producerId !== earning.producerId || earning.status !== 'PAYABLE' || !batch.lines.some(l => l.earningId === earning.id && l.amountCents === earning.amountCents && l.policyId === earning.policyId)) fail();
+  }
   for (const p of policies)
     for (const e of p.entries)
       if (e.batchId) {
@@ -510,8 +575,16 @@ export function validateAllocationSnapshot(
           fail();
       }
   for (const b of batches.filter((b) => b.status !== 'CANCELLED')) {
+      const paid = batchPaidCents(b);
+      if (b.payments && (new Set(b.payments.map(p => p.id)).size !== b.payments.length || b.payments.some(p => !Number.isSafeInteger(p.amountCents) || p.amountCents <= 0) || (b.status === 'PAID' ? paid !== b.totalCents : paid >= b.totalCents && b.totalCents > 0))) fail();
+    if (new Set(b.lines.map(l => l.earningId ?? `${l.policyId}|${l.entryId}`)).size !== b.lines.length) fail();
     if (sum(b.lines.map((l) => l.amountCents)) !== b.totalCents) fail();
     for (const l of b.lines) {
+      if (l.earningId) {
+        const earning = earnings.find(e => e.id === l.earningId);
+        if (!earning || earning.batchId !== b.id || earning.producerId !== b.producerId || earning.amountCents !== l.amountCents || earning.policyId !== l.policyId || earning.status !== 'PAYABLE') fail();
+        continue;
+      }
       const e = entryById.get(`${l.policyId}|${l.entryId}`);
       if (!e || e.batchId !== b.id || e.producerCents !== l.amountCents) fail();
     }

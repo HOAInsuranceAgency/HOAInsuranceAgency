@@ -112,3 +112,179 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* Commission-wide presentation: shared by ledger, reconciliation, payroll,
+   exception cases, and agreement settings, including their expanded forms. */
+.commissions { min-width: 0; font-size: 14px; line-height: 1.5; color: var(--text); }
+.commissions h2, .commissions h3 { color: var(--navy); }
+.commissions h2 { font-size: 18px; line-height: 1.35; }
+.commissions h3 { font-size: 15px; line-height: 1.4; }
+.commissions .card h2 { font-size: 17px; margin: 0 0 14px; }
+.commissions .card > :last-child { margin-bottom: 0; }
+.commissions .stat strong { color: var(--navy); font-size: 25px; font-variant-numeric: tabular-nums; }
+.commission-tabs {
+  padding: 6px;
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+}
+.commission-tabs button {
+  flex: 1 1 auto;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--muted);
+  background: transparent;
+  padding: 10px 14px;
+}
+.commission-tabs button:hover { background: var(--bg); color: var(--navy); }
+.commission-tabs button[aria-selected="true"] { background: var(--blue-bg); border-color: #cbdff5; color: var(--accent-dark); }
+.commissions :is(button, input, select, textarea) { font-family: inherit; }
+.commissions :is(button, input, select, textarea, summary):focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.commissions button { min-height: 36px; max-width: 100%; line-height: 1.4; }
+.commissions button:disabled { opacity: .55; cursor: default; }
+.commissions .field { min-width: 0; color: var(--muted); font-size: 12px; font-weight: 600; gap: 6px; }
+.commissions .field :is(input, select, textarea) {
+  width: 100%;
+  min-width: 0;
+  min-height: 38px;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 400;
+}
+.commissions .field select {
+  padding-right: 34px;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5 6 6.5 11 1.5' fill='none' stroke='%2364748b' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+}
+.commissions .field :is(input, select, textarea):disabled,
+.commissions .field input[readonly] { color: var(--muted); background-color: var(--bg); }
+.commissions .form-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 16px; min-width: 0; }
+.commission-form-body { display: grid; gap: 16px; min-width: 0; }
+.commission-form-body > p { margin: 0; }
+.commissions .commission-form-body .field,
+.commissions .payroll-form-body .field,
+.commissions .commission-period .field { margin: 0; }
+.commission-form-body > button { justify-self: start; }
+.commission-form-body > .commission-panel { margin: 0; }
+.commissions .form-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-top: 20px; }
+.commission-form > fieldset > .form-actions,
+.commission-setting-form > fieldset > .form-actions { border-top: 1px solid var(--border); padding-top: 16px; }
+.commissions .commission-panel-body > .commission-form.card {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  margin: 0;
+  background: transparent;
+}
+.commission-setting-section > .commission-form.card {
+  padding: 18px 0 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  margin-bottom: 0;
+  background: transparent;
+}
+.commission-setting-section > .field { max-width: 640px; margin: 20px 0; }
+.commission-setting-section > p { margin: 0 0 18px; }
+.commission-period, .commission-review-item {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  min-width: 0;
+}
+.commission-period { margin: 0; }
+.commission-period > :is(h3, p) { margin: 0; }
+.commission-period > button { justify-self: start; }
+.commission-review-item { margin: 16px 0; }
+.commission-review-item > p { margin: 0; }
+.commissions .commission-review-item .commission-form { background: var(--card); margin: 0; }
+.commissions .commission-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 13px 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.5;
+}
+.commissions .commission-check input[type="checkbox"] {
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+  accent-color: var(--accent);
+}
+.commissions .commission-file-field {
+  padding: 16px;
+  border: 1px dashed #abc6e4;
+  border-radius: var(--radius);
+  background: var(--bg);
+}
+.commissions .commission-file-field input[type="file"] { padding: 4px 0 0; border: 0; border-radius: 0; background: transparent; font-size: 13px; }
+.commissions input[type="file"]::file-selector-button {
+  margin-right: 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--accent-dark);
+  font: 600 13px "Segoe UI", system-ui, sans-serif;
+  cursor: pointer;
+}
+.commissions input[type="file"]::file-selector-button:hover { border-color: var(--accent); background: var(--blue-bg); }
+.commissions .commission-file-status { color: var(--muted); overflow-wrap: anywhere; }
+.commission-empty { margin: 16px 0; padding: 20px; border: 1px dashed var(--border); border-radius: var(--radius); background: var(--bg); color: var(--muted); font-size: 13px; }
+.commission-notice, .commissions [role="alert"] {
+  margin: 14px 0;
+  padding: 12px 14px;
+  border: 1px solid #ecd9a9;
+  border-radius: 6px;
+  background: var(--amber-bg);
+  color: var(--amber);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.commissions [role="alert"].error-text { border-color: #efc4bf; background: var(--red-bg); color: var(--red); }
+.commission-saved { padding: 10px 14px; border: 1px solid #b9dfca; border-radius: 6px; background: var(--green-bg); color: var(--green); font-size: 13px; }
+.commission-import-summary { padding: 14px 16px; border: 1px solid #cbdff5; border-radius: 6px; background: var(--blue-bg); color: var(--navy); font-weight: 600; }
+.commissions .commission-scroll { max-width: 100%; min-width: 0; border: 1px solid var(--border); border-radius: 6px; }
+.commissions .commission-scroll table { margin: 0; }
+.commissions .commission-scroll thead { background: var(--bg); }
+.commissions .commission-scroll th { border-bottom-width: 1px; }
+.commissions .commission-scroll tr:last-child td { border-bottom: 0; }
+.commissions .commission-scroll :is(th, td) { padding: 11px 14px; }
+.commissions .report-download { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 16px 0; }
+.commissions .report-download select { min-width: 180px; max-width: 100%; min-height: 38px; background-color: var(--card); color: var(--navy); font-weight: 600; }
+.commission-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr)); gap: 16px; margin: 16px 0; padding: 16px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }
+.commission-facts > div { min-width: 0; }
+.commission-facts dt { color: var(--muted); font-size: 11px; font-weight: 600; margin-bottom: 5px; }
+.commission-facts dd { color: var(--navy); font-size: 13px; font-weight: 600; margin: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.commission-audit-change { padding: 14px 0; border-bottom: 1px solid var(--border); }
+.commission-audit-change:first-child { padding-top: 0; }
+.commission-audit-change:last-child { padding-bottom: 0; border-bottom: 0; }
+.commission-audit-change h4 { color: var(--navy); font-size: 14px; margin: 0 0 6px; }
+.commission-audit-change p { margin: 4px 0; }
+.commission-audit-change code { color: var(--muted); overflow-wrap: anywhere; }
+@media (max-width: 760px) {
+  .commission-tabs { gap: 4px; }
+  .commission-tabs button { flex-basis: calc(50% - 4px); padding: 10px 8px; }
+  .commissions .card { padding: 18px 16px; }
+  .commissions .form-grid { grid-template-columns: minmax(0, 1fr); }
+  .commission-period, .commission-review-item { padding: 14px; }
+  .commission-facts { gap: 12px; padding: 14px; }
+}
+
+.commissions button:not([class]) { border: 1px solid var(--border); border-radius: 6px; padding: 8px 14px; color: var(--accent-dark); background: var(--card); cursor: pointer; }
+.commissions button:not([class]):hover { border-color: var(--accent); background: var(--blue-bg); }
+.commissions .field .toolbar { margin: 0; gap: 8px; }
+.commissions .field .toolbar input { flex: 1 1 200px; width: auto; }
+.commissions .field .toolbar button { flex: 0 0 auto; }

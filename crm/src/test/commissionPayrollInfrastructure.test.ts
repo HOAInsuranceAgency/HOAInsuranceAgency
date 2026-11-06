@@ -1,0 +1,32 @@
+import { expect, it, vi } from 'vitest';
+import { App, Stack } from 'aws-cdk-lib';
+import { Template } from 'aws-cdk-lib/assertions';
+import { Construct } from 'constructs';
+import { Code, Function, Runtime } from 'aws-cdk-lib/aws-lambda';
+import { AttributeType, Table } from 'aws-cdk-lib/aws-dynamodb';
+import { Topic } from 'aws-cdk-lib/aws-sns';
+vi.mock('../../amplify/migration-config', () => ({ businessBranch: 'main', migrationExecution: { holdBusinessExecution: false } }));
+import { installCommissions } from '../../amplify/commissions';
+
+it('limits payroll worker writes to delivery/audit while allowing archived PDFs and Owner lookup', () => {
+  const app = new App(), stack = new Stack(app, 'PayrollTest');
+  const api = Object.assign(new Construct(stack, 'Api'), { apiId: 'test-api' });
+  const fn = (name: string) => { const lambda = new Function(stack, name, { code: Code.fromInline('exports.handler=async()=>{}'), handler: 'index.handler', runtime: Runtime.NODEJS_22_X }); return { resources: { lambda }, addEnvironment: (k: string, v: string) => lambda.addEnvironment(k,v) }; };
+  const backend: any = { stack, createStack: (name: string) => new Stack(app,name), commissions: fn('Resolver'), commissionPayrollWorker: fn('Worker'), data: { resources: { graphqlApi: api } }, auth: { resources: { userPool: { userPoolId: 'pool', userPoolArn: 'arn:aws:cognito-idp:us-east-1:123456789012:userpool/pool' } } } };
+  const communicationTable = new Table(stack,'Communications',{partitionKey:{name:'id',type:AttributeType.STRING}});
+  installCommissions(backend,communicationTable,new Topic(stack,'Alerts'),'insurance@example.test','https://crm.example.test');
+  const template = Template.fromStack(stack).toJSON();
+  const policies = Object.values(template.Resources).filter((r:any)=>r.Type==='AWS::IAM::Policy') as any[];
+  const worker = policies.find(p=>JSON.stringify(p.Properties.Roles).includes('Worker'));
+  const statements = worker.Properties.PolicyDocument.Statement;
+  const write = statements.find((s:any)=>s.Condition?.['ForAllValues:StringEquals']?.['dynamodb:LeadingKeys'] && s.Action==='dynamodb:PutItem');
+  expect(write.Condition['ForAllValues:StringEquals']['dynamodb:LeadingKeys']).toEqual(['PAYROLL_DELIVERY','AUDIT']);
+  const read = statements.find((s:any)=>Array.isArray(s.Action)&&s.Action.includes('dynamodb:BatchGetItem'));
+  expect(read.Condition['ForAllValues:StringEquals']['dynamodb:LeadingKeys']).toEqual(expect.arrayContaining(['PAYROLL_REPORT','PAYROLL_REPORT_FILE']));
+  const directory = statements.find((s:any)=>s.Action==='cognito-idp:ListUsersInGroup');
+  expect(directory.Resource).toBe('arn:aws:cognito-idp:us-east-1:123456789012:userpool/pool');
+  expect(statements.some((s:any)=>JSON.stringify(s.Action).includes('AdminAddUserToGroup'))).toBe(false);
+  const lambda = Object.values(template.Resources).find((r:any)=>r.Type==='AWS::Lambda::Function'&&r.Properties.Environment?.Variables.COMMISSION_PAYROLL_FROM) as any;
+  expect(lambda.Properties.Environment.Variables.USER_POOL_ID).toBe('pool');
+  expect(lambda.Properties.ReservedConcurrentExecutions).toBe(1);
+}, 30_000);

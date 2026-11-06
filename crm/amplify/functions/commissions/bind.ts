@@ -103,7 +103,7 @@ export async function bindPolicy(event: Event, input: Data) {
   const plan = await get<CommissionPlan>('PLAN', producerId),
     carrierTerms = await get<CarrierCommissionTerms>('CARRIER', carrierId);
   if (!plan)
-    throw new Error('An Owner must configure this producer’s commission agreement before binding.');
+    throw new Error('An Owner must assign a commission plan to this producer before binding.');
   if (!carrierTerms)
     throw new Error(
       'An Owner must configure this carrier’s commission payment terms before binding.',

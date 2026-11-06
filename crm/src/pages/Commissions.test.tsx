@@ -3,6 +3,7 @@ import { beforeEach, expect, it, vi } from 'vitest';
 import { appendEntry } from '../../../shared/commissions';
 import { commissionPolicy, line, statement } from '../test/commissionFixtures';
 const h = vi.hoisted(() => ({
+  report: vi.fn(),
   owner: false,
   read: vi.fn(),
   action: vi.fn(),
@@ -27,7 +28,8 @@ vi.mock('../lib/client', () => ({
 vi.mock('../lib/communications', () => ({
   communicationRequest: h.communications,
 }));
-vi.mock('../components/ReportDownload', () => ({ ReportDownload: () => null }));
+vi.mock('../lib/editProtection', () => ({ useUnsavedChanges: vi.fn() }));
+vi.mock('../components/ReportDownload', () => ({ ReportDownload: ({ report }: { report: unknown }) => { h.report(report); return null; } }));
 import Commissions from './Commissions';
 const snapshot = () => ({
   plans: [],
@@ -103,6 +105,41 @@ it('clears all financial data after a failed refresh', async () => {
   h.read.mockRejectedValueOnce(new Error('Access inactive'));
   fireEvent.click(screen.getByRole('button', { name: 'Refresh commissions' }));
   await screen.findByRole('alert');
+  expect(screen.queryByText('Producer earned')).toBeNull();
+});
+it('cannot post pending eligibility even after settlement confirmation', async () => {
+  h.owner = true;
+  const data = snapshot();
+  data.statements[0].lines = [line({ reviewStatus: 'PENDING', eligible: false })];
+  h.read.mockResolvedValue(data);
+  render(<Commissions />);
+  await screen.findByText('Producer earned');
+  fireEvent.click(screen.getByRole('tab', { name: 'Reconciliation' }));
+  fireEvent.click(screen.getByLabelText(/I verified settlement evidence/));
+  expect(screen.getByRole('button', { name: 'Post reconciled statement' })).toBeDisabled();
+  expect(h.action).not.toHaveBeenCalled();
+});
+it('clears the parent commission view when a source-file request loses authorization', async () => {
+  h.owner = true;
+  render(<Commissions />);
+  await screen.findByText('Producer earned');
+  fireEvent.click(screen.getByRole('tab', { name: 'Reconciliation' }));
+  h.action.mockRejectedValue(new Error('Not authorized'));
+  fireEvent.click(screen.getByRole('button', { name: 'Download original statement' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Not authorized');
+  expect(screen.queryByText('OCT-1')).toBeNull();
+  fireEvent.click(screen.getByRole('tab', { name: 'Ledger' }));
+  expect(screen.queryByText('Producer earned')).toBeNull();
+});
+it('clears the parent commission view when the payroll workspace loses authorization', async () => {
+  h.owner = true;
+  render(<Commissions />);
+  await screen.findByText('Producer earned');
+  h.action.mockRejectedValue(new Error('Not authorized'));
+  fireEvent.click(screen.getByRole('tab', { name: 'Payroll' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Not authorized');
+  expect(screen.queryByText('Individual payroll batches (manual exceptions)')).toBeNull();
+  fireEvent.click(screen.getByRole('tab', { name: 'Ledger' }));
   expect(screen.queryByText('Producer earned')).toBeNull();
 });
 
@@ -215,64 +252,29 @@ it('lets the Owner confirm missing historical dates before adopting a policy', a
   );
 });
 
-it('requires explicit GIM rates and sends both standard and GIM agreement schedules', async () => {
+it('configures a reusable plan before assigning it to a producer', async () => {
   h.owner = true;
+  h.action.mockResolvedValue({ ok: true, id: 'standard' });
   render(<Commissions />);
   await screen.findByText('Producer earned');
   fireEvent.click(screen.getByRole('tab', { name: 'Agreements & carriers' }));
-  fireEvent.change(await screen.findByLabelText('Producer'), {
-    target: { value: 'producer' },
-  });
-  expect(screen.getByText(/GIM terms pending/)).toBeVisible();
-  fireEvent.change(screen.getByLabelText('Account first-bind cutoff (optional)'), {
-    target: { value: '2026-10-01' },
-  });
-  fireEvent.change(screen.getByLabelText('Agency receipt eligibility begins (optional)'), {
-    target: { value: '2026-10-01' },
-  });
-  fireEvent.change(screen.getByLabelText('Effective from 1'), {
-    target: { value: '2026-01-01' },
-  });
-  fireEvent.change(screen.getByLabelText('New business % 1'), {
-    target: { value: '20' },
-  });
-  fireEvent.change(screen.getByLabelText('Renewal % 1'), {
-    target: { value: '10' },
-  });
-  fireEvent.change(screen.getByLabelText('Agreement reference 1'), {
-    target: { value: 'Signed standard plan' },
-  });
-  fireEvent.click(screen.getByLabelText('Configure GIM rates for period 1'));
-  expect(screen.getByLabelText('GIM new business % 1')).toBeRequired();
-  expect(screen.getByLabelText('GIM new business % 1')).toHaveValue('');
-  fireEvent.change(screen.getByLabelText('GIM new business % 1'), {
-    target: { value: '5' },
-  });
-  fireEvent.change(screen.getByLabelText('GIM renewal % 1'), {
-    target: { value: '0' },
-  });
-  fireEvent.change(screen.getByLabelText('GIM agreement reference 1'), {
-    target: { value: 'GIM signed addendum' },
-  });
-  fireEvent.click(screen.getByRole('button', { name: 'Save producer agreement' }));
-  await waitFor(() =>
-    expect(h.action).toHaveBeenCalledWith('savePlan', {
-      accountBoundFrom: '2026-10-01',
-      receiptsFrom: '2026-10-01',
-      producerId: 'producer',
-      name: 'Brian Cole',
-      version: 0,
-      terms: [
-        {
-          from: '2026-01-01',
-          newBps: 2000,
-          renewalBps: 1000,
-          agreement: 'Signed standard plan',
-          gim: { newBps: 500, renewalBps: 0, agreement: 'GIM signed addendum' },
-        },
-      ],
-    }),
-  );
+  await screen.findByLabelText('Plan name');
+  for (const [label, value] of [['Plan name','Producer standard'],['Plan new business %','20'],['Plan renewal %','10'],['Plan document reference','Final plan']]) fireEvent.change(screen.getByLabelText(label), { target: { value } });
+  fireEvent.click(screen.getByLabelText('Include GIM house-account rates'));
+  for (const [label, value] of [['Plan GIM new business %','5'],['Plan GIM renewal %','0'],['GIM plan document reference','GIM addendum']]) fireEvent.change(screen.getByLabelText(label), { target: { value } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save commission plan' }));
+  await waitFor(() => expect(h.action).toHaveBeenCalledWith('saveCommissionPlan', { id: expect.any(String), version: 0, name: 'Producer standard', newBps: 2000, renewalBps: 1000, agreement: 'Final plan', archived: false, gim: { newBps: 500, renewalBps: 0, agreement: 'GIM addendum' } }));
+});
+it('keeps employee effective dates and eligibility on the plan assignment', async () => {
+  h.owner = true;
+  h.read.mockResolvedValue({ ...snapshot(), planDefinitions: [{ id: 'standard', version: 3, name: 'Producer standard', newBps: 2000, renewalBps: 1000, agreement: 'Plan reference', archived: false }] });
+  render(<Commissions />); await screen.findByText('Producer earned');
+  fireEvent.click(screen.getByRole('tab', { name: 'Agreements & carriers' }));
+  fireEvent.change(await screen.findByLabelText('Producer'), { target: { value: 'producer' } });
+  fireEvent.change(screen.getByLabelText('Commission plan 1'), { target: { value: 'standard:3' } });
+  for (const [label, value] of [['Assignment starts 1','2026-10-01'],['Employee agreement reference 1','Brian signed agreement'],['Account first-bind cutoff 1 (optional)','2026-10-01'],['Receipt eligibility begins 1 (optional)','2026-10-01']]) fireEvent.change(screen.getByLabelText(label), { target: { value } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save producer assignments' }));
+  await waitFor(() => expect(h.action).toHaveBeenCalledWith('savePlanAssignments', expect.objectContaining({ producerId: 'producer', version: 0, assignments: [expect.objectContaining({ planId: 'standard', planVersion: 3, from: '2026-10-01', accountBoundFrom: '2026-10-01', receiptsFrom: '2026-10-01' })] })));
 });
 it('searches and classifies a GIM account with dates and evidence and clears controls on role switch', async () => {
   h.owner = true;
@@ -587,4 +589,34 @@ it('shows the safe producer receipt summary without private carrier terms or for
   expect(screen.queryByText('Manage expected receipts')).toBeNull();
   expect(screen.queryByLabelText('Receipt reconciliation as of')).toBeNull();
   expect(h.action).not.toHaveBeenCalled();
+});
+
+it('exports shared employee earnings separately from the single agency receipt', async () => {
+  const source=snapshot();
+  source.policies[0].entries[0].producerCents=0;
+  source.policies[0].entries[0].allocationId='split';
+  h.read.mockResolvedValue({...source,earnings:[{id:'shared:avery',version:1,producerId:'producer',producerName:'Brian Cole',policyId:'p',policyNumber:'POL-1',accountName:'Cedar HOA',transaction:'NEW',entryId:'e',receivedOn:'2026-10-15',agencyCents:100000,producerBps:2000,amountCents:12000,shareBps:6000,source:'SHARED_RECEIPT',status:'PAYABLE'}]});
+  render(<Commissions />);
+  await screen.findByText('Shared commission & adjustment earnings');
+  const report=h.report.mock.calls.at(-1)![0];
+  expect(report.commissionLedger).toMatchObject({scope:'Your displayed earnings',agencyReceivedCents:100000,earnedCents:12000,paidCents:0});
+  expect(report.sections[0].rows).toHaveLength(1);
+  expect(report.sections[0].rows[0][6]).toBe(1000);
+  expect(report.sections[0].rows[0].slice(7,9)).toEqual(['','']);
+  expect(screen.getByText(/Your earnings \$120\.00/)).toBeVisible();
+  expect(report.sections[1].rows).toHaveLength(1);
+  expect(report.sections[1].rows[0].slice(5,9)).toEqual([60,20,120,'PAYABLE']);
+  expect(report.sections[1].columns).not.toContain('Agency commission (USD)');
+});
+
+it('counts payable shared earnings in the policy summary without counting review or replaced amounts', async () => {
+  h.owner = true;
+  const source = snapshot();
+  source.policies[0].entries[0].producerCents = 0;
+  source.policies[0].entries[0].allocationId = 'split';
+  const earning = {id:'shared:avery',version:1,producerId:'producer',producerName:'Avery Brooks',policyId:'p',policyNumber:'POL-1',accountName:'Cedar HOA',transaction:'NEW',entryId:'e',receivedOn:'2026-10-15',agencyCents:100000,producerBps:2000,amountCents:12000,shareBps:6000,source:'SHARED_RECEIPT',status:'PAYABLE'};
+  h.read.mockResolvedValue({...source, earnings:[earning, {...earning,id:'shared:jordan',producerId:'jordan',producerName:'Jordan Hayes',producerBps:1600,shareBps:4000,amountCents:6400}, {...earning,id:'review',status:'REVIEW',amountCents:9000}, {...earning,id:'replaced',status:'REPLACED',amountCents:5000}]});
+  render(<Commissions />);
+  expect(await screen.findByText(/Employee earnings \$184\.00/)).toBeVisible();
+  expect(screen.getByText(/Shared receipts use the individual shares and rates shown above/)).toBeVisible();
 });

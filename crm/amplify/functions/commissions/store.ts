@@ -123,13 +123,14 @@ export async function commit(changes: Change[], actor: string, extras: Transacti
         TableName: table(),
         Item: {
           kind: 'AUDIT',
-          id: randomUUID(),
+          id: `audit#${at}#${randomUUID()}`,
           actor,
           at,
           changes: changes.map((c) => ({
             kind: c.kind,
             id: c.value.id,
             previousVersion: c.previous?.version ?? 0,
+            newVersion: ((c.previous?.version as number) ?? 0) + 1,
             value:
               c.kind === 'POLICY'
                 ? {
@@ -137,6 +138,8 @@ export async function commit(changes: Change[], actor: string, extras: Transacti
                     entries: undefined,
                     entryIds: (c.value.entries as { id: string }[]).map((e) => e.id),
                   }
+                : (c.kind === 'PAYROLL_REPORT_FILE' || c.kind === 'DEPARTURE_REPORT') ? { ...c.value, content: undefined }
+                : c.kind === 'PAYROLL_REPORT' ? { contentHash: c.value.contentHash, cycleId: (c.value.cycle as Data).id, revision: (c.value.cycle as Data).revision, documents: c.value.documents }
                 : c.value,
           })),
         },
@@ -151,4 +154,21 @@ export async function commit(changes: Change[], actor: string, extras: Transacti
   )
     throw new Error('This operation is too large. Use a smaller statement or payroll batch.');
   await db.send(new TransactWriteCommand({ TransactItems: items }));
+}
+export async function auditPage(token?: unknown) {
+  let cursor: Data | undefined;
+  let legacy = false;
+  if (token !== undefined) {
+    if (typeof token !== 'string' || token.length > 1000) throw new Error('Invalid audit page.');
+    let page: { phase?: string; key?: Data };
+    try { page = JSON.parse(Buffer.from(token, 'base64url').toString('utf8')); } catch { throw new Error('Invalid audit page.'); }
+    if (!page || !['current','legacy'].includes(page.phase ?? '') || Object.keys(page).some(k => !['phase','key'].includes(k))) throw new Error('Invalid audit page.');
+    legacy = page.phase === 'legacy'; cursor = page.key;
+    if (cursor && (cursor.kind !== 'AUDIT' || typeof cursor.id !== 'string' || Object.keys(cursor).length !== 2)) throw new Error('Invalid audit page.');
+  }
+  const result = await db.send(new QueryCommand({ TableName: table(), ConsistentRead: true,
+    KeyConditionExpression: legacy ? '#kind = :kind' : '#kind = :kind AND begins_with(id, :prefix)', ExpressionAttributeNames: { '#kind': 'kind' },
+    ExpressionAttributeValues: { ':kind': 'AUDIT', ':prefix': 'audit#' }, ...(legacy ? { FilterExpression: 'NOT begins_with(id, :prefix)' } : {}), ScanIndexForward: false, Limit: 25, ExclusiveStartKey: cursor }));
+  const next = result.LastEvaluatedKey ? { phase: legacy ? 'legacy' : 'current', key: result.LastEvaluatedKey } : legacy ? undefined : { phase: 'legacy' };
+  return { entries: result.Items ?? [], legacy, cursor: next ? Buffer.from(JSON.stringify(next)).toString('base64url') : undefined };
 }

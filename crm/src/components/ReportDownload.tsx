@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { openReportWindow, saveReport, type DashboardReport } from "../lib/reportDownload";
-export const ReportContext = createContext<{ disabled: boolean; asOf: Date | null }>({ disabled: false, asOf: null });
+export const ReportContext = createContext<{ disabled: boolean; asOf: Date | null; isTest?: boolean }>({ disabled: false, asOf: null });
 export function ReportDownload({ report, disabled = false, loadReport }: { report: DashboardReport; disabled?: boolean; loadReport?: () => Promise<DashboardReport> }) {
   const context = useContext(ReportContext), [error, setError] = useState(""), [loading, setLoading] = useState(false);
   const inFlight = useRef(false), mounted = useRef(true), pendingWindow = useRef<Window | null>(null);
@@ -12,7 +12,7 @@ export function ReportDownload({ report, disabled = false, loadReport }: { repor
     <select aria-label={`Download ${report.title}`} value="" disabled={disabled || context.disabled || loading} onChange={e => {
       const format = e.target.value;
       if (format !== "csv" && format !== "pdf" || inFlight.current) return;
-      const snapshot = { asOf: context.asOf ?? new Date(), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone };
+      const snapshot = { asOf: context.asOf ?? new Date(), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, isTest: context.isTest };
       if (!loadReport) {
         try { saveReport(report, snapshot, format); setError(""); }
         catch (err) { setError(err instanceof Error ? err.message : "Could not prepare the report."); }

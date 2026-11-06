@@ -10,7 +10,7 @@ const config = vi.hoisted(() => ({ migrationDestination: true, migrationPreview:
 vi.mock("../../amplify/migration-config", () => config);
 import { installTransactionalMail } from "../../amplify/transactional-mail";
 const identity = "arn:aws:ses:us-east-1:917680434255:identity/protectmyhoa.com";
-const senders = ["magicLinkVerify", "teamAdmin", "sendInvoice", "marketingReportWorker", "stripeWebhook", "mailVerification", "mailRecovery"];
+const senders = ["magicLinkVerify", "teamAdmin", "sendInvoice", "marketingReportWorker", "commissionPayrollWorker", "stripeWebhook", "mailVerification", "mailRecovery"];
 function infra() {
   const app = new App(); const stack = new Stack(app, "ExistingMail", { env: { account: "917680434255", region: "us-east-1" } });
   const sesStack = new Stack(app, "NewSesMail", { env: { account: "917680434255", region: "us-east-1" } });
@@ -112,7 +112,7 @@ describe("SES-only transactional mail infrastructure", () => {
   });
   it("denies every send in previews without requiring feedback resources", () => {
     config.migrationPreview = true; const { existing, ses } = infra();
-    expect(statements(existing).filter(s => s.Effect === "Deny" && s.Action === "ses:Send*" && s.Resource === "*")).toHaveLength(7); expect(resources(ses)).toHaveLength(0);
+    expect(statements(existing).filter(s => s.Effect === "Deny" && s.Action === "ses:Send*" && s.Resource === "*")).toHaveLength(senders.length); expect(resources(ses)).toHaveLength(0);
   });
   it.each(["0", "-1", "100x", "50001", "1.5"])("rejects invalid SES daily limit %s", value => {
     vi.stubEnv("HOA_SES_DAILY_LIMIT", value); expect(() => infra()).toThrow("application limit");

@@ -195,7 +195,7 @@ it('blocks a stale client selection and missing agreement setup', async () => {
   await expect(bindPolicy(event, input())).rejects.toThrow(/selected package/);
   h.rows.delete('Communication:commercial:a');
   h.get.mockResolvedValue(undefined);
-  await expect(bindPolicy(event, input())).rejects.toThrow(/configure/);
+  await expect(bindPolicy(event, input())).rejects.toThrow(/assign a commission plan/);
   expect(h.commit).not.toHaveBeenCalled();
 });
 

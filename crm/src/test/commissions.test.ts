@@ -151,6 +151,7 @@ it('separates paid recovery proposals from adjustments to unpaid earnings', asyn
   const batch = {
     id: 'batch',
     status: 'PAID',
+    totalCents: 16000,
   } as import('../../../shared/commissions').CommissionBatch;
   expect(recoveryBalances(p, [batch])).toEqual({ paidRecovery: 16000, unpaidAdjustment: 0 });
   p = appendEntry(

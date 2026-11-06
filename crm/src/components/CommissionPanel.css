@@ -1,0 +1,60 @@
+/* Shared disclosure pattern, using the CRM's existing design tokens. */
+.commission-panel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+  margin: 12px 0;
+  min-width: 0;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.commission-panel > summary {
+  display: block;
+  list-style: none;
+  position: relative;
+  padding: 14px 42px 14px 16px;
+  cursor: pointer;
+  color: var(--navy);
+  font-weight: 600;
+  line-height: 1.5;
+  border-radius: var(--radius);
+  overflow-wrap: anywhere;
+}
+.commission-panel > summary::-webkit-details-marker { display: none; }
+.commission-panel > summary::marker { content: ""; }
+.commission-panel > summary::after {
+  content: "";
+  position: absolute;
+  right: 18px;
+  top: 20px;
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid var(--muted);
+  border-bottom: 1.5px solid var(--muted);
+  transform: rotate(-45deg);
+}
+.commission-panel[open] > summary::after { transform: rotate(45deg); }
+.commission-panel > summary:hover { background: var(--bg); }
+.commission-panel > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.commission-panel > summary small {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-weight: 400;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.commission-panel[open] > summary {
+  border-bottom: 1px solid var(--border);
+  border-radius: var(--radius) var(--radius) 0 0;
+  background: var(--bg);
+}
+.commission-panel-body { padding: 18px; min-width: 0; }
+.commission-panel-body > :first-child { margin-top: 0; }
+.commission-panel-body > :last-child { margin-bottom: 0; }
+.commission-panel--danger > summary { color: var(--red); }
+.commission-panel-body > .commission-panel { background: var(--card); }
+@media (max-width: 650px) {
+  .commission-panel-body { padding: 14px; }
+  .commission-panel > summary { padding-left: 14px; }
+}
