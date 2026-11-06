@@ -142,6 +142,11 @@ It does not retrieve cloud credentials, run a sandbox, or deploy a backend.
 The verifier runs on macOS and Linux. On cancellation it stops its command's
 process group before restoring the configuration and build output.
 It preserves dependency symlinks so the same checks work in prepared audit worktrees.
+The offline suite uses two Vitest worker processes to preserve per-process
+timezone behavior, and backend synth checks use Node's `tsx` loader directly.
+Node test scripts run without per-file subprocess isolation.
+These choices keep the same tests and checks while avoiding local IPC
+listeners that the audit sandbox blocks; they do not enable network access.
 
 The staging CI workflow runs these checks on Node 22 and Node 24, covering both
 the deployed toolchain and the nightly audit runner. Audit reports should cite

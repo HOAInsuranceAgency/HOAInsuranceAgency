@@ -29,7 +29,11 @@ export function offlinePlan(scope = 'crm', directory = crmDirectory) {
   if (scope !== 'crm') throw new Error(`Unknown offline verification scope: ${scope}`);
   const command = process.platform === 'win32' ? 'npm.cmd' : 'npm';
   const task = (name, script, env = {}) => ({ name, command, args: ['run', script], cwd: directory, env });
-  return [task('CRM tests', 'test:run'), task('CRM and backend types', 'typecheck'), task('CRM production build', 'build'),
+  const tests = task('CRM tests', 'test:run');
+  // Bound worker resources while retaining real per-process timezone changes
+  // used by the calendar tests; thread workers cannot apply process.env.TZ.
+  tests.args.push('--', '--pool=forks', '--maxWorkers=2');
+  return [tests, task('CRM and backend types', 'typecheck'), task('CRM production build', 'build'),
     task('Backend synth: main', 'synth:check', { AWS_BRANCH: 'main' }),
     task('Backend synth: staging', 'synth:check', { AWS_BRANCH: 'staging' })];
 }

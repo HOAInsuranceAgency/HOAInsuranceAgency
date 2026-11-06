@@ -1,4 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { URL as NodeURL } from "node:url";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { AGENCY_FMT } from "../../../shared/agency";
 import {
   buildMimeMessage,
   encodeHeader,
@@ -214,6 +217,23 @@ describe("invoiceTerms", () => {
  * and only the bytes prove it did not.
  */
 describe("the invoice PDF", () => {
+  // Use Node URL resolution so Vite does not rewrite this fixture to a browser asset URL.
+  const logo = readFileSync(new NodeURL("../../public/logo.png", import.meta.url));
+  const fetchLogo = vi.fn(async (input: RequestInfo | URL) => {
+    if (input !== AGENCY_FMT.logoUrl) throw new Error("Unexpected invoice PDF network request");
+    return new Response(Uint8Array.from(logo).buffer, { status: 200, headers: { "content-type": "image/png" } });
+  });
+  beforeAll(() => { vi.stubGlobal("fetch", fetchLogo); });
+  afterAll(() => {
+    try {
+      // loadLogo catches transport errors, so assert the calls here as well:
+      // a request to any other URL must fail instead of silently using its fallback.
+      expect(fetchLogo).toHaveBeenCalledExactlyOnceWith(AGENCY_FMT.logoUrl);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   const view = {
     number: "INV-2026-00042",
     associationName: "Maple Court Condominium Trust",
@@ -283,6 +303,19 @@ describe("the invoice PDF", () => {
         : Buffer.from(hex, "hex").toString("latin1")
     );
   };
+
+  it("embeds the local agency PNG at its real dimensions without a network dependency", async () => {
+    const { PDFDict, PDFDocument, PDFName, PDFNumber, PDFRawStream } = await import("pdf-lib");
+    const { renderInvoicePdf } = await import("../../amplify/functions/send-invoice/pdf");
+    const document = await PDFDocument.load(await renderInvoicePdf(view as never));
+    expect(document.getPageCount()).toBe(1);
+    const images = document.getPages()[0].node.Resources()!.lookup(PDFName.of("XObject"), PDFDict);
+    const image = images.entries().map(([, reference]) => document.context.lookup(reference))
+      .find((entry): entry is import("pdf-lib").PDFRawStream => entry instanceof PDFRawStream && entry.dict.get(PDFName.of("Subtype")) === PDFName.of("Image"));
+    expect(image).toBeDefined();
+    expect(image!.dict.lookup(PDFName.of("Width"), PDFNumber).asNumber()).toBe(750);
+    expect(image!.dict.lookup(PDFName.of("Height"), PDFNumber).asNumber()).toBe(148);
+  });
 
   it("shows the retail figures and the total", async () => {
     const pdf = await text();
