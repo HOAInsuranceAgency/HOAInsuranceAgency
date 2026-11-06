@@ -4,7 +4,7 @@ import { Amplify } from "aws-amplify";
 import { generateClient } from "aws-amplify/data";
 import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtime";
 import type { Schema } from "../../data/resource";
-import { safeSegment } from "../../../../shared/storageKeys";
+import { documentObjectKey } from "../../../../shared/storageKeys";
 import { operationOf } from "./dispatch";
 import {
   IDLE_AFTER_UPLOAD_MINUTES,
@@ -108,6 +108,7 @@ async function handleRequestUpload(
     // extraction pass does not depend on the category being right.
     category: "OTHER",
     name: filename,
+    uploadedName: filename,
     s3Key: "pending",
     contentType: typeof args.contentType === "string" ? args.contentType : undefined,
     sizeBytes,
@@ -120,13 +121,7 @@ async function handleRequestUpload(
 
   // Same layout as a staff upload, so `process-document` can parse the
   // Document id back out of the key and OCR fires with no special case.
-  const key = [
-    "documents",
-    "ACCOUNT",
-    safeSegment(reply.accountId),
-    safeSegment(doc.id),
-    safeSegment(filename),
-  ].join("/");
+  const key = documentObjectKey("ACCOUNT", reply.accountId, doc.id, filename);
 
   const url = await getSignedUrl(
     s3,

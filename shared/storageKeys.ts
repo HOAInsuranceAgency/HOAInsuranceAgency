@@ -29,3 +29,8 @@ export function safeSegment(value: string): string {
     .trim();
   return cleaned || "file";
 }
+
+/** Staff and public uploads share the OCR worker's five-segment key layout. */
+export function documentObjectKey(entityType: string, entityId: string, documentId: string, filename: string): string {
+  return ["documents", ...[entityType, entityId, documentId, filename].map(safeSegment)].join("/");
+}

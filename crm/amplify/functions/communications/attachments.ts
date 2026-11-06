@@ -31,7 +31,7 @@ export async function importAttachment(op: Operation) {
   // Validate and fully download before making a document visible. Rejected
   // hosts, oversized bodies and failed downloads cannot leave empty documents.
   if (!existing.data) {
-    const created = await client.models.Document.create({ id: documentId, entityType: "ACCOUNT", entityId: op.accountId, name: filename, s3Key: key,
+    const created = await client.models.Document.create({ id: documentId, entityType: "ACCOUNT", entityId: op.accountId, name: filename, uploadedName: filename, s3Key: key,
       contentType: attachment.content_type, sizeBytes: downloaded?.length ?? attachment.size, uploadedBy: op.requestedBy, lastWriteBy: "front-attachment", ocrStatus: "PENDING" });
     if (created.errors?.length) throw new Error("Could not create CRM document");
   }

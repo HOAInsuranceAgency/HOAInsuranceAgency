@@ -1,5 +1,4 @@
 import { accountPath, accountManagementPath } from '../../../shared/crmRoutes';
-import { assertGraphqlErrors } from '../lib/apiResponse';
 import { Button } from "../components/ui/Button";
 import { Select } from "../components/ui/Select";
 import { Input } from "../components/ui/Input";
@@ -15,7 +14,7 @@ import { isAssignableSalesperson } from "../../../shared/salespersonOwnership";
 import { useAsyncResource } from "../lib/useAsyncResource";
 import { useState, useEffect, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { uploadData } from "../lib/scopedStorage";
+import { uploadDocument } from "../lib/storage";
 import { client,
   friendlyError,
   validateAccountFields,
@@ -266,30 +265,12 @@ export default function NewLead() {
     for (const file of stagedFiles) {
       if (!mounted.current) return;
       try {
-        const { data: doc } = await client.models.Document.create({
+        await uploadDocument({
           entityType: "ACCOUNT",
           entityId: data.id,
           category: "OTHER",
-          name: file.name,
-          s3Key: "pending",
-          contentType: file.type,
-          sizeBytes: file.size,
-          ocrStatus: "PENDING",
+          file,
         });
-        if (!mounted.current) return;
-        if (!doc) {
-          failedUploads.push(file.name);
-          continue;
-        }
-        const path = `documents/ACCOUNT/${data.id}/${doc.id}/${file.name}`;
-        const updated = await client.models.Document.update({ id: doc.id, s3Key: path });
-        if (!mounted.current) return;
-        assertGraphqlErrors(updated);
-        await uploadData({
-          path,
-          data: file,
-          options: { contentType: file.type || undefined },
-        }).result;
       } catch {
         // A failed upload shouldn't block lead creation, but navigating away
         // without saying so loses the attachment silently.

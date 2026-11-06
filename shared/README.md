@@ -25,3 +25,12 @@ legacy public offers missing an explicit server total retain their raw dollar su
 These policies intentionally differ for fractional-cent historical inputs. Existing
 cent-valued quotes agree, and an explicit server total (including zero) stays
 authoritative. Billing versions and actual-receipt compatibility remain server-owned.
+
+`storageKeys.ts` owns the normalized five-segment document key used by staff and
+public uploads. Browser file attachments use `uploadDocument` in `crm/src/lib/storage.ts`
+for record/link/upload ordering and failed-record cleanup. External file creators
+stamp `uploadedName` equal to their initial `name`; the OCR worker uses this immutable
+provenance to respect later manual renames even when the object filename was normalized.
+Front imports retain their existing provider-specific filename/key and deterministic
+ID for retries. Public token, quota and presign guards and generated documents remain
+owned by their handlers; this key helper does not change those lifecycles.
