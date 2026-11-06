@@ -1,6 +1,6 @@
 import { assertWebsiteActionsEnabled } from "./migrationPreview";
 import { publicApi } from "./publicApi";
-import { isHttpsUrl, isRecord } from '../../../shared/apiResponse';
+import { readPortalStatus, readUploadDestination, type PortalStatus } from '../../../shared/publicUploads';
 /**
  * The lead document portal's two calls against the CRM's public AppSync API.
  *
@@ -35,37 +35,11 @@ async function call(query: string, variables: Record<string, unknown>, field: st
   });
 }
 
-export interface PortalSection {
-  key: string;
-  label: string;
-  help: string;
-  received: number;
-}
-
-export interface PortalStatus {
-  associationName: string;
-  expiresAt: string;
-  uploadCount: number;
-  maxFiles: number;
-  full: boolean;
-  sections: PortalSection[];
-}
-
 export async function fetchPortalStatus(token: string): Promise<PortalStatus> {
   const r = await call(STATUS_QUERY, { token }, "uploadPortalStatus");
-  if (typeof r.associationName !== 'string' || typeof r.expiresAt !== 'string' || typeof r.full !== 'boolean'
-    || !Number.isSafeInteger(r.uploadCount) || Number(r.uploadCount) < 0 || !Number.isSafeInteger(r.maxFiles) || Number(r.maxFiles) < 0
-    || !Array.isArray(r.sections) || !r.sections.every(section => isRecord(section) && ['key', 'label', 'help'].every(key => typeof section[key] === 'string') && Number.isSafeInteger(section.received) && Number(section.received) >= 0)) {
-    throw new Error('The server sent back something unreadable.');
-  }
-  return {
-    associationName: String(r.associationName ?? "your association"),
-    expiresAt: String(r.expiresAt ?? ""),
-    uploadCount: Number(r.uploadCount ?? 0),
-    maxFiles: Number(r.maxFiles ?? 0),
-    full: r.full === true,
-    sections: r.sections.map(section => ({ key: String(section.key), label: String(section.label), help: String(section.help), received: Number(section.received) })),
-  };
+  const status = readPortalStatus(r);
+  if (!status) throw new Error('The server sent back something unreadable.');
+  return status;
 }
 
 /**
@@ -91,11 +65,11 @@ export async function uploadPortalFile(
     },
     "requestPortalUpload"
   );
-  const uploadUrl = r.uploadUrl;
-  if (!isHttpsUrl(uploadUrl)) throw new Error("The server didn't give us anywhere to put it.");
+  const receipt = readUploadDestination(r);
+  if (!receipt) throw new Error("The server didn't give us anywhere to put it.");
 
   assertWebsiteActionsEnabled();
-  const put = await fetch(uploadUrl, {
+  const put = await fetch(receipt.uploadUrl, {
     method: "PUT",
     // Must match the Content-Type the presign was signed with, or S3 rejects
     // the signature. An empty type is signed as absent and sent as absent.

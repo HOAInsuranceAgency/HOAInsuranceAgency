@@ -3,6 +3,7 @@ import {
   REQUESTED_DOCUMENTS,
   categoryForKey,
 } from "../../../../shared/leadDocuments";
+import type { PortalSection } from "../../../../shared/publicUploads";
 
 /**
  * The rules a public upload link is held to. Pure — no data client, no S3 — so
@@ -77,15 +78,6 @@ export function looksLikeToken(token: unknown): token is string {
   return typeof token === "string" && token.length >= MIN_TOKEN_LENGTH;
 }
 
-/** One checklist section, as the page renders it. */
-export interface ChecklistSection {
-  key: string;
-  label: string;
-  help: string;
-  /** How many files have arrived against this section. */
-  received: number;
-}
-
 /**
  * The checklist, with counts filled in from the account's documents.
  *
@@ -100,7 +92,7 @@ export interface ChecklistSection {
  */
 export function buildChecklist(
   documents: readonly { category?: string | null }[]
-): ChecklistSection[] {
+): PortalSection[] {
   const counts = new Map<string, number>();
   for (const doc of documents) {
     if (!doc.category) continue;

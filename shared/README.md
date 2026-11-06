@@ -34,3 +34,8 @@ provenance to respect later manual renames even when the object filename was nor
 Front imports retain their existing provider-specific filename/key and deterministic
 ID for retries. Public token, quota and presign guards and generated documents remain
 owned by their handlers; this key helper does not change those lifecycles.
+
+`publicUploads.ts` owns public checklist and reservation response contracts.
+Its browser readers project only the displayed checklist fields or an HTTPS upload
+destination; unused reservation metadata is not required from legacy responses.
+Token authorization, quotas, presigning and upload-window timing stay server-owned.
