@@ -6,10 +6,10 @@ import { Table } from "./ui/Table";
 import { Input } from "./ui/Input";
 import { useEffect, useId, useRef, useState } from "react";
 import "./DocumentsPanel.css";
-import { uploadData, remove } from "../lib/scopedStorage";
+import { remove } from "../lib/scopedStorage";
 import { client, friendlyError, type CrmDocument, type Policy, type Quote } from "../lib/client";
 import { listAllPages } from "../../../shared/pagination";
-import { downloadFile } from "../lib/storage";
+import { downloadFile, uploadDocument } from "../lib/storage";
 import { useAsyncResource } from "../lib/useAsyncResource";
 import { isAuthorizationError } from "../../../shared/authorizationError";
 import { allWithAuthorizationPriority } from "../lib/allWithAuthorizationPriority";
@@ -179,38 +179,18 @@ function DocumentsPanelContent({
     setUploading(true);
     setError("");
     for (const file of files) {
-      let docId: string | null = null;
       try {
-        const { data: doc, errors } = await client.models.Document.create({
+        await uploadDocument({
           entityType,
           entityId,
           sourceCommunicationId,
           category,
-          name: file.name,
-          s3Key: "pending",
-          contentType: file.type,
-          sizeBytes: file.size,
-          ocrStatus: "PENDING",
+          file,
           // Uploads land where the viewer is looking: the selected policy
           // or quote, or unlinked when viewing everything.
           ...(view ? linkFields(view) : {}),
         });
-        if (errors?.length || !doc) throw new Error(errors?.[0]?.message);
-        docId = doc.id;
-
-        const path = `documents/${entityType}/${entityId}/${doc.id}/${file.name}`;
-        const linked = await client.models.Document.update({ id: doc.id, s3Key: path });
-        assertGraphqlErrors(linked);
-        await uploadData({
-          path,
-          data: file,
-          options: { contentType: file.type || undefined },
-        }).result;
       } catch (err) {
-        // Don't leave a ghost record behind for a file that never landed.
-        if (docId) {
-          await client.models.Document.delete({ id: docId }).catch(() => {});
-        }
         setError(
           `"${file.name}" failed to upload — ${friendlyError(err, "unknown error")}`
         );

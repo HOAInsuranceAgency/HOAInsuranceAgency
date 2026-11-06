@@ -146,6 +146,9 @@ export async function uploadDocument(opts: {
   entityId: string;
   category: DocumentCategory;
   file: File;
+  sourceCommunicationId?: string;
+  policyId?: string | null;
+  quoteId?: string | null;
 }): Promise<CrmDocument> {
   const { entityType, entityId, category, file } = opts;
 
@@ -153,18 +156,21 @@ export async function uploadDocument(opts: {
     entityType,
     entityId,
     category,
+    sourceCommunicationId: opts.sourceCommunicationId,
+    policyId: opts.policyId,
+    quoteId: opts.quoteId,
     name: file.name,
+    uploadedName: file.name,
     s3Key: PENDING_KEY,
     contentType: file.type,
     sizeBytes: file.size,
     ocrStatus: "PENDING",
   });
-  assertGraphqlErrors({ errors });
-  if (!doc) {
-    throw new Error(errors?.[0]?.message ?? `Couldn't record "${file.name}".`);
-  }
-
   try {
+    assertGraphqlErrors({ errors });
+    if (!doc) {
+      throw new Error(`Couldn't record "${file.name}".`);
+    }
     const path = assertGrantedPath(
       [
         "documents",
@@ -184,6 +190,10 @@ export async function uploadDocument(opts: {
     return linked ?? { ...doc, s3Key: path };
   } catch (err) {
     // Don't leave a ghost record behind for a file that never landed.
+    // A partial GraphQL response may include the created row and errors.
+    if (!doc?.id) {
+      throw err;
+    }
     try {
       const { errors: delErrors } = await client.models.Document.delete({ id: doc.id });
       assertGraphqlErrors({ errors: delErrors });

@@ -160,6 +160,8 @@ export class AccountAccess {
     if(model==="Account"&&operation==="delete"&&(await this.get("Account",id(input.id)))?.brokerFeeHistory)throw new Error("Accounts with signed fee disclosures must retain their document history.");
     if (model === "Document") {
       const previous = input.id ? await this.get("Document", id(input.id)) : undefined;
+      if (operation === "create" && input.uploadedName != null && input.uploadedName !== input.name) throw new Error("The uploaded filename must match the initial document name.");
+      if (operation === "update" && Object.hasOwn(input, "uploadedName") && (input.uploadedName ?? null) !== (previous?.uploadedName ?? null)) throw new Error("The original uploaded filename cannot be changed.");
       if (input.category === "BROKER_FEE_DISCLOSURE" || previous?.category === "BROKER_FEE_DISCLOSURE") throw new Error("Signed broker fee disclosures are preserved by the signing service and cannot be replaced or deleted.");
     }
     if (model === "AgencySettings" && ["brokerFeeJurisdictions","brokerFeeJurisdictionsVersion"].some(key=>Object.hasOwn(input,key))) throw new Error("Save reviewed broker fee rules through Agency settings.");

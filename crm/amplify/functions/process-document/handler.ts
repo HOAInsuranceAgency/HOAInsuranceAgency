@@ -166,17 +166,18 @@ async function autoName(
 ): Promise<void> {
   try {
     const { data: doc } = await client.models.Document.get({ id: documentId });
-    if (!doc || doc.name !== filename) return;
+    if (!doc) return;
+    const uploadedName = doc.uploadedName ?? filename;
+    if (doc.name !== uploadedName) return;
 
     const suggested = await suggestDocumentName({
       ocrText,
       category: doc.category,
-      filename,
+      filename: uploadedName,
     });
     if (!suggested) return;
 
-    // The extension comes from the key, not from `doc.name`: they are the
-    // same string today, and this is the one that stays true if that changes.
+    // The extension comes from the object key even when its basename was normalized.
     const name = withExtension(suggested, filename);
     if (!name || name === doc.name) return;
 

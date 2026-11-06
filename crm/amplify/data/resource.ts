@@ -1583,6 +1583,7 @@ const schema = a
         deliveredAt: a.datetime(),
         category: a.ref("DocumentCategory"),
         name: a.string().required(),
+        uploadedName: a.string(), // Original filename; renaming only changes name.
         s3Key: a.string().required(),
         contentType: a.string(),
         sizeBytes: a.integer(),
