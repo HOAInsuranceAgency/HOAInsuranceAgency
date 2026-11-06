@@ -15,6 +15,18 @@ class AuditTest(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
+        # Unit tests own their runner-command files. In the hosted audit
+        # sandbox, the real GitHub step destinations are deliberately read-only.
+        self.github_output = self.root / "github-output"
+        self.github_summary = self.root / "github-summary"
+        for destination in (self.github_output, self.github_summary):
+            destination.touch(mode=0o600)
+        environment = patch.dict(audit.os.environ, {
+            "GITHUB_OUTPUT": str(self.github_output),
+            "GITHUB_STEP_SUMMARY": str(self.github_summary),
+        })
+        environment.start()
+        self.addCleanup(environment.stop)
         self.repo = self.root / "repo"
         self.repo.mkdir()
         self.output = self.root / "output"
@@ -60,6 +72,7 @@ class AuditTest(unittest.TestCase):
             for relative in audit.DEPENDENCY_DIRS:
                 self.assertTrue((worktree / relative).is_symlink())
         self.assertEqual(json.loads((self.output / "context.json").read_text())["base_sha"], self.base)
+        self.assertEqual(self.github_output.read_text(), f"base_sha={self.base}\n")
 
     def test_valid_patch_and_new_file_export(self):
         proposal = self.proposal(name="web/src/new.ts")
@@ -217,12 +230,13 @@ class AuditTest(unittest.TestCase):
         self.assertIn("[skip-cd]", audit.git(self.repo, "log", "-1", "--format=%s"))
 
     def test_validate_only_never_calls_github_or_push(self):
-        self.manifest([self.proposal()])
+        manifest = self.manifest([self.proposal()])
         args = argparse.Namespace(repo=self.repo, output=self.output, repository="owner/repo", base=self.base, validate_only=True)
         with patch.object(audit, "current_prs", side_effect=AssertionError("No network")):
             audit.publish(args)
         self.assertEqual(audit.git(self.repo, "status", "--porcelain"), "")
         self.assertEqual(audit.git(self.repo, "rev-parse", "HEAD").strip(), self.base)
+        self.assertEqual(self.github_summary.read_text(), manifest["report"] + "\n\n")
 
     def test_stale_base_cannot_publish(self):
         self.manifest([])
