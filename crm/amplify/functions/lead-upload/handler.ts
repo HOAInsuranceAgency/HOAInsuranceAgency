@@ -3,6 +3,8 @@ import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { documentObjectKey } from "../../../../shared/storageKeys";
 import { operationOf } from "./dispatch";
+import type { ApiFailure } from "../../../../shared/apiResponse";
+import type { CloseLeadUploadResponse, LeadUploadResponse } from "../../../../shared/publicUploads";
 import {
   IDLE_AFTER_UPLOAD_MINUTES,
   MAX_FILES,
@@ -45,12 +47,12 @@ async function liveWindow(client: DataClient, uploadToken: unknown) {
   return reply;
 }
 
-const refused = { ok: false, error: "That upload link is no longer active." };
+const refused: ApiFailure = { ok: false, error: "That upload link is no longer active." };
 
 async function handleRequestUpload(
   client: DataClient,
   args: Record<string, unknown>
-) {
+): Promise<LeadUploadResponse> {
   const reply = await liveWindow(client, args.uploadToken);
   if (!reply) return refused;
 
@@ -154,7 +156,7 @@ async function handleRequestUpload(
 async function handleCloseWindow(
   client: DataClient,
   args: Record<string, unknown>
-) {
+): Promise<CloseLeadUploadResponse> {
   const reply = await liveWindow(client, args.uploadToken);
   // Already sent or unknown: report success. The caller is usually a beacon
   // firing as a tab dies and cannot act on an error, and "your reply already
@@ -175,7 +177,7 @@ async function handleCloseWindow(
 export const handler = async (event: {
   info?: { fieldName?: string };
   arguments?: Record<string, unknown>;
-}) => {
+}): Promise<LeadUploadResponse | CloseLeadUploadResponse> => {
   const client = await getDataClient();
   const args = event.arguments ?? {};
 

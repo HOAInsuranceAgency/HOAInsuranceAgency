@@ -7,6 +7,7 @@ import { documentObjectKey } from "../../../../shared/storageKeys";
 import { listAllPages } from "../../../../shared/pagination";
 import { REJECTION_MESSAGE, rejectUpload } from "../../../../shared/leadUpload";
 import { PORTAL_MAX_FILES } from "../../../../shared/leadDocuments";
+import type { PortalStatusResponse, PortalUploadResponse } from "../../../../shared/publicUploads";
 import { reserveUploadSlot } from "../uploadQuota";
 import {
   PORTAL_REFUSAL_MESSAGE,
@@ -66,7 +67,7 @@ async function documentsFor(client: DataClient, accountId: string) {
   );
 }
 
-async function handleGetPortal(client: DataClient, args: Record<string, unknown>) {
+async function handleGetPortal(client: DataClient, args: Record<string, unknown>): Promise<PortalStatusResponse> {
   const portal = await findPortal(client, args.token);
   const now = new Date().toISOString();
   const refusal = refusalFor(portal, now);
@@ -108,7 +109,7 @@ async function handleGetPortal(client: DataClient, args: Record<string, unknown>
 async function handleRequestUpload(
   client: DataClient,
   args: Record<string, unknown>
-) {
+): Promise<PortalUploadResponse> {
   const portal = await findPortal(client, args.token);
   const refusal = refusalFor(portal, new Date().toISOString());
   if (refusal || !portal) {
@@ -226,7 +227,7 @@ async function handleRequestUpload(
 export const handler = async (event: {
   info?: { fieldName?: string };
   arguments?: Record<string, unknown>;
-}) => {
+}): Promise<PortalStatusResponse | PortalUploadResponse> => {
   const client = await getDataClient();
   const args = event.arguments ?? {};
 

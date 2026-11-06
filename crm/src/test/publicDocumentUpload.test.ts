@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
   lead: vi.fn(), portal: vi.fn(), create: vi.fn(), link: vi.fn(),
+  account: vi.fn(), documents: vi.fn(),
   leadUpdate: vi.fn(), portalUpdate: vi.fn(), reserve: vi.fn(), presign: vi.fn(),
 }));
 vi.mock("aws-amplify", () => ({ Amplify: { configure: vi.fn() } }));
@@ -9,7 +10,8 @@ vi.mock("@aws-amplify/backend/function/runtime", () => ({ getAmplifyDataClientCo
 vi.mock("aws-amplify/data", () => ({ generateClient: () => ({ models: {
   LeadReply: { listLeadReplyByUploadToken: h.lead, update: h.leadUpdate },
   UploadPortal: { listUploadPortalByToken: h.portal, update: h.portalUpdate },
-  Document: { create: h.create, update: h.link },
+  Account: { get: h.account },
+  Document: { create: h.create, update: h.link, list: h.documents },
 } }) }));
 vi.mock("@aws-sdk/client-s3", () => ({ S3Client: class {}, PutObjectCommand: class { constructor(public input: unknown) {} } }));
 vi.mock("@aws-sdk/s3-request-presigner", () => ({ getSignedUrl: h.presign }));
@@ -20,6 +22,7 @@ import { handler as leadUpload } from "../../amplify/functions/lead-upload/handl
 import { handler as portalUpload } from "../../amplify/functions/upload-portal/handler";
 import { MAX_FILES } from "../../../shared/leadUpload";
 import { PORTAL_MAX_FILES } from "../../../shared/leadDocuments";
+import { readPortalStatus, readUploadDestination } from "../../../shared/publicUploads";
 
 const token = "fictional-upload-token-for-tests";
 const base = { filename: "_scan.pdf", sizeBytes: 1000, contentType: "application/pdf" };
@@ -38,6 +41,8 @@ beforeEach(() => {
   h.create.mockResolvedValue({ data: { id: "d1" } });
   h.link.mockResolvedValue({}); h.leadUpdate.mockResolvedValue({}); h.portalUpdate.mockResolvedValue({});
   h.reserve.mockResolvedValue(1); h.presign.mockResolvedValue("https://files.example.test/signed");
+  h.account.mockResolvedValue({ data: { id: "a1", name: "Fictional HOA", address: "Private address", contactEmail: "private@example.test" } });
+  h.documents.mockResolvedValue({ data: [{ id: "private-document", name: "Private.pdf", category: "POLICY" }] });
 });
 afterEach(() => vi.unstubAllEnvs());
 
@@ -45,6 +50,8 @@ describe.each(callers)("$name public document upload", ({ name, invoke, table, i
   it("retains the initial filename for OCR while signing the normalized key and exact size", async () => {
     const result = await invoke();
     expect(result).toMatchObject({ ok: true, documentId: "d1", uploadCount: 1 });
+    expect(readUploadDestination(result)).toEqual({ uploadUrl: "https://files.example.test/signed" });
+    expect(Object.keys(result).sort()).toEqual(["ok", "documentId", "uploadUrl", "uploadCount", ...(name === "portal" ? ["category"] : [])].sort());
     expect(h.create).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
       entityType: "ACCOUNT", entityId: "a1", name: "_scan.pdf", uploadedName: "_scan.pdf", s3Key: "pending",
       contentType: "application/pdf", sizeBytes: 1000, ocrStatus: "PENDING", lastWriteBy: name === "lead" ? "lead-upload" : "upload-portal",
@@ -79,4 +86,28 @@ describe.each(callers)("$name public document upload", ({ name, invoke, table, i
     expect(await invoke()).toMatchObject({ ok: false });
     expect(h.reserve).not.toHaveBeenCalled(); expect(h.create).not.toHaveBeenCalled();
   });
+});
+
+it("returns only the public checklist fields, not account or document details", async () => {
+  const result = await portalUpload({ arguments: { token } });
+  expect(result.ok).toBe(true);
+  const status = readPortalStatus(result);
+  expect(status).toMatchObject({ associationName: "Fictional HOA", uploadCount: 0, maxFiles: PORTAL_MAX_FILES, full: false });
+  expect(Object.keys(result).sort()).toEqual(["ok", "associationName", "expiresAt", "uploadCount", "maxFiles", "full", "sections"].sort());
+  expect(JSON.stringify(result)).not.toMatch(/Private|private|a1/);
+  expect(status?.sections.every(section => Object.keys(section).sort().join() === "help,key,label,received")).toBe(true);
+});
+
+it("keeps a full portal readable while refusing another reservation", async () => {
+  h.portal.mockResolvedValue({ data: [{ id: "portal", accountId: "a1", expiresAt: new Date(Date.now() + 3600_000).toISOString(), uploadCount: PORTAL_MAX_FILES }] });
+  expect(readPortalStatus(await portalUpload({ arguments: { token } }))).toMatchObject({ full: true, uploadCount: PORTAL_MAX_FILES });
+  expect(await callers[1].invoke()).toMatchObject({ ok: false });
+  expect(h.reserve).not.toHaveBeenCalled();
+});
+
+it("keeps closing an unknown lead window idempotent without reserving or writing", async () => {
+  h.lead.mockResolvedValue({ data: [] });
+  expect(await leadUpload({ arguments: { uploadToken: token } })).toEqual({ ok: true, alreadyClosed: true });
+  expect(h.reserve).not.toHaveBeenCalled();
+  expect(h.leadUpdate).not.toHaveBeenCalled();
 });

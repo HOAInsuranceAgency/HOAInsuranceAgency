@@ -1,5 +1,5 @@
 import { publicApi } from "./publicApi";
-import { isHttpsUrl } from '../../../shared/apiResponse';
+import { readUploadDestination } from '../../../shared/publicUploads';
 import { assertWebsiteActionsEnabled } from "./migrationPreview";
 /** Durable website lead capture. A success means the CRM saved the enquiry. */
 import { captureLeadAttribution } from "./leadAttribution";
@@ -187,9 +187,10 @@ export async function uploadLeadFile(
         : "We couldn't accept that file."
     );
   }
-  if (!isHttpsUrl(result.uploadUrl)) throw new Error("We couldn't accept that file.");
+  const receipt = readUploadDestination(result);
+  if (!receipt) throw new Error("We couldn't accept that file.");
   assertWebsiteActionsEnabled();
-  const put = await fetch(result.uploadUrl, {
+  const put = await fetch(receipt.uploadUrl, {
     method: "PUT",
     // Must match the type the URL was signed with, or S3 rejects it.
     headers: file.type ? { "Content-Type": file.type } : undefined,
