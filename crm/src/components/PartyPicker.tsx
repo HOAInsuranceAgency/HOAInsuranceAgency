@@ -90,7 +90,7 @@ export default function PartyPicker({
         </select>
       </label>
       {page.loading && <p className="muted small">Searching…</p>}
-      {query && !page.loading && !page.items.length && (
+      {query && !page.loading && !page.error && !page.items.length && (
         <p className="muted small">
           {page.nextToken ? 'More profiles remain to search.' : 'No matching profiles.'}
         </p>
