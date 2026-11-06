@@ -6,32 +6,36 @@ import { emptyCommercialPlan } from '../../../shared/quotePackages';
 
 const h = vi.hoisted(() => ({ request: vi.fn(), saveReport: vi.fn(), listAccounts: vi.fn() }));
 vi.mock('../lib/client', async () => {
-  const fixtures = await import('../../scripts/commercial-preview/fixtures');
+  const fixtures = await import('../test/fixtures/commercialClient');
   return { ...fixtures, client: { ...fixtures.client, models: { ...fixtures.client.models, Account: { list: h.listAccounts } } } };
 });
 vi.mock('../lib/communications', () => ({ communicationRequest: h.request }));
 vi.mock('../lib/reportDownload', async original => ({ ...await original<typeof import('../lib/reportDownload')>(), saveReport: h.saveReport }));
-import { accounts, plans } from '../../scripts/commercial-preview/fixtures';
+import { commercialFixtures, resetCommercialFixtures } from '../test/fixtures/commercialClient';
 import { AdminContext } from '../lib/auth';
 import AccountsList from './AccountsList';
+import { enableLiveUpdates } from '../test/liveUpdates';
+import { liveUpdates } from '../lib/liveUpdates';
 
 const willow = 'Willow Court Condominium';
 const pine = 'Pine Grove Association';
 const cedar = 'Cedar House — partially bound';
 let snoozes: Record<string, LeadSnooze>;
-let currentAccounts: typeof accounts;
+let currentAccounts: typeof commercialFixtures.accounts;
 
 beforeEach(() => {
+  resetCommercialFixtures();
   vi.resetAllMocks();
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime('2026-10-01T16:00:00Z');
+  enableLiveUpdates();
   snoozes = Object.fromEntries(['willow', 'pine', 'cedar'].map(id => [id, emptyLeadSnooze(id)]));
-  currentAccounts = structuredClone(accounts);
+  currentAccounts = structuredClone(commercialFixtures.accounts);
   h.listAccounts.mockImplementation(async () => ({ data: structuredClone(currentAccounts) }));
   h.request.mockImplementation(async (operation, input) => {
     if (operation === 'team') return { team: [{ userId: 'sales', name: 'Avery Brooks', enabled: true, salesperson: true }] };
     if (operation === 'commercialTable') return { items: input.accountIds.map((accountId: string) => ({
-      accountId, salespersonId: 'sales', plan: structuredClone(plans[accountId] ?? emptyCommercialPlan(accountId)),
+      accountId, salespersonId: 'sales', plan: structuredClone(commercialFixtures.plans[accountId] ?? emptyCommercialPlan(accountId)),
       ...(input.snoozeAccountIds?.includes(accountId) ? { snooze: { ...(snoozes[accountId] ?? emptyLeadSnooze(accountId)) } } : {}),
     })) };
     if (operation === 'saveLeadSnooze') {
@@ -51,7 +55,7 @@ function page(stage: 'LEAD' | 'CLIENT' = 'LEAD', admin = false) {
   </MemoryRouter></AdminContext.Provider>;
 }
 function row(name: string) { return within(screen.getByText(name).closest('tr')!); }
-function chooseView(name: string) { fireEvent.click(within(screen.getByRole('tablist', { name: 'Lead views' })).getByRole('tab', { name })); }
+function chooseView(name: string) { fireEvent.click(within(screen.getByRole('group', { name: 'Lead views' })).getByRole('button', { name })); }
 function fillFollowUp(name: string, date: string, note = '') {
   const scope = row(name);
   fireEvent.change(scope.getByLabelText('Follow-up date'), { target: { value: date } });
@@ -63,15 +67,20 @@ function returnToPage(trigger: 'focus' | 'visibility' | 'both' = 'both') {
   if (trigger !== 'focus') document.dispatchEvent(new Event('visibilitychange'));
 }
 async function allowReturnRefresh() {
-  // The hook coalesces browser focus/visibility events for 100 ms.
-  await act(async () => { await new Promise(resolve => window.setTimeout(resolve, 150)); });
+  // A completed account-book cycle is rate limited; advance the Date-only
+  // clock without executing a minute of unrelated interval work.
+  await act(async () => {
+    vi.setSystemTime(Date.now() + 61_100);
+    liveUpdates.wake();
+    await new Promise(resolve => window.setTimeout(resolve, 150));
+  });
 }
 
 it('lets an owned producer snooze, find, export, and bring back a lead without navigating', async () => {
   render(page());
   fireEvent.click(await screen.findByRole('button', { name: `Snooze ${willow}` }));
   expect(screen.queryByRole('combobox', { name: 'Salesperson' })).not.toBeInTheDocument();
-  expect(screen.getByRole('tab', { name: 'Active' })).toHaveAttribute('aria-selected', 'true');
+  expect(screen.getByRole('button', { name: 'Active' })).toHaveAttribute('aria-pressed', 'true');
   fillFollowUp(willow, '2026-10-09', '  Check with the board  ');
   await waitFor(() => expect(screen.queryByText(willow)).not.toBeInTheDocument());
   expect(h.request).toHaveBeenCalledWith('saveLeadSnooze', {
@@ -178,7 +187,7 @@ it('preserves the saved date after failure and refreshes the version before retr
 
   snoozes.willow = { accountId: 'willow', version: 5, followUpOn: '2026-10-10', note: 'Updated elsewhere' };
   h.request.mockImplementation(initial);
-  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
   fireEvent.click(await screen.findByRole('button', { name: `Edit follow-up for ${willow}` }));
   expect(row(willow).getByLabelText('Follow-up date')).toHaveValue('2026-10-10');
   fillFollowUp(willow, '2026-10-12', 'Revised note');
@@ -209,7 +218,7 @@ it.each(['refresh-last', 'save-last'] as const)('keeps the newest confirmed foll
   fireEvent.click(row(willow).getByRole('button', { name: `Snooze ${willow}` }));
   fillFollowUp(willow, '2026-10-09', 'Saved follow-up');
   refreshing = true;
-  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
   await waitFor(() => expect(finishRefresh).toBeTypeOf('function'));
   const snapshot = await initial('commercialTable', { accountIds: ['willow', 'pine', 'cedar'], snoozeAccountIds: ['willow', 'pine'] });
   const saved = { snooze: { accountId: 'willow', version: 8, followUpOn: '2026-10-09', note: 'Saved follow-up' } };
@@ -246,7 +255,7 @@ it('cancels a draft without saving and leaves Clients free of follow-up controls
   view.unmount();
   render(page('CLIENT'));
   await screen.findByText(cedar);
-  expect(screen.queryByRole('tablist', { name: 'Lead views' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('group', { name: 'Lead views' })).not.toBeInTheDocument();
   expect(screen.queryByRole('columnheader', { name: 'Follow-up' })).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: /Snooze|Edit follow-up|Bring back now|Mark followed up/ })).not.toBeInTheDocument();
   const clientRead = h.request.mock.calls.filter(([op]) => op === 'commercialTable').at(-1)![1];
@@ -308,8 +317,7 @@ it.each(['snooze', 'estimate'] as const)('preserves the %s draft across return e
     expect(row(willow).getByLabelText('Follow-up note')).toHaveValue('Do not lose this draft');
   } else expect(row(willow).getByLabelText('Estimated agency commission')).toHaveValue('2375.50');
   fireEvent.click(row(willow).getByRole('button', { name: 'Cancel' }));
-  await allowReturnRefresh();
-  expect(h.listAccounts).toHaveBeenCalledTimes(2);
+  await waitFor(() => expect(h.listAccounts).toHaveBeenCalledTimes(2));
   expect(screen.getByRole('button', { name: `Snooze ${willow}` })).toBeInTheDocument();
   expect(h.request.mock.calls.some(([op]) => op === 'saveLeadSnooze' || op === 'saveCommercial')).toBe(false);
 });
@@ -336,8 +344,7 @@ it.each(['snooze', 'clear'] as const)('defers refresh until the %s save finishes
     followUpOn: action === 'snooze' ? '2026-10-09' : null,
     note: action === 'snooze' ? 'Confirmed follow-up' : '',
   } }));
-  await allowReturnRefresh();
-  expect(h.listAccounts).toHaveBeenCalledTimes(2);
+  await waitFor(() => expect(h.listAccounts).toHaveBeenCalledTimes(2));
   chooseView(action === 'snooze' ? 'Snoozed' : 'Active');
   expect(screen.getByText(willow)).toBeInTheDocument();
   expect(row(willow).getByRole('button', { name: action === 'snooze' ? `Edit follow-up for ${willow}` : `Snooze ${willow}` })).toBeInTheDocument();
@@ -356,9 +363,8 @@ it('waits for an estimated opportunity save before refreshing', async () => {
   await allowReturnRefresh();
   expect(h.listAccounts).toHaveBeenCalledTimes(1);
   expect(row(willow).getByLabelText('Estimated agency commission')).toBeDisabled();
-  await act(async () => finishSave({ plan: { ...plans.willow, version: 2, estimatedCents: 240000 } }));
-  await allowReturnRefresh();
-  expect(h.listAccounts).toHaveBeenCalledTimes(2);
+  await act(async () => finishSave({ plan: { ...commercialFixtures.plans.willow, version: 2, estimatedCents: 240000 } }));
+  await waitFor(() => expect(h.listAccounts).toHaveBeenCalledTimes(2));
   expect(row(willow).queryByLabelText('Estimated agency commission')).not.toBeInTheDocument();
 });
 
@@ -399,10 +405,9 @@ it('defers return refresh while an admin changes a snoozed lead owner and retain
   expect(screen.getByLabelText('Current route')).toHaveTextContent('/leads');
 
   await act(async () => finishAssignment({ workflow: { accountId: 'willow', salespersonId: 'bob', version: 8 } }));
-  await allowReturnRefresh();
-  expect(h.listAccounts).toHaveBeenCalledTimes(2);
+  await waitFor(() => expect(h.listAccounts).toHaveBeenCalledTimes(2));
   expect(h.request.mock.calls.filter(([operation]) => operation === 'commercialTable')).toHaveLength(2);
-  expect(screen.getByRole('tab', { name: 'Snoozed' })).toHaveAttribute('aria-selected', 'true');
+  expect(screen.getByRole('button', { name: 'Snoozed' })).toHaveAttribute('aria-pressed', 'true');
   const refreshedPicker = screen.getByRole('combobox', { name: `Salesperson for ${willow}` });
   expect(refreshedPicker).toBeEnabled();
   expect(refreshedPicker).toHaveValue('bob');

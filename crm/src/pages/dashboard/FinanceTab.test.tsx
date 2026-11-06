@@ -1,3 +1,4 @@
+import { invalidateLiveUpdates } from "../../test/liveUpdates";
 import { beforeEach, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
@@ -10,7 +11,10 @@ const h = vi.hoisted(() => ({
 vi.mock('../../lib/client', async original => ({
   ...await original<typeof import('../../lib/client')>(),
   client: { models: Object.fromEntries(['Account', 'Invoice', 'InvoiceLine', 'PfLoan', 'Policy', 'PfLoanPayment']
-    .map(model => [model, { list: vi.fn(async () => ({ data: (h.rows[model] ?? []).map(row => model === 'Invoice' ? { ...row, lines: async () => ({ data: [] }) } : row) })) }])) },
+    .map(model => [model, {
+      list: vi.fn(async () => ({ data: (h.rows[model] ?? []).map(row => model === 'Invoice' ? { ...row, lines: async () => ({ data: [] }) } : row) })),
+      ...(model === 'Policy' ? { listPolicyByBrokerFeeReportingKey: vi.fn(async () => ({ data: h.rows.Policy ?? [] })) } : {}),
+    }])) },
 }));
 vi.mock('../../lib/dashboardAssignments', () => ({ loadAssignments: h.loadAssignments }));
 vi.mock('../../lib/communications', () => ({ communicationRequest: async (operation: string, input: { policyIds?: string[] }) => {
@@ -86,12 +90,12 @@ it('retains finance data for transient failures but clears denied data through r
   render(<MemoryRouter><FinanceTab /></MemoryRouter>);
   await screen.findByRole('heading', { name: 'Premium finance portfolio' });
   h.loadAssignments.mockRejectedValueOnce(new Error('Report temporarily unavailable'));
-  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+  await invalidateLiveUpdates();
   await screen.findByText(/Report temporarily unavailable/);
   expect(screen.getByText('INV-1')).toBeVisible();
   expect(screen.getByRole('combobox', { name: 'Download Finance summary' })).toBeDisabled();
   h.loadAssignments.mockRejectedValueOnce(Object.assign(new Error('Credentials changed'), { name: 'Unauthorized' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+  await invalidateLiveUpdates();
   expect(await screen.findByRole('alert')).toHaveTextContent('Credentials changed');
   expect(screen.queryByText('INV-1')).toBeNull();
   expect(screen.queryByRole('heading', { name: 'A/R aging' })).toBeNull();

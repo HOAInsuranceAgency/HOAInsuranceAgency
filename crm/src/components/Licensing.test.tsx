@@ -65,7 +65,7 @@ const renderPage = (isAdmin = true) =>
     </AdminContext.Provider>
   );
 
-const view = (name: string) => screen.getByRole("button", { name });
+const view = (name: string) => screen.getByRole("tab", { name });
 const goTo = async (user: ReturnType<typeof userEvent.setup>, name: string) =>
   user.click(view(name));
 
@@ -80,7 +80,7 @@ beforeEach(() => {
 describe("one view at a time", () => {
   it("opens on the map, with no table underneath it", async () => {
     renderPage();
-    await waitFor(() => expect(view("Map")).toHaveAttribute("aria-pressed", "true"));
+    await waitFor(() => expect(view("Map")).toHaveAttribute("aria-selected", "true"));
 
     // The tables used to sit below the map view's own content.
     expect(screen.queryByText("Firm licenses")).not.toBeInTheDocument();
@@ -288,7 +288,7 @@ describe("licensing reliability", () => {
     models.License.list.mockResolvedValueOnce({ data: LICENSES.slice(0, 1), nextToken: "licenses-2" }).mockResolvedValueOnce({ data: LICENSES.slice(1) });
     models.UserProfile.list.mockResolvedValueOnce({ data: profiles.slice(0, 1), nextToken: "profiles-2" }).mockResolvedValueOnce({ data: profiles.slice(1) });
     renderPage();
-    await screen.findByRole("button", { name: "People" });
+    await screen.findByRole("tab", { name: "People" });
     fireEvent.click(view("People"));
     expect(await screen.findByText("Dana Reyes")).toBeVisible();
     expect(models.License.list).toHaveBeenLastCalledWith({ nextToken: "licenses-2" });
@@ -307,7 +307,7 @@ describe("licensing reliability", () => {
 
   it("keeps a license after a rejected delete and allows retry", async () => {
     models.License.delete.mockResolvedValueOnce({ errors: [{ message: "License is in use" }] }).mockResolvedValueOnce({ data: LICENSES[0] });
-    renderPage(); fireEvent.click(await screen.findByRole("button", { name: "Firm" }));
+    renderPage(); fireEvent.click(await screen.findByRole("tab", { name: "Firm" }));
     fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
     fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("License is in use");
@@ -319,7 +319,7 @@ describe("licensing reliability", () => {
   it("keeps an in-flight editor open and recovers its draft after a rejected save", async () => {
     let reject!: (reason: Error) => void;
     models.License.update.mockImplementationOnce(() => new Promise((_resolve, fail) => { reject = fail; }));
-    renderPage(); fireEvent.click(await screen.findByRole("button", { name: "Firm" }));
+    renderPage(); fireEvent.click(await screen.findByRole("tab", { name: "Firm" }));
     fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
     const dialog = screen.getByRole("dialog");
     const number = within(dialog).getByDisplayValue("FIRM-MA");

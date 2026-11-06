@@ -1,4 +1,4 @@
-import { parseStoredJson } from "../../../src/lib/aiExtraction";
+import { parseStoredJson } from "../../../../shared/aiExtraction";
 
 /**
  * Turning a stored extraction result into prompt context. Pure, so the one

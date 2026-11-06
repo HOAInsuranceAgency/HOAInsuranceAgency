@@ -1,3 +1,5 @@
+import { createDataClientGetter, type LambdaDataClient as DataClient } from "../data-client";
+import { captureHandledFailure } from "../monitoring";
 import type { S3Handler } from "aws-lambda";
 import {
   TextractClient,
@@ -5,12 +7,8 @@ import {
   GetDocumentAnalysisCommand,
   type Block,
 } from "@aws-sdk/client-textract";
-import { Amplify } from "aws-amplify";
-import { generateClient } from "aws-amplify/data";
-import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtime";
-import type { Schema } from "../../data/resource";
 import { suggestDocumentName } from "./autoName";
-import { withExtension } from "./name";
+import { withExtension } from "../../../../shared/documentName";
 
 /**
  * Textract OCR pipeline.
@@ -38,21 +36,7 @@ const MAX_TABLES_CHARS = 100_000;
 const POLL_INTERVAL_MS = 5_000;
 const MAX_POLL_MS = 13 * 60 * 1000; // stay under the 15 min Lambda timeout
 
-type DataClient = ReturnType<typeof generateClient<Schema>>;
-
-let dataClient: DataClient | undefined;
-
-async function getDataClient() {
-  if (!dataClient) {
-    // Env vars are injected by `allow.resource(processDocument)` in the schema.
-    const { resourceConfig, libraryOptions } = await getAmplifyDataClientConfig(
-      process.env as never
-    );
-    Amplify.configure(resourceConfig, libraryOptions);
-    dataClient = generateClient<Schema>();
-  }
-  return dataClient;
-}
+const getDataClient = createDataClientGetter();
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -165,17 +149,18 @@ async function autoName(
 ): Promise<void> {
   try {
     const { data: doc } = await client.models.Document.get({ id: documentId });
-    if (!doc || doc.name !== filename) return;
+    if (!doc) return;
+    const uploadedName = doc.uploadedName ?? filename;
+    if (doc.name !== uploadedName) return;
 
     const suggested = await suggestDocumentName({
       ocrText,
       category: doc.category,
-      filename,
+      filename: uploadedName,
     });
     if (!suggested) return;
 
-    // The extension comes from the key, not from `doc.name`: they are the
-    // same string today, and this is the one that stays true if that changes.
+    // The extension comes from the object key even when its basename was normalized.
     const name = withExtension(suggested, filename);
     if (!name || name === doc.name) return;
 
@@ -240,6 +225,7 @@ export const handler: S3Handler = async (event) => {
       // extraction as FAILED.
       await autoName(client, documentId, filename, text);
     } catch (err) {
+      captureHandledFailure(err);
       console.error(`OCR failed for ${documentId} (${key})`, err);
       await client.models.Document.update({
         id: documentId,

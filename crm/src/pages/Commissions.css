@@ -9,12 +9,6 @@
   margin-top: 20px;
   padding: 24px;
 }
-.commission-tabs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin: 20px 0;
-}
 .commissions fieldset {
   border: 0;
   margin: 0;
@@ -53,11 +47,52 @@
   margin: 20px 0;
 }
 .commissions input[type='checkbox'] {
-  width: auto;
   margin-right: 8px;
 }
 .commissions .form-actions {
   margin-top: 20px;
+}
+.commission-asof {
+  max-width: 260px;
+  margin-top: 24px;
+}
+.commission-balances,
+.commission-notice {
+  padding: 16px;
+  margin: 16px 0;
+  border: 1px solid #dce3e7;
+  border-radius: 10px;
+  background: #f8fafb;
+}
+.commission-balances dl {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 16px;
+  margin: 16px 0;
+}
+.commission-balances dt {
+  font-size: 0.85rem;
+  color: #52636d;
+}
+.commission-balances dd {
+  margin: 6px 0 0;
+  font-weight: 600;
+}
+.commission-forecast-editor > summary {
+  cursor: pointer;
+  padding: 12px 0;
+  font-weight: 600;
+}
+.commission-forecast-row {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 16px 0;
+}
+.commission-forecast-row .field {
+  flex: 1 1 180px;
+  margin: 0;
 }
 
 @media (max-width: 760px) {

@@ -1,17 +1,18 @@
-import { currentContacts } from "../../../src/lib/contacts";
+import { createDataClientGetter, type LambdaDataClient as DataClient } from "../data-client";
+import { sendCrmWrite } from '../live-write';
+import { migrationPendingCutoff, migrationPendingHeld } from "../migration-pending";
+import { currentContacts } from "../../../../shared/contacts";
 import { randomBytes } from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
 import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
 import { UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { resolveIssue } from "../communications/routing";
 import { db, get, issue } from "../communications/store";
+import { openQueueCursor, saveQueueCursor } from "../communications/queueCursor";
 import { assignedEmailProducer, enqueueOperation, type Operation } from "../communications/operations";
 import type { LeadWorkflow } from "../../../../shared/leadWorkflow";
-import { Amplify } from "aws-amplify";
-import { generateClient } from "aws-amplify/data";
-import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtime";
 import type { Schema } from "../../data/resource";
-import { listAllPages } from "../../../src/lib/pagination";
+import { listAllPages } from "../../../../shared/pagination";
 import { CLAUDE_MODEL } from "../model";
 import { decide } from "./decide";
 import { flattenExtraction } from "./extraction";
@@ -37,18 +38,7 @@ import {
  * kick extraction off, or leave it for the next tick.
  */
 
-type DataClient = ReturnType<typeof generateClient<Schema>>;
-let dataClient: DataClient | undefined;
-async function getDataClient() {
-  if (!dataClient) {
-    const { resourceConfig, libraryOptions } = await getAmplifyDataClientConfig(
-      process.env as never
-    );
-    Amplify.configure(resourceConfig, libraryOptions);
-    dataClient = generateClient<Schema>();
-  }
-  return dataClient;
-}
+const getDataClient = createDataClientGetter();
 
 const lambda = new LambdaClient();
 
@@ -59,18 +49,53 @@ export const handler = async () => {
   const client = await getDataClient();
   const now = new Date().toISOString();
 
-  // Query the due index; historical SENT rows never join the sweep.
-  const result = await client.models.LeadReply.leadRepliesByStatusAndDueAt(
-    { status: "WAITING", dueAt: { le: now } }, { limit: MAX_PER_TICK, sortDirection: "ASC" }
-  );
-  if (result.errors?.length) throw new Error(result.errors[0].message);
-  const waiting = result.data;
-  // Generating has no external send side effect. Recover a crashed generation
-  // only after checking whether its durable send operation already exists.
-  const stalled = await client.models.LeadReply.leadRepliesByStatusAndDueAt(
-    { status: "SENDING", dueAt: { le: now } }, { limit: MAX_PER_TICK, sortDirection: "ASC" }
-  );
-  for (const r of stalled.data ?? []) {
+  // Source keeps its existing sweep. In the migrated account, use the immutable
+  // handoff cutoff and page past held rows without making old work eligible.
+  const cutoff = migrationPendingCutoff();
+  if (cutoff !== null && !Number.isFinite(cutoff)) return { waiting: 0, due: 0, queued: 0, extracting: 0, failed: 0 };
+  const dueRows = async (status: "WAITING" | "SENDING") => {
+    const eligible: Schema["LeadReply"]["type"][] = [];
+    const progress = cutoff === null ? undefined : await openQueueCursor(`lead-reply:${status}`, now);
+    let nextToken = progress?.nextToken;
+    let seenIds = new Set(progress?.seenIds ?? []);
+    for (let page = 0; page < (cutoff === null ? 1 : 25); page++) {
+      const pageStart = nextToken;
+      const result = await client.models.LeadReply.leadRepliesByStatusAndDueAt(
+        { status, dueAt: cutoff === null ? { le: now } : { between: [new Date(cutoff).toISOString(), progress!.through] } },
+        { limit: cutoff === null ? MAX_PER_TICK : 100, sortDirection: "ASC", nextToken }
+      );
+      if (result.errors?.length) throw new Error(result.errors[0].message);
+      const currentIds = new Set(result.data.map(r => r.id));
+      seenIds = new Set([...seenIds].filter(id => currentIds.has(id)));
+      eligible.push(...result.data.filter(r => !migrationPendingHeld(r) && !seenIds.has(r.id)));
+      nextToken = result.nextToken ?? undefined;
+      // Remember only the current page's selected rows. OCR/extraction waits
+      // remain unchanged, but cannot block later pages forever. A crash after
+      // this checkpoint can delay selected rows until the next finite sweep;
+      // their existing business claims still prevent duplicate sends.
+      if (eligible.length) {
+        const selected = eligible.slice(0, MAX_PER_TICK);
+        if (progress) await saveQueueCursor(progress, pageStart, [...new Set([...seenIds, ...selected.map(r => r.id)])]);
+        return selected;
+      }
+      seenIds.clear();
+      if (!nextToken) {
+        if (progress) await saveQueueCursor(progress);
+        return [];
+      }
+    }
+    // Old future-deadline rows stay untouched; no retry/generation is inferred
+    // from a timestamp update. A large current-window backlog remains visible.
+    if (nextToken) console.warn("lead-reply migration candidate page budget reached", status);
+    if (progress) await saveQueueCursor(progress, nextToken);
+    return eligible.slice(0, MAX_PER_TICK);
+  };
+  const waiting = await dueRows("WAITING");
+  // Generating has no external send side effect. Recover only post-handoff
+  // generation after checking its durable send operation.
+  const stalled = await dueRows("SENDING");
+  for (const r of stalled) {
+    if (migrationPendingHeld(r)) continue;
     if (Date.parse(r.updatedAt) > Date.now() - 15 * 60_000) continue;
     if (!r.frontGenerationClaimedAt) {
       await client.models.LeadReply.update({ id: r.id, status: "FAILED", note: "Legacy email send could not be confirmed. Review its AWS/Front history before any new reply." });
@@ -78,10 +103,10 @@ export const handler = async () => {
     }
     const op = await get<Operation>(`op:ai:${r.id}`);
     const status = !op ? "WAITING" : op.data.state === "CONFIRMED" ? "SENT" : op.data.state === "SUPPRESSED" ? "SUPPRESSED" : op.data.state === "FAILED" ? "FAILED" : "QUEUED";
-    await db.send(new UpdateCommand({ TableName: process.env.LEAD_REPLY_TABLE, Key: { id: r.id },
+    await sendCrmWrite(db.send(new UpdateCommand({ TableName: process.env.LEAD_REPLY_TABLE, Key: { id: r.id },
       UpdateExpression: "SET #s = :status, updatedAt = :now", ConditionExpression: "#s = :sending",
       ExpressionAttributeNames: { "#s": "status" }, ExpressionAttributeValues: { ":status": status, ":sending": "SENDING", ":now": now },
-    })).catch(e => { if (e?.name !== "ConditionalCheckFailedException") throw e; });
+    }))).catch(e => { if (e?.name !== "ConditionalCheckFailedException") throw e; });
     await issue(`generation:${r.id}`, op ? "Recovered queued initial email" : "Initial email generation was interrupted and will retry", r.accountId);
   }
 
@@ -93,6 +118,7 @@ export const handler = async () => {
   const summary = { waiting: waiting.length, due: due.length, queued: 0, extracting: 0, failed: 0 };
 
   for (const reply of due.slice(0, MAX_PER_TICK)) {
+    if (migrationPendingHeld(reply)) continue;
     let queued = false;
     try {
       if (!reply.submissionId) {
@@ -117,10 +143,10 @@ export const handler = async () => {
       } catch (error) {
         const message = error instanceof Error ? error.message : "The assigned salesperson could not be verified";
         try {
-          await db.send(new UpdateCommand({ TableName: process.env.LEAD_REPLY_TABLE, Key: { id: reply.id },
+          await sendCrmWrite(db.send(new UpdateCommand({ TableName: process.env.LEAD_REPLY_TABLE, Key: { id: reply.id },
             UpdateExpression: "SET dueAt = :retry, note = :note, updatedAt = :now", ConditionExpression: "#s = :waiting",
             ExpressionAttributeNames: { "#s": "status" }, ExpressionAttributeValues: { ":waiting": "WAITING", ":retry": new Date(Date.now() + 60_000).toISOString(), ":note": `Initial email is waiting: ${message}`.slice(0, 500), ":now": now },
-          }));
+          })));
           await issue(`generation-assignment:${reply.id}`, `Initial email is waiting: ${message}`.slice(0, 500), reply.accountId);
         } catch (error) {
           // A warning/projection failure cannot turn pending assignment into a
@@ -209,13 +235,13 @@ export const handler = async () => {
         continue;
       }
 
-      await db.send(new UpdateCommand({
+      await sendCrmWrite(db.send(new UpdateCommand({
         TableName: process.env.LEAD_REPLY_TABLE, Key: { id: reply.id },
         UpdateExpression: "SET #s = :sending, updatedAt = :now, frontGenerationClaimedAt = :now",
         ConditionExpression: "#s = :waiting",
         ExpressionAttributeNames: { "#s": "status" },
         ExpressionAttributeValues: { ":sending": "SENDING", ":waiting": "WAITING", ":now": now },
-      }));
+      })));
 
       /**
        * Before generating, not after: the prompt is told a link is coming so it
@@ -265,11 +291,11 @@ export const handler = async () => {
         : null;
       // The delivery worker may already have confirmed SENT. Never overwrite
       // that result with this producer's delayed QUEUED projection.
-      await db.send(new UpdateCommand({ TableName: process.env.LEAD_REPLY_TABLE, Key: { id: reply.id },
+      await sendCrmWrite(db.send(new UpdateCommand({ TableName: process.env.LEAD_REPLY_TABLE, Key: { id: reply.id },
         UpdateExpression: "SET #s = :queued, sentSubject = :subject, sentBody = :body, note = :note, updatedAt = :now",
         ConditionExpression: "#s = :sending", ExpressionAttributeNames: { "#s": "status" },
         ExpressionAttributeValues: { ":queued": "QUEUED", ":sending": "SENDING", ":subject": subject, ":body": text, ":note": [decision.note, nameNote].filter(Boolean).join(" ") || null, ":now": new Date().toISOString() },
-      })).catch(e => { if (e?.name !== "ConditionalCheckFailedException") throw e; });
+      }))).catch(e => { if (e?.name !== "ConditionalCheckFailedException") throw e; });
       summary.queued++;
       console.log("lead-reply queued", reply.id, JSON.stringify({ subject }));
     } catch (err) {

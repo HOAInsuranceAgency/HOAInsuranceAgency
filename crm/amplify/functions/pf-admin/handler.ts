@@ -1,7 +1,9 @@
+import { sendCrmWrite } from '../live-write';
+import { captureHandledFailure } from "../monitoring";
 import { randomUUID } from "node:crypto";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, GetCommand, PutCommand, TransactWriteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
-import { PF_CONFIG_SHA256 } from "../../../src/lib/premiumFinance/jurisdictions";
+import { PF_CONFIG_SHA256 } from "../../../../shared/premiumFinance/jurisdictions";
 
 /**
  * Custom mutation handler: setPremiumFinanceEnabled. See resource.ts.
@@ -93,7 +95,7 @@ export const handler = async (event: {
   };
 
   const writeFlag = async (value: boolean, seenStamp?: string | null): Promise<string | null> => {
-    const res = await ddb.send(
+    const res = await sendCrmWrite(ddb.send(
       new UpdateCommand({
         TableName: settingsTable,
         Key: { id: AGENCY_SETTINGS_ID },
@@ -117,7 +119,7 @@ export const handler = async (event: {
         // serialization point, for free.
         ReturnValues: "UPDATED_OLD",
       })
-    );
+    ));
     const v = (res.Attributes as Record<string, unknown> | undefined)?.premiumFinanceEnabledAt;
     return typeof v === "string" ? v : null;
   };
@@ -149,7 +151,7 @@ export const handler = async (event: {
     };
     for (let attempt = 1; attempt <= LOG_ATTEMPTS; attempt++) {
       try {
-        await ddb.send(new PutCommand({ TableName: logTable, Item: item }));
+        await sendCrmWrite(ddb.send(new PutCommand({ TableName: logTable, Item: item })));
         return true;
       } catch (err) {
         console.error(`[pf-admin] log write attempt ${attempt} failed`, err);
@@ -268,7 +270,7 @@ export const handler = async (event: {
             verifiedStamp !== null && verifiedStamp > now ? verifiedStamp : now
           );
           try {
-            await ddb.send(
+            await sendCrmWrite(ddb.send(
               new TransactWriteCommand({
                 TransactItems: [
                   {
@@ -311,7 +313,7 @@ export const handler = async (event: {
                   },
                 ],
               })
-            );
+            ));
             return { ok: false, error: "Couldn't enable the module. Try again." };
           } catch (corrErr) {
             if ((corrErr as { name?: string }).name !== "TransactionCanceledException") {
@@ -350,7 +352,7 @@ export const handler = async (event: {
          * and best-effort: the log table takes appends from here always.
          */
         try {
-          await ddb.send(
+          await sendCrmWrite(ddb.send(
             new PutCommand({
               TableName: logTable,
               Item: {
@@ -370,7 +372,7 @@ export const handler = async (event: {
                 occurredAt: isoAfter(now),
               },
             })
-          );
+          ));
         } catch (annErr) {
           console.error("[pf-admin] could not annotate the failed enable", annErr);
         }
@@ -449,7 +451,7 @@ export const handler = async (event: {
     if (oldStamp !== null && now <= oldStamp) {
       const bumped = isoAfter(oldStamp);
       try {
-        await ddb.send(
+        await sendCrmWrite(ddb.send(
           new UpdateCommand({
             TableName: settingsTable,
             Key: { id: AGENCY_SETTINGS_ID },
@@ -458,7 +460,7 @@ export const handler = async (event: {
               "premiumFinanceEnabled = :off AND premiumFinanceEnabledAt = :ours",
             ExpressionAttributeValues: { ":bumped": bumped, ":off": false, ":ours": now },
           })
-        );
+        ));
         now = bumped;
       } catch (bumpErr) {
         if ((bumpErr as { name?: string }).name !== "ConditionalCheckFailedException") {
@@ -513,6 +515,7 @@ export const handler = async (event: {
     }
     return { ok: true, enabled: false };
   } catch (err) {
+    captureHandledFailure(err);
     console.error("pf-admin failed", err);
     return { ok: false, error: "Couldn't change the setting. Try again." };
   }

@@ -1,8 +1,14 @@
+import { assertGraphqlErrors } from '../lib/apiResponse';
+import { LiveStatus } from "../components/LiveStatus";
+import { useLiveUpdateBlock } from "../lib/useLiveUpdates";
+import { Input } from "../components/ui/Input";
+import { Button } from "../components/ui/Button";
+import { Table } from "../components/ui/Table";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useIsOwner } from "../lib/auth";
 import { LeadEligibilityCells, LeadEligibilityEditor, LeadEligibilityFeedback, useLeadEligibilitySettings } from "../components/LeadEligibilitySettings";
 import { client, fmtDate, friendlyError, type UserProfile } from "../lib/client";
-import { toE164 } from "../../amplify/functions/lead-intake/sms";
+import { toE164 } from "../../../shared/leadTextAlerts";
 import { Badge, flagBadge } from "../lib/badges";
 import SignatureManager from "../components/SignatureManager";
 import Modal from "../components/Modal";
@@ -10,7 +16,7 @@ import { SaveStatus, useSaveStatus } from "../components/SaveStatus";
 import { useAsyncResource } from "../lib/useAsyncResource";
 import { useSort, SortTh } from "../lib/useSort";
 import { useFormState } from "../lib/useFormState";
-import { DEFAULT_USER_ROLE, isUserRole, USER_ROLE_OPTIONS, type UserRole } from "../lib/enums";
+import { DEFAULT_USER_ROLE, isUserRole, USER_ROLE_OPTIONS, type UserRole } from "../../../shared/enums";
 
 interface TeamUser {
   userId: string;
@@ -34,7 +40,7 @@ function RoleChoices({ roles, onChange, disabled = false, keepRole, canManageOwn
       {USER_ROLE_OPTIONS.filter(option => option.value !== "OWNER" || canManageOwners || roles.includes("OWNER")).map(option => {
         const checked = roles.includes(option.value);
         return <label key={option.value} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <input type="checkbox" checked={checked}
+          <Input type="checkbox" checked={checked}
             disabled={(option.value === "OWNER" && !canManageOwners) || (checked ? roles.length === 1 || keepRole === option.value : roles.length >= 2)}
             onChange={() => onChange(checked ? roles.filter(role => role !== option.value) : [...roles, option.value])} />
           {option.label}
@@ -64,11 +70,11 @@ function RoleEditor({ user, name, currentUser, onSave, onClose }: {
       keepRole={currentUser ? initialRoles.includes("OWNER") ? "OWNER" : initialRoles.includes("ADMIN") ? "ADMIN" : undefined : undefined}
       onChange={next => { setRoles(next); status.markDirty(); }} />
     <div className="form-actions">
-      <button className="primary" disabled={status.busy || !dirty || roles.length < 1 || roles.length > 2}
+      <Button variant="primary"  disabled={status.busy || !dirty || roles.length < 1 || roles.length > 2}
         onClick={() => void status.run(async () => { await onSave(roles); onClose(); }, { errorMessage: "Couldn't save roles." })}>
         {status.busy ? "Saving…" : "Save roles"}
-      </button>
-      <button className="secondary" disabled={status.busy} onClick={close}>Cancel</button>
+      </Button>
+      <Button variant="secondary"  disabled={status.busy} onClick={close}>Cancel</Button>
       <SaveStatus {...status.status} />
     </div>
   </Modal>;
@@ -95,10 +101,10 @@ function AccessEditor({ user, name, onSave, onClose }: {
     <p>{enable ? "Restore this team member’s access to the CRM. They’ll need to sign in again."
       : "Block this team member’s CRM access and sign them out. They won’t be eligible for new assignments. You can reactivate them later."}</p>
     <div className="form-actions">
-      <button type="button" className={enable ? "primary" : "danger"} disabled={status.busy} onClick={() => void save()}>
+      <Button type="button" variant={enable ? "primary" : "danger"} disabled={status.busy} onClick={() => void save()}>
         {status.busy ? "Updating access…" : enable ? "Reactivate user" : "Deactivate user"}
-      </button>
-      <button type="button" className="secondary" disabled={status.busy} onClick={close}>Cancel</button>
+      </Button>
+      <Button variant="secondary" type="button"  disabled={status.busy} onClick={close}>Cancel</Button>
       <SaveStatus {...status.status} />
     </div>
   </Modal>;
@@ -133,13 +139,14 @@ function LeadTextCell({
     setDraft(current => current === previous ? phone : current);
     previousPhone.current = phone;
   }, [profile.mobilePhone]);
+  useLiveUpdateBlock(draft.trim() !== (profile.mobilePhone ?? "").trim());
   const on = !!profile.leadTextAlerts;
   const reachable = toE164(draft) !== null;
 
   return (
     <div className="lead-text-cell">
       <label className="lead-text-switch">
-        <input
+        <Input
           type="checkbox"
           disabled={disabled}
           checked={on}
@@ -148,7 +155,7 @@ function LeadTextCell({
         />
         <span>{on ? "On" : "Off"}</span>
       </label>
-      <input
+      <Input
         disabled={disabled}
         className="lead-text-phone"
         type="tel"
@@ -189,7 +196,7 @@ function parse(raw: unknown): Record<string, unknown> {
 
 async function fetchTeamPage(nextToken?: string) {
   const { data, errors } = await client.queries.listTeamUsers({ nextToken });
-  if (errors?.length) throw new Error(errors[0].message);
+  assertGraphqlErrors({ errors: errors });
   const body = parse(data);
   if (body.ok === false) throw new Error(String(body.error ?? "Failed to load team"));
   const users = (body.users as TeamUser[] | undefined) ?? NO_USERS;
@@ -227,6 +234,7 @@ export default function Team({ profile }: { profile: UserProfile }) {
   const [moreError, setMoreError] = useState("");
   const morePending = useRef(false);
   const pageVersion = useRef(0);
+  const loadedPages = useRef(1);
   useEffect(() => () => { pageVersion.current++; }, []);
 
   // `client.queries.*` reports failure by *resolving* with an `errors` array,
@@ -234,16 +242,26 @@ export default function Team({ profile }: { profile: UserProfile }) {
   // a rejection otherwise.
   const team = useAsyncResource(
     async () => {
-      // Refresh starts a new sequence. An older Load more response cannot
-      // append stale rows or replace the refreshed continuation token.
-      pageVersion.current++;
-      morePending.current = false;
-      setMoreLoading(false);
-      setMoreError("");
-      return fetchTeamPage();
+      // Revalidate the depth already opened, without resetting paging or edits.
+      const depth = loadedPages.current;
+      if (depth > 100) throw new Error('Too many team pages to update safely.');
+      const users = new Map<string, TeamUser>(), profiles = new Map<string, UserProfile>();
+      const seen = new Set<string>();
+      let nextToken: string | undefined;
+      let cursor: string | null = null;
+      for (let pageNumber = 0; pageNumber < depth; pageNumber++) {
+        const page = await fetchTeamPage(nextToken);
+        for (const member of page.users) if (!users.has(member.userId)) users.set(member.userId, member);
+        for (const member of page.profiles) if (!profiles.has(member.id)) profiles.set(member.id, member);
+        cursor = page.nextToken;
+        if (!cursor) break;
+        if (seen.has(cursor)) throw new Error('The team page could not be refreshed completely.');
+        seen.add(cursor); nextToken = cursor;
+      }
+      return { users: [...users.values()], profiles: [...profiles.values()], nextToken: cursor };
     },
     [],
-    { initialData: EMPTY_TEAM, errorMessage: "Failed to load team" }
+    { initialData: EMPTY_TEAM, errorMessage: "Failed to load team" , live: true }
   );
   const { users, profiles } = team.data;
   const eligibilityMembers = useMemo(() => users.map(user => {
@@ -252,6 +270,7 @@ export default function Team({ profile }: { profile: UserProfile }) {
       name: memberProfile ? `${memberProfile.firstName} ${memberProfile.lastName}` : user.email, hasProfile: !!memberProfile };
   }), [users, profiles]);
   const eligibility = useLeadEligibilitySettings(eligibilityMembers, team.loading || moreLoading || inviteStatus.busy || alertStatus.busy || !!editingRoles || !!editingAccess);
+  useLiveUpdateBlock(!!editingRoles || !!editingAccess || moreLoading || eligibility.busy || !!eligibility.editing || inviteStatus.busy || alertStatus.busy);
   const setProfiles = (update: (profiles: UserProfile[]) => UserProfile[]) =>
     team.setData(previous => ({ ...previous, profiles: update(previous.profiles) }));
 
@@ -265,6 +284,7 @@ export default function Team({ profile }: { profile: UserProfile }) {
     try {
       const page = await fetchTeamPage(nextToken);
       if (version !== pageVersion.current) return;
+      loadedPages.current++;
       // Cognito pagination can repeat a member if the pool changes between
       // reads. Keep existing rows (and any edits) instead of duplicating them.
       team.setData(previous => ({
@@ -284,6 +304,7 @@ export default function Team({ profile }: { profile: UserProfile }) {
 
   // An invite adds a Cognito user, so restart the roster and its decorations.
   function reload() {
+    pageVersion.current++; morePending.current = false; setMoreLoading(false); setMoreError("");
     void team.refetch();
     eligibility.refresh();
   }
@@ -297,7 +318,7 @@ export default function Team({ profile }: { profile: UserProfile }) {
           email,
           roles: form.roles,
         });
-        if (errors?.length) throw new Error(errors[0].message);
+        assertGraphqlErrors({ errors: errors });
         const body = parse(data);
         if (!body.ok) {
           // Failed cleanup can leave a real member behind. Refresh access
@@ -322,7 +343,7 @@ export default function Team({ profile }: { profile: UserProfile }) {
 
   async function saveRoles(user: TeamUser, roles: UserRole[]) {
     const { data, errors } = await client.mutations.updateUserRoles({ userId: user.userId, roles });
-    if (errors?.length) throw new Error(errors[0].message);
+    assertGraphqlErrors({ errors: errors });
     const body = parse(data);
     if (!body.ok) {
       void team.refetch();
@@ -365,7 +386,8 @@ export default function Team({ profile }: { profile: UserProfile }) {
           id: p.id,
           ...patch,
         });
-        if (errors?.length || !data) throw new Error(errors?.[0]?.message);
+        assertGraphqlErrors({ errors });
+        if (!data) throw new Error(errors?.[0]?.message);
         // Only the submitted fields belong to this response; another control
         // may have saved a signature or profile decoration in the meantime.
         const committed = Object.fromEntries(Object.keys(patch).map(key => [key, data[key as keyof UserProfile]]));
@@ -408,7 +430,7 @@ export default function Team({ profile }: { profile: UserProfile }) {
         <div className="form-grid" style={{ maxWidth: 640 }}>
           <div className="field">
             <label htmlFor="team-invite-email">Email</label>
-            <input
+            <Input
               id="team-invite-email"
               disabled={inviteStatus.busy}
               type="email"
@@ -422,13 +444,13 @@ export default function Team({ profile }: { profile: UserProfile }) {
           </div>
         </div>
         <div className="form-actions">
-          <button
-            className="primary"
+          <Button variant="primary"
+
             disabled={inviteStatus.busy || !form.email.trim()}
             onClick={invite}
           >
             {inviteStatus.busy ? "Inviting…" : "Send invite"}
-          </button>
+          </Button>
           <SaveStatus {...inviteStatus.status} />
         </div>
         <p className="muted small" style={{ marginBottom: 0 }}>
@@ -438,6 +460,7 @@ export default function Team({ profile }: { profile: UserProfile }) {
         </p>
       </div>
 
+      <LiveStatus resource={team} />
       <section className="card team-eligibility" aria-labelledby="team-members-title">
         <div className="toolbar" style={{ marginTop: 0, alignItems: "flex-start" }}>
           <div>
@@ -450,9 +473,7 @@ export default function Team({ profile }: { profile: UserProfile }) {
             </p>
           </div>
           <div className="grow" />
-          <button type="button" className="secondary" disabled={team.loading || moreLoading || alertStatus.busy || eligibility.disabled || !!editingRoles || !!editingAccess} onClick={reload}>
-            Refresh team
-          </button>
+
           {/* Toggles are per-row with no per-row place to report; this is
               the card's one status line. */}
           <SaveStatus {...alertStatus.status} />
@@ -466,7 +487,7 @@ export default function Team({ profile }: { profile: UserProfile }) {
           !team.error && <p className="muted small">No users found.</p>
         ) : (
           <div className="table-wrap">
-            <table>
+            <Table>
               <thead>
                 <tr>
                   <SortTh label="Team member" colKey="email" sortKey={sortKey} dir={dir} onToggle={toggle} />
@@ -501,15 +522,15 @@ export default function Team({ profile }: { profile: UserProfile }) {
                           {(u.groups.filter(isUserRole).length ? u.groups.filter(isUserRole) : [p?.role ?? "—"]).map(role =>
                             <span key={role} className="badge gray">{role}</span>)}
                         </div>
-                        <button type="button" className="secondary" disabled={team.loading || moreLoading || eligibility.busy || !!eligibility.editing || !!editingRoles || !!editingAccess || (u.groups.includes("OWNER") && !canManageOwners)} aria-label={`Edit roles for ${name || u.email}`}
-                          onClick={() => { roleStatus.markDirty(); setEditingRoles(u); }}>Edit roles</button>
+                        <Button variant="secondary" type="button"  disabled={team.loading || moreLoading || eligibility.busy || !!eligibility.editing || !!editingRoles || !!editingAccess || (u.groups.includes("OWNER") && !canManageOwners)} aria-label={`Edit roles for ${name || u.email}`}
+                          onClick={() => { roleStatus.markDirty(); setEditingRoles(u); }}>Edit roles</Button>
                       </td>
                       <td>
                         <div style={{ marginBottom: 6 }}><span className={`badge ${u.enabled === false ? "gray" : "green"}`}>{u.enabled === false ? "Inactive" : "Active"}</span></div>
-                        {canManageOwners && <button type="button" className="secondary"
+                        {canManageOwners && <Button variant="secondary" type="button"
                           disabled={u.userId === profile.userId || team.loading || moreLoading || eligibility.busy || !!eligibility.editing || !!editingRoles || !!editingAccess}
                           aria-label={`${u.enabled === false ? "Reactivate" : "Deactivate"} ${name || u.email}`}
-                          onClick={() => { accessStatus.markDirty(); setEditingAccess(u); }}>{u.enabled === false ? "Reactivate" : "Deactivate"}</button>}
+                          onClick={() => { accessStatus.markDirty(); setEditingAccess(u); }}>{u.enabled === false ? "Reactivate" : "Deactivate"}</Button>}
                       </td>
                       <td>
                         {/* One-off pair — onboarding state is badged here and
@@ -551,18 +572,18 @@ export default function Team({ profile }: { profile: UserProfile }) {
                   );
                 })}
               </tbody>
-            </table>
+            </Table>
           </div>
         )}
         {team.error && <div role="alert">
           <p className="error-text">{team.error}</p>
-          <button type="button" className="secondary" disabled={team.loading} onClick={() => void team.refetch()}>Retry team</button>
+          <Button variant="secondary" type="button"  disabled={team.loading} onClick={() => void team.refetch()}>Retry team</Button>
         </div>}
         {moreError && <p className="error-text" role="alert">{moreError}</p>}
         {team.data.nextToken && <div className="form-actions">
-          <button type="button" className="secondary" disabled={team.loading || moreLoading || alertStatus.busy || eligibility.disabled || !!editingRoles || !!editingAccess} onClick={() => void loadMore()}>
+          <Button variant="secondary" type="button"  disabled={team.loading || moreLoading || alertStatus.busy || eligibility.disabled || !!editingRoles || !!editingAccess} onClick={() => void loadMore()}>
             {moreLoading ? "Loading more…" : moreError ? "Retry loading more" : "Load more team members"}
-          </button>
+          </Button>
         </div>}
         <LeadEligibilityEditor settings={eligibility} />
         {editingRoles && <RoleEditor user={editingRoles}

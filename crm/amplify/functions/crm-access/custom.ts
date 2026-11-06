@@ -1,9 +1,11 @@
 import { DIRECTORY_READS } from '../../../../shared/relationships';
 import { AccountAccess } from "./access";
-import { AccessDenied, id, object, type RecordData } from "./policy";
+import { AccessDenied, id, type RecordData } from "./policy";
+import { object } from '../api-input';
 import { retiredTaskOperation } from "../../../../shared/retiredTaskOperations";
 const adminCommunication = new Set(["dashboardOpenQuotesPage", "dashboardBoundPoliciesPage", "dashboardQuotesPage", "dashboardQuoteStates", "dashboardInvoiceAnchors", "dashboardAssignments", "dashboardInterestPage", "dashboardPolicyAnchors", "dashboardLeadPlansPage", "settings", "teamSettings", "prepareLeadDeletion", "setResponsibilities", "saveEligibility", "saveSettings", "restartReconciliation", "restartConversationHistory", "validateConnection", "activate", "reviewOperation", "backfill"]);
 const accountOperations = new Set(["context", "accountSummary", "saveCommercial", "saveLeadSnooze", "prepareBusinessDraft", "initializeLead", "reopenLead", "setLeadDisposition", "cancelAi", "linkConversation", "linkActivity", "archive", "addNote"]);
+const deliveryOperations = new Set(['businessDeliveryContext', 'previewBusinessDelivery', 'prepareBusinessDraft', 'historyBusinessDeliveries', 'reconcileBusinessDraft']);
 async function filterAccountItems(access: AccountAccess, input: unknown) {
   const items = Array.isArray(input) ? input : [];
   await access.prefetchAccounts(items.map(value => id(object(value).accountId)));
@@ -19,7 +21,15 @@ async function communicationAccount(access: AccountAccess, key: string, expected
 }
 export async function authorizeCustom(access: AccountAccess, field: string, args: RecordData) {
   if (["communicationRead", "communicationWrite"].includes(field) && retiredTaskOperation(id(args.readOperation ?? args.operation), object(args.input))) throw new AccessDenied();
+  if (field === "brokerFeeAction") {
+    const input = object(args.input);
+    if (input.op === "saveJurisdiction") { if (!access.admin) throw new AccessDenied(); return; }
+    if (input.op === "confirmInvoicePayment") await access.requireRecord("Invoice", id(input.invoiceId));
+    else await access.requireAccount(id(input.accountId));
+    return;
+  }
   if (field === "commissionOverview") return; // Handler returns only the caller’s own financial records.
+  if (field === "carrierPaymentPreview") { await access.requireRecord("Quote", id(args.quoteId)); return; }
   if (field === "bindCommissionPolicy") { await access.requireRecord("Quote", id(object(args.input).quoteId)); return; }
   if (access.admin) return;
   if (["crmAccess", "crmFile", "honeycombSubmissionSettings", "reserveCertificateNumber", "reserveInvoiceNumber"].includes(field)) return;
@@ -67,6 +77,47 @@ export async function authorizeCustom(access: AccountAccess, field: string, args
     await access.requireSalesperson(id(input.salespersonId) || access.actor);
     const previous = await access.get("Communication", `manual:${access.actor}:${id(input.requestId)}`);
     if (previous) await access.requireAccount(id(object(previous.data).accountId));
+    return;
+  }
+  if (deliveryOperations.has(op)) {
+    const expectedField = ['businessDeliveryContext', 'historyBusinessDeliveries'].includes(op) ? 'communicationRead' : 'communicationWrite';
+    if (field !== expectedField) throw new AccessDenied();
+    const accountId = id(input.accountId);
+    await access.requireAccount(accountId);
+    await access.requireRecord('Account', accountId);
+    const conversationId = id(input.conversationId);
+    if (conversationId && conversationId !== 'NEW') await communicationAccount(access, `front-link:${conversationId}`, accountId);
+    if (op === 'previewBusinessDelivery') {
+      const kind = id(input.kind), recordId = id(input.recordId);
+      if (kind === 'PACKAGE') {
+        const commercial = await access.get('Communication', `commercial:${accountId}`);
+        const plan = object(commercial?.data);
+        const option = (Array.isArray(plan.options) ? plan.options : []).map(object).find(value => id(value.id) === recordId);
+        if (!option || !Array.isArray(option.quoteIds) || !option.quoteIds.length || option.quoteIds.length > 50) throw new AccessDenied();
+        for (const key of option.quoteIds) {
+          const quote = await access.requireRecord('Quote', id(key));
+          if (await access.root('Quote', quote) !== accountId) throw new AccessDenied();
+        }
+      } else {
+        const model = ({ CERTIFICATE: 'Certificate', DOCUMENT: 'Document' } as Record<string, string>)[kind];
+        if (!model) throw new AccessDenied();
+        const record = await access.requireRecord(model, recordId);
+        if (await access.root(model, record) !== accountId) throw new AccessDenied();
+      }
+      if (input.documentIds !== undefined) {
+        if (!Array.isArray(input.documentIds) || input.documentIds.length > 10) throw new AccessDenied();
+        for (const key of input.documentIds) {
+          const document = await access.requireRecord('Document', id(key));
+          if (document.entityType !== 'ACCOUNT' || document.entityId !== accountId) throw new AccessDenied();
+        }
+      }
+    } else if (op === 'prepareBusinessDraft') {
+      const preview = await access.get('Communication', id(input.previewId)), data = object(preview?.data);
+      if (preview?.kind !== 'BUSINESS_PREVIEW' || preview.accountId !== accountId || data.actor !== access.actor || object(object(data.preview).selection).accountId !== accountId) throw new AccessDenied();
+    } else if (op === 'reconcileBusinessDraft') {
+      const attempt = await access.get('Communication', id(input.attemptId)), data = object(attempt?.data);
+      if (attempt?.kind !== 'BUSINESS_DELIVERY' || attempt.accountId !== accountId || data.accountId !== accountId || data.actor !== access.actor) throw new AccessDenied();
+    }
     return;
   }
   let accountId = id(input.accountId);

@@ -25,13 +25,13 @@ import { buildCrmLead } from "./quote/submission";
 import { useLeadSubmission } from "../lib/crmLead";
 import { attachAddressAutocomplete, loadGooglePlaces } from "../lib/googlePlaces";
 import { takeHandoff } from "../lib/addressHandoff";
-import { states as ALL_STATES } from "../data/states";
+import { US_STATE_CATALOG } from "../../../shared/usStates";
 import { AGENCY } from "../../../shared/agency";
 import { PHONE, PHONE_HREF, trackLead } from "../constants";
 
-const STATE_OPTIONS = [...ALL_STATES]
+const STATE_OPTIONS = [...US_STATE_CATALOG]
   .sort((a, b) => a.name.localeCompare(b.name))
-  .map((s) => ({ value: s.abbr, label: s.name }));
+  .map((s) => ({ value: s.code, label: s.name }));
 
 const ROLE_OPTIONS = [
   { value: "board", label: "Board member / trustee" },

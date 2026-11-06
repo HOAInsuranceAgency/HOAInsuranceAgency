@@ -3,7 +3,7 @@ export const ACCOUNT_MODELS = ["Account", "AccountRelationship", "Contact", "Pri
 /** Storage remains for history; no signed-in browser can use the retired feature. */
 export const RETIRED_MODELS: readonly string[] = ["MarketingTask"];
 export const SHARED_MODELS = ["Party", "PartyAffiliation", "Carrier", "AppetiteGuide", "PfCounselOpinion", "UserProfile", "ProducerLicense", "License", "AgencySettings", "LicenseReminder"] as const;
-export const PUBLIC_OPERATIONS = ["webLeadEstimate", "leadIntakeReady", "submitWebLead", "requestLeadUpload", "closeLeadUploadWindow", "uploadPortalStatus", "requestPortalUpload", "financeElectionTerms", "acceptFinanceElection"];
+export const PUBLIC_OPERATIONS = ["brokerFeeDisclosure", "signBrokerFeeDisclosure", "webLeadEstimate", "leadIntakeReady", "submitWebLead", "requestLeadUpload", "closeLeadUploadWindow", "uploadPortalStatus", "requestPortalUpload", "financeElectionTerms", "acceptFinanceElection"];
 export const OWNER_OPERATIONS = ["commissionAction", "ownerProfitability", "saveEmployeeCompensation", "setTeamUserEnabled"];
 export const ADMIN_OPERATIONS = ["inviteUser", "updateUserRoles", "listTeamUsers", "setPremiumFinanceEnabled", "marketingReportSettings", "marketingReportAction"];
 /** Native group authorization still sees every assigned Cognito group. These
@@ -14,7 +14,7 @@ export const ADMIN_MODEL_OPERATIONS: Record<string, readonly string[]> = {
   UserProfile: ["delete"], PfCounselOpinion: ["create"], License: ["update", "delete"],
   AgencySettings: ["create", "update", "delete"], LeadReply: ["read"], UploadPortal: ["read", "update"],
 };
-export const CUSTOM_OPERATIONS = ["commissionOverview", "bindCommissionPolicy", "communicationRead", "communicationWrite", "honeycombSubmissionSettings", "startHoneycombSubmission", "resolveHoneycombSubmission", "startLeadExtraction", "suggestFormFields", "reserveCertificateNumber", "reserveInvoiceNumber", "sendInvoice", "voidInvoice", "issueFinanceQuote", "generatePfAgreement", "servicePfLoan", "crmAccess", "crmFile"];
+export const CUSTOM_OPERATIONS = ["brokerFeeAction", "commissionOverview", "carrierPaymentPreview", "bindCommissionPolicy", "communicationRead", "communicationWrite", "honeycombSubmissionSettings", "startHoneycombSubmission", "resolveHoneycombSubmission", "startLeadExtraction", "suggestFormFields", "reserveCertificateNumber", "reserveInvoiceNumber", "sendInvoice", "voidInvoice", "issueFinanceQuote", "generatePfAgreement", "servicePfLoan", "crmAccess", "crmFile"];
 export const ACCOUNT_REFERENCES: Record<string, Record<string, string>> = {
   Quote: { renewalPolicyId: "Policy" }, Policy: { quoteId: "Quote" }, Invoice: { policyId: "Policy", quoteId: "Quote" },
   InvoiceLine: { invoiceId: "Invoice", policyId: "Policy" }, PfLoan: { policyId: "Policy", quoteId: "Quote", boardResolutionDocumentId: "Document" },
@@ -24,19 +24,16 @@ export const ACCOUNT_REFERENCES: Record<string, Record<string, string>> = {
 };
 /** Listing partitions follow authoritative parents, including historical rows
  * that predate writable accountId mirrors on invoice lines. */
-export const LIST_PARENTS: Record<string, { model: string; field: string }> = {
+const listParents = {
   InvoiceLine: { model: "Invoice", field: "invoiceId" },
   PfLoanPayment: { model: "PfLoan", field: "loanId" },
   PfNotice: { model: "PfLoan", field: "loanId" },
   PfOverride: { model: "Policy", field: "policyId" },
-};
+} as const;
+export type ParentListPartitions = { [Model in keyof typeof listParents]: typeof listParents[Model]["field"] };
+export const LIST_PARENTS: Record<string, { model: string; field: string }> = listParents;
 export const listPartition = (model: string) => model === "Document" || model === "Activity" ? "entityId" : LIST_PARENTS[model]?.field ?? "accountId";
 export type RecordData = Record<string, unknown>;
 export type Identity = { sub?: string; groups?: string[]; claims?: Record<string, unknown> };
 export class AccessDenied extends Error { constructor() { super("This record is not available to your account. Contact an administrator if it needs to be assigned to you."); this.name = "Unauthorized"; } }
-export const object = (value: unknown): RecordData => {
-  const parsed = typeof value === "string" ? JSON.parse(value) : value;
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
-  return parsed as RecordData;
-};
 export const id = (value: unknown): string => typeof value === "string" && value.length > 0 && value.length <= 500 ? value : "";

@@ -31,7 +31,7 @@ import { defineFunction } from "@aws-amplify/backend";
  */
 export const uploadPortal = defineFunction({
   name: "upload-portal",
-  entry: "./handler.ts",
+  entry: "./handler.sentry.ts",
   timeoutSeconds: 30,
   memoryMB: 512,
   resourceGroupName: "data",

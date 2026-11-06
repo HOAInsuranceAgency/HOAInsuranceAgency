@@ -1,18 +1,16 @@
-import { Amplify } from "aws-amplify";
-import { generateClient } from "aws-amplify/data";
-import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtime";
+import { createDataClientGetter } from "../data-client";
+import { captureHandledFailure } from "../monitoring";
 import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
 import Anthropic from "@anthropic-ai/sdk";
-import type { Schema } from "../../data/resource";
 import { CLAUDE_MODEL } from "../model";
-import { listAllPages } from "../../../src/lib/pagination";
+import { listAllPages } from "../../../../shared/pagination";
 import {
   CONSTRUCTION_TYPES,
   CONTACT_TYPES,
   DEFAULT_DOCUMENT_CATEGORY,
   DOCUMENT_CATEGORY_EXTRACTION_PRIORITY,
   isExtractableCategory,
-} from "../../../src/lib/enums";
+} from "../../../../shared/enums";
 
 /**
  * Two invocation modes:
@@ -26,17 +24,7 @@ import {
 
 const lambda = new LambdaClient();
 
-let dataClient: ReturnType<typeof generateClient<Schema>> | undefined;
-async function getDataClient() {
-  if (!dataClient) {
-    const { resourceConfig, libraryOptions } = await getAmplifyDataClientConfig(
-      process.env as never
-    );
-    Amplify.configure(resourceConfig, libraryOptions);
-    dataClient = generateClient<Schema>();
-  }
-  return dataClient;
-}
+const getDataClient = createDataClientGetter();
 
 // ── Extraction schema (structured outputs — additionalProperties:false,
 //    every property required, nullable via type arrays) ─────────────────
@@ -412,6 +400,7 @@ For a contact's "type" use exactly one of: ${CONTACT_TYPES.join(", ")}, or "" wh
         `${response.usage.input_tokens} in / ${response.usage.output_tokens} out tokens`
     );
   } catch (err) {
+    captureHandledFailure(err);
     console.error(`Extraction failed for ${accountId}`, err);
     await client.models.Account.update({
       id: accountId,

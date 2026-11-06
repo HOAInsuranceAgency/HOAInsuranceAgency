@@ -1,5 +1,5 @@
 import type { License, UserProfile } from "../../lib/client";
-import type { LicenseHolderType } from "../../lib/enums";
+import type { LicenseHolderType } from "../../../../shared/enums";
 
 /** The schema's `LicenseHolderType`, under the name licensing code uses. */
 export type HolderType = LicenseHolderType;

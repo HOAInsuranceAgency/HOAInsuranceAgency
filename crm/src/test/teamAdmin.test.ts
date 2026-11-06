@@ -201,6 +201,66 @@ describe("team role assignments", () => {
   });
 });
 
+describe('complete role membership reads', () => {
+  const incomplete = 'Team group membership could not be verified completely';
+  const member = { Username: 'member', UserAttributes: [{ Name: 'sub', Value: 'member-sub' }] };
+
+  it('refuses cyclic membership pages before any role mutation', async () => {
+    let pages = 0;
+    cognitoSend.mockImplementation(async command => {
+      if (command instanceof AdminGetUserCommand) return member;
+      if (command instanceof AdminListGroupsForUserCommand) return ++pages <= 2
+        ? { Groups: [{ GroupName: 'ADMIN' }], NextToken: 'repeated' } : { Groups: [] };
+      return {};
+    });
+    await expect(run('updateUserRoles', { userId: 'member-sub', roles: ['STAFF'] })).rejects.toThrow(incomplete);
+    expect(pages).toBe(2);
+    expect(changes()).toEqual([]);
+  });
+
+  it('refuses an exhausted membership page budget before changing access', async () => {
+    let pages = 0;
+    cognitoSend.mockImplementation(async command => {
+      if (command instanceof AdminGetUserCommand) return member;
+      if (command instanceof AdminListGroupsForUserCommand) return ++pages <= 20
+        ? { Groups: [{ GroupName: 'ADMIN' }], NextToken: `page-${pages}` } : { Groups: [] };
+      return {};
+    });
+    await expect(run('updateUserRoles', { userId: 'member-sub', roles: ['STAFF'] })).rejects.toThrow(incomplete);
+    expect(pages).toBe(20);
+    expect(changes()).toEqual([]);
+  });
+
+  it('preserves a late Cognito read failure and makes no role changes', async () => {
+    const unavailable = new Error('Cognito membership read unavailable');
+    cognitoSend.mockImplementation(async command => {
+      if (command instanceof AdminGetUserCommand) return member;
+      if (command instanceof AdminListGroupsForUserCommand) {
+        if (command.input.NextToken) throw unavailable;
+        return { Groups: [{ GroupName: 'ADMIN' }], NextToken: 'next' };
+      }
+      return {};
+    });
+    await expect(run('updateUserRoles', { userId: 'member-sub', roles: ['STAFF'] })).rejects.toBe(unavailable);
+    expect(changes()).toEqual([]);
+  });
+
+  it('preserves every role and unrelated group across an empty membership page', async () => {
+    cognitoSend.mockImplementation(async command => {
+      if (command instanceof AdminGetUserCommand) return member;
+      if (command instanceof AdminListGroupsForUserCommand) {
+        if (!command.input.NextToken) return { Groups: [{ GroupName: 'ADMIN' }], NextToken: 'empty' };
+        if (command.input.NextToken === 'empty') return { Groups: [], NextToken: 'last' };
+        return { Groups: [{ GroupName: 'PRODUCER' }, { GroupName: 'SUPPORT_REPORTING' }] };
+      }
+      return {};
+    });
+    expect(await run('updateUserRoles', { userId: 'member-sub', roles: ['ADMIN', 'PRODUCER'] })).toMatchObject({ ok: true, roles: ['ADMIN', 'PRODUCER'] });
+    expect(changes()).toEqual([]);
+    expect(cognitoSend.mock.calls.filter(([command]) => command instanceof AdminListGroupsForUserCommand)).toHaveLength(3);
+  });
+});
+
 describe("Owner account shutdown", () => {
   let status: Record<string, unknown> | undefined;
   let cognitoEnabled: boolean;

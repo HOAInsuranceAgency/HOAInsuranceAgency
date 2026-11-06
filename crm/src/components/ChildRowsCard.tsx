@@ -1,3 +1,5 @@
+import { Button, ButtonSummary } from "./ui/Button";
+import { Table } from "./ui/Table";
 import { type ReactNode } from "react";
 import Modal from "./Modal";
 import ConfirmButton from "./ConfirmButton";
@@ -136,28 +138,28 @@ export default function ChildRowsCard<
 
   const editActions = (
     <>
-      <button
-        className="primary"
+      <Button variant="primary"
+
         disabled={mutating}
         onClick={child.saveEdit}
       >
         {child.editStatus.busy ? "Saving…" : "Save"}
-      </button>
-      <button className="secondary" disabled={mutating} onClick={child.cancelEdit}>
+      </Button>
+      <Button variant="secondary"  disabled={mutating} onClick={child.cancelEdit}>
         Cancel
-      </button>
+      </Button>
       <SaveStatus {...child.editStatus.status} />
     </>
   );
 
   const addButton = (
-    <button
-      className={addDisclosure ? "primary" : "secondary"}
+    <Button
+      variant={addDisclosure ? "primary" : "secondary"}
       disabled={mutating}
       onClick={child.add}
     >
       {addDisclosure && child.addStatus.busy ? "Adding…" : addLabel}
-    </button>
+    </Button>
   );
   const EmptyTag = typeof emptyMessage === "string" ? "p" : "div";
 
@@ -194,7 +196,7 @@ export default function ChildRowsCard<
         <>
           {addDisclosure ? (
             <details className="child-rows-add">
-              <summary>{addDisclosure}</summary>
+              <ButtonSummary>{addDisclosure}</ButtonSummary>
               <div className="child-rows-add-body">
                 <div className="form-grid child-rows-fields">{fields(addFields)}</div>
                 <div className="form-actions child-rows-form-actions">
@@ -232,7 +234,7 @@ export default function ChildRowsCard<
             </EmptyTag>
           ) : (
             <div className="table-wrap child-rows-table-wrap">
-              <table className="child-rows-table" aria-label={tableLabel}>
+              <Table className="child-rows-table" aria-label={tableLabel}>
                 <colgroup>
                   {columns.map((column) => (
                     <col key={column.key} />
@@ -283,14 +285,14 @@ export default function ChildRowsCard<
                         ))}
                         <td>
                           <div className="child-rows-row-actions">
-                            <button
-                              className="secondary"
+                            <Button variant="secondary"
+
                               aria-label={editButtonLabel?.(row)}
                               disabled={mutating || canEditRow?.(row) === false}
                               onClick={() => child.startEdit(row)}
                             >
                               Edit
-                            </button>{" "}
+                            </Button>{" "}
                             <ConfirmButton
                               label="Remove"
                               disabled={mutating || canRemoveRow?.(row) === false}
@@ -304,7 +306,7 @@ export default function ChildRowsCard<
                     ),
                   )}
                 </tbody>
-              </table>
+              </Table>
             </div>
           )}
 

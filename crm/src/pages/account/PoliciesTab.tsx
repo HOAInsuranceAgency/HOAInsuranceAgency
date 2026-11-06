@@ -1,20 +1,19 @@
+import { assertGraphqlErrors } from '../../lib/apiResponse';
+import { useLiveUpdateBlock } from "../../lib/useLiveUpdates";
+import { Button } from "../../components/ui/Button";
+import { Table } from "../../components/ui/Table";
+import { Select } from "../../components/ui/Select";
 import { useRef, useState } from "react";
-import {
-  client,
-  fmtDate,
-  fmtMoney,
-  friendlyError,
-  listAllPages,
-  type Carrier,
-  type Policy,
-} from "../../lib/client";
+import { client, fmtDate, fmtMoney, friendlyError, type Carrier, type Policy } from "../../lib/client";
+import { listAllPages } from "../../../../shared/pagination";
 import { useAsyncResource } from "../../lib/useAsyncResource";
-import { BILL_TYPE_SHORT, POLICY_STATUSES } from "../../lib/enums";
+import { BILL_TYPE_SHORT, POLICY_STATUSES } from "../../../../shared/enums";
 import { useSort, SortTh } from "../../lib/useSort";
 import { commissionCell, termsSummary } from "../../components/QuotesPanel";
+import PolicyCharges from "../../components/PolicyCharges";
 import CoverageForm from "../../components/CoverageForm";
 import { SaveStatus, type SaveStatusValue } from "../../components/SaveStatus";
-import { isAuthorizationError } from "../../lib/authorizationError";
+import { isAuthorizationError } from "../../../../shared/authorizationError";
 
 export function PoliciesTab({ accountId }: { accountId: string }) {
   return <AccountPolicies key={accountId} accountId={accountId} />;
@@ -22,6 +21,7 @@ export function PoliciesTab({ accountId }: { accountId: string }) {
 
 function AccountPolicies({ accountId }: { accountId: string }) {
   const [editing, setEditing] = useState<Policy | null>(null);
+  useLiveUpdateBlock(!!editing);
   const updates = useRef(new Set<string>());
   const [rowStatus, setRowStatus] = useState<Record<string, SaveStatusValue>>({});
   const saving = Object.values(rowStatus).some(status => status.state === "saving");
@@ -35,7 +35,7 @@ function AccountPolicies({ accountId }: { accountId: string }) {
         })
       ),
     [accountId],
-    { initialData: [] as Policy[], errorMessage: "Failed to load policies", clearDataOnError: isAuthorizationError }
+    { initialData: [] as Policy[], errorMessage: "Failed to load policies", clearDataOnError: isAuthorizationError , live: true }
   );
   const policies = policyRes.data;
   const setPolicies = policyRes.setData;
@@ -47,7 +47,7 @@ function AccountPolicies({ accountId }: { accountId: string }) {
   const carrierRes = useAsyncResource(
     () => listAllPages(nextToken => client.models.Carrier.list({ nextToken })),
     [],
-    { initialData: [] as Carrier[], errorMessage: "Failed to load carriers", clearDataOnError: isAuthorizationError }
+    { initialData: [] as Carrier[], errorMessage: "Failed to load carriers", clearDataOnError: isAuthorizationError , live: true }
   );
   const carrierRows = carrierRes.data;
 
@@ -59,7 +59,8 @@ function AccountPolicies({ accountId }: { accountId: string }) {
     setRowStatus(previous => ({ ...previous, [id]: { state: "saving" } }));
     try {
       const { data, errors } = await client.models.Policy.update({ id, ...patch });
-      if (errors?.length || !data) throw new Error(errors?.[0]?.message);
+      assertGraphqlErrors({ errors });
+      if (!data) throw new Error(errors?.[0]?.message);
       setPolicies(ps => ps.map(p => p.id === id ? data : p));
       setRowStatus(previous => ({ ...previous, [id]: { state: "saved", message: "Policy updated." } }));
     } catch (error) {
@@ -117,11 +118,11 @@ function AccountPolicies({ accountId }: { accountId: string }) {
           column reads "—", indistinguishable from a policy with none set. */}
       {carrierRes.error && <p className="error-text" role="alert">
         {carrierRes.error}{" "}
-        <button className="secondary" disabled={carrierRes.loading} onClick={() => void carrierRes.refetch()}>Retry carriers</button>
+        <Button variant="secondary"  disabled={carrierRes.loading} onClick={() => void carrierRes.refetch()}>Retry carriers</Button>
       </p>}
       {policyRes.error && <p className="error-text" role="alert">
         {policyRes.error}{" "}
-        <button className="secondary" disabled={policyRes.loading} onClick={() => void refresh()}>Retry policies</button>
+        <Button variant="secondary"  disabled={policyRes.loading} onClick={() => void refresh()}>Retry policies</Button>
       </p>}
 
       {!policyRes.loaded || (policyRes.loading && policies.length === 0) ? (
@@ -132,7 +133,7 @@ function AccountPolicies({ accountId }: { accountId: string }) {
         </p>
       ) : (
         <div className="table-wrap">
-          <table>
+          <Table>
             <thead>
               <tr>
                 <SortTh label="Policy #" colKey="number" sortKey={sortKey} dir={dir} onToggle={toggle} />
@@ -162,7 +163,7 @@ function AccountPolicies({ accountId }: { accountId: string }) {
                   {/* Blank for anything bound before the field existed, which
                       is honest — "Direct" would be a guess about money. */}
                   <td className="small">{BILL_TYPE_SHORT[p.billType ?? ""] ?? "—"}</td>
-                  <td>{fmtMoney(p.premium)}</td>
+                  <td>{fmtMoney(p.premium)}<PolicyCharges source={p} />{(p.brokerFeeRefunded ?? 0) > 0 && <div className="small muted">{fmtMoney(p.brokerFeeRefunded)} HOA broker fee refunded</div>}</td>
                   <td className="small">{commissionCell(p)}</td>
                   <td className="small">{termsSummary(p)}</td>
                   <td>{fmtDate(p.effectiveDate)}</td>
@@ -171,7 +172,7 @@ function AccountPolicies({ accountId }: { accountId: string }) {
                       before the field existed. */}
                   <td>{fmtDate(p.datePolicyBound?.slice(0, 10))}</td>
                   <td>
-                    <select
+                    <Select
                       aria-label={`Status for policy ${p.policyNumber || p.id}`}
                       disabled={rowStatus[p.id]?.state === "saving" || policyRes.loading || Boolean(policyRes.error) || Boolean(editing)}
                       value={p.status}
@@ -182,18 +183,18 @@ function AccountPolicies({ accountId }: { accountId: string }) {
                       {POLICY_STATUSES.map((s) => (
                         <option key={s}>{s}</option>
                       ))}
-                    </select>
+                    </Select>
                     <SaveStatus {...(rowStatus[p.id] ?? { state: "idle" })} />
                   </td>
                   <td>
-                    <button className="link" disabled={saving || policyRes.loading || Boolean(policyRes.error) || Boolean(editing) || !carrierRes.loaded || carrierRes.loading || Boolean(carrierRes.error)} onClick={() => setEditing(p)}>
+                    <Button variant="link"  disabled={saving || policyRes.loading || Boolean(policyRes.error) || Boolean(editing) || !carrierRes.loaded || carrierRes.loading || Boolean(carrierRes.error)} onClick={() => setEditing(p)}>
                       Edit
-                    </button>
+                    </Button>
                   </td>
                 </tr>
               ))}
             </tbody>
-          </table>
+          </Table>
         </div>
       )}
     </div>

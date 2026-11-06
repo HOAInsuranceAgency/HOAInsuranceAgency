@@ -1,17 +1,13 @@
+import { assertGraphqlErrors } from '../../lib/apiResponse';
+import { reserveCertificateNumber } from '../../lib/billingApi';
+import { Button } from "../../components/ui/Button";
+import { Input } from "../../components/ui/Input";
+import { Textarea } from "../../components/ui/Textarea";
+import { Table } from "../../components/ui/Table";
 import { useRef, useState } from "react";
 import { uploadData } from "../../lib/scopedStorage";
-import {
-  client,
-  fmtDate,
-  friendlyError,
-  listAllPages,
-  TEMPLATE_MISSING_MESSAGE,
-  type Account,
-  type Carrier,
-  type Certificate,
-  type Policy,
-  type UserProfile,
-} from "../../lib/client";
+import { client, fmtDate, friendlyError, TEMPLATE_MISSING_MESSAGE, type Account, type Carrier, type Certificate, type Policy, type UserProfile } from "../../lib/client";
+import { listAllPages } from "../../../../shared/pagination";
 import {
   aiFillGaps,
   fillAcord25,
@@ -20,12 +16,13 @@ import {
 } from "../../lib/acord";
 import { downloadFile } from "../../lib/storage";
 import { useSort, SortTh } from "../../lib/useSort";
-import { isAuthorizationError } from "../../lib/authorizationError";
+import { isAuthorizationError } from "../../../../shared/authorizationError";
 import { useAsyncResource } from "../../lib/useAsyncResource";
 import AiFilledList from "../../components/AiFilledList";
 import FilePreviewModal from "../../components/FilePreview";
 import { SaveStatus, useSaveStatus } from "../../components/SaveStatus";
 import { useFormState } from "../../lib/useFormState";
+import BusinessDraftButton from "../../components/BusinessDraftButton";
 
 export function CertificatesTab(props: Parameters<typeof CertificatesTabContent>[0]) {
   return <CertificatesTabContent key={`${props.account.id}:${props.sourceCommunicationId ?? ""}`} {...props} />;
@@ -49,7 +46,7 @@ function CertificatesTabContent({
         })
       ),
     [account.id],
-    { initialData: [] as Certificate[], errorMessage: "Failed to load certificates", clearDataOnError: isAuthorizationError }
+    { initialData: [] as Certificate[], errorMessage: "Failed to load certificates", clearDataOnError: isAuthorizationError , live: true }
   );
   const certs = certRes.data;
   const setCerts = certRes.setData;
@@ -63,7 +60,7 @@ function CertificatesTabContent({
         })
       ),
     [account.id],
-    { initialData: [] as Policy[], errorMessage: "Failed to load policies", clearDataOnError: isAuthorizationError }
+    { initialData: [] as Policy[], errorMessage: "Failed to load policies", clearDataOnError: isAuthorizationError , live: true }
   );
   const policies = policyRes.data;
 
@@ -75,7 +72,7 @@ function CertificatesTabContent({
   const carrierRes = useAsyncResource(
     () => listAllPages(nextToken => client.models.Carrier.list({ nextToken })),
     [],
-    { initialData: [] as Carrier[], errorMessage: "Failed to load carriers", clearDataOnError: isAuthorizationError }
+    { initialData: [] as Carrier[], errorMessage: "Failed to load carriers", clearDataOnError: isAuthorizationError , live: true }
   );
   const carriers = carrierRes.data;
 
@@ -112,11 +109,7 @@ function CertificatesTabContent({
     const submitted = form;
     await issueStatus.run(async () => {
       setError("");
-      const { data: reserved, errors: reserveErrors } = await client.mutations.reserveCertificateNumber();
-      if (reserveErrors?.length) throw new Error(reserveErrors[0].message);
-      const body = typeof reserved === "string" ? JSON.parse(reserved) : reserved;
-      const certificateNumber = body?.certificateNumber;
-      if (!certificateNumber) throw new Error("Couldn't reserve a certificate number. Nothing was saved; try again.");
+      const certificateNumber = await reserveCertificateNumber();
       const { data, errors } = await client.models.Certificate.create({
         accountId: account.id,
         sourceCommunicationId,
@@ -129,7 +122,8 @@ function CertificatesTabContent({
         issuedBy: `${profile.firstName} ${profile.lastName}`,
         issuedAt: new Date().toISOString(),
       });
-      if (errors?.length || !data) throw new Error(errors?.[0]?.message ?? "Couldn't record the certificate. Your entries are still here; try again.");
+      assertGraphqlErrors({ errors });
+      if (!data) throw new Error(errors?.[0]?.message ?? "Couldn't record the certificate. Your entries are still here; try again.");
       setCerts(cs => [data, ...cs]);
       setShowForm(false);
       reset();
@@ -263,9 +257,9 @@ function CertificatesTabContent({
         <>
           <div className="toolbar">
             <div className="grow" />
-            <button className="primary" disabled={saving} onClick={() => setShowForm(!showForm)}>
+            <Button variant="primary"  disabled={saving} onClick={() => { if (showForm) reset(); setShowForm(!showForm); }}>
               {showForm ? "Cancel" : "+ New certificate"}
-            </button>
+            </Button>
           </div>
 
           {showForm && (
@@ -274,18 +268,18 @@ function CertificatesTabContent({
               <div className="form-grid">
                 <div className="field">
                   <label>Certificate holder *</label>
-                  <input value={form.holderName} onChange={(e) => setF("holderName", e.target.value)} />
+                  <Input value={form.holderName} onChange={(e) => setF("holderName", e.target.value)} />
                 </div>
                 <div className="field">
                   <label>Holder address</label>
-                  <input
+                  <Input
                     value={form.holderAddress}
                     onChange={(e) => setF("holderAddress", e.target.value)}
                   />
                 </div>
                 <div className="field full">
                   <label>Description of operations</label>
-                  <textarea
+                  <Textarea
                     rows={2}
                     value={form.description}
                     onChange={(e) => setF("description", e.target.value)}
@@ -306,7 +300,7 @@ function CertificatesTabContent({
                         className="small"
                         style={{ display: "flex", gap: 6, alignItems: "center" }}
                       >
-                        <input
+                        <Input
                           type="checkbox"
                           checked={form.selectedPolicies.includes(p.id)}
                           onChange={(e) =>
@@ -326,13 +320,13 @@ function CertificatesTabContent({
               </div>
               </fieldset>
               <div className="form-actions">
-                <button
-                  className="primary"
+                <Button variant="primary"
+
                   disabled={saving || genStatus.busy || !referencesReady || !form.holderName.trim()}
                   onClick={issue}
                 >
                   {saving ? "Saving…" : "Record certificate"}
-                </button>
+                </Button>
               </div>
             </div>
           )}
@@ -346,9 +340,9 @@ function CertificatesTabContent({
           <AiFilledList fields={aiFilled} />
           {/* `error` is the issue/generate failure; the reads have their own. */}
           {error && <p className="error-text">{error}</p>}
-          {carrierRes.error && <p className="error-text">{carrierRes.error} <button disabled={carrierRes.loading} onClick={() => void carrierRes.refetch()}>Retry carriers</button></p>}
-          {policyRes.error && <p className="error-text">{policyRes.error} <button disabled={policyRes.loading} onClick={() => void policyRes.refetch()}>Retry policies</button></p>}
-          {certRes.error && <p className="error-text">{certRes.error} <button disabled={certRes.loading} onClick={() => void certRes.refetch()}>Retry certificates</button></p>}
+          {carrierRes.error && <p className="error-text">{carrierRes.error} <Button disabled={carrierRes.loading} onClick={() => void carrierRes.refetch()}>Retry carriers</Button></p>}
+          {policyRes.error && <p className="error-text">{policyRes.error} <Button disabled={policyRes.loading} onClick={() => void policyRes.refetch()}>Retry policies</Button></p>}
+          {certRes.error && <p className="error-text">{certRes.error} <Button disabled={certRes.loading} onClick={() => void certRes.refetch()}>Retry certificates</Button></p>}
 
           {!certRes.loaded ? (
             <p className="muted small">Loading…</p>
@@ -356,7 +350,7 @@ function CertificatesTabContent({
             <p className="muted small">No certificates issued.</p>
           ) : (
             <div className="table-wrap">
-              <table>
+              <Table>
                 <thead>
                   <tr>
                     <SortTh label="Cert #" colKey="number" sortKey={sortKey} dir={dir} onToggle={toggle} />
@@ -382,34 +376,35 @@ function CertificatesTabContent({
                       <td style={{ whiteSpace: "nowrap" }}>
                         {c.s3Key ? (
                           <>
-                            <button className="link" onClick={() => setPreviewCert(c)}>
+                            <Button variant="link"  onClick={() => setPreviewCert(c)}>
                               Preview
-                            </button>
-                            <button className="link" onClick={() => downloadPdf(c)}>
+                            </Button>
+                            <Button variant="link"  onClick={() => downloadPdf(c)}>
                               Download
-                            </button>
-                            <button
-                              className="link"
+                            </Button>
+                            <BusinessDraftButton accountId={account.id} kind="CERTIFICATE" recordId={c.id} label="Prepare email in Front" disabled={genStatus.busy || saving || !referencesReady} />
+                            <Button variant="link"
+
                               disabled={genStatus.busy || saving || !referencesReady}
                               onClick={() => generatePdf(c)}
                             >
                               {generating === c.id ? "Regenerating…" : "Regenerate"}
-                            </button>
+                            </Button>
                           </>
                         ) : (
-                          <button
-                            className="link"
+                          <Button variant="link"
+
                             disabled={genStatus.busy || saving || !referencesReady}
                             onClick={() => generatePdf(c)}
                           >
                             {generating === c.id ? "Generating…" : "Generate PDF"}
-                          </button>
+                          </Button>
                         )}
                       </td>
                     </tr>
                   ))}
                 </tbody>
-              </table>
+              </Table>
             </div>
           )}
         </>

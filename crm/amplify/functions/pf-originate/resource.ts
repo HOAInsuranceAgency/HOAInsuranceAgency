@@ -14,7 +14,7 @@ import { defineFunction } from "@aws-amplify/backend";
  */
 export const pfOriginate = defineFunction({
   name: "pf-originate",
-  entry: "./handler.ts",
+  entry: "./handler.sentry.ts",
   timeoutSeconds: 30,
   resourceGroupName: "data",
 });

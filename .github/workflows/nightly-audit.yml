@@ -30,7 +30,9 @@ jobs:
   audit:
     # Fork PRs never receive the API key. PR runs always use the small smoke prompt.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-latest
+    # Ubuntu 26.04's socket permission probe breaks the pinned action's drop-sudo.
+    # Keep isolation enabled on 24.04 until openai/codex-action#188 is resolved.
+    runs-on: ubuntu-24.04
     timeout-minutes: 65
     permissions:
       contents: read

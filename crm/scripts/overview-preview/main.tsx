@@ -1,5 +1,8 @@
+import { Tabs, TabPanel } from '../../src/components/ui/Tabs';
+import { Input } from '../../src/components/ui/Input';
+import '../../src/components/UniversalSearch.css';
 import { useState } from 'react';
-import { createRoot } from 'react-dom/client';
+import { mountPreview } from '../preview-support/mount';
 import { MemoryRouter } from 'react-router-dom';
 import '../../src/styles.css';
 import { OverviewTab } from '../../src/pages/account/OverviewTab';
@@ -19,16 +22,20 @@ function Preview() {
       <div className="spacer" /><div className="user">Avery Brooks<div className="small">SALESPERSON</div><div className="small" style={{ marginTop: 8 }}>Fictional preview</div></div>
     </aside>
     <main className="main">
-      <div className="topbar"><div className="usearch"><input aria-label="Preview search" placeholder="Search accounts, contacts, policies, invoices, documents…" disabled /></div></div>
+      <div className="topbar"><div className="usearch"><Input aria-label="Preview search" placeholder="Search accounts, contacts, policies, invoices, documents…" disabled /></div></div>
       <h1>{account.name} <span className="badge blue">{isClient ? 'Client' : 'Lead'}</span></h1>
       <p className="sub">ASSOCIATION · {account.city || 'Boston'}, {account.state || 'MA'} · {isClient ? `client since ${fmtDate(account.convertedAt)}` : `entered ${fmtDate(account.createdAt)}`}</p>
-      <div className="tabs">{tabs.map(name => <button key={name} className={name === 'Overview' ? 'active' : ''}>{name}</button>)}</div>
+      {/* Shell navigation stays inert in this single-view fixture. */}
+      <Tabs id="overview-preview" label="Account views" value="overview" onChange={() => {}}
+        items={tabs.map(label => ({ value: label.toLowerCase().replace(/[^a-z0-9]+/g, '-'), label }))} />
+      <TabPanel tabsId="overview-preview" value="overview">
       <div className="account-overview">
         <OverviewTab account={account} onChange={setAccount} />
         <ContactsCard accountId={account.id} />
         <PropertyPanel account={account} onChange={setAccount} />
       </div>
+      </TabPanel>
     </main>
   </div>;
 }
-createRoot(document.getElementById('root')!).render(<MemoryRouter><Preview /></MemoryRouter>);
+mountPreview(<MemoryRouter><Preview /></MemoryRouter>);

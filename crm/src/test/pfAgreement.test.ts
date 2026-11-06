@@ -11,7 +11,7 @@ import {
   SECURITY_INTEREST_AND_AUTHORITY,
   type AgreementView,
 } from "../../amplify/functions/pf-agreement/agreementPdf";
-import { buildQuote } from "../lib/premiumFinance/quote";
+import { buildQuote } from "../../../shared/premiumFinance/quote";
 
 /**
  * The agreement is a legal document; these tests pin its load-bearing text.
@@ -87,6 +87,16 @@ function decode(bytes: Uint8Array): string {
 }
 
 describe("the premium finance agreement", () => {
+  it.each([
+    { downPayment: 0.005, originationFee: 0.005, brokerFee: 0, initial: '$0.01', principal: '$0.01' },
+    { downPayment: 1.005, originationFee: 10, brokerFee: 0, initial: '$11.01', principal: '$1.01' },
+    { downPayment: 8435.52, originationFee: 10, brokerFee: 500, initial: '$8,945.52', principal: '$8,435.52' },
+  ])('preserves combined-dollar rounding in the agreement and first payment: %j', async ({ initial, principal, ...amounts }) => {
+    const text = decode(await renderAgreementPdf({ ...view, ...amounts }));
+    expect(text).toContain(`making the initial payment ${initial}.`);
+    expect(text).toContain(`2026-09-01 (down payment) ${initial} $0.00 ${principal} $750,000.00`);
+  });
+
   it("carries the ownership disclosure verbatim", async () => {
     const text = decode(await renderAgreementPdf(view));
     // pdf-lib may encode the em dash oddly; assert the load-bearing clauses.

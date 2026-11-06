@@ -1,3 +1,6 @@
+import { publicApi } from "./publicApi";
+import { isFinanceElectionTerms, isFinanceElectionAcceptance } from '../../../shared/financeElection';
+import { initialPaymentTotalDollars } from '../../../shared/premiumFinance/initialPayment';
 /**
  * The finance election's two calls against the CRM's public AppSync API.
  *
@@ -17,50 +20,15 @@ const ACCEPT_MUTATION = `mutation AcceptFinanceElection($token: String!, $accept
   acceptFinanceElection(token: $token, accept: $accept, signerName: $signerName, signerRole: $signerRole)
 }`;
 
-/**
- * `a.json()` is AWSJSON on the wire, which is a JSON *string*, and the fetch
- * below does no parsing. Same trap `uploadPortal.ts` and `crmLead.ts`
- * document; it has cost a working panel twice already.
- */
-function unwrap(raw: unknown): Record<string, unknown> | null {
-  let v: unknown = raw;
-  try {
-    if (typeof v === "string") v = JSON.parse(v);
-    if (typeof v === "string") v = JSON.parse(v);
-  } catch {
-    return null;
-  }
-  return v && typeof v === "object" ? (v as Record<string, unknown>) : null;
-}
-
-async function call(
-  query: string,
-  variables: Record<string, unknown>,
-  field: string
-): Promise<Record<string, unknown>> {
-  if (!API_URL || !API_KEY) {
-    throw new Error("Financing is not configured on this build.");
-  }
-  const res = await fetch(API_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "x-api-key": API_KEY },
-    body: JSON.stringify({ query, variables }),
+async function call(query: string, variables: Record<string, unknown>, field: string) {
+  return publicApi(query, variables, field, {
+    url: API_URL, key: API_KEY, configurationError: 'Financing is not configured on this build.',
+    refused: 'This financing link is no longer active.',
   });
-  if (!res.ok) throw new Error(`We couldn't reach the server (${res.status}).`);
-  const body = await res.json();
-  if (body.errors?.length) {
-    throw new Error(body.errors[0].message ?? "The server refused that request.");
-  }
-  const result = unwrap(body.data?.[field]);
-  if (!result) throw new Error("The server sent back something unreadable.");
-  if (result.ok !== true) {
-    throw new Error(String(result.error ?? "This financing link is no longer active."));
-  }
-  return result;
 }
 
 export interface ElectionTerms {
-  state: "open" | "done" | "active" | "closed" | "checkout";
+  state: "open" | "done" | "active" | "closed";
   reason: string | null;
   associationName: string;
   premium: number;
@@ -72,6 +40,7 @@ export interface ElectionTerms {
   payment: number;
   totalInterest: number;
   originationFee: number;
+  brokerFee: number;
   effectiveDate: string | null;
   /** The agreement paragraphs the customer signs — served, never copied. */
   agreementTerms: string[];
@@ -82,19 +51,24 @@ export interface ElectionTerms {
 
 export async function fetchElectionTerms(token: string): Promise<ElectionTerms> {
   const r = await call(TERMS_QUERY, { token }, "financeElectionTerms");
+  if (!isFinanceElectionTerms(r)) throw new Error('The server sent back something unreadable.');
+  if (r.state === 'closed') return { state: 'closed', reason: r.reason ?? null, associationName: 'your association', premium: 0, months: 0, apr: 0, downPayment: 0, initialPaymentAmount: 0, amountFinanced: 0, payment: 0, totalInterest: 0, originationFee: 0, brokerFee: 0, effectiveDate: null, agreementTerms: [], agreementSignedName: null, agreementSignedRole: null };
   return {
-    state: (r.state as ElectionTerms["state"]) ?? "closed",
-    reason: typeof r.reason === "string" ? r.reason : null,
+    state: r.state,
+    reason: null,
     associationName: String(r.associationName ?? "your association"),
     premium: Number(r.premium ?? 0),
     months: Number(r.months ?? 0),
     apr: Number(r.apr ?? 0),
     downPayment: Number(r.downPayment ?? 0),
-    initialPaymentAmount: Number(r.initialPaymentAmount ?? (Number(r.downPayment ?? 0) + Number(r.originationFee ?? 0))),
+    initialPaymentAmount: Number(r.initialPaymentAmount ?? initialPaymentTotalDollars({
+      downPayment: Number(r.downPayment ?? 0), originationFee: Number(r.originationFee ?? 0), brokerFee: Number(r.brokerFee ?? 0),
+    })),
     amountFinanced: Number(r.amountFinanced ?? 0),
     payment: Number(r.payment ?? 0),
     totalInterest: Number(r.totalInterest ?? 0),
     originationFee: Number(r.originationFee ?? 0),
+    brokerFee: Number(r.brokerFee ?? 0),
     effectiveDate: typeof r.effectiveDate === "string" ? r.effectiveDate : null,
     agreementTerms: Array.isArray(r.agreementTerms)
       ? r.agreementTerms.filter((p): p is string => typeof p === "string")
@@ -114,7 +88,7 @@ export async function fetchElectionTerms(token: string): Promise<ElectionTerms> 
 export async function acceptElection(
   token: string,
   signer?: { name: string; role: string }
-): Promise<{ state: string; url: string | null; reason: string | null }> {
+): Promise<{ state: 'checkout' | 'done' | 'closed'; url: string | null; reason: string | null }> {
   const r = await call(
     ACCEPT_MUTATION,
     {
@@ -125,9 +99,6 @@ export async function acceptElection(
     },
     "acceptFinanceElection"
   );
-  return {
-    state: String(r.state ?? "closed"),
-    url: typeof r.url === "string" ? r.url : null,
-    reason: typeof r.reason === "string" ? r.reason : null,
-  };
+  if (!isFinanceElectionAcceptance(r)) throw new Error('The server sent back something unreadable.');
+  return { state: r.state, url: r.state === 'checkout' ? r.url : null, reason: r.state === 'closed' ? r.reason ?? null : null };
 }

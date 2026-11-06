@@ -1,9 +1,14 @@
+import { Button } from "./ui/Button";
+import { Input } from "./ui/Input";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { receivesNewLeads } from "../../../shared/salespersonOwnership";
 import { communicationRequest as request, type TeamEligibility } from "../lib/communications";
 import { useAsyncResource } from "../lib/useAsyncResource";
-import { isAuthorizationError } from "../lib/authorizationError";
+import { isAuthorizationError } from "../../../shared/authorizationError";
 import Modal from "./Modal";
+import { liveUpdates } from '../lib/liveUpdates';
+import { useLiveRefresh, useLiveUpdateBlock } from '../lib/useLiveUpdates';
+import { LiveStatus } from './LiveStatus';
 
 type ConnectionIds = Pick<TeamEligibility, "frontId" | "dialpadId" | "frontChannelId" | "frontSignatureId">;
 
@@ -19,25 +24,38 @@ export function useLeadEligibilitySettings(members: readonly EligibilityRosterMe
   const [editing, setEditing] = useState<TeamEligibility | null>(null);
   const inFlight = useRef(false), readPending = useRef(false), refreshPending = useRef(false);
   const saved = useRef(new Map<string, TeamEligibility>()), loaded = useRef(new Set<string>());
+  const generation = useRef(0);
+  const [refreshError, setRefreshError] = useState('');
   const readIds = useRef<string[]>([]);
   const current = useRef({ members, paused, editing });
   current.current = { members, paused, editing };
+  useLiveUpdateBlock(!!editing);
+  useLiveUpdateBlock(busy, 'write');
+  async function fetchSettings(ids: string[]) {
+    const rows: TeamEligibility[] = [];
+    for (let offset = 0; offset < ids.length; offset += 20) {
+      const page = await request("teamSettings", { userIds: ids.slice(offset, offset + 20) });
+      if (!Array.isArray(page.team)) throw new Error('Could not load assignment settings.');
+      rows.push(...page.team);
+    }
+    return rows;
+  }
+  function mergeSettings(ids: string[], rows: TeamEligibility[]) {
+    for (const id of ids) loaded.current.add(id);
+    for (const row of rows) {
+      const previous = saved.current.get(row.userId);
+      if (ids.includes(row.userId) && (!previous || (row.version ?? 0) >= (previous.version ?? 0))) saved.current.set(row.userId, row);
+    }
+    return { team: [...saved.current.values()] };
+  }
   const resource = useAsyncResource(async () => {
     const ids = [...readIds.current];
+    const ticket = generation.current;
     try {
-      const rows: TeamEligibility[] = [];
-      for (let offset = 0; offset < ids.length; offset += 20) {
-        const page = await request<{ team: TeamEligibility[] }>("teamSettings", { userIds: ids.slice(offset, offset + 20) });
-        rows.push(...page.team);
-      }
+      const rows = await fetchSettings(ids);
       // Do not replace a newer committed version with an older response. Missing
       // rows mean defaults, rather than needing a broad roster/profile lookup.
-      for (const id of ids) loaded.current.add(id);
-      for (const row of rows) {
-        const previous = saved.current.get(row.userId);
-        if (ids.includes(row.userId) && (!previous || (row.version ?? 0) >= (previous.version ?? 0))) saved.current.set(row.userId, row);
-      }
-      return { team: [...saved.current.values()] };
+      return ticket === generation.current ? mergeSettings(ids, rows) : { team: [] };
     } finally {
       // Release before the resource publishes loading=false, so newly visible
       // IDs can start their read in that render's effect without a timing gap.
@@ -49,12 +67,37 @@ export function useLeadEligibilitySettings(members: readonly EligibilityRosterMe
       saved.current.clear(); loaded.current.clear();
       return true;
     },
-  });
+   });
   const idsKey = JSON.stringify(members.map(member => member.userId));
+
+  function deny(failure: unknown) {
+    generation.current++; saved.current.clear(); loaded.current.clear();
+    readIds.current = []; readPending.current = false; refreshPending.current = false;
+    setEditing(null); setError(''); setMessage(''); setRefreshError('');
+    resource.invalidate(failure);
+  }
+  useLiveRefresh(async () => {
+    const ids = [...new Set(current.current.members.map(member => member.userId))];
+    if (!ids.length || readPending.current || inFlight.current || current.current.editing || current.current.paused) return false;
+    const fence = liveUpdates.getSnapshot(), ticket = generation.current;
+    if (!liveUpdates.canPublish(fence)) return false;
+    try {
+      const rows = await fetchSettings(ids);
+      if (ticket !== generation.current) return true;
+      if (!liveUpdates.canPublish(fence) || JSON.stringify(current.current.members.map(member => member.userId)) !== idsKey) return false;
+      resource.setData(mergeSettings(ids, rows)); setRefreshError('');
+    } catch (failure) {
+      if (isAuthorizationError(failure)) deny(failure);
+      else if (ticket === generation.current && liveUpdates.canPublish(fence)) setRefreshError(failure instanceof Error ? failure.message : 'Could not refresh assignment settings.');
+      else if (ticket === generation.current) return false;
+    }
+    return true;
+  }, { enabled: resource.loaded && !!members.length, paused: paused || busy || !!editing || resource.loading, onDenied: deny });
 
   function read(ids: string[]) {
     if (!ids.length || readPending.current || inFlight.current || current.current.editing || current.current.paused) return;
     readIds.current = [...new Set(ids)];
+    generation.current++; setRefreshError('');
     readPending.current = true;
     void resource.refetch();
   }
@@ -80,14 +123,16 @@ export function useLeadEligibilitySettings(members: readonly EligibilityRosterMe
   async function save(member: TeamEligibility, patch: Partial<TeamEligibility>) {
     if (inFlight.current || readPending.current || current.current.paused) return false;
     inFlight.current = true; setBusy(true); setError(""); setMessage("");
+    const ticket = ++generation.current;
     try {
-      const result = await request<{ member: TeamEligibility }>("saveEligibility", { userId: member.userId, version: member.version ?? 0, ...patch }, true);
+      const result = await request("saveEligibility", { userId: member.userId, version: member.version ?? 0, ...patch }, true);
+      if (ticket !== generation.current) return false;
       saved.current.set(member.userId, result.member);
       loaded.current.add(member.userId);
       resource.setData({ team: [...saved.current.values()] });
       setMessage(`Settings saved for ${member.name}.`);
       return true;
-    } catch(e) { setError(e instanceof Error ? e.message : "Could not save teammate settings"); return false; }
+    } catch(e) { if (isAuthorizationError(e)) deny(e); else if (ticket === generation.current) setError(e instanceof Error ? e.message : "Could not save teammate settings"); return false; }
     finally { inFlight.current = false; setBusy(false); }
   }
   function closeEditor() { if (!inFlight.current) { setEditing(null); setError(""); } }
@@ -98,15 +143,16 @@ export function useLeadEligibilitySettings(members: readonly EligibilityRosterMe
     if (current.current.paused) { refreshPending.current = true; return; }
     setError(""); read(current.current.members.map(member => member.userId));
   }
-  return { resource: { ...resource, data: { team } }, busy, error, message, editing, disabled, save, closeEditor, editMember, refresh, setEditing };
+  return { resource: { ...resource, data: { team }, refreshError }, busy, error, message, editing, disabled, save, closeEditor, editMember, refresh, setEditing };
 }
 type EligibilitySettings = ReturnType<typeof useLeadEligibilitySettings>;
 
 export function LeadEligibilityFeedback({ settings }: { settings: EligibilitySettings }) {
   const { editing, error, resource, disabled, refresh, busy, message } = settings;
   return <>
-    {!editing && (error || resource.error) && <div role="alert"><p className="error-text">{error || resource.error}</p><button type="button" className="secondary" disabled={disabled} onClick={refresh}>Refresh assignment settings</button></div>}
+    {!editing && (error || resource.error) && <div role="alert"><p className="error-text">{error || resource.error}</p><Button variant="secondary" type="button"  disabled={disabled} onClick={refresh}>Retry</Button></div>}
     <p className="small muted" role="status">{busy ? "Saving teammate settings…" : resource.loading ? "Loading assignment settings…" : message}</p>
+    <LiveStatus resource={resource} />
   </>;
 }
 
@@ -115,7 +161,7 @@ export function LeadEligibilityCells({ member, settings, disabled: rowDisabled =
   if (!member) return <td colSpan={2} className="muted small">{resource.error ? "Assignment settings unavailable" : "Loading assignment settings…"}</td>;
   return <>
     <td>{member.salesperson ? <label className="lead-text-switch">
-      <input aria-label={`Receive new leads for ${member.name}`} type="checkbox" checked={member.receiveNewLeads !== false}
+      <Input aria-label={`Receive new leads for ${member.name}`} type="checkbox" checked={member.receiveNewLeads !== false}
         disabled={disabled || rowDisabled || member.available === false}
         onChange={event => void save(member, { receiveNewLeads: event.target.checked })} />
       <span>{member.receiveNewLeads !== false ? "On" : "Off"}</span>
@@ -124,7 +170,7 @@ export function LeadEligibilityCells({ member, settings, disabled: rowDisabled =
       <div className="small">Front: {member.frontId ? <code className="team-connection-id">{member.frontId}</code> : <span className="muted">Not linked</span>}</div>
       {member.frontId && <div className="small muted">Email: {member.frontChannelId || member.frontSignatureId ? "Custom Front selections" : "Automatic from Front"}</div>}
       <div className="small">Dialpad: {member.dialpadId ? <code className="team-connection-id">{member.dialpadId}</code> : <span className="muted">Not linked</span>}</div>
-      <button type="button" className="secondary" disabled={disabled || rowDisabled || member.available === false} aria-label={`Edit connections for ${member.name}`} onClick={() => editMember(member)}>Edit connections</button>
+      <Button variant="secondary" type="button"  disabled={disabled || rowDisabled || member.available === false} aria-label={`Edit connections for ${member.name}`} onClick={() => editMember(member)}>Edit connections</Button>
     </td>
   </>;
 }
@@ -152,17 +198,17 @@ function ConnectionEditor({ member, busy, error, onClose, onSave }: {
     <form aria-label={`Connections for ${member.name}`} onSubmit={event => { event.preventDefault(); if (!busy && dirty && !invalid) void onSave({ frontId: front, dialpadId: dialpad, frontChannelId: channel, frontSignatureId: signature }); }}>
       <fieldset disabled={busy} className="team-connection-fields">
         <div className="form-grid">
-          <label className="field">Front teammate ID<input value={frontId} autoComplete="off" autoCapitalize="none" spellCheck={false} placeholder="tea_…" aria-invalid={frontError} aria-describedby="front-id-help" onChange={event => { if (event.target.value.trim() !== front) { setFrontChannelId(""); setFrontSignatureId(""); } setFrontId(event.target.value); }} />
+          <label className="field">Front teammate ID<Input value={frontId} autoComplete="off" autoCapitalize="none" spellCheck={false} placeholder="tea_…" aria-invalid={frontError} aria-describedby="front-id-help" onChange={event => { if (event.target.value.trim() !== front) { setFrontChannelId(""); setFrontSignatureId(""); } setFrontId(event.target.value); }} />
             <span id="front-id-help" className={frontError ? "error-text" : "muted small"}>{frontError ? "Use a Front teammate ID beginning with tea_, followed by lowercase letters or numbers." : "Starts with tea_, followed by letters and numbers."}</span></label>
-          <label className="field">Dialpad user ID<input value={dialpadId} inputMode="numeric" autoComplete="off" spellCheck={false} aria-invalid={dialpadError} aria-describedby="dialpad-id-help" onChange={event => setDialpadId(event.target.value)} />
+          <label className="field">Dialpad user ID<Input value={dialpadId} inputMode="numeric" autoComplete="off" spellCheck={false} aria-invalid={dialpadError} aria-describedby="dialpad-id-help" onChange={event => setDialpadId(event.target.value)} />
             <span id="dialpad-id-help" className={dialpadError ? "error-text" : "muted small"}>{dialpadError ? "Use the numeric Dialpad user ID without spaces or punctuation." : "The numeric user ID from Dialpad."}</span></label>
-          <label className="field">Email channel ID<input value={frontChannelId} autoComplete="off" autoCapitalize="none" spellCheck={false} placeholder="cha_…" aria-invalid={channelError} aria-describedby="front-channel-help front-email-help" onChange={event => setFrontChannelId(event.target.value)} />
+          <label className="field">Email channel ID<Input value={frontChannelId} autoComplete="off" autoCapitalize="none" spellCheck={false} placeholder="cha_…" aria-invalid={channelError} aria-describedby="front-channel-help front-email-help" onChange={event => setFrontChannelId(event.target.value)} />
             <span id="front-channel-help" className={channelError ? "error-text" : "muted small"}>{channelError ? "Link a Front teammate and use their channel ID beginning with cha_." : "Optional Front sending channel, beginning with cha_."}</span></label>
-          <label className="field">Email signature ID<input value={frontSignatureId} autoComplete="off" autoCapitalize="none" spellCheck={false} placeholder="sig_…" aria-invalid={signatureError} aria-describedby="front-signature-help front-email-help" onChange={event => setFrontSignatureId(event.target.value)} />
+          <label className="field">Email signature ID<Input value={frontSignatureId} autoComplete="off" autoCapitalize="none" spellCheck={false} placeholder="sig_…" aria-invalid={signatureError} aria-describedby="front-signature-help front-email-help" onChange={event => setFrontSignatureId(event.target.value)} />
             <span id="front-signature-help" className={signatureError ? "error-text" : "muted small"}>{signatureError ? "Link a Front teammate and use their signature ID beginning with sig_." : "Optional Front email signature, beginning with sig_."}</span></label>
         </div>
         <p id="front-email-help" className="muted small">Leave blank to use the salesperson’s only mailbox and default signature in Front. Changing the Front teammate clears these selections.</p>
-        <div className="form-actions"><button type="submit" className="primary" disabled={!dirty || invalid}>{busy ? "Saving…" : "Save connections"}</button><button type="button" className="secondary" onClick={onClose}>Cancel</button></div>
+        <div className="form-actions"><Button variant="primary" type="submit"  disabled={!dirty || invalid}>{busy ? "Saving…" : "Save connections"}</Button><Button variant="secondary" type="button"  onClick={onClose}>Cancel</Button></div>
       </fieldset>
     </form>
   </Modal>;

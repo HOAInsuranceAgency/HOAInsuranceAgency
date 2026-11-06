@@ -1,5 +1,10 @@
+import { useLiveUpdateBlock } from "../lib/useLiveUpdates";
+import { Input } from "./ui/Input";
+import { Button } from "./ui/Button";
+import { Textarea } from "./ui/Textarea";
 import PartyPicker from './PartyPicker';
-import { useMounted } from '../lib/useMounted';
+import { useFormState } from '../lib/useFormState';
+import { useSaveStatus } from './SaveStatus';
 import { useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import Modal from './Modal';
@@ -7,7 +12,7 @@ import { communicationRequest } from '../lib/communications';
 import { type Contact, fmtDate } from '../lib/client';
 import type { PartyRecord, AccountRelationshipRecord } from '../lib/relationships';
 import { relationshipCurrent } from '../../../shared/relationships';
-import { agencyDay } from '../../../shared/leadActionGuidance';
+import { agencyDay } from "../../../shared/agencyTime";
 
 export default function ManagementChangeForm({
   accountId,
@@ -30,19 +35,17 @@ export default function ManagementChangeForm({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [partyId, setParty] = useState(initialPartyId ?? ''),
-    [effectiveOn, setEffective] = useState(agencyDay(new Date().toISOString())),
-    [generalPartyId, setGeneral] = useState(''),
-    [billingPartyId, setBilling] = useState(''),
-    [inspectionPartyId, setInspection] = useState(''),
-    [retire, setRetire] = useState<string[]>([]),
-    [notes, setNotes] = useState(''),
-    [confirmed, setConfirmed] = useState(false),
-    [busy, setBusy] = useState(false),
-    [error, setError] = useState('');
-  const mounted = useMounted();
-  const requestId = useRef(crypto.randomUUID()),
-    pending = useRef(false);
+  useLiveUpdateBlock(true);
+  const saveStatus = useSaveStatus({ singleFlight: true });
+  const { busy } = saveStatus;
+  const error = saveStatus.status.state === 'error' ? saveStatus.status.message : '';
+  const { form, setF } = useFormState(() => ({
+    partyId: initialPartyId ?? '', effectiveOn: agencyDay(new Date().toISOString()),
+    generalPartyId: '', billingPartyId: '', inspectionPartyId: '', retire: [] as string[], notes: '',
+  }), { onEdit: saveStatus.markDirty });
+  const { partyId, effectiveOn, generalPartyId, billingPartyId, inspectionPartyId, retire, notes } = form;
+  const [confirmed, setConfirmed] = useState(false);
+  const requestId = useRef(crypto.randomUUID());
   const [selectedManager, setSelectedManager] = useState<PartyRecord>();
   const previous = relationships.filter((r) => r.role === 'MANAGER' && relationshipCurrent(r, effectiveOn));
   const managedContactIds = new Set(
@@ -58,11 +61,8 @@ export default function ManagementChangeForm({
     requestId.current = crypto.randomUUID();
   }
   async function save() {
-    if (pending.current || !confirmed || contactsLoading || contactsError) return;
-    pending.current = true;
-    setBusy(true);
-    setError('');
-    try {
+    if (saveStatus.isPending() || !confirmed || contactsLoading || contactsError) return;
+    await saveStatus.run(async current => {
       await communicationRequest(
         'relationshipChangeManagement',
         {
@@ -79,13 +79,8 @@ export default function ManagementChangeForm({
         },
         true,
       );
-      if (mounted.current) onSaved();
-    } catch (e) {
-      if (mounted.current) setError(e instanceof Error ? e.message : 'Could not change management.');
-    } finally {
-      pending.current = false;
-      if (mounted.current) setBusy(false);
-    }
+      if (current()) onSaved();
+    }, { errorMessage: 'Could not change management.' });
   }
   const select = (label: string, value: string, setter: (s: string) => void) => (
     <PartyPicker
@@ -104,7 +99,7 @@ export default function ManagementChangeForm({
     <Modal
       title="Change management"
       onClose={() => {
-        if (!busy) onClose();
+        if (!saveStatus.isPending()) onClose();
       }}
     >
       <form
@@ -120,7 +115,7 @@ export default function ManagementChangeForm({
             initial={[...parties, ...(selectedManager ? [selectedManager] : [])]}
             emptyLabel="Self-managed / no management company"
             onChange={(id, profile) => {
-              setParty(id);
+              setF('partyId', id);
               setSelectedManager(profile);
               changed();
             }}
@@ -135,21 +130,21 @@ export default function ManagementChangeForm({
           </p>
           <label className="field">
             Effective date
-            <input
+            <Input
               type="date"
               required
               value={effectiveOn}
               onChange={(e) => {
-                setEffective(e.target.value);
+                setF('effectiveOn', e.target.value);
                 changed();
               }}
             />
           </label>
           {partyId && (
             <>
-              {select('General correspondence and forms', generalPartyId, setGeneral)}
-              {select('Billing contact', billingPartyId, setBilling)}
-              {select('Inspection contact', inspectionPartyId, setInspection)}
+              {select('General correspondence and forms', generalPartyId, value => setF('generalPartyId', value))}
+              {select('Billing contact', billingPartyId, value => setF('billingPartyId', value))}
+              {select('Inspection contact', inspectionPartyId, value => setF('inspectionPartyId', value))}
             </>
           )}
           <div>
@@ -161,11 +156,11 @@ export default function ManagementChangeForm({
             {legacy.length ? (
               legacy.map((c) => (
                 <label className="relationship-checkbox" key={c.id}>
-                  <input
+                  <Input
                     type="checkbox"
                     checked={retire.includes(c.id)}
                     onChange={(e) => {
-                      setRetire((old) =>
+                      setF('retire', (old) =>
                         e.target.checked ? [...old, c.id] : old.filter((id) => id !== c.id),
                       );
                       changed();
@@ -181,16 +176,16 @@ export default function ManagementChangeForm({
             )}
           </div>
           {contactsLoading && <p className="muted">Loading account contacts…</p>}
-          {contactsError && <p role="alert" className="error-text">{contactsError} <button type="button" className="secondary" onClick={retryContacts}>Retry contacts</button></p>}
-          {moreContacts && <p className="muted small">Additional account contacts are available to review. <button type="button" className="secondary" disabled={contactsLoading} onClick={moreContacts}>Load more account contacts</button></p>}
+          {contactsError && <p role="alert" className="error-text">{contactsError} <Button variant="secondary" type="button"  onClick={retryContacts}>Retry contacts</Button></p>}
+          {moreContacts && <p className="muted small">Additional account contacts are available to review. <Button variant="secondary" type="button"  disabled={contactsLoading} onClick={moreContacts}>Load more account contacts</Button></p>}
           <label className="field">
             Handoff note
-            <textarea
+            <Textarea
               maxLength={2000}
               rows={3}
               value={notes}
               onChange={(e) => {
-                setNotes(e.target.value);
+                setF('notes', e.target.value);
                 changed();
               }}
             />
@@ -216,7 +211,7 @@ export default function ManagementChangeForm({
             )}
           </div>
           <label className="relationship-checkbox">
-            <input
+            <Input
               type="checkbox"
               checked={confirmed}
               onChange={(e) => setConfirmed(e.target.checked)}
@@ -225,12 +220,12 @@ export default function ManagementChangeForm({
             I reviewed the effective date and contact handoff.
           </label>
           <div className="form-actions">
-            <button className="primary" type="submit" disabled={!confirmed || contactsLoading || !!contactsError}>
+            <Button variant="primary"  type="submit" disabled={!confirmed || contactsLoading || !!contactsError}>
               {busy ? 'Saving…' : 'Save management change'}
-            </button>
-            <button className="secondary" type="button" onClick={onClose}>
+            </Button>
+            <Button variant="secondary"  type="button" onClick={onClose}>
               Cancel
-            </button>
+            </Button>
           </div>
         </fieldset>
         {error && (

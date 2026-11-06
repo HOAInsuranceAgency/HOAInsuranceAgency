@@ -1,3 +1,6 @@
+import { assertGraphqlErrors } from '../lib/apiResponse';
+import { Button } from "../components/ui/Button";
+import { Tabs, TabPanel } from "../components/ui/Tabs";
 import AccountRelationships from "../components/AccountRelationships";
 import SubmissionsPanel from "../components/SubmissionsPanel";
 import HoneycombEstimates from "../components/HoneycombEstimates";
@@ -30,38 +33,13 @@ import { ActivityTab } from "./account/ActivityTab";
 import { CertificatesTab } from "./account/CertificatesTab";
 import { useIsAdmin } from "../lib/auth";
 import { communicationRequest, type LeadWorkflow, type WorkflowContext } from "../lib/communications";
-import { isAuthorizationError } from "../lib/authorizationError";
+import { ACCOUNT_TABS, accountTabLocation, type AccountTab } from '../../../shared/crmRoutes';
+import { isAuthorizationError } from "../../../shared/authorizationError";
 import { AccountSalespersonSelect } from "../components/AccountSalespersonSelect";
 import "./AccountDetail.css";
 
-type Tab =
-  | "overview"
-  | "property"
-  | "priorcarrier"
-  | "losses"
-  | "submissions"
-  | "quotes"
-  | "policies"
-  | "invoices"
-  | "financing"
-  | "documents"
-  | "certificates"
-  | "activity";
-
-const VALID_TABS: Tab[] = [
-  "overview",
-  "property",
-  "priorcarrier",
-  "losses",
-  "submissions",
-  "quotes",
-  "policies",
-  "invoices",
-  "financing",
-  "documents",
-  "certificates",
-  "activity",
-];
+type Tab = AccountTab;
+const VALID_TABS = ACCOUNT_TABS;
 
 /**
  * Tabs that only make sense while the account is still a prospect.
@@ -185,9 +163,7 @@ function AccountDetailPage({ profile }: { profile: UserProfile }) {
    * navigation Back should have to walk out of one step at a time.
    */
   function selectTab(t: Tab) {
-    const next = new URLSearchParams(searchParams);
-    next.set("tab", t);
-    navigate({ search: `?${next.toString()}`, hash: "" }, { replace: true });
+    navigate(accountTabLocation(searchParams, t), { replace: true });
   }
   const [celebrate, setCelebrate] = useState(false);
   const prevStage = useRef<string | null>(null);
@@ -196,11 +172,11 @@ function AccountDetailPage({ profile }: { profile: UserProfile }) {
     async () => {
       if (!id) return null;
       const response = await client.models.Account.get({ id });
-      if (response.errors?.length) throw new Error(response.errors[0].message);
+      assertGraphqlErrors(response);
       return response.data;
     },
     [id],
-    { initialData: null as Account | null, errorMessage: "Failed to load account" }
+    { initialData: null as Account | null, errorMessage: "Failed to load account" , live: true }
   );
   const account = res.data;
   const setAccount = res.setData;
@@ -254,18 +230,8 @@ function AccountDetailPage({ profile }: { profile: UserProfile }) {
         {account.convertedAt && ` · client since ${fmtDate(account.convertedAt.slice(0, 10))}`}
       </p>
 
-      <div className="tabs">
-        {tabs.map(([t, label]) => (
-          <button
-            key={t}
-            className={activeTab === t ? "active" : ""}
-            onClick={() => selectTab(t)}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-
+      <Tabs id="account-detail" label="Account views" items={tabs.map(([value, label]) => ({ value, label }))} value={activeTab} onChange={selectTab} />
+      <TabPanel tabsId="account-detail" value={activeTab}>
       {activeTab === "overview" && (
         <div className="account-overview">
           {isAdmin && account.stage === "LEAD" && <LeadAssignment key={account.id} account={account} />}
@@ -308,6 +274,7 @@ function AccountDetailPage({ profile }: { profile: UserProfile }) {
         <CertificatesTab account={account} profile={profile} sourceCommunicationId={searchParams.get("request") ?? undefined} />
       )}
       {activeTab === "activity" && <ActivityTab key={account.id} accountId={account.id} />}
+      </TabPanel>
     </>
   );
 }
@@ -316,11 +283,11 @@ function AccountDetailPage({ profile }: { profile: UserProfile }) {
 function LeadAssignment({ account }: { account: Account }) {
   const savedWorkflow = useRef<LeadWorkflow | null>(null);
   const resource = useAsyncResource(async () => {
-    const context = await communicationRequest<WorkflowContext>("context", { accountId: account.id });
+    const context = await communicationRequest("context", { accountId: account.id });
     // An explicit retry may finish after a newer assignment save.
     const saved = savedWorkflow.current;
     return saved && saved.version > (context.workflow?.version ?? 0) ? { ...context, workflow: saved } : context;
-  }, [account.id], { initialData: null as WorkflowContext | null, errorMessage: "Could not load salesperson", clearDataOnError: isAuthorizationError });
+  }, [account.id], { initialData: null as WorkflowContext | null, errorMessage: "Could not load salesperson", clearDataOnError: isAuthorizationError , live: true });
 
   return <section className="card account-lead-assignment" aria-label="Lead salesperson">
     <h2>Salesperson</h2>
@@ -337,6 +304,6 @@ function LeadAssignment({ account }: { account: Account }) {
           resource.setData(current => current && workflow.version > (current.workflow?.version ?? 0) ? { ...current, workflow } : current);
         }}
       />}
-    {resource.error && <p className="error-text small" role="alert">{resource.error} <button className="link" onClick={() => void resource.refetch()}>Retry salesperson</button></p>}
+    {resource.error && <p className="error-text small" role="alert">{resource.error} <Button variant="link"  onClick={() => void resource.refetch()}>Retry salesperson</Button></p>}
   </section>;
 }

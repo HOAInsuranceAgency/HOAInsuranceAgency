@@ -1,18 +1,15 @@
+import { accountPath, accountManagementPath } from '../../../shared/crmRoutes';
+import { Button } from "./ui/Button";
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import type { Contact } from '../lib/client';
 import { communicationRequest } from '../lib/communications';
-import { usePagedList, type Page } from '../lib/usePagedList';
+import { usePagedList } from '../lib/usePagedList';
 import PartyForm from './PartyForm';
-interface Candidate {
-  id: string;
-  contact: Contact;
-  accountName: string;
-}
 /** Each page is filtered and authorized on the server, with batched account names. */
 export default function LegacyManagerReview() {
   const resource = usePagedList(
-    (nextToken) => communicationRequest<Page<Candidate>>('relationshipLegacyCandidates', { nextToken }),
+    (nextToken) => communicationRequest('relationshipLegacyCandidates', { nextToken }),
     [],
   );
   const [selected, setSelected] = useState<Contact | null>(null);
@@ -27,9 +24,9 @@ export default function LegacyManagerReview() {
       {resource.error && (
         <p role="alert" className="error-text">
           {resource.error}{' '}
-          <button className="secondary" onClick={() => void resource.more()}>
+          <Button variant="secondary"  onClick={() => void resource.more()}>
             Retry
-          </button>
+          </Button>
         </p>
       )}
       {resource.loading && <p>Loading contacts…</p>}
@@ -46,21 +43,21 @@ export default function LegacyManagerReview() {
             <strong>{contact.name}</strong>
             {contact.email && ` · ${contact.email}`}
             <p>
-              <Link to={`/accounts/${contact.accountId}`}>{accountName}</Link>
+              <Link to={accountPath(contact.accountId)}>{accountName}</Link>
             </p>
             <div className="toolbar">
-              <button className="secondary" onClick={() => setSelected(contact)}>
+              <Button variant="secondary"  onClick={() => setSelected(contact)}>
                 Create reviewed profile
-              </button>
-              <Link to={`/accounts/${contact.accountId}?management=1`}>Link an existing manager</Link>
+              </Button>
+              <Link to={accountManagementPath(contact.accountId)}>Link an existing manager</Link>
             </div>
           </li>
         ))}
       </ul>
       {resource.nextToken && (
-        <button className="secondary" disabled={resource.loading} onClick={() => void resource.more()}>
+        <Button variant="secondary"  disabled={resource.loading} onClick={() => void resource.more()}>
           Load more contacts
-        </button>
+        </Button>
       )}
       {selected && (
         <PartyForm
@@ -73,7 +70,7 @@ export default function LegacyManagerReview() {
           }}
           onClose={() => setSelected(null)}
           onSaved={(p) =>
-            navigate(`/accounts/${selected.accountId}?management=1&partyId=${encodeURIComponent(p.id)}`)
+            navigate(accountManagementPath(selected.accountId, p.id))
           }
         />
       )}

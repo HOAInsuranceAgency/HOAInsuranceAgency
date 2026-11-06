@@ -135,6 +135,64 @@ describe("<SaveStatus>", () => {
 });
 
 describe("useSaveStatus", () => {
+  it('blocks same-tick duplicate tasks synchronously when singleFlight is enabled', async () => {
+    const pending = deferred<void>();
+    const task = vi.fn(() => pending.promise);
+    const { result } = renderHook(() => useSaveStatus({ singleFlight: true }));
+    let done!: Promise<void>;
+    await act(async () => {
+      done = result.current.run(task);
+      expect(result.current.isPending()).toBe(true);
+      await result.current.run(task);
+    });
+    expect(task).toHaveBeenCalledTimes(1);
+    expect(result.current.busy).toBe(true);
+    await act(async () => { pending.resolve(); await done; });
+    expect(result.current.isPending()).toBe(false);
+    expect(result.current.busy).toBe(false);
+  });
+
+  it('allows an explicit retry after failure without retrying a task automatically', async () => {
+    const task = vi.fn().mockRejectedValueOnce(new Error('Unconfirmed response')).mockResolvedValue(undefined);
+    const { result } = renderHook(() => useSaveStatus({ singleFlight: true }));
+    await act(async () => { await result.current.run(task); });
+    expect(task).toHaveBeenCalledTimes(1);
+    expect(result.current.status).toEqual({ state: 'error', message: 'Unconfirmed response' });
+    expect(result.current.isPending()).toBe(false);
+    await act(async () => { await result.current.run(task); });
+    expect(task).toHaveBeenCalledTimes(2);
+    expect(result.current.status.state).toBe('saved');
+  });
+
+  it('makes task completion guards false after unmount and releases the pending task', async () => {
+    const pending = deferred<void>();
+    const completed = vi.fn();
+    const { result, unmount } = renderHook(() => useSaveStatus({ singleFlight: true }));
+    let done!: Promise<void>;
+    act(() => { done = result.current.run(async current => { await pending.promise; if (current()) completed(); }); });
+    unmount();
+    await act(async () => { pending.resolve(); await done; });
+    expect(completed).not.toHaveBeenCalled();
+    expect(result.current.isPending()).toBe(false);
+  });
+
+  it('keeps completion ownership with the latest task when overlapping tasks are explicitly allowed', async () => {
+    const first = deferred<void>(), second = deferred<void>();
+    const completed = vi.fn();
+    const { result } = renderHook(() => useSaveStatus());
+    let one!: Promise<void>, two!: Promise<void>;
+    act(() => {
+      one = result.current.run(async current => { await first.promise; if (current()) completed('first'); });
+      two = result.current.run(async current => { await second.promise; if (current()) completed('second'); });
+    });
+    await act(async () => { first.resolve(); await one; });
+    expect(completed).not.toHaveBeenCalled();
+    expect(result.current.isPending()).toBe(true);
+    await act(async () => { second.resolve(); await two; });
+    expect(completed).toHaveBeenCalledExactlyOnceWith('second');
+    expect(result.current.isPending()).toBe(false);
+  });
+
   it("starts idle, not busy, with no message", () => {
     const { result } = renderHook(() => useSaveStatus());
     expect(result.current.status).toEqual({ state: "idle" });

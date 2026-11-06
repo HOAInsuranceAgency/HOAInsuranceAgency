@@ -1,5 +1,5 @@
 import { AGENCY, AGENCY_FMT } from "../../../../shared/agency";
-import { formatMoney, invoiceTotals, type LineLike } from "../../../src/lib/invoiceTotals";
+import { formatMoney, invoiceTotals, type LineLike } from "../../../../shared/invoiceTotals";
 
 /**
  * The emailed invoice. Pure: no SES, no data client.
@@ -45,10 +45,13 @@ export interface InvoiceView {
   riskLocation?: string[];
   effectiveDate?: string | null;
   expirationDate?: string | null;
+  /** Set only from the linked policy's recorded binding, never a quote date. */
+  coverageBound?: boolean;
   issuedAt?: string | null;
   dueAt?: string | null;
   memo?: string | null;
   paymentUrl?: string | null;
+  paymentLabel?: string;
   /**
    * W7: the financing fork. Present only when the policy carried a QUOTED
    * finance offer at send time — the email then presents both paths and the
@@ -59,6 +62,7 @@ export interface InvoiceView {
     url: string;
     downPayment: number;
     originationFee?: number;
+    brokerFee?: number;
     monthly: number;
     months: number;
     apr: number;
@@ -123,15 +127,18 @@ export interface RenderedInvoice {
 
 export function renderInvoice(inv: InvoiceView): RenderedInvoice {
   const totals = invoiceTotals(inv.lines);
-  const due = formatMoney(totals.retail);
+  const credit = totals.retail < 0, payable = totals.retail > 0;
+  const due = formatMoney(Math.abs(totals.retail));
+  const balanceLabel = credit ? 'Credit balance' : payable ? 'Amount due' : 'No payment due';
+  const balanceNote = credit ? 'No payment is due. Contact the agency to apply or return this credit.' : 'No payment is due on this invoice.';
   const number = inv.number?.trim() || "";
   const greeting = inv.contactFirstName?.trim()
     ? `Hi ${inv.contactFirstName.trim()},`
     : "Hello,";
 
   const subject = number
-    ? `Invoice ${number} from ${AGENCY_FMT.displayName} — ${due} due`
-    : `Invoice from ${AGENCY_FMT.displayName} — ${due} due`;
+    ? `Invoice ${number} from ${AGENCY_FMT.displayName} — ${due} ${credit ? 'credit' : 'due'}`
+    : `Invoice from ${AGENCY_FMT.displayName} — ${due} ${credit ? 'credit' : 'due'}`;
 
   const meta: [string, string][] = [
     ["Invoice", number],
@@ -145,7 +152,7 @@ export function renderInvoice(inv: InvoiceView): RenderedInvoice {
         : "",
     ],
     ["Issued", formatDay(inv.issuedAt)],
-    ["Due", formatDay(inv.dueAt)],
+    ["Due", payable ? formatDay(inv.dueAt) : ''],
   ].filter(([, v]) => v !== "") as [string, string][];
 
   const lines = inv.lines.filter(
@@ -155,21 +162,22 @@ export function renderInvoice(inv: InvoiceView): RenderedInvoice {
   const text = [
     greeting,
     "",
-    `Amount due: ${due}`,
-    ...(inv.dueAt ? [`Payable by ${formatDay(inv.dueAt)}.`] : []),
+    `${balanceLabel}: ${due}`,
+    ...(payable && inv.dueAt ? [`Payable by ${formatDay(inv.dueAt)}.`] : []),
+    ...(!payable ? [balanceNote] : []),
     "",
     ...meta.map(([k, v]) => `${k}: ${v}`),
     "",
     ...lines.map(
       (l) => `  ${(l.description ?? "").trim() || "Premium"}  ${formatMoney(l.retailAmount)}`
     ),
-    `  ${"Total".padEnd(0)}  ${due}`,
+    `  ${credit ? 'Total credit' : 'Total'}  ${due}`,
     ...(inv.memo?.trim() ? ["", inv.memo.trim()] : []),
-    ...(inv.paymentUrl?.trim() ? ["", "Pay online:", inv.paymentUrl.trim()] : []),
-    ...(inv.finance
+    ...(payable && inv.paymentUrl?.trim() ? ["", inv.paymentLabel ? `${inv.paymentLabel}:` : "Pay online:", inv.paymentUrl.trim()] : []),
+    ...(payable && inv.finance
       ? [
           "",
-          `Prefer monthly payments? Finance with ${formatMoney(inv.finance.downPayment)} down (payment 1 of ${inv.finance.months + 1})${inv.finance.originationFee ? ` plus a ${formatMoney(inv.finance.originationFee)} origination fee in the initial payment` : ""}, then ${inv.finance.months} monthly payments of ${formatMoney(inv.finance.monthly)} at ${inv.finance.apr}% APR:`,
+          `Prefer monthly payments? Finance with ${formatMoney(inv.finance.downPayment)} down (payment 1 of ${inv.finance.months + 1})${inv.finance.brokerFee ? ` plus the ${formatMoney(inv.finance.brokerFee)} broker fee paid in full` : ""}${inv.finance.originationFee ? ` plus a ${formatMoney(inv.finance.originationFee)} origination fee in the initial payment` : ""}, then ${inv.finance.months} monthly payments of ${formatMoney(inv.finance.monthly)} at ${inv.finance.apr}% APR:`,
           inv.finance.url,
         ]
       : []),
@@ -179,7 +187,7 @@ export function renderInvoice(inv: InvoiceView): RenderedInvoice {
   ].join("\n");
 
   const font = "-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif";
-  const pay = inv.paymentUrl?.trim();
+  const pay = payable ? inv.paymentUrl?.trim() : undefined;
 
   const html = `<!doctype html>
 <html><head><meta charset="utf-8"><meta name="color-scheme" content="light only"></head>
@@ -196,18 +204,19 @@ export function renderInvoice(inv: InvoiceView): RenderedInvoice {
           <p style="font:400 15px/1.6 ${font};color:#334155;margin:0 0 18px">${escapeHtml(greeting)}</p>
           <!-- The total, larger than anything else on the page. See the note at
                the top of this file for why that is not only a design choice. -->
-          <div style="font:400 12px/1.4 ${font};color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin:0 0 2px">Amount due</div>
+          <div style="font:400 12px/1.4 ${font};color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin:0 0 2px">${balanceLabel}</div>
           <div style="font:800 34px/1.15 ${font};color:#0f172a;margin:0 0 4px">${escapeHtml(due)}</div>
-          ${inv.dueAt ? `<div style="font:400 14px/1.5 ${font};color:#64748b;margin:0 0 18px">Payable by ${escapeHtml(formatDay(inv.dueAt))}</div>` : `<div style="height:14px"></div>`}
+          ${payable && inv.dueAt ? `<div style="font:400 14px/1.5 ${font};color:#64748b;margin:0 0 18px">Payable by ${escapeHtml(formatDay(inv.dueAt))}</div>` : `<div style="height:14px"></div>`}
+          ${!payable ? `<p style="font:400 13px/1.6 ${font};color:#475569">${balanceNote}</p>` : ''}
           ${
             pay
-              ? `<a href="${escapeHtml(pay)}" style="display:inline-block;padding:13px 26px;border-radius:6px;background:#e5c16a;color:#1a365d;font:700 15px/1 ${font};text-decoration:none;margin:0 0 6px">Pay this invoice</a>`
+              ? `<a href="${escapeHtml(pay)}" style="display:inline-block;padding:13px 26px;border-radius:6px;background:#e5c16a;color:#1a365d;font:700 15px/1 ${font};text-decoration:none;margin:0 0 6px">${escapeHtml(inv.paymentLabel ?? "Pay this invoice")}</a>`
               : ""
           }
           ${
-            inv.finance
+            payable && inv.finance
               ? `<div style="font:400 13px/1.6 ${font};color:#475569;margin:14px 0 0;padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px">
-            Prefer monthly payments? Finance with <b>${escapeHtml(formatMoney(inv.finance.downPayment))} down</b>${inv.finance.originationFee ? ` plus a <b>${formatMoney(inv.finance.originationFee)}</b> origination fee in the initial payment` : ""} — payment 1 of ${inv.finance.months + 1} — then ${inv.finance.months} monthly payments of <b>${escapeHtml(formatMoney(inv.finance.monthly))}</b> at ${escapeHtml(String(inv.finance.apr))}% APR.<br>
+            Prefer monthly payments? Finance with <b>${escapeHtml(formatMoney(inv.finance.downPayment))} down</b>${inv.finance.brokerFee ? ` plus the <b>${formatMoney(inv.finance.brokerFee)}</b> broker fee paid in full` : ""}${inv.finance.originationFee ? ` plus a <b>${formatMoney(inv.finance.originationFee)}</b> origination fee in the initial payment` : ""} — payment 1 of ${inv.finance.months + 1} — then ${inv.finance.months} monthly payments of <b>${escapeHtml(formatMoney(inv.finance.monthly))}</b> at ${escapeHtml(String(inv.finance.apr))}% APR.<br>
             <a href="${escapeHtml(inv.finance.url)}" style="display:inline-block;margin:8px 0 0;font:700 14px/1 ${font};color:#1a365d;text-decoration:underline">Set up financing</a>
           </div>`
               : ""
@@ -237,7 +246,7 @@ ${lines
       `            <tr><td style="padding:9px 12px 9px 0;font:400 14px/1.5 ${font};color:#334155;border-bottom:1px solid #f1f5f9">${escapeHtml((l.description ?? "").trim() || "Premium")}</td><td align="right" style="padding:9px 0;font:400 14px/1.5 ${font};color:#0f172a;border-bottom:1px solid #f1f5f9;white-space:nowrap">${escapeHtml(formatMoney(l.retailAmount))}</td></tr>`
   )
   .join("\n")}
-            <tr><td style="padding:12px 12px 0 0;font:700 15px/1.5 ${font};color:#0f172a">Total</td><td align="right" style="padding:12px 0 0;font:700 15px/1.5 ${font};color:#0f172a;white-space:nowrap">${escapeHtml(due)}</td></tr>
+            <tr><td style="padding:12px 12px 0 0;font:700 15px/1.5 ${font};color:#0f172a">${credit ? 'Total credit' : 'Total'}</td><td align="right" style="padding:12px 0 0;font:700 15px/1.5 ${font};color:#0f172a;white-space:nowrap">${escapeHtml(due)}</td></tr>
           </table>
         </td></tr>
 

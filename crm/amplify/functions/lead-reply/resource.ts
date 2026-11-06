@@ -1,3 +1,4 @@
+import { migrationPreview } from "../../migration-config";
 import { defineFunction, secret } from "@aws-amplify/backend";
 
 /**
@@ -26,7 +27,7 @@ import { defineFunction, secret } from "@aws-amplify/backend";
  */
 export const leadReply = defineFunction({
   name: "lead-reply",
-  entry: "./handler.ts",
+  entry: "./handler.sentry.ts",
   schedule: {
     // Every minute. Day-of-month `*`, day-of-week `?` — the one combination
     // Amplify's validator accepts (see task-digest for the trap here).
@@ -37,7 +38,7 @@ export const leadReply = defineFunction({
   timeoutSeconds: 600,
   memoryMB: 1024,
   environment: {
-    ANTHROPIC_API_KEY: secret("ANTHROPIC_API_KEY"),
+    ...(migrationPreview ? {} : { ANTHROPIC_API_KEY: secret("ANTHROPIC_API_KEY") }),
   },
   resourceGroupName: "data",
 });

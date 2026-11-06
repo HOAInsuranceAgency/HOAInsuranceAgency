@@ -12,7 +12,7 @@ import { defineFunction } from "@aws-amplify/backend";
  */
 export const pfAgreement = defineFunction({
   name: "pf-agreement",
-  entry: "./handler.ts",
+  entry: "./handler.sentry.ts",
   timeoutSeconds: 60,
   memoryMB: 512,
   resourceGroupName: "data",

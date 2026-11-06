@@ -1,13 +1,13 @@
+import { createDataClientGetter, type LambdaDataClient as DataClient } from "../data-client";
+import { captureHandledFailure } from "../monitoring";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { Amplify } from "aws-amplify";
-import { generateClient } from "aws-amplify/data";
-import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtime";
 import type { Schema } from "../../data/resource";
-import { safeSegment } from "../../../src/lib/storageKeys";
-import { listAllPages } from "../../../src/lib/pagination";
+import { documentObjectKey } from "../../../../shared/storageKeys";
+import { listAllPages } from "../../../../shared/pagination";
 import { REJECTION_MESSAGE, rejectUpload } from "../../../../shared/leadUpload";
 import { PORTAL_MAX_FILES } from "../../../../shared/leadDocuments";
+import type { PortalStatusResponse, PortalUploadResponse } from "../../../../shared/publicUploads";
 import { reserveUploadSlot } from "../uploadQuota";
 import {
   PORTAL_REFUSAL_MESSAGE,
@@ -27,18 +27,7 @@ import {
  * naturally.
  */
 
-type DataClient = ReturnType<typeof generateClient<Schema>>;
-let dataClient: DataClient | undefined;
-async function getDataClient() {
-  if (!dataClient) {
-    const { resourceConfig, libraryOptions } = await getAmplifyDataClientConfig(
-      process.env as never
-    );
-    Amplify.configure(resourceConfig, libraryOptions);
-    dataClient = generateClient<Schema>();
-  }
-  return dataClient;
-}
+const getDataClient = createDataClientGetter();
 
 const s3 = new S3Client();
 
@@ -78,7 +67,7 @@ async function documentsFor(client: DataClient, accountId: string) {
   );
 }
 
-async function handleGetPortal(client: DataClient, args: Record<string, unknown>) {
+async function handleGetPortal(client: DataClient, args: Record<string, unknown>): Promise<PortalStatusResponse> {
   const portal = await findPortal(client, args.token);
   const now = new Date().toISOString();
   const refusal = refusalFor(portal, now);
@@ -120,7 +109,7 @@ async function handleGetPortal(client: DataClient, args: Record<string, unknown>
 async function handleRequestUpload(
   client: DataClient,
   args: Record<string, unknown>
-) {
+): Promise<PortalUploadResponse> {
   const portal = await findPortal(client, args.token);
   const refusal = refusalFor(portal, new Date().toISOString());
   if (refusal || !portal) {
@@ -180,6 +169,7 @@ async function handleRequestUpload(
     // instead of as an untyped blob for someone to open and categorise.
     category: category as Schema["Document"]["type"]["category"],
     name: filename,
+    uploadedName: filename,
     s3Key: "pending",
     contentType,
     sizeBytes,
@@ -192,13 +182,7 @@ async function handleRequestUpload(
 
   // Same layout as a staff upload, so `process-document` parses the Document id
   // back out of the key and OCR fires with no special case.
-  const key = [
-    "documents",
-    "ACCOUNT",
-    safeSegment(portal.accountId),
-    safeSegment(doc.id),
-    safeSegment(filename),
-  ].join("/");
+  const key = documentObjectKey("ACCOUNT", portal.accountId, doc.id, filename);
 
   const url = await getSignedUrl(
     s3,
@@ -243,7 +227,7 @@ async function handleRequestUpload(
 export const handler = async (event: {
   info?: { fieldName?: string };
   arguments?: Record<string, unknown>;
-}) => {
+}): Promise<PortalStatusResponse | PortalUploadResponse> => {
   const client = await getDataClient();
   const args = event.arguments ?? {};
 
@@ -260,6 +244,7 @@ export const handler = async (event: {
       ? await handleRequestUpload(client, args)
       : await handleGetPortal(client, args);
   } catch (err) {
+    captureHandledFailure(err);
     // Never leak an internal message to a public caller.
     console.error("upload-portal failed", err);
     return { ok: false, error: "Something went wrong. Please try again." };

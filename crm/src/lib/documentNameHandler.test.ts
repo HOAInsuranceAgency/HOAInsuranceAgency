@@ -90,7 +90,7 @@ beforeEach(() => {
 });
 
 describe("process-document auto-naming", () => {
-  it("renames a document whose name is still the uploaded filename", async () => {
+  it("renames a legacy document whose name still matches its object-key filename", async () => {
     textractSucceeds();
     anthropic.create.mockResolvedValue(says("2024 Operating Budget — Willow Creek HOA"));
 
@@ -112,6 +112,36 @@ describe("process-document auto-naming", () => {
     const prompt = anthropic.create.mock.calls[0][0].messages[0].content;
     expect(prompt).toContain(OCR_TEXT);
     expect(prompt).toContain("budget"); // the category, humanised
+  });
+
+  it("uses the original uploaded name when the object key was normalized", async () => {
+    textractSucceeds();
+    anthropic.create.mockResolvedValue(says("2024 Operating Budget"));
+    models.Document.get.mockResolvedValue({
+      data: { id: "doc-1", name: "_scan.pdf", uploadedName: "_scan.pdf", category: "BUDGET" },
+    });
+
+    await handler({
+      Records: [{ s3: { bucket: { name: "crm-docs" }, object: { key: "documents/ACCOUNT/acct-1/doc-1/scan.pdf" } } }],
+    } as S3Event, {} as never, () => {});
+
+    expect(renameCall()).toEqual({ id: "doc-1", name: "2024 Operating Budget.pdf", lastWriteBy: "process-document" });
+    expect(anthropic.create.mock.calls[0][0].messages[0].content).toContain("Uploaded filename: _scan.pdf");
+  });
+
+  it.each(["scan.pdf", "Reviewed budget.pdf"])("preserves the manual name %s after an upload with a normalized key", async name => {
+    textractSucceeds();
+    anthropic.create.mockResolvedValue(says("2024 Operating Budget"));
+    models.Document.get.mockResolvedValue({
+      data: { id: "doc-1", name, uploadedName: "_scan.pdf", category: "BUDGET" },
+    });
+
+    await handler({
+      Records: [{ s3: { bucket: { name: "crm-docs" }, object: { key: "documents/ACCOUNT/acct-1/doc-1/scan.pdf" } } }],
+    } as S3Event, {} as never, () => {});
+
+    expect(anthropic.create).not.toHaveBeenCalled();
+    expect(renameCall()).toBeUndefined();
   });
 
   it("leaves a name that was edited by hand while Textract ran", async () => {

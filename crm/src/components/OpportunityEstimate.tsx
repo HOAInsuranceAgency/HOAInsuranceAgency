@@ -1,3 +1,6 @@
+import { useLiveUpdateBlock } from "../lib/useLiveUpdates";
+import { Button } from "./ui/Button";
+import { Input } from "./ui/Input";
 import { useRef, useState } from 'react';
 import { communicationRequest } from '../lib/communications';
 import { useRowInteraction, type InteractionChange } from '../lib/useRefreshOnReturn';
@@ -22,6 +25,7 @@ export function OpportunityEstimate({
     [error, setError] = useState('');
   const pending = useRef(false);
   const [editingVersion, setEditingVersion] = useState(plan.version);
+  useLiveUpdateBlock(editing || saving);
   useRowInteraction(`estimate:${plan.accountId}`, editing || saving, onInteractionChange);
   return (
     <div
@@ -29,8 +33,8 @@ export function OpportunityEstimate({
       onKeyDown={(e) => e.stopPropagation()}
     >
       {!editing ? (
-        <button
-          className="link"
+        <Button variant="link"
+
           aria-label="Edit estimated opportunity"
           onClick={() => {
             setEditingVersion(plan.version);
@@ -46,7 +50,7 @@ export function OpportunityEstimate({
           {plan.estimatedCents == null
             ? 'Add estimate'
             : formatCommission(plan.estimatedCents)}
-        </button>
+        </Button>
       ) : (
         <form
           onSubmit={async (e) => {
@@ -57,9 +61,7 @@ export function OpportunityEstimate({
             setSaving(true);
             try {
               parseEstimate(amount);
-              const result = await communicationRequest<{
-                plan: CommercialPlan;
-              }>(
+              const result = await communicationRequest(
                 'saveCommercial',
                 {
                   accountId: plan.accountId,
@@ -83,7 +85,7 @@ export function OpportunityEstimate({
         >
           <label className="field">
             Agency commission ($)
-            <input
+            <Input
               aria-label="Estimated agency commission"
               inputMode="decimal"
               value={amount}
@@ -93,17 +95,17 @@ export function OpportunityEstimate({
             />
           </label>
           <div className="form-actions">
-            <button className="primary" disabled={saving}>
+            <Button variant="primary"  disabled={saving}>
               Save
-            </button>
-            <button
+            </Button>
+            <Button variant="secondary"
               type="button"
-              className="secondary"
+
               disabled={saving}
               onClick={() => setEditing(false)}
             >
               Cancel
-            </button>
+            </Button>
           </div>
         </form>
       )}

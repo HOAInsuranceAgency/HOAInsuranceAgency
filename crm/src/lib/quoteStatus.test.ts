@@ -13,7 +13,7 @@ import {
   openQuoteStatusFilter,
   quoteStatusFilter,
   type QuoteStatus,
-} from "./quoteStatus";
+} from "../../../shared/quoteStatus";
 
 /**
  * The compile-time exhaustiveness guard in quoteStatus.ts only bites while

@@ -1,18 +1,19 @@
+import { agencyDay } from './agencyTime';
+import { accountPath, type AccountTab, type AccountAnchor } from './crmRoutes';
 import type { Communication, LeadTask } from "./leadWorkflow";
 import { taskDomain, taskContext } from "./workRouting";
 import { currentMessage } from "./serviceEvidence";
 
-export const agencyDay = (at: string) => new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(at));
 export function workLink(task: LeadTask): { path: string; label: string } {
-  const account = `/accounts/${encodeURIComponent(task.accountId)}`;
-  if (task.blocker) return { path: `${account}?tab=activity#lead-workspace`, label: "Review blocker" };
-  if (task.kind === "CORRECTION") return { path: `${account}?tab=overview#contacts`, label: "Check contact details" };
-  if (task.serviceType === "CERTIFICATE") return { path: `${account}?tab=certificates`, label: "Prepare certificate" };
-  if (task.kind === "DOCUMENTS" || task.serviceType === "DOCUMENT") return { path: `${account}?tab=documents`, label: "Review documents" };
-  if (["SUBMISSION", "QUOTE_TARGET", "QUOTE_PRESENTATION", "BIND"].includes(task.kind) || task.quoteId) return { path: `${account}?tab=quotes${task.kind === "SUBMISSION" ? "#carrier-work" : ""}`, label: task.kind === "SUBMISSION" ? "Review carrier submissions" : "Review quotes" };
-  if (task.policyId || task.kind === "RENEWAL_START") return { path: `${account}?tab=policies`, label: "Review renewal" };
+  const account = (tab: AccountTab, hash?: AccountAnchor) => accountPath(task.accountId, { tab, hash });
+  if (task.blocker) return { path: account('activity', 'lead-workspace'), label: "Review blocker" };
+  if (task.kind === "CORRECTION") return { path: account('overview', 'contacts'), label: "Check contact details" };
+  if (task.serviceType === "CERTIFICATE") return { path: account('certificates'), label: "Prepare certificate" };
+  if (task.kind === "DOCUMENTS" || task.serviceType === "DOCUMENT") return { path: account('documents'), label: "Review documents" };
+  if (["SUBMISSION", "QUOTE_TARGET", "QUOTE_PRESENTATION", "BIND"].includes(task.kind) || task.quoteId) return { path: account('quotes', task.kind === 'SUBMISSION' ? 'carrier-work' : undefined), label: task.kind === "SUBMISSION" ? "Review carrier submissions" : "Review quotes" };
+  if (task.policyId || task.kind === "RENEWAL_START") return { path: account('policies'), label: "Review renewal" };
   if (task.conversationId) return { path: `https://app.frontapp.com/open/${encodeURIComponent(task.conversationId)}`, label: task.kind === "CALLBACK" ? "Open call request" : "Open conversation" };
-  return { path: `${account}?tab=activity#lead-workspace`, label: "Open Activity" };
+  return { path: account('activity', 'lead-workspace'), label: "Open Activity" };
 }
 
 /** The same actionable explanation in the work list, Front and morning report. */

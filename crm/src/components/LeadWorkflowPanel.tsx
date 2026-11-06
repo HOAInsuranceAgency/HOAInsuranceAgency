@@ -1,3 +1,9 @@
+import { LiveStatus } from "./LiveStatus";
+import { useLiveUpdateBlock } from "../lib/useLiveUpdates";
+import { Select } from "./ui/Select";
+import { Button } from "./ui/Button";
+import { Textarea } from "./ui/Textarea";
+import { Input } from "./ui/Input";
 import ConversationContext from "./ConversationContext";
 import CommunicationAccountSummary from "./CommunicationAccountSummary";
 import { CallOutcome, SidebarActivityLinker } from "./CommunicationReview";
@@ -11,19 +17,20 @@ import "./LeadWorkflowPanel.css";
 import { LeadSnoozeControl } from './LeadSnoozeControl';
 import { useAgencyDay } from '../lib/useAgencyDay';
 import type { LeadSnooze } from '../../../shared/leadSnooze';
-import { isAuthorizationError } from '../lib/authorizationError';
+import { isAuthorizationError } from '../../../shared/authorizationError';
 import { useIsAdmin } from '../lib/auth';
+import BusinessDraftButton from './BusinessDraftButton';
 
 const EMPTY: WorkflowContext = { workflow: null, tasks: [], communications: [], team: [], issues: [] };
 export function ResponsibilitySelect({ label, value, team, onChange, disabled = false }: {
   label: string; value: string; team: TeamEligibility[]; onChange: (value: string) => void; disabled?: boolean;
 }) {
   const eligible = team.filter(isAssignableSalesperson);
-  return <label className="field">{label}<select aria-label={label} value={value} onChange={e => onChange(e.target.value)} disabled={disabled}>
+  return <label className="field">{label}<Select aria-label={label} value={value} onChange={e => onChange(e.target.value)} disabled={disabled}>
     <option value="">Choose teammate</option>
     {value && !eligible.some(t => t.userId === value) && <option value={value} disabled>{team.find(t => t.userId === value)?.name ?? "Assigned teammate"} (needs review)</option>}
     {eligible.map(t => <option key={t.userId} value={t.userId}>{t.name}</option>)}
-  </select></label>;
+  </Select></label>;
 }
 export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }: { accountId?: string; conversationId?: string; onOpen?: (url: string) => void }) {
   const isAdmin = useIsAdmin();
@@ -39,11 +46,12 @@ export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }:
   const [snoozeInteracting, setSnoozeInteracting] = useState(false);
   const onSnoozeInteractionChange = useCallback((_key: string, active: boolean) => setSnoozeInteracting(active), []);
   const today = useAgencyDay();
-  const [leadStatus, setLeadStatus] = useState("LOST");
+  const [leadStatus, setLeadStatus] = useState<'LOST' | 'DISQUALIFIED'>("LOST");
   const noteId = useRef(crypto.randomUUID());
   const [channel, setChannel] = useState("ALL");
   const [note, setNote] = useState(""), [publish, setPublish] = useState(false);
-  const resource = useAsyncResource(() => request<WorkflowContext>("context", { accountId, conversationId }), [accountId, conversationId], { initialData: EMPTY, errorMessage: "Could not load account communications", clearDataOnError: isAuthorizationError });
+  useLiveUpdateBlock(busy || editingTeam || !!note.trim() || snoozeInteracting || loadingOlder);
+  const resource = useAsyncResource(() => request("context", { accountId, conversationId }), [accountId, conversationId], { initialData: EMPTY, errorMessage: "Could not load account communications", clearDataOnError: isAuthorizationError, live: { intervalMs: 15_000 } });
   const { workflow, communications, team, issues } = resource.data;
   const currentData = useRef(resource.data);
   currentData.current = resource.data;
@@ -53,22 +61,15 @@ export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }:
     setSavedSnooze(undefined); setEditingTeam(false); setSalesperson('');
     noteId.current = crypto.randomUUID();
   }, [resource.data, resource.error]);
-  useEffect(() => {
-    if (!compact || busy || editingTeam || note.trim() || resource.loading || snoozeInteracting || loadingOlder) return;
-    const refresh = () => { if (document.visibilityState === "visible") void resource.refetch(); };
-    const timer = window.setInterval(refresh, 15_000);
-    document.addEventListener("visibilitychange", refresh);
-    return () => { window.clearInterval(timer); document.removeEventListener("visibilitychange", refresh); };
-  }, [compact, busy, editingTeam, note, resource.loading, resource.refetch, snoozeInteracting, loadingOlder]);
   useEffect(() => { if (!editingTeam) setSalesperson(workflow?.salespersonId ?? ""); }, [workflow?.salespersonId, editingTeam]);
   useEffect(() => { if (!isAdmin) { setEditingTeam(false); setSalesperson(workflow?.salespersonId ?? ""); } }, [isAdmin, workflow?.salespersonId]);
   // The parent keys the panel by conversation/account, so unsaved edits never
   // become writes against the newly selected lead in Front.
-  const run = async (op: string, input: unknown) => {
+  const run = async <K extends import('../lib/communicationContracts').CommunicationWriteOperation,>(op: K, input: import('../lib/communicationContracts').CommunicationInput<K>) => {
     if (mutationBusy.current) return false;
     mutationBusy.current = true; setBusy(true); setError(""); setNotice("");
     try {
-      const result = await request<{ notice?: string }>(op, input, true);
+      const result = await request(op, input, true);
       if (!mounted.current) return false;
       if (result.notice) setNotice(result.notice);
       await resource.refetch();
@@ -87,14 +88,14 @@ export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }:
     }} />
   </section>;
   if (resource.loading && !workflow) return <div className="card" role="status" aria-busy="true">Loading account communications…</div>;
-  if (resource.error && !workflow) return <div className="card"><p className="error-text" role="alert">{resource.error}</p><button className="secondary" onClick={() => void resource.refetch()}>Retry</button></div>;
+  if (resource.error && !workflow) return <div className="card"><p className="error-text" role="alert">{resource.error}</p><Button variant="secondary"  onClick={() => void resource.refetch()}>Retry</Button></div>;
   if (!workflow) return <div className="card"><h2>Account communications</h2><p>{accountId ? "Set up the account salesperson and linked communications." : "Link this conversation to its CRM account to see its salesperson and communication history."}</p>
-    {accountId && <button className="primary" disabled={busy} onClick={() => void run("initializeLead", { accountId })}>Set up account communications</button>}{error && <p role="alert">{error}</p>}{followUp}</div>;
+    {accountId && <Button variant="primary"  disabled={busy} onClick={() => void run("initializeLead", { accountId })}>Set up account communications</Button>}{error && <p role="alert">{error}</p>}{followUp}</div>;
   const clientWork = workflow.disposition === "BOUND";
   const teamName = (id?: string) => team.find(t => t.userId === id)?.name ?? "Needs assignment";
   const visibleCommunications = communications.filter(c => channel === "ALL" || c.channel === channel);
   const history = <>
-    <div className="toolbar activity-history-heading">{!compact && <h3>Communication history <span className="activity-history-count">{communications.length}{resource.data.communicationNextToken ? "+" : ""}</span></h3>}<select aria-label="Communication channel" value={channel} onChange={e => setChannel(e.target.value)}>{["ALL", "EMAIL", "CALL", "SMS", "NOTE"].map(c => <option key={c} value={c}>{communicationChannelLabels[c]}</option>)}</select></div>
+    <div className="toolbar activity-history-heading">{!compact && <h3>Communication history <span className="activity-history-count">{communications.length}{resource.data.communicationNextToken ? "+" : ""}</span></h3>}<Select aria-label="Communication channel" value={channel} onChange={e => setChannel(e.target.value)}>{["ALL", "EMAIL", "CALL", "SMS", "NOTE"].map(c => <option key={c} value={c}>{communicationChannelLabels[c]}</option>)}</Select></div>
     {!visibleCommunications.length && <div className={compact ? "muted" : "activity-empty"}>{!communications.length ? <><strong>No linked communication yet.</strong>{!compact && <p>Emails, calls, texts, and internal notes will appear here.</p>}</> : <p>No {communicationChannelLabels[channel].toLowerCase()} in the loaded activity.{resource.data.communicationNextToken ? " Load older activity to check earlier records." : ""}</p>}</div>}
     {visibleCommunications.map(c => <details key={c.id} className="workflow-task"><summary><span className="workflow-activity-title">{c.subject || c.summary?.slice(0, 70) || (["SMS", "NOTE"].includes(c.channel) ? c.text?.slice(0, 70) : undefined) || (c.channel === "CALL" ? "Phone call" : c.channel === "NOTE" ? "Internal note" : "Message")}</span><span className="workflow-activity-meta">{c.channel === "CALL" ? "Call" : c.channel === "SMS" ? "Text" : c.channel === "NOTE" ? "Note" : "Email"} · {compact ? compactDateTime(c.at) : fmtDateTime(c.at)}</span></summary>
       <div className="activity-message-body">
@@ -103,61 +104,63 @@ export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }:
       {c.channel === "CALL" && <><p className="muted small">{c.enrichment}</p><CallOutcome communication={c} /></>}
       {c.summary && <p>{c.summary}</p>}<p style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{c.text || "Content is unavailable. Open the source for details."}</p>
       {c.channel === "EMAIL" && c.direction === "OUTBOUND" && <p className="muted small">{c.seenAt ? `Seen signal: ${fmtDateTime(c.seenAt)}` : c.seenCheckedAt ? "No Seen signal returned" : "Seen status not checked yet"}{c.seenCheckedAt && ` · Checked ${fmtDateTime(c.seenCheckedAt)}`}. An email-open signal does not prove it was read.</p>}
-      {c.provider === "front" && c.channel === "EMAIL" && c.direction === "OUTBOUND" && <button className="link" disabled={busy} onClick={() => void run("refreshSeen", { id: c.id })}>Refresh Seen status{c.seenRequestedAt ? " (queued)" : ""}</button>}
-      {c.attachments?.map(a => <p key={a.id}>{a.filename} · {Math.ceil(a.size / 1024)} KB <button className="link" disabled={busy} onClick={() => void run("saveAttachment", { communicationId: c.id, attachmentId: a.id })}>Save to CRM documents</button></p>)}
+      {c.provider === "front" && c.channel === "EMAIL" && c.direction === "OUTBOUND" && <Button variant="link"  disabled={busy} onClick={() => void run("refreshSeen", { id: c.id })}>Refresh Seen status{c.seenRequestedAt ? " (queued)" : ""}</Button>}
+      {c.attachments?.map(a => <p key={a.id}>{a.filename} · {Math.ceil(a.size / 1024)} KB <Button variant="link"  disabled={busy} onClick={() => void run("saveAttachment", { communicationId: c.id, attachmentId: a.id })}>Save to CRM documents</Button></p>)}
       {c.seenError && <p className="error-text small">Seen status unavailable: {c.seenError}</p>}
-      {c.provider === "front" && <button className="link" onClick={() => open(`https://app.frontapp.com/open/${c.providerId}`)}>Open message</button>}
+      {c.provider === "front" && <Button variant="link"  onClick={() => open(`https://app.frontapp.com/open/${c.providerId}`)}>Open message</Button>}
       </div>
     </details>)}
-    {resource.data.communicationNextToken && <button className="secondary activity-load-more" disabled={loadingOlder || resource.loading} onClick={async () => {
+    {resource.data.communicationNextToken && <Button variant="secondary" className="activity-load-more" disabled={loadingOlder || resource.loading} onClick={async () => {
       if (olderBusy.current) return;
       olderBusy.current = true; setLoadingOlder(true);
       const captured = resource.data;
       try {
-        const more = await request<WorkflowContext>("context", { accountId: workflow.accountId, nextToken: captured.communicationNextToken });
+        const more = await request("context", { accountId: workflow.accountId, nextToken: captured.communicationNextToken });
         if (mounted.current && currentData.current === captured) resource.setData(current => current === captured ? ({ ...current, communications: [...new Map([...current.communications, ...more.communications].map(item => [item.id, item])).values()], communicationNextToken: more.communicationNextToken }) : current);
       } catch(e) { if (mounted.current) { if (isAuthorizationError(e)) resource.invalidate(e); else setError(friendlyError(e, 'Could not load older activity')); } }
       finally { olderBusy.current = false; if (mounted.current) setLoadingOlder(false); }
-    }}>{loadingOlder ? 'Loading older activity…' : 'Load older activity'}</button>}
+    }}>{loadingOlder ? 'Loading older activity…' : 'Load older activity'}</Button>}
   </>;
   const noteEditor = <>
-    {!compact && <h3>Add an internal note</h3>}<div className="field"><textarea disabled={busy} aria-label="Internal note" placeholder="Add a note for your team…" value={note} onChange={e => setNote(e.target.value)} rows={3} /></div>
+    {!compact && <h3>Add an internal note</h3>}<div className="field"><Textarea disabled={busy} aria-label="Internal note" placeholder="Add a note for your team…" value={note} onChange={e => setNote(e.target.value)} rows={3} /></div>
     <div className="activity-note-actions">
-    <label className="workflow-note-publish"><input type="checkbox" disabled={busy} checked={publish} onChange={e => setPublish(e.target.checked)} /> Also post as a Front comment</label>
-    <div className="toolbar"><button className="primary" disabled={busy || !note.trim()} onClick={async () => { if (await run("addNote", { accountId: workflow.accountId, text: note, publishToFront: publish, requestId: noteId.current })) { setNote(""); noteId.current = crypto.randomUUID(); } }}>Save note</button></div></div>  </>;
+    <label className="workflow-note-publish"><Input type="checkbox" disabled={busy} checked={publish} onChange={e => setPublish(e.target.checked)} /> Also post as a Front comment</label>
+    <div className="toolbar"><Button variant="primary"  disabled={busy || !note.trim()} onClick={async () => { if (await run("addNote", { accountId: workflow.accountId, text: note, publishToFront: publish, requestId: noteId.current })) { setNote(""); noteId.current = crypto.randomUUID(); } }}>Save note</Button></div></div>  </>;
   const conversationTools = <>
+    <BusinessDraftButton accountId={workflow.accountId} conversationId={conversationId ?? workflow.conversationId} />
     {(conversationId ?? workflow.conversationId) && <ConversationContext accountId={workflow.accountId} conversationId={(conversationId ?? workflow.conversationId)!} bound={workflow.disposition === "BOUND"} saved={resource.data.frontContext} onSaved={() => void resource.refetch()} />}
     {workflow.disposition !== "BOUND" && <details className="front-disclosure"><summary>Lead status</summary>
-      {workflow.disposition === "ACTIVE" ? <><label className="field">Status<select disabled={busy} value={leadStatus} onChange={e => setLeadStatus(e.target.value)}><option value="LOST">Lost</option><option value="DISQUALIFIED">Not a fit</option></select></label><button className="secondary" disabled={busy} onClick={() => void run("setLeadDisposition", { accountId: workflow.accountId, version: workflow.version, disposition: leadStatus })}>Update lead status</button></>
-        : <button className="secondary" disabled={busy} onClick={() => void run("setLeadDisposition", { accountId: workflow.accountId, version: workflow.version, disposition: "ACTIVE" })}>Reopen lead</button>}
+      {workflow.disposition === "ACTIVE" ? <><label className="field">Status<Select disabled={busy} value={leadStatus} onChange={e => { if (e.target.value === "LOST" || e.target.value === "DISQUALIFIED") setLeadStatus(e.target.value); }}><option value="LOST">Lost</option><option value="DISQUALIFIED">Not a fit</option></Select></label><Button variant="secondary"  disabled={busy} onClick={() => void run("setLeadDisposition", { accountId: workflow.accountId, version: workflow.version, disposition: leadStatus })}>Update lead status</Button></>
+        : <Button variant="secondary"  disabled={busy} onClick={() => void run("setLeadDisposition", { accountId: workflow.accountId, version: workflow.version, disposition: "ACTIVE" })}>Reopen lead</Button>}
     </details>}
 
-    {!workflow.humanTakeover && <div className="front-tool-action"><button className="secondary" disabled={busy} onClick={() => void run("cancelAi", { accountId: workflow.accountId, version: workflow.version })}>{compact ? "Handle personally" : "Handle personally / cancel pending AI reply"}</button>{compact && <p className="muted small">Cancels an AI reply that has not been sent.</p>}</div>}
+    {!workflow.humanTakeover && <div className="front-tool-action"><Button variant="secondary"  disabled={busy} onClick={() => void run("cancelAi", { accountId: workflow.accountId, version: workflow.version })}>{compact ? "Handle personally" : "Handle personally / cancel pending AI reply"}</Button>{compact && <p className="muted small">Cancels an AI reply that has not been sent.</p>}</div>}
     {workflow.conversationId && <>
       {compact && <h3>Assign Front conversation to</h3>}
-      <div className="toolbar"><button className={compact ? "secondary" : "link"} disabled={busy} onClick={() => void run("routeConversation", { conversationId: conversationId ?? workflow.conversationId, role: "SALESPERSON" })}>Use salesperson as Front handler</button></div>
+      <div className="toolbar"><Button variant={compact ? "secondary" : "link"} disabled={busy} onClick={() => void run("routeConversation", { conversationId: conversationId ?? workflow.conversationId, role: "SALESPERSON" })}>Use salesperson as Front handler</Button></div>
     </>}
     {compact && conversationId && <SidebarActivityLinker accountId={workflow.accountId} conversationId={conversationId} onSaved={() => void resource.refetch()} />}
   </>;
   const owner = <section className={compact ? "front-team" : "activity-owner"} aria-label="Account owner">
-      <div className="toolbar"><h3>Account owner</h3><div className="grow" />{isAdmin && !editingTeam && <button className="link" onClick={() => setEditingTeam(true)}>Edit salesperson</button>}</div>
+      <div className="toolbar"><h3>Account owner</h3><div className="grow" />{isAdmin && !editingTeam && <Button variant="link"  onClick={() => setEditingTeam(true)}>Edit salesperson</Button>}</div>
       {!isAdmin || !editingTeam ? <dl className="front-team-list"><div><dt>Salesperson</dt><dd>{teamName(workflow.salespersonId)}</dd></div></dl> : <>
         <div className="form-grid">
           <ResponsibilitySelect label="Salesperson" value={salesperson} team={team} onChange={setSalesperson} disabled={busy} />
         </div>
         <div className="toolbar">
-          <button className="primary" disabled={busy || !salesperson || salesperson === workflow.salespersonId}
-            onClick={async () => { if (isAdmin && await run("setResponsibilities", { accountId: workflow.accountId, salespersonId: salesperson, version: workflow.version })) setEditingTeam(false); }}>Save salesperson</button>
-          <button className="secondary" disabled={busy} onClick={() => { setSalesperson(workflow.salespersonId ?? ""); setEditingTeam(false); }}>Cancel</button>
+          <Button variant="primary"  disabled={busy || !salesperson || salesperson === workflow.salespersonId}
+            onClick={async () => { if (isAdmin && await run("setResponsibilities", { accountId: workflow.accountId, salespersonId: salesperson, version: workflow.version })) setEditingTeam(false); }}>Save salesperson</Button>
+          <Button variant="secondary"  disabled={busy} onClick={() => { setSalesperson(workflow.salespersonId ?? ""); setEditingTeam(false); }}>Cancel</Button>
         </div>
       </>}
       {resource.data.frontContext && <p className="muted small front-handler">In Front: {team.find(t => t.frontId === resource.data.frontContext?.assigneeId)?.name ?? (resource.data.frontContext.assigneeId ? "Unmapped teammate" : "Unassigned")}<span>{resource.data.frontContext.routing === "MANUAL" ? "Manually assigned" : "Follows the account salesperson"}</span></p>}
     </section>;
   return <section className={`card lead-workflow${compact ? "" : " activity-workspace"}`} aria-label="Account communications">
-    <div className="toolbar workflow-heading"><div><h2>{clientWork ? "Client workspace" : "Account communications"}</h2>{!compact && <p className="muted small">Communication history, team notes, and account controls.</p>}</div><div className="grow" /><button className="secondary" disabled={resource.loading} onClick={() => void resource.refetch()}>{resource.loading ? "Refreshing…" : "Refresh"}</button></div>
+    <div className="toolbar workflow-heading"><div><h2>{clientWork ? "Client workspace" : "Account communications"}</h2>{!compact && <p className="muted small">Communication history, team notes, and account controls.</p>}</div><div className="grow" /></div>
     {onOpen && <CommunicationAccountSummary accountId={workflow.accountId} open={open} />}
     {notice && <p className="workflow-notice" role="status">{notice}</p>}
-    {resource.error && <p className="error-text workflow-notice" role="alert">{resource.error} <button className="link" onClick={() => void resource.refetch()}>Retry refresh</button></p>}
+    <LiveStatus resource={resource} />
+    {resource.error && <p className="error-text workflow-notice" role="alert">{resource.error} <Button variant="link"  onClick={() => void resource.refetch()}>Retry</Button></p>}
     {error && <p className="error-text workflow-notice" role="alert">{error}</p>}
     {workflow.assignmentIssue && <p className="error-text workflow-notice">{workflow.assignmentIssue}</p>}
     {issues.length > 0 && <details open className="front-disclosure activity-attention"><summary>Needs attention <span className="front-count">{issues.length}</span></summary>{issues.map(i => <div key={i.id}><p className="error-text small">{i.message}</p></div>)}</details>}
@@ -176,7 +179,7 @@ export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }:
         {owner}
         {followUp}
         <section className="activity-tools" aria-label="Account tools">
-          <div className="toolbar"><h3>Account tools</h3>{workflow.conversationId && <button className="secondary" onClick={() => open(`https://app.frontapp.com/open/${workflow.conversationId}`)}>Open in Front</button>}</div>
+          <div className="toolbar"><h3>Account tools</h3>{workflow.conversationId && <Button variant="secondary"  onClick={() => open(`https://app.frontapp.com/open/${workflow.conversationId}`)}>Open in Front</Button>}</div>
           {conversationTools}
         </section>
       </aside>

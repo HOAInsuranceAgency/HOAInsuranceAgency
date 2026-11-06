@@ -16,6 +16,7 @@ vi.mock("../../lib/storage", () => ({ downloadFile: vi.fn() }));
 vi.mock("../../components/FilePreview", () => ({ default: () => null }));
 import { CertificatesTab } from "./CertificatesTab";
 import type { Account, UserProfile } from "../../lib/client";
+import { liveUpdates } from '../../lib/liveUpdates';
 const account = { id: "a1", stage: "CLIENT" } as Account;
 const profile = { id: "u1", firstName: "Test", lastName: "Agent" } as UserProfile;
 const cert = { id: "cert1", accountId: "a1", holderName: "Holder", certificateNumber: "C-1" };
@@ -31,6 +32,14 @@ beforeEach(() => {
   api.upload.mockReturnValue({ result: Promise.resolve({}) });
   api.models.Certificate.update.mockResolvedValue({ data: { ...cert, s3Key: "certificates/a1/cert1.pdf" } });
 });
+it("offers certificate handoff only after the generated PDF exists", async () => {
+  api.models.Certificate.list.mockResolvedValue({ data: [cert, { ...cert, id: "generated-cert", holderName: "Bank", s3Key: "certificates/a1/generated-cert.pdf" }] });
+  render(<CertificatesTab account={account} profile={profile} />);
+  expect(await screen.findByRole("button", { name: "Prepare email in Front" })).toBeEnabled();
+  expect(screen.getAllByRole("button", { name: "Prepare email in Front" })).toHaveLength(1);
+  expect(screen.getByRole("button", { name: "Generate PDF" })).toBeInTheDocument();
+  expect(api.models.Certificate.create).not.toHaveBeenCalled();
+});
 async function form() {
   render(<CertificatesTab account={account} profile={profile} />);
   await screen.findByText("No certificates issued.");
@@ -38,6 +47,22 @@ async function form() {
   await userEvent.type(screen.getAllByRole("textbox")[0], "Holder");
 }
 describe("certificate reliability", () => {
+  it('releases a cancelled issuance draft so queued live reads resume, then reopens blank', async () => {
+    const stop = liveUpdates.start('certificate-cancel-test');
+    try {
+      const edits = liveUpdates.getSnapshot().edits;
+      await form();
+      expect(liveUpdates.getSnapshot().edits).toBeGreaterThan(edits);
+      const reads = api.models.Certificate.list.mock.calls.length;
+      liveUpdates.invalidate(['CRM']);
+      await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+      expect(liveUpdates.getSnapshot().edits).toBe(edits);
+      await waitFor(() => expect(api.models.Certificate.list.mock.calls.length).toBeGreaterThan(reads));
+      await userEvent.click(screen.getByRole('button', { name: '+ New certificate' }));
+      expect(screen.getAllByRole('textbox')[0]).toHaveValue('');
+      expect(api.models.Certificate.create).not.toHaveBeenCalled();
+    } finally { stop(); }
+  });
   it("keeps entries and enables retry after a resolved GraphQL create failure", async () => {
     api.models.Certificate.create.mockResolvedValueOnce({ data: null, errors: [{ message: "Certificate rejected" }] });
     await form();

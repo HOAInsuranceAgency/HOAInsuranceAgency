@@ -1,7 +1,15 @@
-import { client, US_STATES, type Carrier } from "../../lib/client";
+import { str } from "../../lib/formCodec";
+import { assertGraphqlErrors } from '../../lib/apiResponse';
+import { Input } from "../../components/ui/Input";
+import { Field } from "../../components/ui/Field";
+import { Select } from "../../components/ui/Select";
+import { Button } from "../../components/ui/Button";
+import { Textarea } from "../../components/ui/Textarea";
+import { client, type Carrier } from "../../lib/client";
+import { US_STATES } from "../../../../shared/usStates";
 import { SaveStatus, useSaveStatus } from "../../components/SaveStatus";
 import { useFormState } from "../../lib/useFormState";
-import { MARKET_TYPE_OPTIONS, type MarketType } from "../../lib/enums";
+import { MARKET_TYPE_OPTIONS, type MarketType } from "../../../../shared/enums";
 
 export function CarrierForm({
   carrier,
@@ -13,7 +21,7 @@ export function CarrierForm({
   // `useSaveStatus` owns the confirmation; `useFormState`'s `saved` is left
   // unread so there is exactly one answer to "did that save land".
   const saveStatus = useSaveStatus();
-  const { form, setF } = useFormState({
+  const { form, setF, markSaved } = useFormState({
     name: carrier.name,
     appointed: carrier.appointed,
     marketType: carrier.marketType ?? "",
@@ -44,6 +52,7 @@ export function CarrierForm({
   }
 
   async function save() {
+    const submitted = form;
     await saveStatus.run(
       async () => {
         const { data, errors } = await client.models.Carrier.update({
@@ -54,14 +63,14 @@ export function CarrierForm({
           // spells it — an empty string would fail enum validation.
           marketType: (form.marketType as MarketType) || null,
           dateAppointed: form.dateAppointed || null,
-          primaryContactName: form.primaryContactName.trim() || null,
-          primaryContactEmail: form.primaryContactEmail.trim() || null,
-          primaryContactPhone: form.primaryContactPhone.trim() || null,
-          primaryUnderwriterName: form.primaryUnderwriterName.trim() || null,
-          primaryUnderwriterEmail: form.primaryUnderwriterEmail.trim() || null,
-          primaryUnderwriterPhone: form.primaryUnderwriterPhone.trim() || null,
+          primaryContactName: str(form.primaryContactName),
+          primaryContactEmail: str(form.primaryContactEmail),
+          primaryContactPhone: str(form.primaryContactPhone),
+          primaryUnderwriterName: str(form.primaryUnderwriterName),
+          primaryUnderwriterEmail: str(form.primaryUnderwriterEmail),
+          primaryUnderwriterPhone: str(form.primaryUnderwriterPhone),
           states: form.states,
-          naicCode: form.naicCode.trim() || null,
+          naicCode: str(form.naicCode),
           standardCommissionPct: form.standardCommissionPct
             ? Number(form.standardCommissionPct)
             : null,
@@ -76,9 +85,11 @@ export function CarrierForm({
             : null,
           commercialLines: form.commercialLines,
           personalLines: form.personalLines,
-          notes: form.notes.trim() || null,
+          notes: str(form.notes),
         });
-        if (errors?.length || !data) throw new Error(errors?.[0]?.message);
+        assertGraphqlErrors({ errors });
+        if (!data) throw new Error(errors?.[0]?.message);
+        markSaved(submitted);
         onChange(data);
       },
       { errorMessage: "Save failed" }
@@ -89,23 +100,20 @@ export function CarrierForm({
     <div className="card">
       <h2>Appointment details</h2>
       <div className="form-grid">
-        <div className="field">
-          <label>Name</label>
-          <input value={form.name} onChange={(e) => setF("name", e.target.value)} />
-        </div>
-        <div className="field">
-          <label>Status</label>
-          <select
+        <Field label="Name">
+          {control => <Input {...control} value={form.name} onChange={(e) => setF("name", e.target.value)} />}
+        </Field>
+        <Field label="Status">
+          {control => <Select {...control}
             value={form.appointed ? "1" : "0"}
             onChange={(e) => setF("appointed", e.target.value === "1")}
           >
             <option value="1">Appointed</option>
             <option value="0">Prospective</option>
-          </select>
-        </div>
-        <div className="field">
-          <label>Market type</label>
-          <select
+          </Select>}
+        </Field>
+        <Field label="Market type">
+          {control => <Select {...control}
             value={form.marketType}
             onChange={(e) => setF("marketType", e.target.value)}
           >
@@ -115,58 +123,52 @@ export function CarrierForm({
                 {o.label}
               </option>
             ))}
-          </select>
-        </div>
-        <div className="field">
-          <label>Date appointed</label>
-          <input type="date" value={form.dateAppointed} onChange={(e) => setF("dateAppointed", e.target.value)} />
-        </div>
-        <div className="field">
-          <label>NAIC code</label>
-          <input value={form.naicCode} onChange={(e) => setF("naicCode", e.target.value)} />
-        </div>
-        <div className="field">
-          <label>Standard commission % (autofills new quotes)</label>
-          <input
+          </Select>}
+        </Field>
+        <Field label="Date appointed">
+          {control => <Input {...control} type="date" value={form.dateAppointed} onChange={(e) => setF("dateAppointed", e.target.value)} />}
+        </Field>
+        <Field label="NAIC code">
+          {control => <Input {...control} value={form.naicCode} onChange={(e) => setF("naicCode", e.target.value)} />}
+        </Field>
+        <Field label="Standard commission % (autofills new quotes)">
+          {control => <Input {...control}
             type="number"
             step="0.1"
             min={0}
             max={100}
             value={form.standardCommissionPct}
             onChange={(e) => setF("standardCommissionPct", e.target.value)}
-          />
-        </div>
-        <div className="field">
-          <label>Annual minimum premium to maintain appointment ($)</label>
-          <input
+          />}
+        </Field>
+        <Field label="Annual minimum premium to maintain appointment ($)">
+          {control => <Input {...control}
             type="number"
             step="1"
             min={0}
             value={form.annualMinimumPremium}
             onChange={(e) => setF("annualMinimumPremium", e.target.value)}
-          />
-        </div>
-        <div className="field">
-          <label>Profit sharing threshold — premium written ($)</label>
-          <input
+          />}
+        </Field>
+        <Field label="Profit sharing threshold — premium written ($)">
+          {control => <Input {...control}
             type="number"
             step="1"
             min={0}
             value={form.profitSharingPremiumThreshold}
             onChange={(e) => setF("profitSharingPremiumThreshold", e.target.value)}
-          />
-        </div>
-        <div className="field">
-          <label>Profit sharing loss ratio threshold (%)</label>
-          <input
+          />}
+        </Field>
+        <Field label="Profit sharing loss ratio threshold (%)">
+          {control => <Input {...control}
             type="number"
             step="0.1"
             min={0}
             max={100}
             value={form.profitSharingLossRatioThreshold}
             onChange={(e) => setF("profitSharingLossRatioThreshold", e.target.value)}
-          />
-        </div>
+          />}
+        </Field>
         <div className="field">
           <label>Lines written</label>
           <div style={{ display: "flex", gap: 16, alignItems: "center", height: 38 }}>
@@ -174,7 +176,7 @@ export function CarrierForm({
               className="small"
               style={{ display: "flex", gap: 5, alignItems: "center" }}
             >
-              <input
+              <Input
                 type="checkbox"
                 checked={form.commercialLines}
                 onChange={(e) => setF("commercialLines", e.target.checked)}
@@ -185,7 +187,7 @@ export function CarrierForm({
               className="small"
               style={{ display: "flex", gap: 5, alignItems: "center" }}
             >
-              <input
+              <Input
                 type="checkbox"
                 checked={form.personalLines}
                 onChange={(e) => setF("personalLines", e.target.checked)}
@@ -194,56 +196,50 @@ export function CarrierForm({
             </label>
           </div>
         </div>
-        <div className="field">
-          <label>Primary contact</label>
-          <input value={form.primaryContactName} onChange={(e) => setF("primaryContactName", e.target.value)} />
-        </div>
-        <div className="field">
-          <label>Contact email</label>
-          <input value={form.primaryContactEmail} onChange={(e) => setF("primaryContactEmail", e.target.value)} />
-        </div>
-        <div className="field">
-          <label>Contact phone</label>
-          <input value={form.primaryContactPhone} onChange={(e) => setF("primaryContactPhone", e.target.value)} />
-        </div>
-        <div className="field">
-          <label>Primary underwriter</label>
-          <input
+        <Field label="Primary contact">
+          {control => <Input {...control} value={form.primaryContactName} onChange={(e) => setF("primaryContactName", e.target.value)} />}
+        </Field>
+        <Field label="Contact email">
+          {control => <Input {...control} value={form.primaryContactEmail} onChange={(e) => setF("primaryContactEmail", e.target.value)} />}
+        </Field>
+        <Field label="Contact phone">
+          {control => <Input {...control} value={form.primaryContactPhone} onChange={(e) => setF("primaryContactPhone", e.target.value)} />}
+        </Field>
+        <Field label="Primary underwriter">
+          {control => <Input {...control}
             value={form.primaryUnderwriterName}
             onChange={(e) => setF("primaryUnderwriterName", e.target.value)}
-          />
-        </div>
-        <div className="field">
-          <label>Underwriter email</label>
-          <input
+          />}
+        </Field>
+        <Field label="Underwriter email">
+          {control => <Input {...control}
             value={form.primaryUnderwriterEmail}
             onChange={(e) => setF("primaryUnderwriterEmail", e.target.value)}
-          />
-        </div>
-        <div className="field">
-          <label>Underwriter phone</label>
-          <input
+          />}
+        </Field>
+        <Field label="Underwriter phone">
+          {control => <Input {...control}
             value={form.primaryUnderwriterPhone}
             onChange={(e) => setF("primaryUnderwriterPhone", e.target.value)}
-          />
-        </div>
+          />}
+        </Field>
         <div className="field full">
           <label>States covered ({form.states.length})</label>
           <div className="toolbar" style={{ marginTop: 0, marginBottom: 6 }}>
-            <button
-              className="secondary"
+            <Button variant="secondary"
+
               disabled={form.states.length === US_STATES.length}
               onClick={() => setF("states", [...US_STATES])}
             >
               All states
-            </button>
-            <button
-              className="secondary"
+            </Button>
+            <Button variant="secondary"
+
               disabled={form.states.length === 0}
               onClick={() => setF("states", [])}
             >
               Clear
-            </button>
+            </Button>
           </div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 10px" }}>
             {US_STATES.map((s) => (
@@ -252,7 +248,7 @@ export function CarrierForm({
                 className="small"
                 style={{ display: "flex", gap: 3, alignItems: "center" }}
               >
-                <input
+                <Input
                   type="checkbox"
                   checked={form.states.includes(s)}
                   onChange={() => toggleState(s)}
@@ -262,15 +258,14 @@ export function CarrierForm({
             ))}
           </div>
         </div>
-        <div className="field full">
-          <label>Notes</label>
-          <textarea rows={3} value={form.notes} onChange={(e) => setF("notes", e.target.value)} />
-        </div>
+        <Field label="Notes" className="full">
+          {control => <Textarea {...control} rows={3} value={form.notes} onChange={(e) => setF("notes", e.target.value)} />}
+        </Field>
       </div>
       <div className="form-actions">
-        <button className="primary" disabled={saveStatus.busy} onClick={save}>
+        <Button variant="primary"  disabled={saveStatus.busy} onClick={save}>
           {saveStatus.busy ? "Saving…" : "Save changes"}
-        </button>
+        </Button>
         <SaveStatus {...saveStatus.status} />
       </div>
     </div>

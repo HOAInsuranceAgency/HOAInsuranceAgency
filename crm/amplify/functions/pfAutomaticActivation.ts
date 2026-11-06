@@ -1,3 +1,4 @@
+import { sendCrmWrite } from './live-write';
 import { UpdateCommand, type DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 
 export interface ElectedLoan {
@@ -17,7 +18,7 @@ export async function activateSettledElection(ddb: DynamoDBDocumentClient, table
       !loan.downPaymentIntentId || !loan.stripeCustomerId || !loan.stripePaymentMethodId) return false;
   const now = new Date().toISOString();
   try {
-    await ddb.send(new UpdateCommand({
+    await sendCrmWrite(ddb.send(new UpdateCommand({
       TableName: table,
       Key: { id: loan.id },
       UpdateExpression: "SET #s = :active, activatedAt = if_not_exists(activatedAt, :now), updatedAt = :now",
@@ -27,7 +28,7 @@ export async function activateSettledElection(ddb: DynamoDBDocumentClient, table
         ":active": "ACTIVE", ":accepted": "ACCEPTED", ":now": now,
         ":pi": loan.downPaymentIntentId, ":cus": loan.stripeCustomerId, ":pm": loan.stripePaymentMethodId,
       },
-    }));
+    })));
     return true;
   } catch (err) {
     if ((err as { name?: string }).name === "ConditionalCheckFailedException") return false;

@@ -1,6 +1,7 @@
+import { Input } from "../ui/Input";
 import { client, fmtMoney, type Blanket } from "../../lib/client";
 import { inputValue, num, str } from "../../lib/formCodec";
-import { blanketKey } from "../../lib/extractionKeys";
+import { blanketKey } from "../../../../shared/extractionKeys";
 import { useChildRows } from "../../lib/useChildRows";
 import type { FormState } from "../../lib/useFormState";
 import ChildRowsCard from "../ChildRowsCard";
@@ -95,7 +96,7 @@ function BlanketFields({
     <>
       <div className="field">
         <label>Blanket #</label>
-        <input
+        <Input
           placeholder="BL-1"
           value={form.form.blanketNumber}
           onChange={(e) => form.setF("blanketNumber", e.target.value)}
@@ -104,7 +105,7 @@ function BlanketFields({
       </div>
       <div className="field" style={{ flex: "1 1 200px" }}>
         <label>Type</label>
-        <input
+        <Input
           placeholder="Blanket Bldg & BPP"
           value={form.form.type}
           onChange={(e) => form.setF("type", e.target.value)}

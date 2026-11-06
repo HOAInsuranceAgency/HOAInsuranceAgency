@@ -1,14 +1,16 @@
 import { describe, expect, it } from "vitest";
-import type { LineLike } from "./invoiceTotals";
+import type { LineLike } from "../../../shared/invoiceTotals";
 import {
   directBillWarning,
+  financeableInvoiceTotal,
   formatMoney,
   invoiceTotals,
   isPassThrough,
   marginWarnings,
+  missingRemittanceCost,
   premiumLineFromPolicy,
   remittanceSplit,
-} from "./invoiceTotals";
+} from "../../../shared/invoiceTotals";
 
 describe("invoiceTotals", () => {
   it("adds retail and cost, and calls the difference margin", () => {
@@ -73,7 +75,7 @@ describe("invoiceTotals", () => {
     // What a seeded line is: the premium in the cost box, the amount blank.
     // Margin is negative and marginPct null, because there is no retail to be
     // a share of — the invoice is unfinished, not loss-making.
-    const line = premiumLineFromPolicy({ premium: 10000 });
+    const line = { retailAmount: null, costAmount: 10000 };
     const t = invoiceTotals([line]);
     expect(t.cost).toBe(10000);
     expect(t.retail).toBe(0);
@@ -101,7 +103,7 @@ describe("marginWarnings", () => {
 
   it("does not flag a pass-through for having no margin", () => {
     // Zero margin on a tax is correct, not an omission.
-    for (const kind of ["TAX", "SURPLUS_LINES", "STAMPING_FEE"]) {
+    for (const kind of ["CARRIER_FEE", "WHOLESALER_FEE", "TAX", "SURPLUS_LINES", "STAMPING_FEE"]) {
       expect(
         marginWarnings([{ kind, retailAmount: 400, costAmount: 400 }]),
         kind
@@ -171,10 +173,10 @@ describe("formatMoney", () => {
 });
 
 describe("premiumLineFromPolicy", () => {
-  it("puts the premium in the cost box and leaves the amount blank", () => {
+  it("seeds the gross client premium and leaves actual supplier remittance unknown", () => {
     expect(premiumLineFromPolicy({ premium: 10000 })).toEqual({
-      retailAmount: null,
-      costAmount: 10000,
+      retailAmount: 10000,
+      costAmount: null,
     });
   });
 
@@ -186,12 +188,12 @@ describe("premiumLineFromPolicy", () => {
       expect(
         premiumLineFromPolicy({ premium: 10000, commissionPct } as never),
         String(commissionPct)
-      ).toEqual({ retailAmount: null, costAmount: 10000 });
+      ).toEqual({ retailAmount: 10000, costAmount: null });
     }
   });
 
   it("rounds the premium to the cent", () => {
-    expect(premiumLineFromPolicy({ premium: 12480.005 }).costAmount).toBe(12480.01);
+    expect(premiumLineFromPolicy({ premium: 12480.005 }).retailAmount).toBe(12480.01);
   });
 
   it("returns nothing at all when the policy has no premium", () => {
@@ -294,6 +296,7 @@ describe("remittanceSplit", () => {
       { kind: "PREMIUM", retailAmount: 25000, costAmount: 21250 },
     ]);
     expect(s).toEqual({
+      brokerFeeCents: 0,
       carrierCents: 2_125_000,
       commissionCents: 375_000,
       interestCents: 0,
@@ -349,7 +352,7 @@ describe("remittanceSplit", () => {
     for (const lines of cases) {
       const s = remittanceSplit(lines);
       expect(
-        s.carrierCents + s.commissionCents + s.interestCents,
+        s.carrierCents + s.commissionCents + s.interestCents + s.brokerFeeCents,
         JSON.stringify(lines)
       ).toBe(s.totalCents);
     }
@@ -374,5 +377,40 @@ describe("remittanceSplit", () => {
     expect(s.totalCents).toBe(0);
     expect(s.carrierCents).toBe(850_000);
     expect(s.commissionCents).toBe(-850_000);
+  });
+});
+
+describe("broker fee separation", () => {
+  it("keeps wholesaler fees and taxes out of agency income while including them in financed client charges", () => {
+    const lines = [
+      { kind: "PREMIUM", retailAmount: 55541, costAmount: 49986.90 },
+      { kind: "WHOLESALER_FEE", retailAmount: 250, costAmount: 250 },
+      { kind: "SURPLUS_LINES", retailAmount: 2221.64, costAmount: 2221.64 },
+      { kind: "BROKER_FEE", retailAmount: 500, costAmount: 0 },
+    ];
+    expect(invoiceTotals(lines).retail).toBe(58512.64);
+    expect(financeableInvoiceTotal(lines)).toBe(58012.64);
+    expect(remittanceSplit(lines)).toEqual({ carrierCents: 5245854, commissionCents: 555410, brokerFeeCents: 50000, interestCents: 0, totalCents: 5851264 });
+    expect(marginWarnings(lines)).toEqual([]);
+    expect(remittanceSplit(lines.filter(line => line.kind !== "BROKER_FEE")).brokerFeeCents).toBe(0);
+  });
+  it("requires actual premium and endorsement remittance without confusing reviewed zero with missing", () => {
+    for (const kind of ["PREMIUM", "ENDORSEMENT"]) {
+      expect(missingRemittanceCost([{ kind, retailAmount: 100 }])).toBe(true);
+      expect(missingRemittanceCost([{ kind, retailAmount: 100, costAmount: null }])).toBe(true);
+      expect(missingRemittanceCost([{ kind, retailAmount: 100, costAmount: 0 }])).toBe(false);
+      expect(missingRemittanceCost([{ kind, retailAmount: 100, costAmount: 80 }])).toBe(false);
+    }
+  });
+  it("collects the full fee separately while financing only premium and existing pass-throughs", () => {
+    const lines = [{kind:"PREMIUM",retailAmount:10000,costAmount:8500}, {kind:"BROKER_FEE",retailAmount:500,costAmount:0}, {kind:"TAX",retailAmount:100,costAmount:100}];
+    expect(financeableInvoiceTotal(lines)).toBe(10100);
+    expect(remittanceSplit(lines)).toEqual({carrierCents:860000,commissionCents:150000,brokerFeeCents:50000,interestCents:0,totalCents:1060000});
+    expect(marginWarnings([lines[1]])).toEqual([]);
+  });
+  it("does not finance a fee-only direct-bill invoice", () => {
+    const lines = [{kind:"BROKER_FEE",retailAmount:500,costAmount:0}];
+    expect(financeableInvoiceTotal(lines)).toBe(0);
+    expect(directBillWarning("DIRECT", lines)).toBeNull();
   });
 });

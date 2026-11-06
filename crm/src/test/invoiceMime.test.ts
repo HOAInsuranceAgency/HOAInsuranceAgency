@@ -1,10 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { URL as NodeURL } from "node:url";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { AGENCY_FMT } from "../../../shared/agency";
 import {
   buildMimeMessage,
   encodeHeader,
 } from "../../amplify/functions/send-invoice/mime";
 import { pdfFilename } from "../../amplify/functions/send-invoice/pdf";
-import { invoiceTerms } from "../../amplify/functions/send-invoice/invoice";
+import { invoiceTerms, type InvoiceView } from "../../amplify/functions/send-invoice/invoice";
 
 const boundaries = { mixed: "MIXEDBOUNDARY", alternative: "ALTBOUNDARY" };
 
@@ -214,6 +217,23 @@ describe("invoiceTerms", () => {
  * and only the bytes prove it did not.
  */
 describe("the invoice PDF", () => {
+  // Resolve through Node so Vite does not rewrite this into a browser asset URL.
+  const logo = readFileSync(new NodeURL("../../public/logo.png", import.meta.url));
+  const fetchLogo = vi.fn(async (input: RequestInfo | URL) => {
+    if (input !== AGENCY_FMT.logoUrl) throw new Error("Unexpected invoice PDF network request");
+    return new Response(Uint8Array.from(logo).buffer, { status: 200, headers: { "content-type": "image/png" } });
+  });
+  beforeAll(() => { vi.stubGlobal("fetch", fetchLogo); });
+  afterAll(() => {
+    try {
+      // loadLogo catches transport errors; verify its calls as well so an
+      // unexpected URL cannot silently pass through the text-logo fallback.
+      expect(fetchLogo).toHaveBeenCalledExactlyOnceWith(AGENCY_FMT.logoUrl);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   const view = {
     number: "INV-2026-00042",
     associationName: "Maple Court Condominium Trust",
@@ -224,6 +244,7 @@ describe("the invoice PDF", () => {
     riskLocation: ["18 Maple Court", "Marlborough, MA 01752"],
     effectiveDate: "2026-08-15",
     expirationDate: "2027-08-15",
+    coverageBound: true,
     issuedAt: "2026-08-21",
     dueAt: "2026-09-04",
     memo: "A 35% minimum earned premium applies.",
@@ -246,10 +267,10 @@ describe("the invoice PDF", () => {
    * writes every string as a hex literal — `<544f54414c>` rather than
    * `(TOTAL)` — so those are decoded too. What comes back is the text as drawn.
    */
-  const text = async () => {
+  const text = async (overrides: Partial<InvoiceView> = {}) => {
     const { inflateSync } = await import("node:zlib");
     const { renderInvoicePdf } = await import("../../amplify/functions/send-invoice/pdf");
-    const buf = Buffer.from(await renderInvoicePdf(view as never));
+    const buf = Buffer.from(await renderInvoicePdf({ ...view, ...overrides } as never));
 
     let streams = "";
     let i = 0;
@@ -284,11 +305,33 @@ describe("the invoice PDF", () => {
     );
   };
 
+  it("embeds the local agency PNG at its real dimensions without a network dependency", async () => {
+    const { PDFDict, PDFDocument, PDFName, PDFNumber, PDFRawStream } = await import("pdf-lib");
+    const { renderInvoicePdf } = await import("../../amplify/functions/send-invoice/pdf");
+    const document = await PDFDocument.load(await renderInvoicePdf(view as never));
+    expect(document.getPageCount()).toBe(1);
+    const images = document.getPages()[0].node.Resources()!.lookup(PDFName.of("XObject"), PDFDict);
+    const image = images.entries().map(([, reference]) => document.context.lookup(reference))
+      .find((entry): entry is import("pdf-lib").PDFRawStream => entry instanceof PDFRawStream && entry.dict.get(PDFName.of("Subtype")) === PDFName.of("Image"));
+    expect(image).toBeDefined();
+    expect(image!.dict.lookup(PDFName.of("Width"), PDFNumber).asNumber()).toBe(750);
+    expect(image!.dict.lookup(PDFName.of("Height"), PDFNumber).asNumber()).toBe(148);
+  });
+
   it("shows the retail figures and the total", async () => {
     const pdf = await text();
     for (const want of ["25,000.00", "1,000.00", "26,000.00", "TOTAL DUE"]) {
       expect(pdf, want).toContain(want);
     }
+  });
+  it.each([-500, 0])('does not request cash for a credit or zero balance PDF (%s)', async amount => {
+    const pdf = await text({ lines: [{ description: 'Audit premium adjustment', kind: 'ENDORSEMENT', retailAmount: amount, costAmount: amount }] });
+    expect(pdf).toContain(amount < 0 ? 'TOTAL CREDIT' : 'NO PAYMENT DUE');
+    expect(pdf).toContain('No payment');
+    expect(pdf).not.toContain('PAYMENT INSTRUCTIONS');
+    expect(pdf).not.toContain('Make checks payable');
+    expect(pdf).not.toContain('buy.stripe.com');
+    expect(pdf).not.toContain('Due Date:');
   });
 
   it("shows no cost and no margin, anywhere", async () => {
@@ -328,5 +371,21 @@ describe("the invoice PDF", () => {
     // invoice carries a policy block, and a treasurer reading it as the terms
     // of their coverage would have been misled by us, not by their carrier.
     expect(await text()).toContain("not a binder or policy");
+  });
+
+  it.each([false, undefined])("describes unconfirmed coverage as proposed even when it has an effective date (bound=%s)", async coverageBound => {
+    const pdf = await text({ coverageBound });
+    expect(pdf).toContain("Proposed Term");
+    expect(pdf).toContain("Proposed effective date: August 15, 2026.");
+    expect(pdf).toContain("Coverage is subject to binding confirmation.");
+    expect(pdf).not.toContain("Coverage was bound");
+    expect(pdf).toContain("not a binder or policy");
+  });
+
+  it("states a bound effective date only when the trusted policy proves binding", async () => {
+    const pdf = await text({ coverageBound: true });
+    expect(pdf).toContain("Policy Term");
+    expect(pdf).toContain("Coverage was bound effective August 15, 2026.");
+    expect(pdf).not.toContain("Proposed effective date");
   });
 });

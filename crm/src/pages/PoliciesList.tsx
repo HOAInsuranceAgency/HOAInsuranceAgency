@@ -1,14 +1,10 @@
+import { accountPath } from '../../../shared/crmRoutes';
+import { Button } from "../components/ui/Button";
+import { Table } from "../components/ui/Table";
 import { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import {
-  client,
-  fmtDate,
-  fmtMoney,
-  listAllPages,
-  type Account,
-  type Carrier,
-  type Policy,
-} from "../lib/client";
+import { client, fmtDate, fmtMoney, type Account, type Carrier, type Policy } from "../lib/client";
+import { listAllPages } from "../../../shared/pagination";
 import { Badge, statusBadge, POLICY_STATUS_BADGE } from "../lib/badges";
 import { useSort, SortTh } from "../lib/useSort";
 import { useAsyncResource } from "../lib/useAsyncResource";
@@ -23,7 +19,7 @@ export default function PoliciesList() {
     async () =>
       listAllPages((nextToken) => client.models.Policy.list({ nextToken })),
     [],
-    { initialData: [] as Policy[], errorMessage: "Failed to load policies" }
+    { initialData: [] as Policy[], errorMessage: "Failed to load policies" , live: true }
   );
   const policies = policyRes.data;
 
@@ -35,7 +31,7 @@ export default function PoliciesList() {
     async () =>
       listAllPages((nextToken) => client.models.Account.list({ nextToken })),
     [],
-    { initialData: [] as Account[], errorMessage: "Failed to load account names" }
+    { initialData: [] as Account[], errorMessage: "Failed to load account names" , live: true }
   );
   const accounts = accountRes.data;
 
@@ -43,7 +39,7 @@ export default function PoliciesList() {
     async () =>
       listAllPages((nextToken) => client.models.Carrier.list({ nextToken })),
     [],
-    { initialData: [] as Carrier[], errorMessage: "Failed to load carrier names" }
+    { initialData: [] as Carrier[], errorMessage: "Failed to load carrier names" , live: true }
   );
   const carriers = carrierRes.data;
 
@@ -77,19 +73,19 @@ export default function PoliciesList() {
       <h1>Policies</h1>
       <p className="sub">All bound policies — soonest expiration first</p>
 
-      {accountRes.error && <p className="error-text" role="alert">{accountRes.error} <button disabled={accountRes.loading} onClick={() => void accountRes.refetch()}>Retry account names</button></p>}
-      {carrierRes.error && <p className="error-text" role="alert">{carrierRes.error} <button disabled={carrierRes.loading} onClick={() => void carrierRes.refetch()}>Retry carriers</button></p>}
+      {accountRes.error && <p className="error-text" role="alert">{accountRes.error} <Button disabled={accountRes.loading} onClick={() => void accountRes.refetch()}>Retry account names</Button></p>}
+      {carrierRes.error && <p className="error-text" role="alert">{carrierRes.error} <Button disabled={carrierRes.loading} onClick={() => void carrierRes.refetch()}>Retry carriers</Button></p>}
 
       <div className="card">
         {!policyRes.loaded ? (
           <p className="muted small">Loading…</p>
         ) : policyRes.error ? (
-          <p className="error-text" role="alert">{policyRes.error} <button disabled={policyRes.loading} onClick={() => void policyRes.refetch()}>Retry policies</button></p>
+          <p className="error-text" role="alert">{policyRes.error} <Button disabled={policyRes.loading} onClick={() => void policyRes.refetch()}>Retry policies</Button></p>
         ) : sorted.length === 0 ? (
           <p className="muted small">No policies bound yet.</p>
         ) : (
           <div className="table-wrap">
-            <table>
+            <Table>
               <thead>
                 <tr>
                   <SortTh label="Account" colKey="account" sortKey={sortKey} dir={dir} onToggle={toggle} />
@@ -107,14 +103,14 @@ export default function PoliciesList() {
                   <tr
                     key={p.id}
                     className="clickable"
-                    onClick={() => navigate(`/accounts/${p.accountId}?tab=policies`)}
+                    onClick={() => navigate(accountPath(p.accountId, { tab: 'policies' }))}
                   >
                     <td>
                       <strong>{accountName.get(p.accountId) ?? "—"}</strong>
                     </td>
                     <td>{p.carrierId ? carrierName.get(p.carrierId) ?? "—" : "—"}</td>
                     <td>{p.policyNumber ?? "—"}</td>
-                    <td>{fmtMoney(p.premium)}</td>
+                    <td>{fmtMoney(p.premium)}{(p.brokerFee ?? 0) > 0 && <div className="small muted">+ {fmtMoney(p.brokerFee)} broker fee</div>}</td>
                     <td>{fmtDate(p.effectiveDate)}</td>
                     <td>{fmtDate(p.expirationDate)}</td>
                     <td>{fmtDate(p.datePolicyBound?.slice(0, 10))}</td>
@@ -124,7 +120,7 @@ export default function PoliciesList() {
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </Table>
           </div>
         )}
       </div>

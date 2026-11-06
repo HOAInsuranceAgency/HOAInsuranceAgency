@@ -1,12 +1,15 @@
+import { resetCommercialFixtures } from '../test/fixtures/commercialClient';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { emptyLeadSnooze } from '../../../shared/leadSnooze';
 
 const request = vi.hoisted(() => vi.fn());
 vi.mock('../lib/communications', () => ({ communicationRequest: request }));
-vi.mock('../lib/client', () => import('../../scripts/commercial-preview/fixtures'));
+vi.mock('../lib/client', () => import('../test/fixtures/commercialClient'));
 vi.mock('./CommunicationAccountSummary', () => ({ default: () => null }));
 import LeadWorkflowPanel from './LeadWorkflowPanel';
+import { enableLiveUpdates, invalidateLiveUpdates } from '../test/liveUpdates';
+import { liveUpdates } from '../lib/liveUpdates';
 
 const accessDenied = 'This record is not available to your account. Contact an administrator if it needs to be assigned to you.';
 function deferred<T>() {
@@ -34,11 +37,40 @@ function expectPrivateContextCleared() {
 }
 
 beforeEach(() => {
+  resetCommercialFixtures();
   request.mockReset();
   vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
   vi.setSystemTime('2026-10-01T16:00:00Z');
+  enableLiveUpdates();
 });
 afterEach(() => vi.useRealTimers());
+
+async function settleLiveTimers() {
+  await act(async () => { liveUpdates.wake(); await new Promise(resolve => setTimeout(resolve, 150)); });
+}
+async function pulse() {
+  await invalidateLiveUpdates();
+  await settleLiveTimers();
+}
+async function advanceLive(ms: number) {
+  await act(async () => { await vi.advanceTimersByTimeAsync(ms); });
+  await settleLiveTimers();
+}
+
+it('opens the shared server handoff with the current sidebar account and conversation', async () => {
+  request.mockImplementation(async operation => {
+    if (operation === 'context') return context();
+    if (operation === 'businessDeliveryContext') return { context: { accountId: 'a', accountName: 'Example lead', choices: [], documents: [], recipientSuggestions: [], conversations: [{ id: 'cnv_current', label: 'Current client thread' }], senderError: 'Connect your personal Front mailbox' } };
+    if (operation === 'historyBusinessDeliveries') return { items: [] };
+    throw new Error(`Unexpected operation: ${operation}`);
+  });
+  render(<LeadWorkflowPanel conversationId="cnv_current" onOpen={vi.fn()} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Prepare email in Front', hidden: true }));
+  await screen.findByRole('dialog', { name: 'Prepare email in Front' });
+  expect(request).toHaveBeenCalledWith('businessDeliveryContext', { accountId: 'a' });
+  expect(screen.getByLabelText('Front conversation')).toHaveValue('cnv_current');
+  expect(request.mock.calls.some(([, , write]) => write === true)).toBe(false);
+});
 
 it('keeps a follow-up draft mounted while another account action refreshes the workspace', async () => {
   const refresh = deferred<unknown>();
@@ -57,7 +89,7 @@ it('keeps a follow-up draft mounted while another account action refreshes the w
   expect(screen.getByLabelText('Internal note')).toHaveValue('');
 });
 
-it('does not append an older page after the communication history has refreshed', async () => {
+it('defers automatic context replacement until an older activity page has finished loading', async () => {
   const page = deferred<unknown>();
   let reads = 0;
   request.mockImplementation((operation, input) => {
@@ -68,9 +100,11 @@ it('does not append an older page after the communication history has refreshed'
   render(<LeadWorkflowPanel accountId="a" />);
   fireEvent.click(await screen.findByRole('button', { name: 'Load older activity' }));
   expect(screen.getByRole('button', { name: 'Loading older activity…' })).toBeDisabled();
-  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
-  await screen.findByText('Refreshed history');
+  await pulse();
+  expect(reads).toBe(1);
   await act(async () => page.resolve(context('Example lead', 'Stale older history')));
+  await settleLiveTimers();
+  await screen.findByText('Refreshed history');
   expect(screen.queryByText('Stale older history')).not.toBeInTheDocument();
   expect(screen.getByText('Refreshed history')).toBeInTheDocument();
 });
@@ -79,15 +113,19 @@ it('keeps a snooze draft when an already-running background refresh fails', asyn
   let failRefresh!: (error: Error) => void;
   request.mockResolvedValueOnce({ workflow: { accountId: 'a', name: 'Example lead', version: 1, disposition: 'ACTIVE', humanTakeover: true }, snooze: emptyLeadSnooze('a'), tasks: [], communications: [], team: [], issues: [] });
   request.mockImplementationOnce(() => new Promise((_resolve, reject) => { failRefresh = reject; }));
+  request.mockResolvedValue(context());
   render(<LeadWorkflowPanel accountId="a" onOpen={vi.fn()} />);
   await screen.findByRole('button', { name: 'Snooze Example lead' });
-  await act(async () => { await vi.advanceTimersByTimeAsync(15_000); });
+  await advanceLive(15_000);
   fireEvent.click(screen.getByRole('button', { name: 'Snooze Example lead' }));
   fireEvent.change(screen.getByLabelText('Follow-up note'), { target: { value: 'Keep this draft after a failed refresh' } });
   await act(async () => failRefresh(new Error('Refresh unavailable')));
   expect(screen.getByLabelText('Follow-up note')).toHaveValue('Keep this draft after a failed refresh');
-  expect(screen.getByRole('alert')).toHaveTextContent('Refresh unavailable');
-  expect(screen.getByRole('button', { name: 'Retry refresh' })).toBeInTheDocument();
+  // A response from before editing cannot replace the draft or its status.
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+  await advanceLive(1_100);
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
 });
 
 it.each(['draft', 'pending save'])('pauses compact polling for an uninitialized lead with a snooze %s', async mode => {
@@ -103,10 +141,9 @@ it.each(['draft', 'pending save'])('pauses compact polling for an uninitialized 
   fireEvent.change(screen.getByLabelText('Follow-up note'), { target: { value: 'Keep my follow-up note' } });
   if (mode === 'pending save') fireEvent.click(screen.getByRole('button', { name: 'Snooze lead' }));
 
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(30_000);
-    document.dispatchEvent(new Event('visibilitychange'));
-  });
+  await advanceLive(30_000);
+  act(() => document.dispatchEvent(new Event('visibilitychange')));
+  await settleLiveTimers();
   expect(request.mock.calls.filter(([operation]) => operation === 'context')).toHaveLength(1);
   expect(screen.getByLabelText('Follow-up note')).toHaveValue('Keep my follow-up note');
 
@@ -115,8 +152,10 @@ it.each(['draft', 'pending save'])('pauses compact polling for an uninitialized 
     snooze = { ...snooze, version: 1, followUpOn: '2026-10-02', note: 'Keep my follow-up note' };
     await act(async () => finishSave({ snooze }));
   }
-  await act(async () => { await vi.advanceTimersByTimeAsync(15_000); });
-  expect(request.mock.calls.filter(([operation]) => operation === 'context')).toHaveLength(2);
+  // Closing the editor releases the queued invalidation immediately. Do not
+  // also advance a full fallback interval, which can legitimately read again.
+  await settleLiveTimers();
+  await waitFor(() => expect(request.mock.calls.filter(([operation]) => operation === 'context')).toHaveLength(2));
   expect(screen.queryByLabelText('Follow-up note')).not.toBeInTheDocument();
 });
 
@@ -131,8 +170,8 @@ it.each(['compact', 'full'] as const)('erases revoked context and drafts through
   render(<LeadWorkflowPanel accountId="a" {...(mode === 'compact' ? { onOpen: vi.fn() } : {})} />);
   await screen.findByRole('button', { name: 'Snooze Example lead' });
   expect(screen.getByText('Private renewal discussion')).toBeInTheDocument();
-  if (mode === 'compact') await act(async () => { await vi.advanceTimersByTimeAsync(15_000); });
-  else fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+  if (mode === 'compact') await advanceLive(15_000);
+  else await pulse();
   fireEvent.click(screen.getByRole('button', { name: 'Snooze Example lead' }));
   fireEvent.change(screen.getByLabelText('Follow-up note'), { target: { value: 'Discard this revoked follow-up draft' } });
   if (mode === 'compact') fireEvent.click(screen.getByText('Add a note'));
@@ -172,7 +211,7 @@ it.each([
   request.mockResolvedValueOnce(context()).mockImplementationOnce(() => refresh.promise);
   render(<LeadWorkflowPanel accountId="a" />);
   await screen.findByRole('button', { name: 'Snooze Example lead' });
-  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+  await pulse();
   await act(async () => refresh.reject(denied));
   expectPrivateContextCleared();
   expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
@@ -189,8 +228,8 @@ it('clears access denied from older activity and ignores an in-flight context re
   });
   render(<LeadWorkflowPanel accountId="a" />);
   await screen.findByRole('button', { name: 'Snooze Example lead' });
+  await pulse();
   fireEvent.click(screen.getByRole('button', { name: 'Load older activity' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
   await act(async () => older.reject(new Error(accessDenied)));
   expectPrivateContextCleared();
   expect(screen.getByRole('alert')).toHaveTextContent(accessDenied);
@@ -209,7 +248,7 @@ it('does not restore revoked context when an earlier snooze save finishes', asyn
   });
   render(<LeadWorkflowPanel accountId="a" />);
   await screen.findByRole('button', { name: 'Snooze Example lead' });
-  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+  await pulse();
   fireEvent.click(screen.getByRole('button', { name: 'Snooze Example lead' }));
   fireEvent.change(screen.getByLabelText('Follow-up note'), { target: { value: 'Private pending save' } });
   fireEvent.click(screen.getByRole('button', { name: 'Snooze lead' }));

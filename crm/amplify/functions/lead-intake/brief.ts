@@ -1,3 +1,4 @@
+import { accountPath } from '../../../../shared/crmRoutes';
 import { isLeadSource, LEAD_SOURCE_LABELS } from "../../../../shared/leadSource";
 /** The internal Front intake email. The original snapshot remains unchanged. */
 const escape = (value: string) => value.replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]!));
@@ -135,7 +136,7 @@ export function renderIntakeBrief(input: IntakeBriefInput): { html: string; text
   try {
     const base = new URL(input.crmBaseUrl || "");
     if (base.protocol === "https:" && !base.username && !base.password) {
-      const url = new URL(`${base.pathname.replace(/\/$/, "")}/accounts/${encodeURIComponent(input.accountId)}`, base.origin);
+      const url = new URL(`${base.pathname.replace(/\/$/, "")}${accountPath(input.accountId)}`, base.origin);
       // A non-visible correlation reference survives Front's HTML conversion.
       // Ingestion still verifies the exact provider UID before trusting it.
       url.searchParams.set("submission", input.submissionId);

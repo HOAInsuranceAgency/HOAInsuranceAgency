@@ -1,8 +1,10 @@
 import type { DynamoDBStreamHandler } from "aws-lambda";
+import { holdMigrationStream } from "../migration-stream-hold";
+import { publishCrmChange } from "../live-changes";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { createPartial, type PartialResult } from "./submission-client";
-import type { PartialInput, SubmissionRecord } from "./submission-contract";
+import type { PartialInput, SubmissionRecord } from "../../../../shared/honeycomb/submission";
 const db = DynamoDBDocumentClient.from(new DynamoDBClient(), { marshallOptions: { removeUndefinedValues: true } });
 const table = () => process.env.HONEYCOMB_SUBMISSION_TABLE!;
 async function finish(record: SubmissionRecord, result: PartialResult) {
@@ -32,6 +34,8 @@ export async function processSubmission(id: string) {
   console.info("Honeycomb partial submission finished", { status: result.status, issue: result.issue });
 }
 export const handler: DynamoDBStreamHandler = async event => {
+  if (holdMigrationStream(event, "honeycombSubmissionWorker")) return { batchItemFailures: [] };
+  if (event.Records.length) await publishCrmChange();
   const batchItemFailures: { itemIdentifier: string }[] = [];
   for (const record of event.Records) {
     // A rejected request only runs again after an agent explicitly queues a new attempt.

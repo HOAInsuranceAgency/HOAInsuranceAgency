@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { CLAUDE_CHEAP_MODEL } from "../model";
-import { MAX_NAME_CHARS } from "./name";
+import { MAX_NAME_CHARS } from "../../../../shared/documentName";
 
 /**
  * Asking Claude what an uploaded document is.

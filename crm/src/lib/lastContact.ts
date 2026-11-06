@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { communicationRequest } from "./communications";
+import { useAsyncResource } from './useAsyncResource';
 export interface ContactStamp { at: string; channel: string; direction: string }
 export async function loadLastContacts(ids: string[], active: () => boolean = () => true) {
   const contacts: Record<string, ContactStamp | null> = {};
@@ -7,7 +8,7 @@ export async function loadLastContacts(ids: string[], active: () => boolean = ()
     let pending = ids.slice(start, start + 10).map(accountId => ({ accountId, nextToken: undefined as string | undefined }));
     const seen = new Set<string>();
     while (pending.length && active()) {
-      const result = await communicationRequest<{ items: { accountId: string; contact: ContactStamp | null; complete: boolean; nextToken?: string }[] }>("lastContacts", { accounts: pending });
+      const result = await communicationRequest("lastContacts", { accounts: pending });
       if (result.items.length !== pending.length) throw new Error("Contact history was incomplete. Refresh to try again.");
       pending = [];
       for (const item of result.items) {
@@ -25,13 +26,17 @@ export async function loadLastContacts(ids: string[], active: () => boolean = ()
 }
 export function useLastContacts(ids: string[], revision: unknown) {
   const key = [...new Set(ids)].sort().join(",");
-  const [state, setState] = useState<{ key: string; contacts: Record<string, ContactStamp | null>; loading: boolean; error: string }>({ key: "", contacts: {}, loading: false, error: "" });
-  const generation = useRef(0);
+  const scope = useMemo(() => ({}), [key, revision]);
+  const current = useRef(scope); current.current = scope;
+  const mounted = useRef(true);
   useEffect(() => {
-    const current = ++generation.current, active = () => generation.current === current;
-    setState({ key, contacts: {}, loading: !!key, error: "" });
-    if (key) void loadLastContacts(key.split(","), active).then(contacts => { if (active()) setState({ key, contacts, loading: false, error: "" }); }, () => { if (active()) setState({ key, contacts: {}, loading: false, error: "Could not load last contact. Refresh to try again." }); });
-    return () => { generation.current++; };
-  }, [key, revision]);
-  return state.key === key ? state : { contacts: {} as Record<string, ContactStamp | null>, loading: !!key, error: "" };
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+  const resource = useAsyncResource(
+    () => loadLastContacts(key ? key.split(',') : [], () => mounted.current && current.current === scope),
+    [scope],
+    { initialData: {} as Record<string, ContactStamp | null>, manual: !key, live: !!key, errorMessage: 'Could not load last contact. Refresh to try again.' },
+  );
+  return { key, contacts: resource.data, loading: resource.loading, error: resource.error || resource.refreshError || '', refreshing: resource.refreshing };
 }

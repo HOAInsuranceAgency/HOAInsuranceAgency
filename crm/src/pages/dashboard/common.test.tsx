@@ -1,3 +1,4 @@
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { TabFrame, Tile } from "./common";
@@ -54,7 +55,7 @@ describe("TabFrame", () => {
     expect(screen.getByText("Loading…")).toBeTruthy();
   });
 
-  it("a failed refresh keeps the data and the Refresh control on screen", () => {
+  it("a failed read keeps data visible with a recovery message", () => {
     const { rerender } = render(<TabFrame res={base}>the table</TabFrame>);
     expect(screen.getByText("the table")).toBeTruthy();
 
@@ -65,7 +66,7 @@ describe("TabFrame", () => {
     );
     expect(screen.getByText("the table")).toBeTruthy();
     expect(screen.getByText(/showing the last numbers/)).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Refresh" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Refresh" })).toBeNull();
   });
 
   it('removes a cleared snapshot and keeps it hidden during retry', () => {
@@ -84,7 +85,7 @@ describe("TabFrame", () => {
 });
 
 describe("Tile", () => {
-  it("activates on Space as well as Enter — role=button promises both", () => {
+  it("activates on Space as well as Enter through its native button", async () => {
     let clicks = 0;
     render(
       <Tile
@@ -96,8 +97,8 @@ describe("Tile", () => {
       />
     );
     const tile = screen.getByRole("button", { name: /Open leads/ });
-    fireEvent.keyDown(tile, { key: " " });
-    fireEvent.keyDown(tile, { key: "Enter" });
+    tile.focus();
+    await userEvent.setup().keyboard(" {Enter}");
     expect(clicks).toBe(2);
   });
 

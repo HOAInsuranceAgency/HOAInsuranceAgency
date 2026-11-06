@@ -1,7 +1,11 @@
 import { tasksRemoved } from "./retiredTasks";
+import { sendCrmWrite } from '../live-write';
+import { batchGetComplete } from '../storage/batchGet';
+import { assertTransactionEnvelope } from '../storage/transactions';
+export { conditionalConflict as conflict, retryableStorageFailure as retryableStorage } from '../storage/errors';
 import { createHash, randomUUID } from "node:crypto";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, GetCommand, BatchGetCommand, QueryCommand, TransactWriteCommand, type TransactWriteCommandInput } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, GetCommand, QueryCommand, TransactWriteCommand, type TransactWriteCommandInput } from "@aws-sdk/lib-dynamodb";
 
 export const db = DynamoDBDocumentClient.from(new DynamoDBClient(), { marshallOptions: { removeUndefinedValues: true } });
 export const table = () => { if (!process.env.COMMUNICATION_TABLE) throw new Error("Communication storage is not configured"); return process.env.COMMUNICATION_TABLE; };
@@ -37,19 +41,11 @@ export async function get<T = Record<string, unknown>>(id: string): Promise<Row<
 }
 /** Read one transaction-sized set together. Unprocessed keys are never missing rows. */
 export async function batchGet<T = Record<string, unknown>>(ids: string[]): Promise<Map<string, Row<T>>> {
-  const name = table(), found = new Map<string, Row<T>>();
-  let pending = [...new Set(ids)].map(id => ({ id }));
-  if (pending.length > 100) throw new Error("Communication batch read exceeds the 100-record limit");
-  for (let attempt = 0; pending.length; attempt++) {
-    const result = await db.send(new BatchGetCommand({ RequestItems: { [name]: { Keys: pending, ConsistentRead: true } } }));
-    for (const item of result.Responses?.[name] ?? []) found.set(item.id, item as Row<T>);
-    pending = (result.UnprocessedKeys?.[name]?.Keys ?? []).map(key => ({ id: key.id as string }));
-    if (pending.length) {
-      if (attempt === 3) throw new Error("Communication batch read remains incomplete; retry before sending");
-      await new Promise(resolve => setTimeout(resolve, 25 * 2 ** attempt));
-    }
-  }
-  return found;
+  const rows = await batchGetComplete<Row<T>>({ send: command => db.send(command), table: table(), keys: ids.map(id => ({ id })),
+    maxKeys: 100, attempts: 4, read: { ConsistentRead: true },
+    sizeError: () => new Error('Communication batch read exceeds the 100-record limit'),
+    incompleteError: () => new Error('Communication batch read remains incomplete; retry before sending') });
+  return new Map(rows.map(item => [item.id, item]));
 }
 export function put(record: Row<unknown>, previous?: Row<unknown>): Write {
   if (["TASK", "NOTIFICATION"].includes(record.kind) && (!previous || previous.kind !== record.kind || canonical(record.data) !== canonical(previous.data) || record.dueAt || record.dueGroup || record.workKind || record.workAt)) tasksRemoved();
@@ -63,16 +59,25 @@ export function check(record: Row<unknown>): Write {
   return { ConditionCheck: { TableName: table(), Key: { id: record.id }, ConditionExpression: "#v = :v", ExpressionAttributeNames: { "#v": "version" }, ExpressionAttributeValues: { ":v": record.version } } };
 }
 export async function commit(writes: Write[]) {
-  if (writes.length > 100) throw new Error("Too many changes in one operation");
-  if (writes.length) await db.send(new TransactWriteCommand({ TransactItems: writes }));
+  assertTransactionEnvelope(writes, { keyFields: name => name === table() ? ['id'] : undefined,
+    error: () => new Error('Too many changes in one operation') });
+  if (writes.length) {
+    const internalKinds = new Set(['BUDGET', 'AUTH_HOLD', 'QUEUE_CURSOR', 'MIGRATION', 'CONTACT_FENCE']);
+    const visible = writes.some(write => {
+      if (write.Put) return write.Put.TableName !== table() || !internalKinds.has(String(write.Put.Item?.kind));
+      return !!write.Update || !!write.Delete;
+    });
+    const result = db.send(new TransactWriteCommand({ TransactItems: writes }));
+    if (visible) await sendCrmWrite(result); else await result;
+  }
 }
 export async function save<T>(next: Row<T>, previous?: Row<unknown>) { await commit([put(next, previous)]); return next; }
-export async function query<T = Record<string, unknown>>(index: "kind" | "account" | "due" | "work", key: string, nextToken?: string, limit = 100, prefix?: string) {
+export async function query<T = Record<string, unknown>>(index: "kind" | "account" | "due" | "work", key: string, nextToken?: string, limit = 100, prefix?: string, dueAfter?: string, dueThrough?: string) {
   const attr = index === "kind" ? "kind" : index === "work" ? "workKind" : index === "account" ? "accountId" : "dueGroup";
   let cursor: Record<string, unknown> | undefined;
   if (nextToken) { try { cursor = JSON.parse(Buffer.from(nextToken, "base64url").toString()); } catch { throw new Error("Invalid page token"); } }
-  const out = await db.send(new QueryCommand({ TableName: table(), IndexName: index, KeyConditionExpression: `#k = :k${index === "due" ? " AND dueAt <= :now" : ""}${index === "account" && prefix ? " AND begins_with(accountSort, :prefix)" : ""}`,
-    ExpressionAttributeNames: { "#k": attr }, ExpressionAttributeValues: { ":k": key, ...(index === "due" ? { ":now": new Date().toISOString() } : {}), ...(index === "account" && prefix ? { ":prefix": prefix } : {}) },
+  const out = await db.send(new QueryCommand({ TableName: table(), IndexName: index, KeyConditionExpression: `#k = :k${index === "due" ? dueAfter ? " AND dueAt BETWEEN :afterDue AND :now" : " AND dueAt <= :now" : ""}${index === "account" && prefix ? " AND begins_with(accountSort, :prefix)" : ""}`,
+    ExpressionAttributeNames: { "#k": attr }, ExpressionAttributeValues: { ":k": key, ...(index === "due" ? { ":now": dueThrough ?? new Date().toISOString(), ...(dueAfter ? { ":afterDue": dueAfter } : {}) } : {}), ...(index === "account" && prefix ? { ":prefix": prefix } : {}) },
     ExclusiveStartKey: cursor, Limit: Math.min(limit, 100), ScanIndexForward: index !== "account" }));
   return { items: (out.Items ?? []) as Row<T>[], nextToken: out.LastEvaluatedKey ? Buffer.from(JSON.stringify(out.LastEvaluatedKey)).toString("base64url") : undefined };
 }
@@ -89,21 +94,4 @@ export async function issue(id: string, message: string, accountId?: string) {
   const key = `issue:${id}`, old = await get(key);
   if (old?.data.message === message && !old.data.resolved) return;
   await save(row("ISSUE", key, { sourceId: id, message, at: new Date().toISOString(), resolved: false }, { accountId, previous: old }), old);
-}
-/** Only failed conditions mean another writer won. Capacity/transaction failures must retry. */
-export function conflict(e: unknown): boolean {
-  if (!(e instanceof Error)) return false;
-  if (e.name === "ConditionalCheckFailedException") return true;
-  if (e.name !== "TransactionCanceledException") return false;
-  const reasons = (e as Error & { CancellationReasons?: { Code?: string }[] }).CancellationReasons;
-  return !!reasons?.some(r => r.Code === "ConditionalCheckFailed") && reasons.every(r => r.Code === "None" || r.Code === "ConditionalCheckFailed");
-}
-/** Retry transient AWS failures without confusing them with deduplication. */
-export function retryableStorage(e: unknown): boolean {
-  if (!(e instanceof Error)) return false;
-  const error = e as Error & { CancellationReasons?: { Code?: string }[]; $retryable?: unknown; $metadata?: { httpStatusCode?: number } };
-  if (error.$retryable || (error.$metadata?.httpStatusCode ?? 0) >= 500) return true;
-  if (["ProvisionedThroughputExceededException", "ThrottlingException", "ThrottlingError", "RequestLimitExceeded", "TransactionConflictException", "InternalServerError", "ServiceUnavailable", "TimeoutError"].includes(error.name)) return true;
-  if (error.name !== "TransactionCanceledException") return false;
-  return !error.CancellationReasons?.length || error.CancellationReasons.some(r => ["TransactionConflict", "ThrottlingError", "ProvisionedThroughputExceeded"].includes(r.Code ?? ""));
 }

@@ -1,3 +1,9 @@
+import { formatUsdDollars as money } from '../../../../shared/money';
+import { sendCrmWrite } from '../live-write';
+import { agencyDay } from "../../../../shared/agencyTime";
+import { feeAllocations, type BrokerFeeAllocation } from "../../../../shared/brokerFees";
+import { syncBrokerFeePayment } from "../broker-fees/payments";
+import { TransactionalMailClient } from "../transactional-mail/client";
 import { randomUUID } from "node:crypto";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import {
@@ -7,8 +13,8 @@ import {
   ScanCommand,
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
-import { SESv2Client, SendEmailCommand } from "@aws-sdk/client-sesv2";
-import { PF_CONFIG_SHA256 } from "../../../src/lib/premiumFinance/jurisdictions";
+import { SendEmailCommand } from "@aws-sdk/client-sesv2";
+import { PF_CONFIG_SHA256 } from "../../../../shared/premiumFinance/jurisdictions";
 import { postInstallment, type PostableLoan } from "../pfPosting";
 import type { PfEventDecision } from "./decide";
 import { readPaidContext } from "./lookups";
@@ -28,7 +34,7 @@ import { activateSettledElection } from "../pfAutomaticActivation";
  */
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient());
-const ses = new SESv2Client();
+const ses = new TransactionalMailClient("accounting");
 
 interface LoanRow extends PostableLoan {
   status: string | null;
@@ -38,6 +44,8 @@ interface LoanRow extends PostableLoan {
   months: number;
   downPayment: number;
   originationFee: number;
+  brokerFeeCents?: number;
+  brokerFeeAllocations?: BrokerFeeAllocation[];
   electedAt: string | null;
   agreementSignedAt: string | null;
   downPaidAt: string | null;
@@ -71,6 +79,8 @@ async function readLoan(loanId: string): Promise<LoanRow | null> {
     months: typeof item.months === "number" ? item.months : 11,
     downPayment: typeof item.downPayment === "number" ? item.downPayment : 0,
     originationFee: typeof item.originationFee === "number" ? item.originationFee : 0,
+    brokerFeeCents: typeof item.brokerFeeCents === "number" ? item.brokerFeeCents : 0,
+    brokerFeeAllocations: feeAllocations(item.brokerFeeAllocations),
     electedAt: typeof item.electedAt === "string" ? item.electedAt : null,
     agreementSignedAt: typeof item.agreementSignedAt === "string" ? item.agreementSignedAt : null,
     downPaidAt: typeof item.downPaidAt === "string" ? item.downPaidAt : null,
@@ -96,7 +106,7 @@ async function logRow(row: {
   if (!table) return;
   const now = new Date().toISOString();
   try {
-    await ddb.send(
+    await sendCrmWrite(ddb.send(
       new PutCommand({
         TableName: table,
         Item: {
@@ -112,7 +122,7 @@ async function logRow(row: {
           occurredAt: now,
         },
       })
-    );
+    ));
   } catch (err) {
     console.error("stripe-webhook: pf log write failed", err);
   }
@@ -147,8 +157,7 @@ async function mailAccounting(subject: string, lines: string[]) {
   console.log(`stripe-webhook: accounting email accepted by SES ${sent.MessageId ?? "(no id)"}: ${subject}`);
 }
 
-const money = (n: number) =>
-  n.toLocaleString("en-US", { style: "currency", currency: "USD" });
+
 
 /**
  * The names accounting reconciles by. A loan UUID identifies nothing to the
@@ -169,6 +178,15 @@ async function dealNames(loan: LoanRow): Promise<{ name: string; policy: string 
   } catch {
     return { name: "(unknown association)", policy: "(no policy number)" };
   }
+}
+
+/** No earnings while ACH clears; retries recover a hook after the loan state was recorded. */
+async function syncLoanBrokerFee(d: PfEventDecision, loan: LoanRow, status: "PROCESSING" | "PAID" | "FAILED") {
+  const allocations = feeAllocations(loan.brokerFeeAllocations);
+  if (!allocations.length || d.billingVersion !== 3) return;
+  if (allocations.reduce((sum, part) => sum + part.amountCents, 0) !== (loan.brokerFeeCents ?? 0)) throw new Error("Broker fee loan allocation is incomplete.");
+  if (status !== "FAILED") initialPaymentReceipt(loan, d.amount, d.billingVersion);
+  await syncBrokerFeePayment({ sourceId: d.paymentIntentId, accountId: loan.accountId, allocations, status, receivedOn: agencyDay(d.occurredAt) });
 }
 
 /** The down payment cleared: QUOTED → ACCEPTED, mandate stored. */
@@ -202,6 +220,7 @@ async function applyDownPayment(d: PfEventDecision, loan: LoanRow): Promise<stri
    */
   if (loan.downPaymentIntentId === d.paymentIntentId && loan.status !== "QUOTED") {
     await activateSettledElection(ddb, table, loan);
+    await syncLoanBrokerFee(d, loan, "PAID");
     return "already accepted";
   }
   // A customer election is the activation authorization. Never mark a pending
@@ -212,7 +231,7 @@ async function applyDownPayment(d: PfEventDecision, loan: LoanRow): Promise<stri
   const receipt = initialPaymentReceipt(loan, d.amount, d.billingVersion ?? null);
   const now = new Date().toISOString();
   try {
-    await ddb.send(
+    await sendCrmWrite(ddb.send(
       new UpdateCommand({
         TableName: table,
         Key: { id: loan.id },
@@ -234,7 +253,7 @@ async function applyDownPayment(d: PfEventDecision, loan: LoanRow): Promise<stri
           ":pm": d.paymentMethodId,
         },
       })
-    );
+    ));
   } catch (err) {
     if ((err as { name?: string }).name !== "ConditionalCheckFailedException") throw err;
     /**
@@ -243,7 +262,7 @@ async function applyDownPayment(d: PfEventDecision, loan: LoanRow): Promise<stri
      * is recorded and there is nothing to say.
      */
     const fresh = await readLoan(loan.id);
-    if (fresh?.downPaymentIntentId === d.paymentIntentId) return "already accepted";
+    if (fresh?.downPaymentIntentId === d.paymentIntentId) { await syncLoanBrokerFee(d, fresh, "PAID"); return "already accepted"; }
     /**
      * Genuinely stray: a second checkout session, a cancellation that raced
      * the payment, a full payment that superseded the quote while the down
@@ -343,7 +362,7 @@ async function applyDownPayment(d: PfEventDecision, loan: LoanRow): Promise<stri
       );
       for (const sib of Items ?? []) {
         try {
-          await ddb.send(
+          await sendCrmWrite(ddb.send(
             new UpdateCommand({
               TableName: table,
               Key: { id: sib.id },
@@ -356,7 +375,7 @@ async function applyDownPayment(d: PfEventDecision, loan: LoanRow): Promise<stri
                 ":now": new Date().toISOString(),
               },
             })
-          );
+          ));
         } catch (err) {
           if ((err as { name?: string }).name === "ConditionalCheckFailedException") continue;
           throw err;
@@ -376,6 +395,7 @@ async function applyDownPayment(d: PfEventDecision, loan: LoanRow): Promise<stri
     // Best effort after the money record; a failure never un-accepts.
     console.error(`stripe-webhook: could not supersede sibling quotes for ${loan.id}`, err);
   }
+  await syncLoanBrokerFee(d, loan, "PAID");
   try {
     const deal = await dealNames(loan);
     await mailAccounting(
@@ -387,6 +407,8 @@ async function applyDownPayment(d: PfEventDecision, loan: LoanRow): Promise<stri
         `Total received: ${money(receipt.initialPaymentAmount)}`,
         `Premium down payment: ${money(loan.downPayment)}`,
         `Origination fee collected: ${money(receipt.originationFeeCollected)}`,
+        `Broker fee collected: ${money(receipt.brokerFeeCollectedCents / 100)}`,
+        `Broker fee is separate agency revenue and does not reduce financed principal.`,
         `Loan principal repayment: ${money(0)}`,
         `Interest received: ${money(0)}`,
         ...(receipt.originationFeeCollected < loan.originationFee
@@ -412,7 +434,7 @@ async function clearPending(loanId: string, intentId: string) {
   const table = process.env.PF_LOAN_TABLE;
   if (!table) return;
   try {
-    await ddb.send(
+    await sendCrmWrite(ddb.send(
       new UpdateCommand({
         TableName: table,
         Key: { id: loanId },
@@ -421,7 +443,7 @@ async function clearPending(loanId: string, intentId: string) {
         ConditionExpression: "autopayPendingIntentId = :pi",
         ExpressionAttributeValues: { ":pi": intentId, ":now": new Date().toISOString() },
       })
-    );
+    ));
   } catch (err) {
     if ((err as { name?: string }).name !== "ConditionalCheckFailedException") {
       console.error(`stripe-webhook: could not clear the pending debit on ${loanId}`, err);
@@ -440,7 +462,7 @@ async function failInstallment(loanId: string, intentId: string, installment: nu
   const table = process.env.PF_LOAN_TABLE;
   if (!table) return;
   const patch = (condition: string, values: Record<string, unknown>) =>
-    ddb.send(
+    sendCrmWrite(ddb.send(
       new UpdateCommand({
         TableName: table,
         Key: { id: loanId },
@@ -453,7 +475,7 @@ async function failInstallment(loanId: string, intentId: string, installment: nu
           ...values,
         },
       })
-    );
+    ));
   try {
     await patch("autopayPendingIntentId = :pi", { ":pi": intentId });
     return;
@@ -476,14 +498,14 @@ async function failInstallment(loanId: string, intentId: string, installment: nu
     // Neither matched: the marker already moved on. The stand-down field
     // still matters — write it alone, unconditionally.
     try {
-      await ddb.send(
+      await sendCrmWrite(ddb.send(
         new UpdateCommand({
           TableName: table,
           Key: { id: loanId },
           UpdateExpression: "SET autopayFailedInstallment = :n, updatedAt = :now",
           ExpressionAttributeValues: { ":n": installment, ":now": new Date().toISOString() },
         })
-      );
+      ));
     } catch (err2) {
       console.error(`stripe-webhook: could not record the failed installment on ${loanId}`, err2);
     }
@@ -662,7 +684,7 @@ export async function applyPfEvent(d: PfEventDecision): Promise<string> {
      */
     if (d.kind === "down" && loan.status === "QUOTED" && !loan.downPaymentIntentId) {
       try {
-        await ddb.send(
+        await sendCrmWrite(ddb.send(
           new UpdateCommand({
             TableName: process.env.PF_LOAN_TABLE as string,
             Key: { id: loan.id },
@@ -675,7 +697,7 @@ export async function applyPfEvent(d: PfEventDecision): Promise<string> {
               ":now": new Date().toISOString(),
             },
           })
-        );
+        ));
       } catch (err) {
         if ((err as { name?: string }).name !== "ConditionalCheckFailedException") throw err;
       }
@@ -693,7 +715,7 @@ export async function applyPfEvent(d: PfEventDecision): Promise<string> {
        * the invoice rule that PROCESSING refuses everything.
        */
       try {
-        await ddb.send(
+        await sendCrmWrite(ddb.send(
           new UpdateCommand({
             TableName: process.env.PF_LOAN_TABLE as string,
             Key: { id: loan.id },
@@ -706,11 +728,13 @@ export async function applyPfEvent(d: PfEventDecision): Promise<string> {
               ":now": new Date().toISOString(),
             },
           })
-        );
+        ));
       } catch (err) {
         if ((err as { name?: string }).name !== "ConditionalCheckFailedException") throw err;
         // The loan moved; whatever won knows more than this event does.
       }
+      const current = await readLoan(loan.id);
+      if (current?.downPaymentIntentId === d.paymentIntentId && current.status === "QUOTED") await syncLoanBrokerFee(d, current, "PROCESSING");
       return "down payment clearing; marked";
     }
     // Money in flight moves nothing else — the pending marker already says
@@ -745,7 +769,7 @@ export async function applyPfEvent(d: PfEventDecision): Promise<string> {
      * mirror of PROCESSING → SENT on the invoice.
      */
     try {
-      await ddb.send(
+      await sendCrmWrite(ddb.send(
         new UpdateCommand({
           TableName: process.env.PF_LOAN_TABLE as string,
           Key: { id: loan.id },
@@ -758,10 +782,11 @@ export async function applyPfEvent(d: PfEventDecision): Promise<string> {
             ":now": new Date().toISOString(),
           },
         })
-      );
+      ));
     } catch (err) {
       if ((err as { name?: string }).name !== "ConditionalCheckFailedException") throw err;
     }
+    if (!loan.downPaymentIntentId || loan.downPaymentIntentId === d.paymentIntentId) await syncLoanBrokerFee(d, loan, "FAILED");
     console.log(`stripe-webhook: down payment ${d.paymentIntentId} failed for ${loan.id}`);
     return "down payment failed";
   }

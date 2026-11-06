@@ -1,0 +1,17 @@
+@import './tokens.css';
+
+.stat {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 18px;
+}
+.stat .n { font-size: 26px; font-weight: 700; }
+.stat .l { font-size: 13px; color: var(--muted); }
+
+.stat.hot .n { color: var(--red); }
+.ui-metric-button[data-variant='surface'] { display: block; width: 100%; padding: 14px 18px; border-radius: var(--control-radius); text-align: left; }
+.ui-metric-button[data-variant='surface']:not(:disabled):hover { box-shadow: 0 2px 10px rgb(46 125 209 / 12%); }
+.ui-metric-button[data-hot='true'] .n { color: var(--red, #b3392e); }
+
+.ui-metric-button .n, .ui-metric-button .l { display: block; }

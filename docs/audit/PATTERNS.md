@@ -1,5 +1,9 @@
 # PATTERNS
 
+> Historical audit notes. Counts and examples below describe the original audit;
+> they are not a current inventory. Use [Code boundaries and verification](../CODE-BOUNDARIES.md)
+> and the root `npm run verify` command for current conventions and checks.
+
 Conventions that exist to stop a class of bug recurring. Each entry names the rule,
 where the canonical implementation lives, and one worked example.
 

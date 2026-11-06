@@ -1,0 +1,16 @@
+/* Shared geometry for every CRM control, including narrow embedded surfaces. */
+:root {
+  --control-radius: 6px;
+  --control-height: 38px;
+  --control-height-compact: 32px;
+  --control-font: 14px;
+  --control-font-compact: 13px;
+}
+@media (max-width: 640px), (pointer: coarse) {
+  :root {
+    --control-height: 44px;
+    --control-height-compact: 44px;
+    --control-font: 16px;
+    --control-font-compact: 16px;
+  }
+}

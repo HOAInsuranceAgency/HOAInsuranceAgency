@@ -6,7 +6,7 @@ export const DIRECTORY_READS = new Set([
   'relationshipLegacyCandidates',
 ]);
 import { validCalendarDate } from './renewalPolicy';
-import { agencyDay } from './leadActionGuidance';
+import { agencyDay } from "./agencyTime";
 
 export const RELATIONSHIP_ROLES = ['MANAGER', 'OWNER', 'REFERRER', 'INSURED'] as const;
 export type RelationshipRole = (typeof RELATIONSHIP_ROLES)[number];

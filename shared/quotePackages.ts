@@ -1,5 +1,9 @@
+import { formatUsdCents } from './money';
 import { authorizedQuoteTerms } from './quoteAuthorization';
 import { validCalendarDate } from './renewalPolicy';
+import { brokerFeeCents } from './brokerFees';
+import { clientChargeTotals } from './clientCharges';
+import { normalizeClientConditions, normalizePassThroughCharges } from './passThroughCharges';
 
 export interface PackageQuote {
   id: string;
@@ -9,6 +13,10 @@ export interface PackageQuote {
   lines?: (string | null)[] | null;
   premium?: number | null;
   commissionPct?: number | null;
+  brokerFee?: number | null;
+  passThroughCharges?: unknown;
+  clientConditions?: string | null;
+  billType?: string | null;
   effectiveDate?: string | null;
   expirationDate?: string | null;
   offerExpiresAt?: string | null;
@@ -30,13 +38,7 @@ export interface CommercialPlan {
   selectedTerms?: Record<string, string>;
   selectedAt?: string;
 }
-export const formatCommission = (cents: number) =>
-  new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: cents % 100 ? 2 : 0,
-    maximumFractionDigits: 2,
-  }).format(cents / 100);
+export const formatCommission = (cents: number) => formatUsdCents(cents, 'optionalCents');
 export const emptyCommercialPlan = (accountId: string): CommercialPlan => ({
   accountId,
   version: 0,
@@ -130,10 +132,20 @@ export function packageAssessment(
     problems.push('Record each quote’s coverages');
   if (valid.some((q) => commissionCents(q) == null))
     problems.push('Commission information is missing');
+  const chargeSources = valid.map(q => {
+    let fee = 0, passThroughCharges;
+    try { fee = brokerFeeCents(q.brokerFee); }
+    catch { problems.push('Check the broker fee amounts'); }
+    try { normalizeClientConditions(q.clientConditions); passThroughCharges = normalizePassThroughCharges(q.passThroughCharges); }
+    catch { problems.push('Review the pass-through charges and client conditions'); }
+    return { premium: q.premium, brokerFee: fee / 100, passThroughCharges };
+  });
+  let charges = clientChargeTotals([]);
+  try { charges = clientChargeTotals(chargeSources); }
+  catch { problems.push('Check the recorded amounts'); }
+  if (valid.some(q => (q.brokerFee ?? 0) > 0 && q.billType !== 'AGENCY'))
+    problems.push('Broker fees require agency billing.');
   if (
-    !Number.isSafeInteger(
-      valid.reduce((sum, q) => sum + Math.round((q.premium ?? 0) * 100), 0),
-    ) ||
     !Number.isSafeInteger(
       valid.reduce((sum, q) => sum + (commissionCents(q) ?? 0), 0),
     )
@@ -142,17 +154,18 @@ export function packageAssessment(
   if (
     requireReview &&
     (!option.reviewed ||
-      valid.some((q) => option.reviewed?.terms[q.id] !== packageTerms(q)))
+      valid.some((q) => {
+        try { return option.reviewed?.terms[q.id] !== packageTerms(q); }
+        catch { return true; }
+      }))
   )
     problems.push('Review this package’s current terms');
   const boundCount = valid.filter((q) => q.status === 'BOUND').length;
   return {
     problems: [...new Set(problems)],
     complete: problems.length === 0,
-    premiumCents: valid.reduce(
-      (sum, q) => sum + Math.round((q.premium ?? 0) * 100),
-      0,
-    ),
+    ...charges,
+    agencyRevenueCents: valid.reduce((sum, q) => sum + (commissionCents(q) ?? 0), 0) + charges.brokerFeeCents,
     commissionCents: valid.reduce(
       (sum, q) => sum + (commissionCents(q) ?? 0),
       0,

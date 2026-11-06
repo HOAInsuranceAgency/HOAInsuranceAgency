@@ -14,7 +14,7 @@ import { defineFunction } from "@aws-amplify/backend";
  */
 export const certNumber = defineFunction({
   name: "cert-number",
-  entry: "./handler.ts",
+  entry: "./handler.sentry.ts",
   timeoutSeconds: 15,
   memoryMB: 256,
 });

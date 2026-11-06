@@ -37,7 +37,7 @@ if (kind === "draft") {
     return !last.length || Math.max(...last) <= cutoff;
   }).map((pr) => ({ number: pr.number, title: pr.title.replace(/^Blog draft:\s*/, ""), url: pr.url }));
   if (!drafts.length) { console.log("skip: nothing waiting"); process.exit(0); }
-  if (args.marked) writeFileSync(args.marked, drafts.map((d) => d.number).join("\n"));
+  if (args.marked) writeFileSync(args.marked, drafts.map((d) => `${d.number}\n`).join(""));
   message = reminderEmail(drafts);
 } else {
   throw new Error(`Unknown email kind: ${kind}`);

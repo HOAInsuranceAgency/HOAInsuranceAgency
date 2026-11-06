@@ -1,6 +1,10 @@
+import { Input } from "../components/ui/Input";
+import { Select } from "../components/ui/Select";
+import { Button } from "../components/ui/Button";
 import { useRef, useState } from "react";
-import type { AuthUser } from "aws-amplify/auth";
-import { client, friendlyError, US_STATES, type UserProfile } from "../lib/client";
+import { fetchAuthSession, type AuthUser } from "aws-amplify/auth";
+import { client, friendlyError, type UserProfile } from "../lib/client";
+import { US_STATES } from "../../../shared/usStates";
 import type { Role } from "../lib/auth";
 import { loadProducerLicenses, type SavedProducerLicense } from "../lib/producerOnboarding";
 import { useFormState } from "../lib/useFormState";
@@ -8,7 +12,7 @@ import {
   LICENSE_RESIDENCY_OPTIONS,
   USER_ROLE_LABELS,
   type LicenseResidency,
-} from "../lib/enums";
+} from "../../../shared/enums";
 
 interface LicenseDraft {
   state: string;
@@ -47,7 +51,7 @@ export default function Onboarding({
   roles?: Role[];
   onComplete: (p: UserProfile, licenses: SavedProducerLicense[]) => void;
 }) {
-  const { form, setF } = useFormState({
+  const { form, setF, markSaved } = useFormState({
     firstName: existing?.firstName ?? "",
     lastName: existing?.lastName ?? "",
     npn: existing?.npn ?? "",
@@ -69,6 +73,7 @@ export default function Onboarding({
   }
 
   async function submit() {
+    const submitted = form;
     if (!form.firstName.trim() || !form.lastName.trim()) {
       setError("First and last name are required.");
       return;
@@ -84,8 +89,17 @@ export default function Onboarding({
     setSaving(true);
     setError("");
     try {
-      const email =
-        user.signInDetails?.loginId ?? existing?.email ?? "unknown@unknown";
+      // Redirect sign-in has no signInDetails.loginId. Read the mapped email
+      // from Cognito's ID token rather than saving a provider ID as an email.
+      let email = user.signInDetails?.loginId ?? existing?.email;
+      if (!email) {
+        const { tokens } = await fetchAuthSession();
+        const claim = tokens?.idToken?.payload.email;
+        if (typeof claim === "string") email = claim;
+      }
+      if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        throw new Error("Could not read your sign-in email. Sign out and sign in again.");
+      }
       const payload = {
         userId: user.userId,
         email,
@@ -163,8 +177,10 @@ export default function Onboarding({
           throw new Error(completed.errors?.[0]?.message || "Failed to complete setup.");
         }
         savedProfile.current = completed.data;
+        markSaved(submitted);
         onComplete(completed.data, persisted);
       } else {
+        markSaved(submitted);
         onComplete(profile, []);
       }
     } catch (err) {
@@ -183,15 +199,15 @@ export default function Onboarding({
         <div className="form-grid">
           <div className="field">
             <label>First name *</label>
-            <input disabled={saving} value={form.firstName} onChange={(e) => setF("firstName", e.target.value)} />
+            <Input disabled={saving} value={form.firstName} onChange={(e) => setF("firstName", e.target.value)} />
           </div>
           <div className="field">
             <label>Last name *</label>
-            <input disabled={saving} value={form.lastName} onChange={(e) => setF("lastName", e.target.value)} />
+            <Input disabled={saving} value={form.lastName} onChange={(e) => setF("lastName", e.target.value)} />
           </div>
           <div className="field">
             <label>Assigned roles</label>
-            <input value={(roles.length ? roles : [role]).map(value => USER_ROLE_LABELS[value]).join(" + ")} disabled />
+            <Input value={(roles.length ? roles : [role]).map(value => USER_ROLE_LABELS[value]).join(" + ")} disabled />
             <span className="muted small">
               Set by whoever invited you — ask an admin to change it.
             </span>
@@ -199,7 +215,7 @@ export default function Onboarding({
           {isProducer && (
             <div className="field">
               <label>NPN (National Producer Number) *</label>
-              <input disabled={saving} value={form.npn} onChange={(e) => setF("npn", e.target.value)} />
+              <Input disabled={saving} value={form.npn} onChange={(e) => setF("npn", e.target.value)} />
             </div>
           )}
         </div>
@@ -214,7 +230,7 @@ export default function Onboarding({
               <div className="form-grid" key={i} style={{ marginBottom: 8 }}>
                 <div className="field">
                   <label>State</label>
-                  <select
+                  <Select
                     disabled={saving}
                     value={l.state}
                     onChange={(e) => setLicense(i, { state: e.target.value })}
@@ -223,11 +239,11 @@ export default function Onboarding({
                     {US_STATES.map((s) => (
                       <option key={s}>{s}</option>
                     ))}
-                  </select>
+                  </Select>
                 </div>
                 <div className="field">
                   <label>License number</label>
-                  <input
+                  <Input
                     disabled={saving}
                     value={l.licenseNumber}
                     onChange={(e) => setLicense(i, { licenseNumber: e.target.value })}
@@ -235,7 +251,7 @@ export default function Onboarding({
                 </div>
                 <div className="field">
                   <label>Residency</label>
-                  <select
+                  <Select
                     disabled={saving}
                     value={l.residency}
                     onChange={(e) =>
@@ -249,11 +265,11 @@ export default function Onboarding({
                         {o.label}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </div>
                 <div className="field">
                   <label>Expiration</label>
-                  <input
+                  <Input
                     disabled={saving}
                     type="date"
                     value={l.expirationDate}
@@ -262,8 +278,8 @@ export default function Onboarding({
                 </div>
               </div>
             ))}
-            <button
-              className="secondary"
+            <Button variant="secondary"
+
               disabled={saving}
               onClick={() =>
                 setF("licenses", (ls) => [
@@ -275,14 +291,14 @@ export default function Onboarding({
               }
             >
               + Add another license
-            </button>
+            </Button>
           </>
         )}
 
         <div className="form-actions">
-          <button className="primary" disabled={saving} onClick={submit}>
+          <Button variant="primary"  disabled={saving} onClick={submit}>
             {saving ? "Saving…" : "Complete setup"}
-          </button>
+          </Button>
           {error && <span className="error-text">{error}</span>}
         </div>
       </div>

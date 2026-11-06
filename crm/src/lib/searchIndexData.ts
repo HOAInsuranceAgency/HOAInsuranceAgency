@@ -1,4 +1,5 @@
-import { client, listAllPages } from "./client";
+import { client } from "./client";
+import { listAllPages } from "../../../shared/pagination";
 import { buildSearchRows, type SearchRow } from "./universalSearch";
 
 /**

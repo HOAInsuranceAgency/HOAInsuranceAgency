@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { initialPaymentReceipt, initialPaymentTotals } from "../../amplify/functions/pfInitialPayment";
+import { initialPaymentReceipt } from "../../amplify/functions/pfInitialPayment";
+import { initialPaymentTotals } from "../../../shared/premiumFinance/initialPayment";
 import { activateSettledElection } from "../../amplify/functions/pfAutomaticActivation";
 
-const mocks = vi.hoisted(() => ({ send: vi.fn(), mail: vi.fn() }));
+const mocks = vi.hoisted(() => ({ send: vi.fn(), mail: vi.fn(), feeSync: vi.fn() }));
 vi.mock("@aws-sdk/lib-dynamodb", async (original) => ({
   ...await original<typeof import("@aws-sdk/lib-dynamodb")>(),
   DynamoDBDocumentClient: { from: () => ({ send: mocks.send }) },
@@ -14,6 +15,7 @@ vi.mock("@aws-sdk/client-sesv2", async (original) => ({
 vi.mock("../../amplify/functions/stripe-webhook/lookups", () => ({
   readPaidContext: vi.fn(async () => ({ associationName: "Test HOA", policyNumber: "POL-1" })),
 }));
+vi.mock("../../amplify/functions/broker-fees/payments", () => ({ syncBrokerFeePayment: mocks.feeSync }));
 import { applyPfEvent } from "../../amplify/functions/stripe-webhook/pf";
 import { decidePfEvent } from "../../amplify/functions/stripe-webhook/decide";
 
@@ -40,6 +42,7 @@ beforeEach(() => {
   delete process.env.AGENCY_SETTINGS_TABLE;
   loan = { ...signed };
   mocks.mail.mockResolvedValue({ MessageId: "ses-1" });
+  mocks.feeSync.mockResolvedValue(undefined);
   mocks.send.mockImplementation(async (command) => {
     const p = command.input;
     if (command.constructor.name === "GetCommand") return { Item: { ...loan } };
@@ -120,13 +123,61 @@ describe("automatic customer financing", () => {
 });
 
 describe("initial payment accounting", () => {
+  it.each([
+    { amount: 0.03, version: 3, originationFeeCollected: 0.01, brokerFeeCollectedCents: 1 },
+    { amount: 0.02, version: 2, originationFeeCollected: 0.01, brokerFeeCollectedCents: 0 },
+    { amount: 0.01, version: null, originationFeeCollected: 0, brokerFeeCollectedCents: 0 },
+  ])('preserves the actual receipt for billing version $version', ({ amount, version, ...collected }) => {
+    expect(initialPaymentReceipt({ downPayment: 0.005, originationFee: 0.005, brokerFeeCents: 1 }, amount, version))
+      .toEqual({ initialPaymentAmount: amount, ...collected });
+  });
+
   it("keeps the fee out of premium and financed principal", () => {
-    expect(initialPaymentTotals(signed)).toEqual({ premiumCents: 843552, originationFeeCents: 1000, totalCents: 844552 });
-    expect(initialPaymentReceipt(signed, 8445.52, 2)).toEqual({ initialPaymentAmount: 8445.52, originationFeeCollected: 10 });
+    expect(initialPaymentTotals(signed)).toEqual({ premiumCents: 843552, originationFeeCents: 1000, brokerFeeCents: 0, totalCents: 844552 });
+    expect(initialPaymentReceipt(signed, 8445.52, 2)).toEqual({ initialPaymentAmount: 8445.52, originationFeeCollected: 10, brokerFeeCollectedCents: 0 });
   });
   it("rejects unexpected amounts and invalid fees", () => {
     expect(() => initialPaymentReceipt(signed, 8446.52, 2)).toThrow();
     expect(() => initialPaymentTotals({ downPayment: 1, originationFee: NaN })).toThrow();
     expect(() => initialPaymentTotals({ downPayment: 1, originationFee: -10 })).toThrow();
   });
+});
+
+describe("broker fee initial receipt", () => {
+  const withFee = {...signed,brokerFeeCents:50000};
+  it("collects all broker fee upfront independently from premium and origination", () => {
+    expect(initialPaymentTotals(withFee)).toEqual({premiumCents:843552,originationFeeCents:1000,brokerFeeCents:50000,totalCents:894552});
+    expect(initialPaymentReceipt(withFee,8945.52,3)).toMatchObject({brokerFeeCollectedCents:50000,originationFeeCollected:10});
+  });
+  it("preserves a legacy payment and rejects an incomplete new checkout", () => {
+    expect(initialPaymentReceipt(withFee,8445.52,2)).toMatchObject({brokerFeeCollectedCents:0});
+    expect(()=>initialPaymentReceipt(withFee,8445.52,3)).toThrow("does not match");
+  });
+});
+
+describe("broker fee settlement and retries", () => {
+  const allocations = [{quoteId:"q-1",policyId:"policy-1",amountCents:50000}];
+  it("records submission while clearing without earning collected fee revenue", async () => {
+    loan = {...signed,brokerFeeCents:50000,brokerFeeAllocations:JSON.stringify(allocations)};
+    await applyPfEvent(event("payment_intent.processing",894552,"3"));
+    expect(mocks.feeSync).toHaveBeenCalledWith(expect.objectContaining({sourceId:"pi_down",allocations,status:"PROCESSING"}));
+    expect(loan.status).toBe("QUOTED");
+  });
+  it("recovers a failed fee hook after recording the loan ACTIVE", async () => {
+    loan = {...signed,brokerFeeCents:50000,brokerFeeAllocations:JSON.stringify(allocations)};
+    mocks.feeSync.mockRejectedValueOnce(new Error("ledger unavailable"));
+    await expect(applyPfEvent(event("payment_intent.succeeded",894552,"3"))).rejects.toThrow("ledger unavailable");
+    expect(loan.status).toBe("ACTIVE");
+    expect(await applyPfEvent(event("payment_intent.succeeded",894552,"3"))).toBe("already accepted");
+    expect(mocks.feeSync).toHaveBeenCalledTimes(2);
+    expect(mocks.feeSync).toHaveBeenLastCalledWith(expect.objectContaining({status:"PAID",allocations}));
+    expect(mocks.send.mock.calls.filter(([c])=>c.input.UpdateExpression?.includes("initialPaymentAmount"))).toHaveLength(1);
+  });
+});
+
+it("uses the New York settlement day for broker fee payroll cutoff",async()=>{
+ loan={...signed,brokerFeeCents:50000,brokerFeeAllocations:JSON.stringify([{quoteId:'q-1',policyId:'policy-1',amountCents:50000}])};
+ const received={...event('payment_intent.succeeded',894552,'3'),occurredAt:'2026-11-04T01:30:00Z'};
+ await applyPfEvent(received);
+ expect(mocks.feeSync).toHaveBeenCalledWith(expect.objectContaining({status:'PAID',receivedOn:'2026-11-03'}));
 });

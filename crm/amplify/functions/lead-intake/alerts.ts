@@ -1,8 +1,8 @@
 import { SNSClient, PublishCommand } from "@aws-sdk/client-sns";
 import { generateClient } from "aws-amplify/data";
 import type { Schema } from "../../data/resource";
-import { listAllPages } from "../../../src/lib/pagination";
-import { leadText, profileName, textRecipients, unreachableOptIns, type LeadSummary } from "./sms";
+import { listAllPages } from "../../../../shared/pagination";
+import { leadText, profileName, textRecipients, unreachableOptIns, type LeadSummary } from "../../../../shared/leadTextAlerts";
 type DataClient = ReturnType<typeof generateClient<Schema>>;
 const sns = new SNSClient();
 export async function textLeadAlerts(

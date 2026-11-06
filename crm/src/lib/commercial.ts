@@ -3,7 +3,7 @@ import { communicationRequest, type TeamEligibility } from './communications';
 import type { CommercialPlan } from '../../../shared/quotePackages';
 import type { LeadWorkflow } from '../../../shared/leadWorkflow';
 import type { LeadSnooze } from '../../../shared/leadSnooze';
-import { isAuthorizationError } from './authorizationError';
+import { isAuthorizationError } from '../../../shared/authorizationError';
 export interface CommercialEntry {
   accountId: string;
   plan: CommercialPlan;
@@ -19,11 +19,11 @@ export interface CommercialData {
 }
 /** Load attribution alongside report data so a failed assignment read cannot
  * silently turn an entire report into "Unassigned". */
-export async function loadCommercial(ids: string[], snoozeAccountIds: string[] = []): Promise<CommercialData> {
+export async function loadCommercial(ids: string[], snoozeAccountIds: string[] = [], knownTeam?: TeamEligibility[]): Promise<CommercialData> {
   const accounts = [...new Set(ids)].sort();
   const snoozeIds = new Set(snoozeAccountIds);
   if (!accounts.length) return { entries: {}, team: [] };
-  const roster = await communicationRequest<{ team: TeamEligibility[] }>('team', {});
+  const roster = knownTeam ? { team: knownTeam } : await communicationRequest('team', {});
   if (!Array.isArray(roster.team)) throw new Error('Could not load teammates');
   const entries: Record<string, CommercialEntry> = {};
   // Load up to four batches together; every batch must settle before a failed
@@ -32,7 +32,7 @@ export async function loadCommercial(ids: string[], snoozeAccountIds: string[] =
     const results = await Promise.allSettled(Array.from({ length: Math.ceil(Math.min(100, accounts.length - offset) / 25) }, async (_, batchIndex) => {
       const batch = accounts.slice(offset + batchIndex * 25, offset + (batchIndex + 1) * 25);
       const followUps = batch.filter(id => snoozeIds.has(id));
-      const result = await communicationRequest<{ items: CommercialEntry[] }>(
+      const result = await communicationRequest(
         'commercialTable', { accountIds: batch, ...(followUps.length ? { snoozeAccountIds: followUps } : {}) },
       );
       if (!Array.isArray(result.items) || result.items.length !== batch.length ||
@@ -66,6 +66,7 @@ export function useCommercial(ids: string[], revision?: unknown, snoozeAccountId
       },
       errorMessage: 'Could not load assignments and commission estimates',
       clearDataOnError: isAuthorizationError,
+      live: true,
     },
   );
 }

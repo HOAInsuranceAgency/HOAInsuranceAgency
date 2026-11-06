@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { Link, MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { UserProfile } from "../lib/client";
@@ -130,9 +130,9 @@ describe("lead salesperson on Overview", () => {
     renderAccount(undefined, true);
     fireEvent.change(await screen.findByRole("combobox", { name: "Salesperson for Alpha association" }), { target: { value: "bob" } });
     await screen.findByText("Saved");
-    fireEvent.click(screen.getByRole("button", { name: "Activity" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Activity" }));
     expect(screen.queryByRole("region", { name: "Lead salesperson" })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Overview" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Overview" }));
     expect(await screen.findByRole("combobox", { name: "Salesperson for Alpha association" })).toHaveValue("alice");
     expect(mocks.request.mock.calls.filter(([operation]) => operation === "context")).toHaveLength(2);
 
@@ -168,7 +168,8 @@ describe("lead salesperson on Overview", () => {
     renderAccount(undefined, true);
     const picker = await screen.findByRole("combobox", { name: "Salesperson for Alpha association" });
     fireEvent.change(picker, { target: { value: "bob" } });
-    fireEvent.click(await screen.findByRole("button", { name: "Refresh assignments" }));
+    fireEvent.click(await within(screen.getByRole('region', { name: 'Lead salesperson' })).findByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(finishRefresh).toBeTypeOf('function'));
     fireEvent.change(picker, { target: { value: "bob" } });
     const refreshed = await normal("context", { accountId: "alpha" });
     const saved = { workflow: { accountId: "alpha", salespersonId: "bob", version: 5 } };
@@ -195,14 +196,14 @@ describe("account underwriting layout", () => {
     expect(screen.getByRole("heading", { name: "Site photos & plans" })).toBeVisible();
     for (const name of coverageHeadings) expect(screen.queryByRole("heading", { name })).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "Property & coverage" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Property & coverage" }));
     expect(screen.getByLabelText("Current location")).toHaveTextContent("/accounts/alpha?tab=property");
     for (const name of coverageHeadings) expect(screen.getByRole("heading", { name })).toBeVisible();
     expect(screen.getByLabelText("Buildings draft")).toHaveValue("alpha");
     expect(screen.queryByRole("heading", { name: "Property basics" })).toBeNull();
     expect(screen.queryByRole("heading", { name: "Site photos & plans" })).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "Overview" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Overview" }));
     expect(screen.getByRole("heading", { name: "Property basics" })).toBeVisible();
     for (const name of coverageHeadings) expect(screen.queryByRole("heading", { name })).toBeNull();
   });
@@ -211,7 +212,7 @@ describe("account underwriting layout", () => {
     mocks.getAccount.mockResolvedValue({ data: { id: "alpha", name: "Alpha association", stage: "CLIENT", type: "HOA" } });
     renderAccount("/accounts/alpha?tab=property");
     expect(await screen.findByRole("heading", { name: "Buildings" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Property & coverage" })).toHaveClass("active");
+    expect(screen.getByRole("tab", { name: "Property & coverage" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByLabelText("Current location")).toHaveTextContent("?tab=property");
     expect(screen.queryByRole("heading", { name: "Overview information" })).toBeNull();
   });
@@ -233,6 +234,13 @@ describe("account underwriting layout", () => {
 });
 
 describe("account communications in Activity", () => {
+  it('preserves deep-link query values and repeated parameters while a tab click clears the old hash', async () => {
+    renderAccount('/accounts/alpha?tab=overview&partyId=p%2F%2B&request=req%26one&tag=one&tag=two#contacts');
+    await screen.findByRole('heading', { name: 'Overview information' });
+    fireEvent.click(screen.getByRole('tab', { name: 'Activity' }));
+    expect(screen.getByLabelText('Current location')).toHaveTextContent('/accounts/alpha?tab=activity&partyId=p%2F%2B&request=req%26one&tag=one&tag=two');
+    expect(screen.getByLabelText('Current location')).not.toHaveTextContent('#contacts');
+  });
   it.each(["LEAD", "CLIENT"])("keeps communications off Overview and alongside account changes in Activity for a %s", async stage => {
     mocks.getAccount.mockResolvedValue({ data: { id: "alpha", name: "Alpha association", stage, type: "HOA" } });
     renderAccount();
@@ -240,15 +248,15 @@ describe("account communications in Activity", () => {
     expect(screen.queryByRole("heading", { name: "Account communications" })).not.toBeInTheDocument();
     expect(mocks.listActivity).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole("button", { name: "Activity" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Activity" }));
     expect(screen.getByRole("heading", { name: "Account communications" })).toBeVisible();
     expect(screen.getByRole("heading", { name: /^Account changes/ })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Activity" })).toHaveClass("active");
+    expect(screen.getByRole("tab", { name: "Activity" })).toHaveAttribute("aria-selected", "true");
     expect(screen.queryByRole("heading", { name: "Overview information" })).not.toBeInTheDocument();
     expect(document.getElementById("lead-workspace")).toContainElement(screen.getByRole("heading", { name: "Account communications" }));
     expect(screen.getByLabelText("Current location")).toHaveTextContent("/accounts/alpha?tab=activity");
 
-    fireEvent.click(screen.getByRole("button", { name: "Overview" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Overview" }));
     expect(screen.getByRole("heading", { name: "Overview information" })).toBeVisible();
     expect(screen.queryByRole("heading", { name: "Account communications" })).not.toBeInTheDocument();
   });
@@ -257,12 +265,12 @@ describe("account communications in Activity", () => {
     mocks.getAccount.mockResolvedValue({ data: { id: "alpha", name: "Alpha association", stage, type: "HOA" } });
     renderAccount("/accounts/alpha?tab=overview#lead-workspace");
     expect(await screen.findByRole("heading", { name: "Account communications" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Activity" })).toHaveClass("active");
+    expect(screen.getByRole("tab", { name: "Activity" })).toHaveAttribute("aria-selected", "true");
     expect(screen.queryByRole("heading", { name: "Overview information" })).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Overview" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Overview" }));
     expect(screen.getByRole("heading", { name: "Overview information" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Overview" })).toHaveClass("active");
+    expect(screen.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
     expect(screen.queryByRole("heading", { name: "Account communications" })).not.toBeInTheDocument();
     expect(screen.getByLabelText("Current location")).not.toHaveTextContent("#lead-workspace");
   });
@@ -270,7 +278,7 @@ describe("account communications in Activity", () => {
   it("keeps an existing contact-details link on Overview", async () => {
     renderAccount("/accounts/alpha?tab=overview#contacts");
     expect(await screen.findByRole("heading", { name: "Contacts" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Overview" })).toHaveClass("active");
+    expect(screen.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
     expect(screen.queryByRole("heading", { name: "Account communications" })).not.toBeInTheDocument();
   });
 });

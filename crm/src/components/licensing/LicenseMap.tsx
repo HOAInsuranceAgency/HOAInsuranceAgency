@@ -1,3 +1,5 @@
+import { Button } from "../ui/Button";
+import { Table } from "../ui/Table";
 import { Fragment, useMemo, useState } from "react";
 import {
   fmtDate,
@@ -5,10 +7,11 @@ import {
   type License,
   type UserProfile,
 } from "../../lib/client";
-import { LICENSE_CLASS_LABELS } from "../../lib/enums";
+import { LICENSE_CLASS_LABELS } from "../../../../shared/enums";
 import { Badge } from "../../lib/badges";
 import { useSort, SortTh } from "../../lib/useSort";
-import { US_MAP_VIEWBOX, US_STATE_NAMES, US_STATE_PATHS } from "../../lib/usMap";
+import { US_MAP_VIEWBOX, US_STATE_PATHS } from "../../lib/usMap";
+import { US_STATE_NAMES } from "../../../../shared/usStates";
 import { holderLabel } from "./holder";
 import DocumentsPanel from "../DocumentsPanel";
 
@@ -191,9 +194,9 @@ export default function LicenseMap({
               </p>
             </div>
             <div className="grow" />
-            <button className="link" onClick={() => selectState(null)}>
+            <Button variant="link"  onClick={() => selectState(null)}>
               Close
-            </button>
+            </Button>
           </div>
 
           {sorted.length === 0 ? (
@@ -202,7 +205,7 @@ export default function LicenseMap({
             </p>
           ) : (
             <div className="table-wrap">
-              <table>
+              <Table>
                 <thead>
                   <tr>
                     <SortTh label="Holder" colKey="holder" sortKey={sortKey} dir={dir} onToggle={toggle} />
@@ -249,14 +252,14 @@ export default function LicenseMap({
                           <Badge {...licenseHealth(l)} />
                         </td>
                         <td>
-                          <button
+                          <Button variant="link"
                             type="button"
-                            className="link"
+
                             aria-expanded={openDocsFor === l.id}
                             onClick={() => setOpenDocsFor((current) => current === l.id ? null : l.id)}
                           >
                             {openDocsFor === l.id ? "Hide files" : "Files"}
-                          </button>
+                          </Button>
                         </td>
                         {canEdit && (
                           <td style={{ whiteSpace: "nowrap" }}>
@@ -264,9 +267,9 @@ export default function LicenseMap({
                                 the map and having to go hunt for it in the
                                 tables is silly; deleting a licence from a view
                                 built for skimming is not a trade worth making. */}
-                            <button className="link" onClick={() => onEdit(l)}>
+                            <Button variant="link"  onClick={() => onEdit(l)}>
                               Edit
-                            </button>
+                            </Button>
                           </td>
                         )}
                       </tr>
@@ -284,7 +287,7 @@ export default function LicenseMap({
                     </Fragment>
                   ))}
                 </tbody>
-              </table>
+              </Table>
             </div>
           )}
         </div>

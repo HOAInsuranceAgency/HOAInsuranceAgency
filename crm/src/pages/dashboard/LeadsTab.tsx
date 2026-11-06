@@ -1,3 +1,8 @@
+import { accountPath } from '../../../../shared/crmRoutes';
+import { useLiveUpdateBlock } from "../../lib/useLiveUpdates";
+import { Select } from "../../components/ui/Select";
+import { Button } from "../../components/ui/Button";
+import { Table } from "../../components/ui/Table";
 import { ReportDownload } from "../../components/ReportDownload";
 import { acquisitionLabel, websiteFormLabel } from "../../../../shared/leadSource";
 import { loadCommercial, teammateName, type CommercialData } from '../../lib/commercial';
@@ -8,9 +13,9 @@ import { activeLeadQuotes, isOpenLead, leadPersonMetrics, PIPELINE_SERIES } from
 import { StackedBars, type ChartRow, type ChartSeries } from '../../components/StackedBars';
 import { OpportunityEstimate } from '../../components/OpportunityEstimate';
 import { formatCommission, pendingCommission } from '../../../../shared/quotePackages';
-import { agencyDay } from '../../../../shared/leadActionGuidance';
+import { agencyDay } from "../../../../shared/agencyTime";
 import { useLastContacts } from "../../lib/lastContact";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   daysUntil,
@@ -28,7 +33,7 @@ import {
 } from "../../lib/badges";
 import { useSort, SortTh } from "../../lib/useSort";
 import { useAsyncResource } from "../../lib/useAsyncResource";
-import { isAuthorizationError } from "../../lib/authorizationError";
+import { isAuthorizationError } from "../../../../shared/authorizationError";
 import { allWithAuthorizationPriority } from "../../lib/allWithAuthorizationPriority";
 import {
   leadQuoteStanding,
@@ -57,10 +62,16 @@ interface LeadRow {
 export default function LeadsTab() {
   const navigate = useNavigate();
   const [salespersonFilter, setSalespersonFilter] = useState('');
+  const [editingEstimates, setEditingEstimates] = useState<Set<string>>(() => new Set());
+  useLiveUpdateBlock(editingEstimates.size > 0);
+  const onEstimateInteraction = useCallback((key: string, active: boolean) => setEditingEstimates(current => {
+    if (current.has(key) === active) return current;
+    const next = new Set(current); if (active) next.add(key); else next.delete(key); return next;
+  }), []);
 
   const res = useAsyncResource(loadLeadsDashboard, [], {
     initialData: EMPTY_LEADS_DATA, errorMessage: "Failed to load the lead pipeline", clearDataOnError: isAuthorizationError,
-  });
+   live: true });
   const { leads, clients, quotes, policies, commercial, selections, asOf } = res.data;
   const now = useMemo(() => new Date(asOf || Date.now()), [asOf]);
   const today = agencyDay(now.toISOString());
@@ -171,14 +182,14 @@ export default function LeadsTab() {
           <span className="muted small">sorted by incumbent expiration</span>
         </div>
         <p className="muted small">Last contact includes prospect emails, calls and texts in either direction. Times are shown in your local time zone.</p>
-        <div className="toolbar"><label className="field">Salesperson<select required value={salespersonSelection} onChange={e => setSalespersonFilter(e.target.value)}><option value="">Choose a salesperson</option>{people.map(person => <option key={person.key} value={person.key}>{person.label}</option>)}</select></label></div>
-        {salespersonSelection && worklist.error && <p className="error-text" role="alert">{worklist.error} <button onClick={() => void worklist.refetch()}>Retry lead details</button></p>}
+        <div className="toolbar"><label className="field">Salesperson<Select required value={salespersonSelection} onChange={e => setSalespersonFilter(e.target.value)}><option value="">Choose a salesperson</option>{people.map(person => <option key={person.key} value={person.key}>{person.label}</option>)}</Select></label></div>
+        {salespersonSelection && worklist.error && <p className="error-text" role="alert">{worklist.error} <Button onClick={() => void worklist.refetch()}>Retry lead details</Button></p>}
         {contactHistory.error && <p className="error-text">{contactHistory.error}</p>}
         {!salespersonSelection ? <p className="muted">Choose a salesperson to view their lead work list.</p> : !worklistReady ? <p className="muted small">{worklist.error ? "Lead details are unavailable." : "Loading lead details…"}</p> : rows.length === 0 ? (
           <p className="muted small">No open leads or packages being bound for this salesperson.</p>
         ) : (
           <div className="table-wrap">
-            <table>
+            <Table>
               <thead>
                 <tr>
                   <SortTh label="Lead" colKey="lead" sortKey={sortKey} dir={dir} onToggle={toggle} />
@@ -197,14 +208,14 @@ export default function LeadsTab() {
                   <tr
                     key={r.id}
                     className="clickable"
-                    onClick={() => navigate(`/accounts/${r.id}`)}
+                    onClick={() => navigate(accountPath(r.id))}
                   >
                     <td>
                       <strong>{r.name}</strong>
                       {r.partiallyBound && <div><span className="badge amber">Binding in progress</span></div>}
                     </td>
                     <td>{r.salesperson}</td><td>{r.city || '—'}</td><td>{r.state || '—'}</td><td>{r.form}</td>
-                    <td>{worklist.data.commercial.entries[r.id] ? <OpportunityEstimate plan={worklist.data.commercial.entries[r.id].plan} onSaved={plan => worklist.setData(data => ({ ...data, commercial: { ...data.commercial, entries: { ...data.commercial.entries, [r.id]: { ...data.commercial.entries[r.id], plan } } } }))} /> : 'Unavailable'}</td>
+                    <td>{worklist.data.commercial.entries[r.id] ? <OpportunityEstimate onInteractionChange={onEstimateInteraction} plan={worklist.data.commercial.entries[r.id].plan} onSaved={plan => worklist.setData(data => ({ ...data, commercial: { ...data.commercial, entries: { ...data.commercial.entries, [r.id]: { ...data.commercial.entries[r.id], plan } } } }))} /> : 'Unavailable'}</td>
                     <td><strong>{r.pending == null ? '—' : formatCommission(r.pending)}</strong><div className="muted small">{r.basis}</div></td>
                     <td>{r.source || "—"}</td>
                     <td>{contactHistory.loading ? "Loading…" : contactHistory.error ? "Unavailable" : r.lastContact ? fmtDateTime(r.lastContact) : "No contact recorded"}</td>
@@ -222,7 +233,7 @@ export default function LeadsTab() {
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </Table>
           </div>
         )}
       </div>

@@ -1,3 +1,7 @@
+import { Input } from "../../components/ui/Input";
+import { Select } from "../../components/ui/Select";
+import { Textarea } from "../../components/ui/Textarea";
+import { Button } from "../../components/ui/Button";
 import { useId } from "react";
 import { acquisitionLabel, websiteFormLabel } from "../../../../shared/leadSource";
 import {
@@ -8,9 +12,10 @@ import {
 } from "../../lib/client";
 import { SaveStatus, useSaveStatus } from "../../components/SaveStatus";
 import { useFormState } from "../../lib/useFormState";
+import { useUnsavedChanges } from "../../lib/editProtection";
 import { inputValue, num, str } from "../../lib/formCodec";
 import { DateInput, FeinInput, MoneyInput } from "../../components/inputs";
-import { LEGAL_ENTITY_OPTIONS } from "../../lib/enums";
+import { LEGAL_ENTITY_OPTIONS } from "../../../../shared/enums";
 import "./OverviewTab.css";
 
 export function OverviewTab({
@@ -26,7 +31,7 @@ export function OverviewTab({
   // answering "is the confirmation still true" is the bug this replaces.
   const fieldId = useId();
   const saveStatus = useSaveStatus();
-  const { form, setF } = useFormState({
+  const { form, setF, dirty, markSaved, reset } = useFormState({
     name: account.legalName?.trim() || account.name,
     fein: inputValue(account.fein),
     sicCode: inputValue(account.sicCode),
@@ -38,6 +43,7 @@ export function OverviewTab({
     currentPolicyExpiration: inputValue(account.currentPolicyExpiration),
     notes: inputValue(account.notes),
   }, { onEdit: saveStatus.markDirty });
+  useUnsavedChanges(dirty || saveStatus.busy, { busy: saveStatus.busy, onDiscard: reset });
 
   async function save() {
     const name = str(form.name);
@@ -52,6 +58,7 @@ export function OverviewTab({
     }
     await saveStatus.run(
       async () => {
+        const submitted = { ...form };
         onChange(
           unwrap(
             await client.models.Account.update({
@@ -72,6 +79,8 @@ export function OverviewTab({
             })
           )
         );
+        // Only the submitted snapshot is saved; edits made while waiting stay dirty.
+        markSaved(submitted);
       },
       { errorMessage: "Save failed" }
     );
@@ -93,15 +102,15 @@ export function OverviewTab({
       <div className="overview-details-grid">
         <div className="field overview-field-wide">
           <label htmlFor={`${fieldId}-name`}>Name</label>
-          <input id={`${fieldId}-name`} value={form.name} onChange={(e) => setF("name", e.target.value)} />
+          <Input id={`${fieldId}-name`} value={form.name} onChange={(e) => setF("name", e.target.value)} />
         </div>
         <div className="field">
           <label htmlFor={`${fieldId}-entity`}>Legal entity type</label>
-          <select id={`${fieldId}-entity`} value={form.legalEntityType} onChange={(e) => setF("legalEntityType", e.target.value)}>
+          <Select id={`${fieldId}-entity`} value={form.legalEntityType} onChange={(e) => setF("legalEntityType", e.target.value)}>
             {/* Blank associations use Not For Profit on the ACORD 125. */}
             <option value="">{account.type === "ASSOCIATION" ? "— (Not For Profit)" : "—"}</option>
             {LEGAL_ENTITY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
+          </Select>
         </div>
         <div className="field">
           <label htmlFor={`${fieldId}-fein`}>FEIN</label>
@@ -109,11 +118,11 @@ export function OverviewTab({
         </div>
         <div className="field">
           <label htmlFor={`${fieldId}-sic`}>SIC</label>
-          <input id={`${fieldId}-sic`} value={form.sicCode} onChange={(e) => setF("sicCode", e.target.value)} />
+          <Input id={`${fieldId}-sic`} value={form.sicCode} onChange={(e) => setF("sicCode", e.target.value)} />
         </div>
         <div className="field">
           <label htmlFor={`${fieldId}-naics`}>NAICS</label>
-          <input id={`${fieldId}-naics`} value={form.naicsCode} onChange={(e) => setF("naicsCode", e.target.value)} />
+          <Input id={`${fieldId}-naics`} value={form.naicsCode} onChange={(e) => setF("naicsCode", e.target.value)} />
         </div>
         <div className="field">
           <label htmlFor={`${fieldId}-revenue`}>Annual revenue ($)</label>
@@ -125,7 +134,7 @@ export function OverviewTab({
         </div>
         <div className="field overview-field-wide">
           <label htmlFor={`${fieldId}-agent`}>Current agent / broker</label>
-          <input id={`${fieldId}-agent`} value={form.currentAgent} onChange={(e) => setF("currentAgent", e.target.value)} />
+          <Input id={`${fieldId}-agent`} value={form.currentAgent} onChange={(e) => setF("currentAgent", e.target.value)} />
         </div>
         {/* Lead-only: once bound, the Policy records are authoritative. */}
         {account.stage !== "CLIENT" && (
@@ -136,13 +145,13 @@ export function OverviewTab({
         )}
         <div className="field overview-field-full">
           <label htmlFor={`${fieldId}-notes`}>Notes</label>
-          <textarea id={`${fieldId}-notes`} rows={3} value={form.notes} onChange={(e) => setF("notes", e.target.value)} />
+          <Textarea id={`${fieldId}-notes`} rows={3} value={form.notes} onChange={(e) => setF("notes", e.target.value)} />
         </div>
       </div>
       <div className="form-actions overview-details-actions">
-        <button className="primary" disabled={saveStatus.busy} onClick={save}>
+        <Button variant="primary"  disabled={saveStatus.busy} onClick={save}>
           {saveStatus.busy ? "Saving…" : "Save changes"}
-        </button>
+        </Button>
         <SaveStatus {...saveStatus.status} />
       </div>
     </section>

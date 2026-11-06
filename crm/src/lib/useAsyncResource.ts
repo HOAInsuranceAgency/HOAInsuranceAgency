@@ -9,7 +9,10 @@ import {
   type SetStateAction,
 } from "react";
 import { friendlyError } from "./client";
-import { isAuthorizationError } from "./authorizationError";
+import { mergeLiveSnapshot } from "./liveSnapshot";
+import { liveUpdates, type LiveRefreshOptions } from "./liveUpdates";
+import { useLiveRefresh } from "./useLiveUpdates";
+import { isAuthorizationError } from "../../../shared/authorizationError";
 
 /**
  * One async read, one state machine.
@@ -56,6 +59,10 @@ export interface AsyncResource<T> {
    * correct "still waiting, show a placeholder" gate.
    */
   loaded: boolean;
+  /** Background reads retain the current snapshot and never show a loading gate. */
+  refreshing?: boolean;
+  refreshError?: string;
+  updatedAt?: number;
   /** Empty string when there is no error. Cleared at the start of every fetch. */
   error: string;
   /**
@@ -74,6 +81,8 @@ export interface AsyncResource<T> {
 }
 
 export interface AsyncResourceOptions<T> {
+  /** Opt in only pure reads; fetchers which reconcile or create data must stay explicit. */
+  live?: boolean | LiveRefreshOptions;
   /** Value for `data` before the first success and after a `deps` change. */
   initialData?: T;
   /** Fallback passed to `friendlyError` when the thrown value has no message. */
@@ -108,65 +117,93 @@ export function useAsyncResource<T>(
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const scope = useMemo(() => ({}), deps);
   const [state, setState] = useState(() => ({
-    scope, data: initialData, loading: !manual, loaded: false, error: "",
+    scope, data: initialData, loading: !manual, loaded: false, error: "", refreshing: false, refreshError: "", updatedAt: 0,
   }));
-  const latest = useRef({ scope, fetcher, initialData, errorMessage, clearDataOnError });
-  latest.current = { scope, fetcher, initialData, errorMessage, clearDataOnError };
+  const latest = useRef({ scope, fetcher, initialData, errorMessage, clearDataOnError, protectEdits: typeof options.live === "object" ? options.live.protectEdits !== false : true });
+  latest.current = { scope, fetcher, initialData, errorMessage, clearDataOnError, protectEdits: typeof options.live === "object" ? options.live.protectEdits !== false : true };
   const mounted = useRef(true);
   const ticket = useRef(0);
+  const deniedScope = useRef<object | null>(null);
   useEffect(() => {
     mounted.current = true;
     return () => { mounted.current = false; ++ticket.current; };
   }, []);
 
-  const run = useCallback(async (reset: boolean): Promise<void> => {
-    if (!mounted.current) return;
+  const run = useCallback(async (reset: boolean, background = false): Promise<boolean> => {
+    if (!mounted.current) return true;
     const config = latest.current;
+    const fence = liveUpdates.getSnapshot();
+    if (background && !liveUpdates.canPublish(fence, config.protectEdits)) return false;
     const id = ++ticket.current;
     const current = () => mounted.current && id === ticket.current && latest.current.scope === config.scope;
-    setState(previous => ({
+    const applicable = () => !background || liveUpdates.canPublish(fence, config.protectEdits);
+    setState(previous => background ? { ...previous, refreshing: true, refreshError: "" } : {
       scope: config.scope,
       data: reset || previous.scope !== config.scope ? config.initialData : previous.data,
       loaded: !reset && previous.scope === config.scope && previous.loaded,
-      loading: true, error: "",
-    }));
+      loading: true, error: "", refreshing: false, refreshError: "", updatedAt: previous.updatedAt,
+    });
+    let applied = true;
     try {
       const data = await config.fetcher();
-      if (current()) setState(previous => ({ ...previous, data }));
+      if (current() && applicable()) {
+        deniedScope.current = null;
+        setState(previous => ({ ...previous, data: background ? mergeLiveSnapshot(previous.data, data) : data, error: "", refreshError: "", updatedAt: Date.now() }));
+      }
+      else if (current()) applied = false;
     } catch (err) {
-      if (current()) setState(previous => ({
+      // Revocation wins over editor/write fences and newer reads in this same
+      // scope. Never retain private snapshots just because a form is dirty.
+      const denied = isAuthorizationError(err);
+      const sameScope = mounted.current && latest.current.scope === config.scope;
+      if (denied && sameScope && (background || current())) {
+        if (current()) config.clearDataOnError?.(err);
+        deniedScope.current = config.scope;
+        ++ticket.current;
+        setState(previous => ({ ...previous, data: config.initialData, error: friendlyError(err, config.errorMessage), loading: false, refreshing: false, loaded: true }));
+      } else if (current() && applicable()) setState(previous => ({
         ...previous,
-        ...(config.clearDataOnError?.(err) ? { data: config.initialData } : {}),
-        error: friendlyError(err, config.errorMessage),
+        ...(!background && config.clearDataOnError?.(err) ? { data: config.initialData } : {}),
+        ...(background ? { refreshError: friendlyError(err, config.errorMessage) } : { error: friendlyError(err, config.errorMessage) }),
       }));
+      else if (current()) applied = false;
     } finally {
-      if (current()) setState(previous => ({ ...previous, loading: false, loaded: true }));
+      if (current()) setState(previous => background ? { ...previous, refreshing: false } : { ...previous, loading: false, loaded: true });
     }
+    return applied;
   }, []);
 
-  const refetch = useCallback(() => run(false), [run]);
+  const refetch = useCallback(async () => { await run(false); }, [run]);
   const setData: Dispatch<SetStateAction<T | undefined>> = useCallback(action => {
-    if (!mounted.current || latest.current.scope !== scope) return;
+    if (!mounted.current || latest.current.scope !== scope || deniedScope.current === scope) return;
+    ++ticket.current;
     setState(previous => {
       if (previous.scope !== scope) return previous;
-      return { ...previous, data: typeof action === 'function'
+      return { ...previous, loading: false, refreshing: false, data: typeof action === 'function'
         ? (action as (value: T | undefined) => T | undefined)(previous.data) : action };
     });
   }, [scope]);
   const invalidate = useCallback((err: unknown) => {
     if (!mounted.current || latest.current.scope !== scope) return;
     ++ticket.current;
+    deniedScope.current = scope;
     const config = latest.current;
-    setState({ scope, data: config.initialData, error: friendlyError(err, config.errorMessage), loading: false, loaded: true });
+    setState({ scope, data: config.initialData, error: friendlyError(err, config.errorMessage), loading: false, loaded: true, refreshing: false, refreshError: "", updatedAt: 0 });
   }, [scope]);
 
   useEffect(() => {
     if (manual) {
       ++ticket.current;
-      setState({ scope, data: latest.current.initialData, loading: false, loaded: false, error: "" });
+      setState({ scope, data: latest.current.initialData, loading: false, loaded: false, error: "", refreshing: false, refreshError: "", updatedAt: 0 });
     } else void run(true);
     return () => { ++ticket.current; };
   }, [scope, manual, run]);
+
+  useLiveRefresh(() => run(false, true), {
+    ...(typeof options.live === 'object' ? options.live : {}),
+    enabled: state.scope === scope && state.loaded && !state.loading && !!options.live && (typeof options.live !== 'object' || options.live.enabled !== false) && !manual,
+    onDenied: error => { invalidate(error); if (typeof options.live === 'object') options.live.onDenied?.(error); },
+  });
 
   const visible = state.scope === scope ? state : {
     data: initialData, loading: !manual, loaded: false, error: "",

@@ -1,9 +1,21 @@
+import { CfnResource } from 'aws-cdk-lib';
+import { configureSentry } from "./sentry";
+import { installLiveChanges } from './live-changes';
+import { brokerFees } from './functions/broker-fees/resource';
+import { installBrokerFees } from './broker-fees';
+import { migrationProbeScopes } from "./migration-probe-scopes";
+import { installTransactionalMail } from "./transactional-mail";
+import { sesMailFeedback } from "./functions/ses-mail-feedback/resource";
+import { mailVerification, mailRecovery } from "./functions/transactional-mail/resource";
+import { migrationDestination, migrationPreview, migrationTargets, businessBranch, providerBranch, migrationWebOrigin, migrationExecution, migrationRuntimeBranch } from "./migration-config";
+import { installMigrationPreview } from "./migration-preview";
 import { commissions } from './functions/commissions/resource';
 import { installCommissions } from './commissions';
 import { installAccountAccess } from "./account-access";
 import { modelIndex } from "./model-index";
 import { installDashboardReads } from "./dashboard-reports";
 import { installOwnerProfitability } from "./owner-profitability";
+import { bindPremiumFinanceTables } from './finance-bindings';
 import { ownerProfitability } from "./functions/owner-profitability/resource";
 import { crmAccess } from "./functions/crm-access/resource";
 import { Alarm, TreatMissingData, Metric, ComparisonOperator } from "aws-cdk-lib/aws-cloudwatch";
@@ -17,6 +29,7 @@ import { Schedule, ScheduleExpression, ScheduleTargetInput, ContextAttribute } f
 import { LambdaInvoke } from "aws-cdk-lib/aws-scheduler-targets";
 import { Policy, PolicyStatement } from "aws-cdk-lib/aws-iam";
 import { Secret } from "aws-cdk-lib/aws-secretsmanager";
+import { CfnUserPoolIdentityProvider } from "aws-cdk-lib/aws-cognito";
 import {
   AttributeType,
   BillingMode,
@@ -31,6 +44,8 @@ import {
 } from "aws-cdk-lib/aws-lambda";
 import { DynamoEventSource } from "aws-cdk-lib/aws-lambda-event-sources";
 import { auth } from "./auth/resource";
+import { crmBaseUrl, destinationStagingNativeAuth, googleSignInEnabled } from "./auth/config";
+import { googleSignIn } from "./functions/google-sign-in/resource";
 import { data } from "./data/resource";
 import { storage } from "./storage/resource";
 import { processDocument } from "./functions/process-document/resource";
@@ -65,16 +80,21 @@ import {
   magicLinkDefine,
   magicLinkCreate,
   magicLinkVerify,
+  migrationNativeMessage,
 } from "./functions/magic-link/resource";
 
 // Exported only so `scripts/synth-check.ts` can reach the CDK app and force a
 // real synth. Nothing else imports it; `ampx` uses this file for its side
 // effects, as it always has.
 export const backend = defineBackend({
+  ...Object.fromEntries(migrationDestination && !migrationPreview ? [["sesMailFeedback", sesMailFeedback]] : []),
+  mailVerification,
+  mailRecovery,
   auth,
   crmAccess,
   ownerProfitability,
   commissions,
+  brokerFees,
   assignmentIndexWorker,
   data,
   storage,
@@ -114,6 +134,13 @@ export const backend = defineBackend({
   magicLinkDefine,
   magicLinkCreate,
   magicLinkVerify,
+  migrationNativeMessage,
+  ...Object.fromEntries(destinationStagingNativeAuth ? [] : [["googleSignIn", googleSignIn]]),
+});
+
+configureSentry(backend, {
+  preview: migrationPreview,
+  environment: providerBranch === "main" ? "production" : providerBranch === "staging" ? "staging" : "development",
 });
 
 // The OCR function drives async Textract jobs over uploaded documents.
@@ -252,16 +279,56 @@ for (const model of STREAMED_MODELS) {
 // ── Auth behavior ────────────────────────────────────────────────────
 const { cfnUserPool, cfnUserPoolClient } = backend.auth.resources.cfnResources;
 
-// Magic-link only: the custom auth flow is the sole sign-in path.
+// Email links use custom auth; Google uses the separate OAuth code flow.
+// Neither path enables password authentication or public self-signup.
 cfnUserPool.userPoolTier = "ESSENTIALS";
+cfnUserPool.adminCreateUserConfig = { allowAdminCreateUserOnly: true };
+if (!migrationDestination && process.env.AWS_BRANCH === "staging") {
+  // Preserve staging's existing passwordless invitation setting, previously
+  // configured in Cognito directly. API sign-in remains custom auth only.
+  cfnUserPool.addPropertyOverride("Policies.SignInPolicy.AllowedFirstAuthFactors", ["PASSWORD", "EMAIL_OTP"]);
+}
 cfnUserPoolClient.explicitAuthFlows = [
   "ALLOW_CUSTOM_AUTH",
   "ALLOW_REFRESH_TOKEN_AUTH",
 ];
+if (googleSignInEnabled) {
+  // Managed login must offer only Google. This setting does not disable the
+  // SDK custom-auth API used by our existing email links.
+  cfnUserPoolClient.supportedIdentityProviders = ["Google"];
+  // The literal above replaces CDK's provider-name Ref, which otherwise
+  // orders provider creation before the client enables it. Retain that edge
+  // explicitly or Cognito can reject the client update during deployment.
+  const googleProvider = backend.auth.resources.userPool.identityProviders
+    .map(provider => provider.node.defaultChild)
+    .find((provider): provider is CfnUserPoolIdentityProvider =>
+      provider instanceof CfnUserPoolIdentityProvider && provider.providerType === "Google");
+  if (!googleProvider) throw new Error("Google sign-in requires a Google identity provider");
+  cfnUserPoolClient.addResourceDependency(googleProvider);
+}
 
 // Stay signed in for 7 days (refresh token lifetime).
 cfnUserPoolClient.refreshTokenValidity = 7;
 cfnUserPoolClient.tokenValidityUnits = { refreshToken: "days" };
+
+// Keep the policy separate from the execution role: the user pool references
+// this trigger's Lambda, so an inline role policy referring back to the pool
+// would create a CloudFormation pool → Lambda → role → pool cycle.
+if (googleSignInEnabled) {
+  const googleLinkFunction = Reflect.get(backend, "googleSignIn") as typeof backend.magicLinkVerify | undefined;
+  if (!googleLinkFunction) throw new Error("Google sign-in is enabled without its linking function.");
+  const googleLinkPolicy = new Policy(Stack.of(backend.auth.resources.userPool), "GoogleAccountLinkPolicy", {
+    statements: [new PolicyStatement({
+      actions: [
+        "cognito-idp:AdminGetUser",
+        "cognito-idp:AdminListGroupsForUser",
+        "cognito-idp:AdminLinkProviderForUser",
+      ],
+      resources: [backend.auth.resources.userPool.userPoolArn],
+    })],
+  });
+  googleLinkPolicy.attachToRole(googleLinkFunction.resources.lambda.role!);
+}
 
 // ── Magic link plumbing ──────────────────────────────────────────────
 // Signing secret shared by the create/verify triggers (generated once per
@@ -273,13 +340,8 @@ const magicLinkSecret = new Secret(magicLinkStack, "MagicLinkSigningSecret", {
 magicLinkSecret.grantRead(backend.magicLinkCreate.resources.lambda);
 magicLinkSecret.grantRead(backend.magicLinkVerify.resources.lambda);
 
-// Where the emailed link points, per branch (custom domains: update here).
-const BRANCH_URLS: Record<string, string> = {
-  staging: "https://staging.d2d4g940z91vj4.amplifyapp.com",
-  main: "https://app.protectmyhoa.com",
-};
-const magicLinkBaseUrl =
-  BRANCH_URLS[process.env.AWS_BRANCH ?? ""] ?? "http://localhost:5173";
+// Shared with OAuth so email and Google return to the same branch.
+const magicLinkBaseUrl = crmBaseUrl;
 
 /**
  * The marketing site's host, per branch. Where a lead's upload link points.
@@ -299,7 +361,7 @@ const SITE_BRANCH_URLS: Record<string, string> = {
   main: "https://www.protectmyhoa.com",
 };
 const siteBaseUrl =
-  SITE_BRANCH_URLS[process.env.AWS_BRANCH ?? ""] ?? "http://localhost:4321";
+  migrationDestination ? (migrationPreview || businessBranch === "staging" ? migrationWebOrigin : SITE_BRANCH_URLS.main) : SITE_BRANCH_URLS[process.env.AWS_BRANCH ?? ""] ?? "http://localhost:4321";
 // Sender must be SES-verified (protectmyhoa.com domain, DKIM verified).
 const magicLinkFrom = "HOA Insurance Agency <noreply@protectmyhoa.com>";
 
@@ -316,7 +378,7 @@ const magicLinkFrom = "HOA Insurance Agency <noreply@protectmyhoa.com>";
  * of that default is unit tested rather than asserted here. `internal` is the
  * general inbox: a digest or a licence deadline is not a sales conversation.
  */
-const branch = process.env.AWS_BRANCH;
+const branch = businessBranch;
 const leadReplyMailbox = resolveMailbox("lead", branch);
 const internalMailbox = resolveMailbox("internal", branch);
 
@@ -351,7 +413,7 @@ for (const fn of [backend.leadIntake, backend.honeycombWorker]) {
 }
 estimateTable.grantReadData(backend.honeycombStatus.resources.lambda);
 backend.honeycombStatus.addEnvironment("HONEYCOMB_ESTIMATE_TABLE", estimateTable.tableName);
-backend.leadIntake.addEnvironment("HONEYCOMB_ENABLED", String(honeycombEnvironmentForBranch(branch) !== "disabled"));
+backend.leadIntake.addEnvironment("HONEYCOMB_ENABLED", String(honeycombEnvironmentForBranch(providerBranch) !== "disabled"));
 backend.data.resources.cfnResources.amplifyDynamoDbTables.HoneycombEstimate.streamSpecification = { streamViewType: StreamViewType.NEW_IMAGE };
 backend.honeycombWorker.resources.lambda.addEventSource(new DynamoEventSource(estimateTable, {
   // Include jobs captured while the new event mapping is still being deployed.
@@ -389,7 +451,7 @@ const userAccessTable = new Table(backend.data.resources.graphqlApi, "TeamUserAc
   partitionKey: { name: "userId", type: AttributeType.STRING }, billingMode: BillingMode.PAY_PER_REQUEST,
   encryption: TableEncryption.AWS_MANAGED, pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
 });
-for (const fn of [backend.crmAccess, backend.commissions, backend.teamAdmin, backend.communications, backend.communicationWorker, backend.leadIntake, backend.leadReply, backend.assignmentIndexWorker]) {
+for (const fn of [backend.crmAccess, backend.commissions, backend.brokerFees, backend.teamAdmin, backend.communications, backend.communicationWorker, backend.leadIntake, backend.leadReply, backend.assignmentIndexWorker]) {
   fn.addEnvironment("USER_ACCESS_TABLE", userAccessTable.tableName);
   fn.resources.lambda.addToRolePolicy(new PolicyStatement({ actions: ["dynamodb:GetItem", "dynamodb:ConditionCheckItem"], resources: [userAccessTable.tableArn] }));
 }
@@ -449,6 +511,28 @@ for (const fn of [backend.communications, backend.communicationWorker, backend.l
 }
 backend.storage.resources.bucket.grantRead(backend.communications.resources.lambda, "documents/*");
 backend.storage.resources.bucket.grantRead(backend.communications.resources.lambda, "certificates/*");
+// Explicitly selected generated account forms and frozen customer-facing
+// proposal artifacts use separate, account-bound keys. No finance/private
+// bucket-wide grant is needed for this draft workflow.
+// Keep additive, stateless permissions out of the data template, which is
+// close to CloudFormation's template-size limit. Existing resource identities
+// and their original grants remain in place.
+const businessDeliveryPermissions = backend.createStack('businessDeliveryPermissions');
+const deliveryBucket = backend.storage.resources.bucket;
+new Policy(businessDeliveryPermissions, 'PreparingTeammateArtifacts', {
+  roles: [backend.communications.resources.lambda.role!],
+  statements: [
+    new PolicyStatement({ actions: ['s3:GetObject', 's3:GetObjectVersion'], resources: [deliveryBucket.arnForObjects('generated/*/*-acord*.pdf'), deliveryBucket.arnForObjects('business-deliveries/*')] }),
+    new PolicyStatement({ actions: ['s3:PutObject'], resources: [deliveryBucket.arnForObjects('business-deliveries/*')] }),
+    new PolicyStatement({ actions: ['dynamodb:GetItem', 'dynamodb:BatchGetItem', 'dynamodb:ConditionCheckItem'], resources: [backend.data.resources.tables.Carrier.tableArn] }),
+  ],
+});
+new Policy(businessDeliveryPermissions, 'DeliveryReceiptArtifacts', {
+  roles: [backend.communicationWorker.resources.lambda.role!],
+  statements: [new PolicyStatement({ actions: ['s3:GetObject', 's3:GetObjectVersion'], resources: [deliveryBucket.arnForObjects('business-deliveries/*')] })],
+});
+const deliveryCarrierTable = backend.data.resources.tables.Carrier;
+backend.communications.addEnvironment('CARRIER_TABLE', deliveryCarrierTable.tableName);
 backend.communications.addEnvironment("DOCUMENT_BUCKET", backend.storage.resources.bucket.bucketName);
 backend.storage.resources.bucket.grantReadWrite(backend.communicationWorker.resources.lambda, "documents/*");
 backend.communicationWorker.addEnvironment("DOCUMENT_BUCKET", backend.storage.resources.bucket.bucketName);
@@ -517,21 +601,40 @@ for (const [name, metricName, threshold, comparisonOperator] of [
 });
   alarm.addAlarmAction(new SnsAction(communicationAlerts));
 }
-const communicationWebhookUrl = backend.communicationWebhook.resources.lambda.addFunctionUrl({ authType: FunctionUrlAuthType.NONE });
+const communicationWebhookUrl = backend.communicationWebhook.resources.lambda.addFunctionUrl({ authType: migrationExecution.holdBusinessExecution ? FunctionUrlAuthType.AWS_IAM : FunctionUrlAuthType.NONE });
 backend.communications.addEnvironment("COMMUNICATION_WEBHOOK_URL", communicationWebhookUrl.url);
 backend.addOutput({ custom: { communicationWebhookUrl: communicationWebhookUrl.url, frontSidebarUrl: `${magicLinkBaseUrl}/front-sidebar` } });
 
-backend.magicLinkCreate.addEnvironment("MAGIC_LINK_SECRET_ARN", magicLinkSecret.secretArn);
-backend.magicLinkVerify.addEnvironment("MAGIC_LINK_SECRET_ARN", magicLinkSecret.secretArn);
-backend.magicLinkCreate.addEnvironment("MAGIC_LINK_BASE_URL", magicLinkBaseUrl);
-backend.magicLinkCreate.addEnvironment("MAGIC_LINK_FROM", magicLinkFrom);
-
-backend.magicLinkCreate.resources.lambda.addToRolePolicy(
-  new PolicyStatement({
-    actions: ["ses:SendEmail"],
-    resources: ["*"],
-  })
-);
+for (const fn of [backend.magicLinkCreate, backend.magicLinkVerify]) {
+  fn.addEnvironment("MAGIC_LINK_SECRET_ARN", magicLinkSecret.secretArn);
+  fn.addEnvironment("MAGIC_LINK_BASE_URL", magicLinkBaseUrl);
+  fn.addEnvironment("MAGIC_LINK_FROM", magicLinkFrom);
+}
+if (migrationDestination) {
+  for (const fn of [backend.magicLinkDefine, backend.magicLinkCreate, backend.magicLinkVerify, backend.migrationNativeMessage]) {
+    fn.addEnvironment("HOA_MIGRATION_AUTH", "true");
+    for (const key of ["HOA_PREVIEW_ADMIN_LOGIN", "HOA_PREVIEW_ADMIN_USER_POOL_ID", "HOA_PREVIEW_ADMIN_CLIENT_ID", "HOA_PREVIEW_ADMIN_USERNAME", "HOA_PREVIEW_ADMIN_EMAIL", "HOA_PREVIEW_ADMIN_LOGIN_EXPIRES_AT", "HOA_PREVIEW_SES_CONFIGURATION_SET", "HOA_RESEND_PREVIEW_ENABLED"]) {
+      fn.addEnvironment(key, process.env[key] ?? "");
+    }
+    fn.addEnvironment("MAGIC_LINK_BASE_URL", magicLinkBaseUrl);
+    fn.addEnvironment("MAGIC_LINK_FROM", magicLinkFrom);
+  }
+  if (!migrationPreview || process.env.HOA_PREVIEW_ADMIN_LOGIN === "true") {
+    const expiry = process.env.HOA_PREVIEW_ADMIN_LOGIN_EXPIRES_AT;
+    if (migrationPreview && (!expiry || !Number.isFinite(Date.parse(expiry)))) throw new Error("An owner login test requires an exact expiry.");
+    backend.magicLinkVerify.resources.lambda.addToRolePolicy(new PolicyStatement({
+      actions: ["ses:SendEmail"],
+      resources: [Stack.of(backend.magicLinkVerify.resources.lambda).formatArn({ service: "ses", resource: "identity", resourceName: "protectmyhoa.com" }),
+        ...(migrationPreview ? [Stack.of(backend.magicLinkVerify.resources.lambda).formatArn({ service: "ses", resource: "configuration-set", resourceName: "hoa-migration-preview-20261029" })] : [])],
+      conditions: {
+        StringEquals: { "ses:FromAddress": "noreply@protectmyhoa.com" },
+        ...(migrationPreview ? { "ForAllValues:StringEquals": { "ses:Recipients": ["jake@getgim.com"] }, DateLessThan: { "aws:CurrentTime": expiry! } } : {}),
+      },
+    }));
+  }
+} else {
+  backend.magicLinkCreate.resources.lambda.addToRolePolicy(new PolicyStatement({ actions: ["ses:SendEmail"], resources: ["*"] }));
+}
 
 // ── Team admin (in-app invites) ──────────────────────────────────────
 backend.teamAdmin.addEnvironment(
@@ -684,69 +787,15 @@ invoiceTable.grantReadWriteData(backend.voidInvoice.resources.lambda);
  * Lambda over direct table access — see pf-admin/resource.ts for why the flip
  * and its record must be inseparable.
  */
-const pfLogTable = backend.data.resources.tables.PfComplianceLog;
-backend.pfAdmin.addEnvironment(
-  "AGENCY_SETTINGS_TABLE",
-  backend.data.resources.tables.AgencySettings.tableName
-);
-backend.pfAdmin.addEnvironment("PF_COMPLIANCE_LOG_TABLE", pfLogTable.tableName);
-backend.data.resources.tables.AgencySettings.grantReadWriteData(
-  backend.pfAdmin.resources.lambda
-);
-pfLogTable.grantReadWriteData(backend.pfAdmin.resources.lambda);
+bindPremiumFinanceTables(backend, 'administration');
 
 // Origination writes its decision rows straight to the log table too; model
 // reads and the PfLoan create go through the data client via allow.resource.
-backend.pfOriginate.addEnvironment("PF_COMPLIANCE_LOG_TABLE", pfLogTable.tableName);
-pfLogTable.grantReadWriteData(backend.pfOriginate.resources.lambda);
-// The loan create is a cross-table transaction with a ConditionCheck on the
-// module flag, so origination needs both tables directly.
-backend.pfOriginate.addEnvironment(
-  "AGENCY_SETTINGS_TABLE",
-  backend.data.resources.tables.AgencySettings.tableName
-);
-backend.pfOriginate.addEnvironment(
-  "PF_LOAN_TABLE",
-  backend.data.resources.tables.PfLoan.tableName
-);
-backend.data.resources.tables.AgencySettings.grantReadData(
-  backend.pfOriginate.resources.lambda
-);
-backend.data.resources.tables.PfLoan.grantReadWriteData(
-  backend.pfOriginate.resources.lambda
-);
+bindPremiumFinanceTables(backend, 'origination');
 
-// Servicing and the default sweep write their decision rows to the log too.
-for (const fn of [backend.pfServicing, backend.pfDefaultSweep]) {
-  fn.addEnvironment("PF_COMPLIANCE_LOG_TABLE", pfLogTable.tableName);
-  pfLogTable.grantReadWriteData(fn.resources.lambda);
-}
-
-/**
- * Servicing's idempotency writes go straight to the tables: a deterministic
- * ledger id refuses a duplicate posting atomically, and status transitions
- * are conditional on the status they leave — the data client can express
- * neither. Same reasoning as stripe-webhook's persist.ts.
- */
-for (const [name, model] of [
-  ["PF_LOAN_TABLE", "PfLoan"],
-  ["PF_LOAN_PAYMENT_TABLE", "PfLoanPayment"],
-  // Cancellation and its CANCELLATION_REQUEST notice are one transaction.
-  ["PF_NOTICE_TABLE", "PfNotice"],
-] as const) {
-  const table = backend.data.resources.tables[model];
-  backend.pfServicing.addEnvironment(name, table.tableName);
-  table.grantReadWriteData(backend.pfServicing.resources.lambda);
-}
-// The sweep's default-mark is conditional (still ACTIVE, same due date), so
-// it too writes the loan table directly.
-backend.pfDefaultSweep.addEnvironment(
-  "PF_LOAN_TABLE",
-  backend.data.resources.tables.PfLoan.tableName
-);
-backend.data.resources.tables.PfLoan.grantReadWriteData(
-  backend.pfDefaultSweep.resources.lambda
-);
+// Conditional ledger/notice writes and the default sweep share the audit log.
+bindPremiumFinanceTables(backend, 'servicing');
+bindPremiumFinanceTables(backend, 'defaultSweep');
 
 // The agreement renderer writes its PDFs under generated/pf/ — outside
 // documents/, so the OCR upload trigger never re-reads the app's own output.
@@ -759,40 +808,11 @@ backend.storage.resources.bucket.grantPut(
   "generated/pf/*"
 );
 
-/**
- * And the send, for one write: storing a freshly minted payment link
- * conditionally on the link it replaced, so two overlapping sends cannot leave
- * the loser's link live and tracked by nothing. Everything else in the send
- * still goes through the data client.
- */
-backend.sendInvoice.addEnvironment("INVOICE_TABLE", invoiceTable.tableName);
-invoiceTable.grantReadWriteData(backend.sendInvoice.resources.lambda);
-/**
- * W7: the email's financing fork. The send mints the election token onto the
- * QUOTED loan — conditionally, direct to the table — and links to the public
- * site's finance page.
- */
-backend.sendInvoice.addEnvironment(
-  "PF_LOAN_TABLE",
-  backend.data.resources.tables.PfLoan.tableName
-);
-backend.data.resources.tables.PfLoan.grantReadWriteData(
-  backend.sendInvoice.resources.lambda
-);
+// Invoice-link publication and loan origination use conditional writes and
+// append-only compliance decisions; the feature map retains each permission.
+bindPremiumFinanceTables(backend, 'invoicePublication');
 backend.sendInvoice.addEnvironment("SITE_URL", siteBaseUrl);
-/**
- * W8: origination happens at send, through the shared core — so the send
- * writes decision rows and its loan create transacts with the kill switch.
- */
-backend.sendInvoice.addEnvironment("PF_COMPLIANCE_LOG_TABLE", pfLogTable.tableName);
-pfLogTable.grantWriteData(backend.sendInvoice.resources.lambda);
-backend.sendInvoice.addEnvironment(
-  "AGENCY_SETTINGS_TABLE",
-  backend.data.resources.tables.AgencySettings.tableName
-);
-backend.data.resources.tables.AgencySettings.grantReadData(
-  backend.sendInvoice.resources.lambda
-);
+bindPremiumFinanceTables(backend, 'invoiceOrigination');
 
 /**
  * Reporting the split to corporate finance, when Stripe confirms a payment.
@@ -807,58 +827,14 @@ backend.data.resources.tables.AgencySettings.grantReadData(
 const accountingMailbox = resolveMailbox("accounting", branch);
 backend.stripeWebhook.addEnvironment("ACCOUNTING_MAILBOX", accountingMailbox);
 backend.stripeWebhook.addEnvironment("AGENCY_MAILBOX", internalMailbox);
-for (const [name, model] of [
-  ["ACCOUNT_TABLE", "Account"],
-  ["POLICY_TABLE", "Policy"],
-  ["CARRIER_TABLE", "Carrier"],
-] as const) {
-  const table = backend.data.resources.tables[model];
-  backend.stripeWebhook.addEnvironment(name, table.tableName);
-  table.grantReadData(backend.stripeWebhook.resources.lambda);
-}
+bindPremiumFinanceTables(backend, 'webhookReporting');
 backend.stripeWebhook.resources.lambda.addToRolePolicy(
   new PolicyStatement({ actions: ["ses:SendEmail"], resources: ["*"] })
 );
 // Paying in full supersedes any QUOTED finance loan on the policy — the
-// webhook cancels those conditionally and logs the supersession.
-backend.stripeWebhook.addEnvironment(
-  "PF_LOAN_TABLE",
-  backend.data.resources.tables.PfLoan.tableName
-);
-backend.data.resources.tables.PfLoan.grantReadWriteData(
-  backend.stripeWebhook.resources.lambda
-);
-backend.stripeWebhook.addEnvironment(
-  "PF_COMPLIANCE_LOG_TABLE",
-  backend.data.resources.tables.PfComplianceLog.tableName
-);
-backend.data.resources.tables.PfComplianceLog.grantWriteData(
-  backend.stripeWebhook.resources.lambda
-);
-
-// W7: the webhook consults the kill switch at settle time — not to refuse
-// money, but to record and alarm when a pre-disable election completes
-// under a disabled module.
-backend.stripeWebhook.addEnvironment(
-  "AGENCY_SETTINGS_TABLE",
-  backend.data.resources.tables.AgencySettings.tableName
-);
-backend.data.resources.tables.AgencySettings.grantReadData(
-  backend.stripeWebhook.resources.lambda
-);
-
-/**
- * W7: autopay debits post to the ledger through the webhook, so the webhook
- * gets the payment table too — the same shared posting core pf-servicing
- * uses, the same direct-write reasoning.
- */
-backend.stripeWebhook.addEnvironment(
-  "PF_LOAN_PAYMENT_TABLE",
-  backend.data.resources.tables.PfLoanPayment.tableName
-);
-backend.data.resources.tables.PfLoanPayment.grantReadWriteData(
-  backend.stripeWebhook.resources.lambda
-);
+// webhook cancels those conditionally and logs the supersession. Settlement
+// checks the flag and posts autopay debits through the existing ledger core.
+bindPremiumFinanceTables(backend, 'webhookSettlement');
 
 /**
  * W7: the election endpoint. Its writes are all direct: the pay-in-full void
@@ -866,53 +842,18 @@ backend.data.resources.tables.PfLoanPayment.grantReadWriteData(
  * (PF_LOAN_TABLE, conditional), and the compliance row. SITE_URL is where
  * Checkout returns the customer — the public website's finance page.
  */
-backend.pfElection.addEnvironment("INVOICE_TABLE", invoiceTable.tableName);
-invoiceTable.grantReadWriteData(backend.pfElection.resources.lambda);
-backend.pfElection.addEnvironment(
-  "PF_LOAN_TABLE",
-  backend.data.resources.tables.PfLoan.tableName
-);
-backend.data.resources.tables.PfLoan.grantReadWriteData(
-  backend.pfElection.resources.lambda
-);
-backend.pfElection.addEnvironment("PF_COMPLIANCE_LOG_TABLE", pfLogTable.tableName);
-pfLogTable.grantWriteData(backend.pfElection.resources.lambda);
+bindPremiumFinanceTables(backend, 'electionCheckout');
 backend.pfElection.addEnvironment("SITE_URL", siteBaseUrl);
-// The election stamp transacts with a ConditionCheck on the kill switch —
-// pf-originate's pattern; grantReadData carries ConditionCheckItem.
-backend.pfElection.addEnvironment(
-  "AGENCY_SETTINGS_TABLE",
-  backend.data.resources.tables.AgencySettings.tableName
-);
-backend.data.resources.tables.AgencySettings.grantReadData(
-  backend.pfElection.resources.lambda
-);
+bindPremiumFinanceTables(backend, 'electionFlag');
 
 /**
  * W7: the autopay cron scans the loan table itself (no data client — its
  * pending-marker write is conditional) and logs every attempt.
  */
-backend.pfAutopay.addEnvironment(
-  "PF_LOAN_TABLE",
-  backend.data.resources.tables.PfLoan.tableName
-);
-backend.data.resources.tables.PfLoan.grantReadWriteData(
-  backend.pfAutopay.resources.lambda
-);
-backend.pfAutopay.addEnvironment("PF_COMPLIANCE_LOG_TABLE", pfLogTable.tableName);
-pfLogTable.grantWriteData(backend.pfAutopay.resources.lambda);
-// The autopay heal path posts an adopted succeeded debit itself, so it
-// needs the ledger table the shared core writes.
-backend.pfAutopay.addEnvironment(
-  "PF_LOAN_PAYMENT_TABLE",
-  backend.data.resources.tables.PfLoanPayment.tableName
-);
-backend.data.resources.tables.PfLoanPayment.grantReadWriteData(
-  backend.pfAutopay.resources.lambda
-);
+bindPremiumFinanceTables(backend, 'autopay');
 
 const stripeWebhookUrl = backend.stripeWebhook.resources.lambda.addFunctionUrl({
-  authType: FunctionUrlAuthType.NONE,
+  authType: migrationExecution.holdBusinessExecution ? FunctionUrlAuthType.AWS_IAM : FunctionUrlAuthType.NONE,
 });
 backend.addOutput({
   custom: { stripeWebhookUrl: stripeWebhookUrl.url },
@@ -1027,4 +968,32 @@ backend.extractLead.resources.lambda.grantInvoke(
 installAccountAccess(backend, communicationTable);
 installDashboardReads(backend);
 installOwnerProfitability(backend, communicationTable);
-installCommissions(backend, communicationTable);
+const commissionStorage = installCommissions(backend, communicationTable);
+installBrokerFees(backend, communicationTable, commissionStorage.table, siteBaseUrl);
+installLiveChanges(backend);
+
+// Generated data resolvers approach CloudFormation's template-size limit.
+// Drop diagnostic construct paths, preserving all resource identities and behavior.
+for (const node of backend.stack.node.root.node.findAll()) {
+  if (node instanceof CfnResource) node.addDeletionOverride('Metadata.aws:cdk:path');
+}
+
+// The backend's main/staging namespace is linked to an equally named dormant
+// destination branch. Hosted migration branches consume the generated outputs;
+// Amplify requires branchName to match the branch encoded in the stack ARN.
+
+// Preserve the already-protected root on every destination pipeline update.
+if (migrationDestination) backend.stack.terminationProtection = true;
+
+// Apply preview isolation after all normal resources exist, preserving their identities.
+if (migrationDestination) {
+  const scopes = migrationProbeScopes(migrationExecution.streamProbeEnabled, process.env.HOA_MIGRATION_STREAM_PROBE_SCOPE_MANIFEST, process.env.HOA_MIGRATION_PREPARE_RECEIPT);
+  for (const worker of ["activityLog", "communicationWorker", "honeycombWorker", "honeycombSubmissionWorker"] as const) backend[worker].addEnvironment("HOA_MIGRATION_STREAM_PROBE_SCOPES", scopes[worker]);
+}
+installTransactionalMail(backend, communicationAlerts);
+installMigrationPreview(backend);
+
+if (migrationDestination) backend.addOutput({ custom: { migration: {
+  account: migrationTargets.account, appId: migrationTargets.crmApp,
+  branch: migrationRuntimeBranch, preview: String(migrationPreview),
+} } });

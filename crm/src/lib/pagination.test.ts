@@ -1,6 +1,6 @@
 import { expect, it, vi } from 'vitest';
-import { listAllPages } from './pagination';
-import { isAuthorizationError } from './authorizationError';
+import { listAllPages } from '../../../shared/pagination';
+import { isAuthorizationError } from '../../../shared/authorizationError';
 
 it('rejects GraphQL failure on the first page instead of returning an empty list', async () => {
   await expect(listAllPages(async () => ({ data: [], errors: [{ message: 'Service unavailable' }] })))
@@ -20,7 +20,7 @@ it('preserves authorization failures even when a transient error appears first',
     { message: 'Temporary issue' }, { message: 'Denied by resolver', errorType: 'Unauthorized' },
   ] })).catch(error => error);
   expect(isAuthorizationError(error)).toBe(true);
-  expect(error.message).toBe('Denied by resolver');
+  expect(error).toMatchObject({ message: 'Temporary issue; Denied by resolver', origin: 'graphql', errors: [{ message: 'Temporary issue' }, { message: 'Denied by resolver', errorType: 'Unauthorized' }] });
 });
 
 it('continues through empty filtered pages and respects explicit page limits', async () => {

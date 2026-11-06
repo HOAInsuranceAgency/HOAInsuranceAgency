@@ -211,7 +211,11 @@ describe("the tab in the URL", () => {
 
     // One writer, and it does write.
     expect(src).toMatch(/function selectTab\(/);
-    expect(src).toMatch(/navigate\(\{ search:.*hash: "" \}, \{ replace: true \}\)/);
+    expect(src).toContain('navigate(accountTabLocation(searchParams, t), { replace: true })');
+    const routes = readFileSync(resolve(process.cwd(), '../shared/crmRoutes.ts'), 'utf8');
+    expect(routes).toContain('const next = new URLSearchParams(search)');
+    expect(routes).toContain("next.set('tab', tab)");
+    expect(routes).toContain("hash: ''");
     // The tab is DERIVED from searchParams now — there is no state setter at
     // all, which is the strongest form of the invariant: a tab change that
     // skips the URL has nothing left to call. (Stored state seeded from the

@@ -1,8 +1,18 @@
-import { useEffect, useRef, useState } from "react";
-import { signIn, confirmSignIn } from "aws-amplify/auth";
+import { Input } from "./ui/Input";
+import { Button } from "./ui/Button";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { signIn, confirmSignIn, signInWithRedirect } from "aws-amplify/auth";
+import { destinationSignIn, previewSignInAvailable } from "../lib/migrationAuth";
+import {
+  clearGoogleSignInError,
+  getGoogleSignInError,
+  GOOGLE_SIGN_IN_ERROR,
+  isGoogleSignInConfigured,
+  subscribeGoogleSignInError,
+} from "../lib/googleSignIn";
 
 /**
- * Magic-link sign-in (the only sign-in path — no passwords).
+ * Passwordless sign-in for invited teammates, with Google when configured.
  *
  * Request: start a CUSTOM_WITHOUT_SRP sign-in with mode="request"; the
  * createAuthChallenge Lambda emails a link and this session is abandoned.
@@ -19,6 +29,19 @@ export default function MagicLinkSignIn({ embedded = false }: { embedded?: boole
   const consumed = useRef(false);
   const requesting = useRef(false);
   const [sending, setSending] = useState(false);
+  const [redirecting, setRedirecting] = useState(false);
+  const googleError = useSyncExternalStore(subscribeGoogleSignInError, getGoogleSignInError);
+  const googleEnabled = !embedded && previewSignInAvailable() && isGoogleSignInConfigured();
+  const busy = sending || redirecting;
+
+  useEffect(() => {
+    // Amplify also emits this failure when pageshow restores a cancelled
+    // OAuth flow from bfcache, so browser Back unlocks both sign-in methods.
+    if (googleError) {
+      requesting.current = false;
+      setRedirecting(false);
+    }
+  }, [googleError]);
 
   useEffect(() => {
     const match = window.location.hash.match(/magic=([^&]+)/);
@@ -45,6 +68,11 @@ export default function MagicLinkSignIn({ embedded = false }: { embedded?: boole
   async function completeSignIn(token: string) {
     setPhase("completing");
     setError("");
+    if (!previewSignInAvailable()) {
+      setError("Administrator sign-in is disabled in this migration preview.");
+      setPhase("email");
+      return;
+    }
     const tokenEmail = emailFromToken(token);
     if (!tokenEmail) {
       setError("That sign-in link is malformed. Request a new one.");
@@ -78,18 +106,24 @@ export default function MagicLinkSignIn({ embedded = false }: { embedded?: boole
 
   async function requestLink() {
     const addr = email.trim().toLowerCase();
-    if (!addr || requesting.current) return;
+    if (!addr || requesting.current || !previewSignInAvailable()) return;
     requesting.current = true;
     setSending(true);
     setError("");
+    clearGoogleSignInError();
     try {
-      await signIn({
+      const result = await signIn({
         username: addr,
         options: {
           authFlowType: "CUSTOM_WITHOUT_SRP",
           clientMetadata: { mode: "request" },
         },
       });
+      if (destinationSignIn() && result.nextStep.signInStep === "CONFIRM_SIGN_IN_WITH_CUSTOM_CHALLENGE") {
+        // InitiateAuth metadata is not forwarded to Cognito's create trigger.
+        // Only this explicit answer may send a destination sign-in email.
+        await confirmSignIn({ challengeResponse: "REQUEST_LINK" });
+      }
     } catch (err) {
       // Same response either way — don't reveal whether the account exists.
       console.warn(err);
@@ -100,22 +134,41 @@ export default function MagicLinkSignIn({ embedded = false }: { embedded?: boole
     setPhase("sent");
   }
 
+  async function signInWithGoogle() {
+    if (requesting.current || !googleEnabled || !previewSignInAvailable()) return;
+    requesting.current = true;
+    setRedirecting(true);
+    setError("");
+    clearGoogleSignInError();
+    try {
+      await signInWithRedirect({ provider: "Google" });
+      // A successful call navigates away. Keep both sign-in methods locked
+      // while the browser opens Google rather than starting another session.
+    } catch {
+      requesting.current = false;
+      setRedirecting(false);
+      setError(GOOGLE_SIGN_IN_ERROR);
+    }
+  }
+
   return (
     <>
       <img className="auth-logo" src="/logo.png" alt="HOA Insurance Agency" />
       <div className="auth-card card">
         <h2 style={{ textAlign: "center" }}>Sign in</h2>
 
-        {phase === "completing" ? (
+        {!previewSignInAvailable() ? (
+          <p className="muted small">Administrator sign-in and email are disabled in this migration preview.</p>
+        ) : phase === "completing" ? (
           <p className="muted" style={{ textAlign: "center" }}>
             Signing you in…
           </p>
         ) : phase === "sent" ? (
           <>
             <p className="muted small">
-              If <strong>{email.trim()}</strong> has an account, a sign-in link
-              is on its way. Open the email on this device and click the link —
-              it's valid for 15 minutes.
+              Check <strong>{email.trim()}</strong> for a sign-in link. If it
+              doesn't arrive, try again later or contact an administrator.
+              Open the email on this device; links are valid for 15 minutes.
             </p>
             {embedded && <form onSubmit={e => {
               e.preventDefault();
@@ -127,38 +180,46 @@ export default function MagicLinkSignIn({ embedded = false }: { embedded?: boole
               } catch { setError("Paste the sign-in link from your CRM email."); }
             }}>
               <p className="muted small">For the Front sidebar, copy the sign-in link from your email without opening it, then paste it here. This signs in this panel directly.</p>
-              <label className="field">Private sign-in link<input type="password" autoComplete="off" required value={sidebarLink} onChange={e => setSidebarLink(e.target.value)} /></label>
-              <button disabled={!sidebarLink}>Sign in to this sidebar</button>
+              <label className="field">Private sign-in link<Input type="password" autoComplete="off" required value={sidebarLink} onChange={e => setSidebarLink(e.target.value)} /></label>
+              <Button disabled={!sidebarLink}>Sign in to this sidebar</Button>
             </form>}
-            <button className="link" onClick={() => setPhase("email")}>
+            <Button variant="link"  onClick={() => setPhase("email")}>
               ← Use a different email
-            </button>
+            </Button>
           </>
         ) : (
           <>
+            {googleEnabled && <>
+              <Button variant="google" className="auth-google" disabled={busy} onClick={signInWithGoogle}>
+                <img src="/images/auth/google-g.png" alt="" width="20" height="20" />
+                {redirecting ? "Opening Google…" : "Continue with Google"}
+              </Button>
+              <div className="auth-divider"><span>or use an email link</span></div>
+            </>}
             <p className="muted small" style={{ textAlign: "center" }}>
               Enter your work email and we'll send you a sign-in link.
               No password needed.
             </p>
             <div className="field">
-              <label>Email</label>
-              <input
+              <label htmlFor="sign-in-email">Email</label>
+              <Input
+                id="sign-in-email"
                 type="email"
                 autoFocus
                 value={email}
-                disabled={sending}
+                disabled={busy}
                 onChange={(e) => setEmail(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && requestLink()}
               />
             </div>
             <div className="form-actions">
-              <button className="primary" disabled={sending || !email.trim()} onClick={requestLink}>
+              <Button variant="primary"  disabled={busy || !email.trim()} onClick={requestLink}>
                 {sending ? 'Sending…' : 'Email me a sign-in link'}
-              </button>
+              </Button>
             </div>
           </>
         )}
-        {error && <p className="error-text">{error}</p>}
+        {(error || googleError) && <p className="error-text" role="alert">{error || googleError}</p>}
       </div>
       <div className="auth-tag">Agency CRM · ProtectMyHOA</div>
     </>

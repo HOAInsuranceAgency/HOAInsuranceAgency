@@ -49,6 +49,15 @@ describe("buildSearchRows", () => {
   const rows = buildSearchRows(WORLD);
   const byId = (id: string) => rows.find((r) => r.id === id)!;
 
+  it('keeps special model IDs in one route segment without turning them into tab/query controls', () => {
+    const rows = buildSearchRows({ ...EMPTY,
+      accounts: [{ id: 'account/?#', name: 'Fictional HOA' }],
+      invoices: [{ id: 'invoice', accountId: 'account/?#', number: 'INV-1' }],
+      carriers: [{ id: 'carrier/?#', name: 'Fictional carrier' }],
+    });
+    expect(rows.map(row => row.target)).toEqual(['/accounts/account%2F%3F%23', '/accounts/account%2F%3F%23?tab=invoices', '/carriers/carrier%2F%3F%23']);
+  });
+
   it("joins account and carrier names into the context line", () => {
     expect(byId("p1")).toMatchObject({
       label: "WC-2026-000841",

@@ -1,10 +1,11 @@
+import { account as accountFixture } from '../../fixtures/builders';
 /** Fictional, in-memory preview only. Never import a runtime CRM or storage API. */
-import type { Account, UserProfile } from '../../src/lib/client';
+import type { CrmDocument, UserProfile } from '../../src/lib/client';
 export type { Account, UserProfile, CrmDocument, Policy, Quote, Contact, Building, Loss } from '../../src/lib/client';
 export type { AcordFormDef } from '../../src/lib/acordRegistry';
 export type { AiFilledField } from '../../src/lib/acord';
 export { ACORD_FORMS } from '../../src/lib/acordRegistry';
-export { listAllPages } from '../../src/lib/pagination';
+export { listAllPages } from '../../../shared/pagination';
 
 export const scenario = new URLSearchParams(location.search).get('scenario') || 'lead';
 export const isClient = scenario === 'client';
@@ -30,7 +31,7 @@ const extraction = {
   losses: [{ dateOfLoss: '2024-02-11', lineOfBusiness: 'Commercial Property', typeOfLoss: 'Water damage', description: 'Pipe leak in Building B; repairs completed.', amountPaid: '14500', claimOpen: 'No' }],
 };
 
-export const account = {
+export const account = accountFixture({
   id: 'fictional-willow', name: 'Willow Court Condominium', stage: isClient ? 'CLIENT' : 'LEAD', type: 'ASSOCIATION',
   address: '100 Example St', city: 'Boston', state: 'MA', zip: '02110', unitCount: 28, totalInsuredValue: 5400000,
   currentPolicyExpiration: '2026-10-01', firewallsVerified: null, milesToCoast: null,
@@ -38,7 +39,7 @@ export const account = {
   extractionStatus: scenario === 'empty' ? undefined : scenario === 'loading' ? 'PROCESSING' : scenario === 'error' ? 'FAILED' : 'COMPLETE',
   extractionError: scenario === 'error' ? 'Preview: extraction could not be completed. Try again.' : null,
   aiExtraction: scenario === 'empty' || scenario === 'loading' || scenario === 'error' ? null : JSON.stringify(extraction),
-} as unknown as Account;
+});
 export const profile = { id: 'fictional-avery', firstName: 'Avery', lastName: 'Brooks', email: 'avery@example.test' } as UserProfile;
 
 type Row = Record<string, unknown> & { id: string };
@@ -114,6 +115,20 @@ export function uploadData({ path }: { path: string; data: unknown; options?: un
     return { path };
   }) };
 }
+export const uploadDocument: typeof import('../../src/lib/storage').uploadDocument = async ({
+  entityType, entityId, category, file, sourceCommunicationId, policyId, quoteId,
+}) => {
+  const id = crypto.randomUUID();
+  const row: CrmDocument = {
+    id, entityType, entityId, category, sourceCommunicationId, policyId, quoteId,
+    name: file.name, uploadedName: file.name, s3Key: `preview/${id}/${file.name}`,
+    contentType: file.type, sizeBytes: file.size, ocrStatus: 'PENDING',
+    createdAt: time(), updatedAt: time(),
+  };
+  documents.unshift(row);
+  await uploadData({ path: row.s3Key, data: file }).result;
+  return structuredClone(row);
+};
 export async function remove(_input: { path: string }) { return {}; }
 export async function downloadFile(_path: string, { filename }: { filename: string }) {
   const url = URL.createObjectURL(new Blob([`Fictional preview of ${filename}.\nNo CRM file was downloaded.`], { type: 'text/plain' }));

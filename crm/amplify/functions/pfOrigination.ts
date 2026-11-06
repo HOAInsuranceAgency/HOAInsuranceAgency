@@ -1,3 +1,5 @@
+import { sendCrmWrite } from './live-write';
+import { feeAllocations, type BrokerFeeAllocation } from "../../../shared/brokerFees";
 import { randomUUID } from "node:crypto";
 import type { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import { PutCommand, TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
@@ -6,10 +8,10 @@ import {
   hasCurrentOpinion,
   minPrincipalViolation,
   originationGate,
-} from "../../src/lib/premiumFinance/gate";
-import { evaluateEligibility } from "../../src/lib/premiumFinance/eligibility";
-import { buildQuote, downPctViolation } from "../../src/lib/premiumFinance/quote";
-import { PF_CONFIG_SHA256 } from "../../src/lib/premiumFinance/jurisdictions";
+} from "../../../shared/premiumFinance/gate";
+import { evaluateEligibility } from "../../../shared/premiumFinance/eligibility";
+import { buildQuote, downPctViolation } from "../../../shared/premiumFinance/quote";
+import { PF_CONFIG_SHA256 } from "../../../shared/premiumFinance/jurisdictions";
 
 /**
  * The one way a loan originates.
@@ -74,6 +76,8 @@ export interface OriginationRequest {
   anchor: OriginationAnchor;
   /** The amount being financed — under W8, the invoiced total. */
   premium: number;
+  brokerFeeCents?: number;
+  brokerFeeAllocations?: BrokerFeeAllocation[];
   downPct: number;
   months: number;
   apr: number;
@@ -114,7 +118,7 @@ async function writeDecisions(
   let allLanded = true;
   for (const d of decisions) {
     try {
-      await ddb.send(
+      await sendCrmWrite(ddb.send(
         new PutCommand({
           TableName: table,
           Item: {
@@ -134,7 +138,7 @@ async function writeDecisions(
             occurredAt: now,
           },
         })
-      );
+      ));
     } catch (err) {
       console.error(`[pfOrigination] log write failed for ${d.rule}`, err);
       allLanded = false;
@@ -290,7 +294,7 @@ export async function originateLoan(
         const loanId = randomUUID();
         const nowIso = new Date().toISOString();
         try {
-          await ddb.send(
+          await sendCrmWrite(ddb.send(
             new TransactWriteCommand({
               TransactItems: [
                 {
@@ -317,6 +321,8 @@ export async function originateLoan(
                       state: gate.jurisdiction.code,
                       configSha256: PF_CONFIG_SHA256,
                       premium: req.premium,
+                      brokerFeeCents: req.brokerFeeCents ?? 0,
+                      brokerFeeAllocations: JSON.stringify(feeAllocations(req.brokerFeeAllocations)),
                       downPct: req.downPct,
                       months: req.months,
                       apr: req.apr,
@@ -338,7 +344,7 @@ export async function originateLoan(
                 },
               ],
             })
-          );
+          ));
         } catch (err) {
           const canceled = err as {
             name?: string;

@@ -6,7 +6,7 @@ import type {
   ClosedQuoteStatus,
   OpenQuoteStatus,
   QuoteStatus,
-} from "./quoteStatus";
+} from "../../../shared/quoteStatus";
 
 /** The one commission formula, null-safe: no pct or no premium is $0. */
 export function policyCommission(p: {

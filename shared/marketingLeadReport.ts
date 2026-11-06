@@ -1,3 +1,4 @@
+import { agencyDay } from './agencyTime';
 import { acquisitionLabel, cleanAttribution, isLeadSource } from "./leadSource";
 import { accountPropertyType, propertyTypeLabel, webLeadPropertyType } from "./propertyType";
 
@@ -45,8 +46,7 @@ function instant(value: unknown): number | null {
 function known(value: unknown, cutoff: number): string | null { const ms = instant(value); return ms !== null && ms <= cutoff ? value as string : null; }
 function localDay(value: string): string {
   if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
-  const p = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: MARKETING_REPORT_TIMEZONE, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date(value)).map(x => [x.type, x.value]));
-  return `${p.year}-${p.month}-${p.day}`;
+  return agencyDay(value);
 }
 const dateCell = (value: string | null | undefined): Date | null => value && instant(value) !== null ? new Date(`${localDay(value)}T00:00:00.000Z`) : null;
 function days(from: string | null | undefined, to: string | null | undefined): number | null {

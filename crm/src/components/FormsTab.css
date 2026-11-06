@@ -75,11 +75,6 @@
   margin-top: auto;
 }
 
-.carrier-form-choice button:disabled {
-  opacity: .55;
-  cursor: default;
-}
-
 .carrier-forms-other {
   margin-top: 16px;
   padding-top: 14px;
@@ -184,13 +179,7 @@
 }
 
 .generated-forms-table td {
-  padding-top: 13px;
-  padding-bottom: 13px;
   vertical-align: middle;
-}
-
-.generated-forms-table tbody tr:last-child td {
-  border-bottom: 0;
 }
 
 .generated-forms-name {

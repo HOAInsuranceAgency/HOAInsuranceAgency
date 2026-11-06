@@ -1,18 +1,18 @@
+import { serviceFinanceLoan, generateFinanceAgreement } from '../../lib/billingApi';
+import { useLiveUpdateBlock } from "../../lib/useLiveUpdates";
+import { Button } from "../../components/ui/Button";
+import { Select } from "../../components/ui/Select";
+import { Input } from "../../components/ui/Input";
+import { Table } from "../../components/ui/Table";
 import { useRef, useState } from "react";
-import {
-  client,
-  fmtDate,
-  friendlyError,
-  listAllPages,
-  type Account,
-  type Policy,
-} from "../../lib/client";
+import { client, fmtDate, friendlyError, type Account, type Policy } from "../../lib/client";
+import { listAllPages } from "../../../../shared/pagination";
 import type { Schema } from "../../../amplify/data/resource";
 import { useAsyncResource } from "../../lib/useAsyncResource";
 import { SaveStatus, useSaveStatus } from "../../components/SaveStatus";
-import { formatMoney } from "../../lib/invoiceTotals";
+import { formatMoney } from "../../../../shared/invoiceTotals";
 import { Badge, type BadgeSpec } from "../../lib/badges";
-import { isAuthorizationError } from "../../lib/authorizationError";
+import { isAuthorizationError } from "../../../../shared/authorizationError";
 
 type PfLoan = Schema["PfLoan"]["type"];
 type PfNotice = Schema["PfNotice"]["type"];
@@ -34,6 +34,7 @@ function LoanActions({ loan, onChanged, refreshRequired, setRefreshRequired }: {
   const [certDate, setCertDate] = useState("");
   const [certNumber, setCertNumber] = useState("");
   const [cancelDate, setCancelDate] = useState("");
+  useLiveUpdateBlock(!!certNoticeId || !!certDate || !!certNumber || !!cancelDate || status.busy);
   const postedInstallment = useRef<number>();
   const actionPending = useRef(false);
   const notices = useAsyncResource(
@@ -45,7 +46,7 @@ function LoanActions({ loan, onChanged, refreshRequired, setRefreshRequired }: {
         })
       ),
     [loan.id, loan.status],
-    { initialData: [] as PfNotice[], errorMessage: "Failed to load notices", clearDataOnError: isAuthorizationError }
+    { initialData: [] as PfNotice[], errorMessage: "Failed to load notices", clearDataOnError: isAuthorizationError , live: true }
   );
   /**
    * W8 rollover repair. The bind flow rolls quote-anchored loans onto the
@@ -66,7 +67,7 @@ function LoanActions({ loan, onChanged, refreshRequired, setRefreshRequired }: {
           ).then((ps) => (ps as Policy[])[0] ?? null)
         : Promise.resolve(null),
     [loan.id, loan.quoteId, loan.policyId],
-    { initialData: null as Policy | null, errorMessage: "Failed to check the bound policy", clearDataOnError: isAuthorizationError }
+    { initialData: null as Policy | null, errorMessage: "Failed to check the bound policy", clearDataOnError: isAuthorizationError , live: true }
   );
 
   async function refreshAfterAction() {
@@ -89,17 +90,11 @@ function LoanActions({ loan, onChanged, refreshRequired, setRefreshRequired }: {
         // that nothing was posted.
         if (action === "POST_PAYMENT") postedInstallment.current = (loan.paidThrough ?? 0) + 1;
         try {
-          const { data, errors } = await client.mutations.servicePfLoan({
+          const result = await serviceFinanceLoan({
             loanId: loan.id,
             action,
             ...extra,
           });
-          if (errors?.length) throw new Error(errors[0].message);
-          const result =
-            typeof data === "string" ? JSON.parse(data) : (data as Record<string, unknown>);
-          if (!result?.ok) {
-            throw new Error(String(result?.error ?? "Refused."));
-          }
           if (action === "POST_PAYMENT") {
             const posted = result.posted as { n?: unknown } | undefined;
             postedInstallment.current = typeof posted?.n === "number"
@@ -126,7 +121,7 @@ function LoanActions({ loan, onChanged, refreshRequired, setRefreshRequired }: {
     ); } finally { actionPending.current = false; }
   }
   const busy = status.busy || refreshRequired;
-  const noticesUnavailable = !notices.loaded || notices.loading || Boolean(notices.error);
+  const noticesUnavailable = !notices.loaded || notices.loading || !!notices.refreshing || Boolean(notices.error || notices.refreshError);
 
   const uncertifiedIntents = notices.data.filter(
     (n) =>
@@ -143,18 +138,18 @@ function LoanActions({ loan, onChanged, refreshRequired, setRefreshRequired }: {
 
       {refreshRequired && <p className="muted small">
         Financing must finish refreshing before another servicing action.{" "}
-        <button type="button" className="secondary" disabled={status.busy}
+        <Button variant="secondary" type="button"  disabled={status.busy}
           onClick={() => void status.run(refreshAfterAction, { savedMessage: "Financing refreshed.", errorMessage: "Could not refresh financing. Please retry." })}>
           Refresh financing
-        </button>
+        </Button>
       </p>}
-      {notices.error && <p className="error-text" role="alert">
-        {notices.error}{" "}
-        <button type="button" className="secondary" disabled={notices.loading || busy} onClick={() => void notices.refetch()}>Retry notices</button>
+      {(notices.error || notices.refreshError) && <p className="error-text" role="alert">
+        {notices.error || notices.refreshError}{" "}
+        <Button variant="secondary" type="button"  disabled={notices.loading || busy} onClick={() => void notices.refetch()}>Retry notices</Button>
       </p>}
       {rollTarget.error && <p className="error-text" role="alert">
         {rollTarget.error}{" "}
-        <button type="button" className="secondary" disabled={rollTarget.loading || busy} onClick={() => void rollTarget.refetch()}>Retry bound policy</button>
+        <Button variant="secondary" type="button"  disabled={rollTarget.loading || busy} onClick={() => void rollTarget.refetch()}>Retry bound policy</Button>
       </p>}
 
       {loan.status === "ACCEPTED" && (
@@ -174,9 +169,9 @@ function LoanActions({ loan, onChanged, refreshRequired, setRefreshRequired }: {
             Roll the loan onto it; the exclusion checks read
             the policy from then on.
           </p>
-          <button
+          <Button variant="secondary"
             type="button"
-            className="secondary"
+
             disabled={busy || rollTarget.loading || Boolean(rollTarget.error)}
             onClick={() =>
               void act(
@@ -187,7 +182,7 @@ function LoanActions({ loan, onChanged, refreshRequired, setRefreshRequired }: {
             }
           >
             Roll to policy
-          </button>
+          </Button>
         </div>
       )}
 
@@ -204,59 +199,59 @@ function LoanActions({ loan, onChanged, refreshRequired, setRefreshRequired }: {
                 : "Autopay is on — due installments debit themselves; posting by hand is for money that arrived another way."}
             </p>
           )}
-          <button
+          <Button variant="secondary"
             type="button"
-            className="secondary"
+
             disabled={busy || Boolean(loan.autopayPendingIntentId)}
             onClick={() => void act("POST_PAYMENT", {}, "Payment posted.")}
           >
             {/* The down payment is payment 1 everywhere the schedule is shown,
                 so financed installment n posts as payment n+1 of months+1. */}
             Post payment {(loan.paidThrough ?? 0) + 2} of {loan.months + 1}
-          </button>
+          </Button>
         </div>
       )}
 
       {loan.status === "DEFAULTED" && (
         <>
           <div className="inline-actions">
-            <button
+            <Button variant="danger"
               type="button"
-              className="danger"
+
               disabled={busy || noticesUnavailable}
               onClick={() =>
                 void act("NOTICE_INTENT", {}, "Intent notice recorded — the 15-day clock is running. Mail it and record the certificate.")
               }
             >
               Record notice of intent to cancel
-            </button>
+            </Button>
           </div>
           {uncertifiedIntents.length > 0 && (
             <div className="form-grid">
               <div className="field">
                 <label>Notice</label>
-                <select aria-label="Notice" disabled={busy} value={certNoticeId} onChange={(e) => setCertNoticeId(e.target.value)}>
+                <Select aria-label="Notice" disabled={busy} value={certNoticeId} onChange={(e) => setCertNoticeId(e.target.value)}>
                   <option value="">Choose…</option>
                   {uncertifiedIntents.map((n) => (
                     <option key={n.id} value={n.id}>
                       Intent of {n.occurredAt.slice(0, 10)}
                     </option>
                   ))}
-                </select>
+                </Select>
               </div>
               <div className="field">
                 <label>USPS mailing date</label>
-                <input aria-label="USPS mailing date" disabled={busy} type="date" value={certDate} onChange={(e) => setCertDate(e.target.value)} />
+                <Input aria-label="USPS mailing date" disabled={busy} type="date" value={certDate} onChange={(e) => setCertDate(e.target.value)} />
               </div>
               <div className="field">
                 <label>Certificate number</label>
-                <input aria-label="Certificate number" disabled={busy} value={certNumber} onChange={(e) => setCertNumber(e.target.value)} />
+                <Input aria-label="Certificate number" disabled={busy} value={certNumber} onChange={(e) => setCertNumber(e.target.value)} />
               </div>
               <div className="field">
                 <label>&nbsp;</label>
-                <button
+                <Button variant="secondary"
                   type="button"
-                  className="secondary"
+
                   disabled={!uncertifiedIntents.some(n => n.id === certNoticeId) || !certDate || !certNumber.trim() || busy || noticesUnavailable}
                   onClick={() =>
                     void act(
@@ -267,14 +262,14 @@ function LoanActions({ loan, onChanged, refreshRequired, setRefreshRequired }: {
                   }
                 >
                   Record certificate
-                </button>
+                </Button>
               </div>
             </div>
           )}
           <div className="inline-actions">
             <div className="field">
               <label htmlFor={`pf-cx-${loan.id}`}>Cancellation effective</label>
-              <input
+              <Input
                 id={`pf-cx-${loan.id}`}
                 disabled={busy}
                 type="date"
@@ -282,9 +277,9 @@ function LoanActions({ loan, onChanged, refreshRequired, setRefreshRequired }: {
                 onChange={(e) => setCancelDate(e.target.value)}
               />
             </div>
-            <button
+            <Button variant="danger"
               type="button"
-              className="danger"
+
               disabled={!cancelDate || busy || noticesUnavailable}
               onClick={() =>
                 void act(
@@ -295,7 +290,7 @@ function LoanActions({ loan, onChanged, refreshRequired, setRefreshRequired }: {
               }
             >
               Request cancellation
-            </button>
+            </Button>
           </div>
         </>
       )}
@@ -373,7 +368,7 @@ function AccountFinancing({ account }: { account: Account }) {
   const res = useAsyncResource(
     () => readFinancing(account.id),
     [account.id],
-    { initialData: null, errorMessage: "Failed to load financing", clearDataOnError: isAuthorizationError }
+    { initialData: null, errorMessage: "Failed to load financing", clearDataOnError: isAuthorizationError , live: true }
   );
 
   const agreementStatus = useSaveStatus({ autoClearMs: 6000 });
@@ -408,11 +403,7 @@ function AccountFinancing({ account }: { account: Account }) {
     agreementPending.current = true;
     try { await agreementStatus.run(
       async () => {
-        const { data, errors } = await client.mutations.generatePfAgreement({ loanId });
-        if (errors?.length) throw new Error(errors[0].message);
-        const result =
-          typeof data === "string" ? JSON.parse(data) : (data as Record<string, unknown>);
-        if (!result?.ok) throw new Error(String(result?.error ?? "Generation failed."));
+        await generateFinanceAgreement(loanId);
         return "Financing agreement filed in Documents.";
       },
       { errorMessage: "Couldn't generate the agreement." }
@@ -427,7 +418,7 @@ function AccountFinancing({ account }: { account: Account }) {
     <>
       {res.error && <p className="error-text" role="alert">
         {res.error}{" "}
-        <button className="secondary" disabled={res.loading || refreshRequired} onClick={() => void res.refetch()}>Retry financing</button>
+        <Button variant="secondary"  disabled={res.loading || refreshRequired} onClick={() => void res.refetch()}>Retry financing</Button>
       </p>}
       {res.data && loans.length === 0 && (
         <div className="card">
@@ -448,7 +439,7 @@ function AccountFinancing({ account }: { account: Account }) {
             <SaveStatus {...agreementStatus.status} />
           </div>
           <div className="table-wrap">
-            <table>
+            <Table>
               <thead>
                 <tr>
                   <th>Quoted</th>
@@ -480,30 +471,30 @@ function AccountFinancing({ account }: { account: Account }) {
                           {(l.status === "QUOTED" ||
                             l.status === "ACCEPTED" ||
                             l.status === "ACTIVE") && (
-                            <button
+                            <Button variant="link"
                               type="button"
-                              className="link"
+
                               disabled={agreementStatus.busy}
                               onClick={() => void generateAgreement(l.id)}
                             >
                               Agreement PDF
-                            </button>
+                            </Button>
                           )}
-                          <button
+                          <Button variant="link"
                             type="button"
-                            className="link"
+
                             aria-expanded={openLoan === l.id}
                             disabled={refreshRequired || res.loading}
                             onClick={() => setOpenLoan(openLoan === l.id ? null : l.id)}
                           >
                             {openLoan === l.id ? "Close" : "Service"}
-                          </button>
+                          </Button>
                         </div>
                       </td>
                     </tr>
                   ))}
               </tbody>
-            </table>
+            </Table>
           </div>
           {openLoan && loans.some((l) => l.id === openLoan) && (
             <LoanActions

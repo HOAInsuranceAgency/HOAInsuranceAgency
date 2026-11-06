@@ -1,21 +1,20 @@
+import { assertGraphqlErrors } from '../lib/apiResponse';
+import { readBrokerFeeStatus, bindCommissionPolicy, type BrokerFeeStatus } from '../lib/brokerFees';
+import { serviceFinanceLoan } from '../lib/billingApi';
+import { useLiveUpdateBlock } from "../lib/useLiveUpdates";
+import { Button } from "./ui/Button";
+import { Table } from "./ui/Table";
+import { Select } from "./ui/Select";
+import { Input } from "./ui/Input";
 import { useEffect, useRef, useState } from "react";
 import QuotePackages from "./QuotePackages";
 import "./QuotesPanel.css";
 import { packageTerms } from '../../../shared/quotePackages';
-import {
-  client,
-  fmtDate,
-  fmtMoney,
-  friendlyError,
-  listAllPages,
-  type Account,
-  type Carrier,
-  type Quote,
-  type Policy,
-} from "../lib/client";
+import { client, fmtDate, fmtMoney, friendlyError, type Account, type Carrier, type Quote } from "../lib/client";
+import { listAllPages } from "../../../shared/pagination";
 import { Badge, statusBadge, QUOTE_STATUS_BADGE } from "../lib/badges";
 import { useAsyncResource } from "../lib/useAsyncResource";
-import { isAuthorizationError } from "../lib/authorizationError";
+import { isAuthorizationError } from "../../../shared/authorizationError";
 import { useSort, SortTh } from "../lib/useSort";
 import CoverageForm from "./CoverageForm";
 import { communicationRequest } from "../lib/communications";
@@ -24,8 +23,15 @@ import { SaveStatus, useSaveStatus } from "./SaveStatus";
 import {
   isOpenQuoteStatus,
   SELECTABLE_QUOTE_STATUSES,
-} from "../lib/quoteStatus";
-import { BILL_TYPE_OPTIONS, type BillType } from "../lib/enums";
+} from "../../../shared/quoteStatus";
+import { BILL_TYPE_OPTIONS, type BillType } from "../../../shared/enums";
+import QuoteOfferExpiry from "./QuoteOfferExpiry";
+import { quoteOfferDate } from "../lib/quoteOfferExpiry";
+import { useAgencyDay } from "../lib/useAgencyDay";
+import { brokerFeeCents } from "../../../shared/brokerFees";
+import PolicyCharges from "./PolicyCharges";
+import { readCarrierPaymentPreview } from '../lib/commissions';
+import { COMMISSION_BASES } from '../../../shared/commissions';
 
 /** Commission is baked into the premium — the $ figure is the agency's cut,
  * never an addition on top. */
@@ -71,6 +77,7 @@ function QuotesPanelContent({
   account: Account;
   onAccountChange: (a: Account) => void;
 }) {
+  const today = useAgencyDay();
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Quote | null>(null);
   const [binding, setBinding] = useState<Quote | null>(null);
@@ -85,6 +92,7 @@ function QuotesPanelContent({
   // and retire the confirmation, so a timer is what retires it.
   const statusSave = useSaveStatus({ autoClearMs: 4000 });
   const statusLock = useRef(false);
+  useLiveUpdateBlock(showForm || !!editing || !!binding || !!authorization || authorizing);
 
   const quoteRes = useAsyncResource(
     () =>
@@ -95,7 +103,7 @@ function QuotesPanelContent({
         })
       ),
     [account.id],
-    { initialData: [] as Quote[], errorMessage: "Failed to load quotes", clearDataOnError: isAuthorizationError }
+    { initialData: [] as Quote[], errorMessage: "Failed to load quotes", clearDataOnError: isAuthorizationError , live: true }
   );
   const quotes = quoteRes.data;
   // Identity-stable, so passing it to CoverageForm/BindForm no longer
@@ -108,7 +116,7 @@ function QuotesPanelContent({
   const carrierRes = useAsyncResource(
     () => listAllPages(nextToken => client.models.Carrier.list({ nextToken })),
     [],
-    { initialData: [] as Carrier[], clearDataOnError: isAuthorizationError }
+    { initialData: [] as Carrier[], clearDataOnError: isAuthorizationError , live: true }
   );
   const carrierRows = carrierRes.data;
 
@@ -125,7 +133,7 @@ function QuotesPanelContent({
           ...(["QUOTED", "PRESENTED"].includes(status) && !quote.readyAt ? { readyAt: new Date().toISOString() } : {}),
           ...(status === "PRESENTED" && !quote.presentedAt ? { presentedAt: new Date().toISOString() } : {}),
         });
-        if (errors?.length) throw new Error(errors[0].message);
+        assertGraphqlErrors({ errors: errors });
         await refresh();
       },
       {
@@ -150,6 +158,7 @@ function QuotesPanelContent({
       premium: (q) => q.premium,
       commission: (q) => q.commissionPct,
       effective: (q) => q.effectiveDate,
+      offerExpiry: quoteOfferDate,
       status: (q) => q.status,
       created: (q) => q.createdAt,
     },
@@ -170,15 +179,15 @@ function QuotesPanelContent({
             <h2>Quotes</h2>
             <p>Manage carrier quotes and confirmed bindings.</p>
           </div>
-          <button
-            className={showForm ? "secondary" : "primary"}
+          <Button
+            variant={showForm ? "secondary" : "primary"}
             onClick={() => {
               setEditing(null);
               setShowForm(!showForm);
             }}
           >
             {showForm ? "Cancel" : "+ New quote"}
-          </button>
+          </Button>
         </div>
 
         <div className="quotes-save-status">
@@ -212,7 +221,7 @@ function QuotesPanelContent({
           having no carrier set. */}
         {carrierRes.error && (
           <p className="error-text quotes-feedback" role="alert">
-            {carrierRes.error} <button className="secondary" disabled={carrierRes.loading} onClick={() => void carrierRes.refetch()}>Retry carriers</button>
+            {carrierRes.error} <Button variant="secondary"  disabled={carrierRes.loading} onClick={() => void carrierRes.refetch()}>Retry carriers</Button>
           </p>
         )}
 
@@ -223,9 +232,9 @@ function QuotesPanelContent({
         ) : quoteRes.error ? (
           <div className="quotes-state quotes-state--error" role="alert">
             <p>{quoteRes.error}</p>
-            <button className="secondary" onClick={() => void refresh()}>
+            <Button variant="secondary"  onClick={() => void refresh()}>
               Retry quotes
-            </button>
+            </Button>
           </div>
         ) : quotes.length === 0 ? (
           !showForm && !editing && (
@@ -236,7 +245,7 @@ function QuotesPanelContent({
           )
         ) : (
           <div className="table-wrap quotes-table" aria-busy={quoteRes.loading}>
-            <table aria-label="Carrier quotes">
+            <Table aria-label="Carrier quotes">
               <thead>
                 <tr>
                   <SortTh
@@ -276,6 +285,13 @@ function QuotesPanelContent({
                     onToggle={toggle}
                   />
                   <SortTh
+                    label="Offer valid through"
+                    colKey="offerExpiry"
+                    sortKey={sortKey}
+                    dir={dir}
+                    onToggle={toggle}
+                  />
+                  <SortTh
                     label="Status"
                     colKey="status"
                     sortKey={sortKey}
@@ -292,27 +308,28 @@ function QuotesPanelContent({
                     <td className="small">
                       {(qt.lines ?? []).filter(Boolean).join(", ") || "—"}
                     </td>
-                    <td>{fmtMoney(qt.premium)}</td>
+                    <td>{fmtMoney(qt.premium)}<PolicyCharges source={qt} /></td>
                     <td className="small">{commissionCell(qt)}</td>
                     <td className="small">{termsSummary(qt)}</td>
                     <td>{fmtDate(qt.effectiveDate)}</td>
+                    <td><QuoteOfferExpiry quote={qt} today={today} /></td>
                     <td>
                       <Badge {...statusBadge(QUOTE_STATUS_BADGE, qt.status)} />
                     </td>
                     <td>
                       <div className="quotes-row-actions">
-                        <button
-                          className="link quote-action"
+                        <Button variant="link"
+                          className="quote-action"
                           onClick={() => {
                             setShowForm(false);
                             setEditing(qt);
                           }}
                         >
                           Edit
-                        </button>
+                        </Button>
                         {isOpenQuoteStatus(qt.status) && (
                           <>
-                            <select
+                            <Select
                               className="quote-status-select"
                               aria-label="Quote status"
                               disabled={statusSave.busy || !!binding}
@@ -326,27 +343,27 @@ function QuotesPanelContent({
                                 .map((s) => (
                                   <option key={s}>{s}</option>
                                 ))}
-                            </select>{" "}
-                            <button
-                              className="link quote-action"
+                            </Select>{" "}
+                            <Button variant="link"
+                              className="quote-action"
                               disabled={statusSave.busy || !!binding}
                               onClick={() => setBinding(qt)}
                             >
                               Bind
-                            </button>
+                            </Button>
                             {["QUOTED", "PRESENTED"].includes(qt.status) &&
                               (!qt.bindAuthorizedAt ||
                                 qt.bindAuthorizedTerms !==
                                   authorizedQuoteTerms(qt)) && (
-                                <button
-                                  className="link quote-action"
+                                <Button variant="link"
+                                  className="quote-action"
                                   onClick={() => {
                                     setAuthorization(qt);
                                     setClientAuthorized(false);
                                   }}
                                 >
                                   Request binding
-                                </button>
+                                </Button>
                               )}
                             {qt.bindAuthorizedAt && (
                               <span className="small muted quote-confirmation">
@@ -360,7 +377,7 @@ function QuotesPanelContent({
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </Table>
           </div>
         )}
 
@@ -372,15 +389,17 @@ function QuotesPanelContent({
             <h3>Request binding</h3>
             <p className="quote-flow-summary">
               {carrierName(authorization.carrierId)} ·{" "}
-              {fmtMoney(authorization.premium)} · Effective{" "}
+              {fmtMoney(authorization.premium)} premium · Effective{" "}
               {fmtDate(authorization.effectiveDate)}
             </p>
+            <PolicyCharges source={authorization} />
+            {authorization.clientConditions && <p className="small" style={{ whiteSpace: "pre-wrap" }}>{authorization.clientConditions}</p>}
             <p className="muted small">
               This records the client's approval of these quoted terms. Carrier
               confirmation is still required before recording coverage as bound.
             </p>
             <label className="quote-authorization-check">
-              <input
+              <Input
                 type="checkbox"
                 checked={clientAuthorized}
                 disabled={authorizing}
@@ -389,8 +408,8 @@ function QuotesPanelContent({
               The client has authorized binding these terms.
             </label>
             <div className="form-actions quote-flow-actions">
-              <button
-                className="primary"
+              <Button variant="primary"
+
                 disabled={!clientAuthorized || authorizing}
                 onClick={async () => {
                   if (authorizationLock.current) return;
@@ -420,14 +439,14 @@ function QuotesPanelContent({
                 }}
               >
                 Record binding authorization
-              </button>
-              <button
-                className="secondary"
+              </Button>
+              <Button variant="secondary"
+
                 disabled={authorizing}
                 onClick={() => setAuthorization(null)}
               >
                 Cancel
-              </button>
+              </Button>
             </div>
           </section>
         )}
@@ -470,13 +489,31 @@ function BindForm({
   const [agencyRate, setAgencyRate] = useState(quote.commissionPct == null ? "" : String(quote.commissionPct));
   const [confirmed, setConfirmed] = useState(false);
   /**
-   * No default. Bill type decides whether anyone here is supposed to collect
+   * Reuse the fee quote's recorded answer; otherwise there is no default.
+   * Bill type decides whether anyone here is supposed to collect
    * the premium, and a pre-selected answer to that is one nobody reads — the
    * first policy silently marked agency bill when the carrier is billing the
    * association directly is an invoice sent for money already paid.
    */
-  const [billType, setBillType] = useState<BillType | "">("");
+  const [billType, setBillType] = useState<BillType | "">(quote.billType ?? "");
+  const hasBrokerFee = (quote.brokerFee ?? 0) > 0;
+  const [paymentConfirmation, setPaymentConfirmation] = useState('');
+  const paymentPreview = useAsyncResource(
+    () => readCarrierPaymentPreview(quote.id, billType),
+    [quote.id, quote.updatedAt, billType],
+    { manual: !billType || (hasBrokerFee && billType !== "AGENCY"), clearDataOnError: () => true , live: true },
+  );
+  const paymentKey = JSON.stringify({ billType, preview: paymentPreview.data });
+  const paymentReady = !!paymentPreview.data && !paymentPreview.loading && !paymentPreview.error &&
+    (!paymentPreview.data.payment || paymentConfirmation === paymentKey);
   const [saving, setSaving] = useState(false);
+  useLiveUpdateBlock(saving);
+  const feeStatus = useAsyncResource(async () => {
+    if (!(quote.brokerFee && quote.brokerFee > 0)) return null;
+    const fees = await readBrokerFeeStatus(account.id, [quote.id]);
+    return fees.find(fee => fee.quoteId === quote.id) ?? null;
+  }, [quote.id, quote.brokerFee, account.id], { initialData: null as BrokerFeeStatus | null, errorMessage: "Could not load broker fee status", live: { protectEdits: false, intervalMs: 15_000 } });
+  const currentFeeSigned = Boolean(feeStatus.data?.signedAt && feeStatus.data.amountCents === brokerFeeCents(quote.brokerFee) && feeStatus.data.terms === authorizedQuoteTerms(quote));
   const bindLock = useRef(false);
   const live = useRef(true);
   useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
@@ -490,23 +527,23 @@ function BindForm({
     !quote.expirationDate && "an expiration date",
     quote.commissionPct == null && "the exact agency commission percentage",
     !(quote.lines ?? []).filter(Boolean).length && "at least one line",
+    hasBrokerFee && quote.billType !== "AGENCY" && "agency billing for the broker fee",
   ].filter(Boolean) as string[];
 
   async function bind() {
     // Belt and braces: the button is disabled without one, but `bind` is the
     // thing that writes the row and an unset bill type must never reach it.
-    if (!billType || !confirmed || bindLock.current) return;
+    if (!billType || (hasBrokerFee && billType !== "AGENCY") || !confirmed || !paymentReady || bindLock.current) return;
     bindLock.current = true;
     let policyCreated = false;
     setSaving(true);
     onError("");
     try {
-      const response = await client.mutations.bindCommissionPolicy({ input: JSON.stringify({
+      const result = await bindCommissionPolicy({
         quoteId: quote.id, terms: packageTerms(quote), premium, agencyRate, billType, policyNumber,
-      }) });
-      if (response.errors?.length) throw new Error(response.errors[0].message);
-      const result = (typeof response.data === "string" ? JSON.parse(response.data) : response.data) as { ok: boolean; error?: string; policy: Policy; account: Account };
-      if (!result?.ok || !result.policy) throw new Error(result?.error ?? "Could not bind this policy.");
+        carrierTermsVersion: paymentPreview.data!.carrierTermsVersion,
+        carrierArrangementId: paymentPreview.data!.payment?.id,
+      });
       const policy = result.policy;
       policyCreated = true;
 
@@ -566,15 +603,7 @@ function BindForm({
           const live = ["QUOTED", "ACCEPTED", "ACTIVE", "DEFAULTED"].includes(loan.status);
           if (!live || loan.policyId) continue;
           try {
-            const { data, errors } = await client.mutations.servicePfLoan({
-              loanId: loan.id,
-              action: "BIND_ROLLOVER",
-              policyId: policy.id,
-            });
-            if (errors?.length) throw new Error(errors[0].message);
-            const result =
-              typeof data === "string" ? JSON.parse(data) : (data as Record<string, unknown>);
-            if (!result?.ok) throw new Error(String(result?.error ?? "Rollover refused."));
+            await serviceFinanceLoan({ loanId: loan.id, action: 'BIND_ROLLOVER', policyId: policy.id });
           } catch (err) {
             rollFailures.push(`loan ${loan.id.slice(0, 8)}: ${(err as Error).message}`);
           }
@@ -593,6 +622,7 @@ function BindForm({
       const message = friendlyError(err, "Bind failed");
       if (live.current) onError(policyCreated ? `Policy created, but binding did not finish: ${message}. Check the policies and account before retrying.` : message);
       if (policyCreated && live.current) onDone(null);
+      if (!policyCreated && live.current) void paymentPreview.refetch();
     } finally {
       bindLock.current = false;
       setSaving(false);
@@ -616,38 +646,40 @@ function BindForm({
             the quote details first.
           </p>
           <div className="form-actions quote-flow-actions">
-            <button className="secondary" onClick={() => onDone(null)}>
+            <Button variant="secondary"  onClick={() => onDone(null)}>
               Close
-            </button>
+            </Button>
           </div>
         </>
       ) : (
         <>
-          <p className="small muted">Confirm the exact commissionable premium and agency percentage from the accepted quote. To change either amount, edit the quote first. Producer earnings follow reconciled carrier receipts and the agreement saved by the Owner.</p>
+          <p className="small muted">Confirm the exact commissionable premium and agency percentage from the accepted quote. To change either amount, edit the quote first. Producer earnings follow receipts and the agreement saved by the Owner. Broker fees use the same producer share, separately from carrier commission.</p>
+          {(quote.brokerFee ?? 0) > 0 && <div className="small" role="status"><strong>Broker fee: {fmtMoney(quote.brokerFee)}</strong><p>{feeStatus.loading ? "Checking signed disclosure and payment…" : feeStatus.error || (!currentFeeSigned ? "Client signature is needed on the current broker fee disclosure." : feeStatus.data!.collectedCents >= feeStatus.data!.amountCents ? "Disclosure signed · payment received." : feeStatus.data!.submittedCents >= feeStatus.data!.amountCents ? "Disclosure signed · payment submitted and clearing." : "Disclosure signed · fee payment is still needed.")}</p>{feeStatus.error && <Button variant="link" disabled={feeStatus.loading || saving} onClick={() => void feeStatus.refetch()}>Retry fee status</Button>}</div>}
           <div className="form-grid">
-            <label className="field">Exact policy premium ($)<input aria-label="Exact policy premium" inputMode="decimal" value={premium} disabled={saving} onChange={e => { setPremium(e.target.value); setConfirmed(false); }} /></label>
-            <label className="field">Agency commission (%)<input aria-label="Agency commission percentage" inputMode="decimal" value={agencyRate} disabled={saving} onChange={e => { setAgencyRate(e.target.value); setConfirmed(false); }} /></label>
+            <label className="field">Exact policy premium ($)<Input aria-label="Exact policy premium" inputMode="decimal" value={premium} disabled={saving} onChange={e => { setPremium(e.target.value); setConfirmed(false); }} /></label>
+            <label className="field">Agency commission (%)<Input aria-label="Agency commission percentage" inputMode="decimal" value={agencyRate} disabled={saving} onChange={e => { setAgencyRate(e.target.value); setConfirmed(false); }} /></label>
             <div className="field">
               <label htmlFor="bind-bill-type">Bill type (required)</label>
-              <select
+              <Select
                 id="bind-bill-type"
                 value={billType}
-                disabled={saving}
+                disabled={saving || (quote.brokerFee ?? 0) > 0}
                 onChange={(e) => setBillType(e.target.value as BillType | "")}
               >
                 <option value="">Choose…</option>
                 {BILL_TYPE_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>
+                  <option key={o.value} value={o.value} disabled={hasBrokerFee && o.value === "DIRECT"}>
                     {o.label}
                   </option>
                 ))}
-              </select>
+              </Select>
+              {hasBrokerFee && <p className="small muted">Broker fees require agency billing, as set on the accepted quote.</p>}
             </div>
             <div className="field">
               <label htmlFor="bind-policy-number">
                 Policy number (can be added later)
               </label>
-              <input
+              <Input
                 id="bind-policy-number"
                 value={policyNumber}
                 disabled={saving}
@@ -658,21 +690,46 @@ function BindForm({
           {billType === "DIRECT" && (
             <p className="small muted">
               The carrier bills the association and pays us commission
-              afterwards, so there is nothing to invoice from here.
+              afterwards.
             </p>
           )}
-          <label><input type="checkbox" checked={confirmed} disabled={saving} onChange={e => setConfirmed(e.target.checked)} /> I confirmed the exact premium and agency commission percentage.</label>
+          {billType && (
+            <div className="card" aria-label="Carrier commission payment arrangement">
+              {paymentPreview.loading && <p className="small muted">Loading carrier payment terms…</p>}
+              {paymentPreview.error && <p role="alert">{paymentPreview.error}</p>}
+              {paymentPreview.data && !paymentPreview.loading && !paymentPreview.error && (
+                <>
+                  <p><strong>{COMMISSION_BASES[paymentPreview.data.basis]}</strong></p>
+                  {paymentPreview.data.payment ? (
+                    <>
+                      <p className="small">
+                        Payor: {paymentPreview.data.payment.payor}. Remittance: {({ ONCE: 'once', MONTHLY: 'monthly', QUARTERLY: 'quarterly' })[paymentPreview.data.payment.cadence]}.
+                        {' '}Trigger: {({ BIND: 'bind date', EFFECTIVE: 'policy effective date', COLLECTION: 'premium collection', EARNED: 'coverage provided' })[paymentPreview.data.payment.trigger]}.
+                        {' '}Calendar-day lag: {paymentPreview.data.payment.lagDays}.
+                        {paymentPreview.data.payment.cutoffDay !== undefined && ` Statement cutoff day: ${paymentPreview.data.payment.cutoffDay} (clamped to month end).`}
+                        {paymentPreview.data.payment.paymentDay !== undefined && ` Payment day: ${paymentPreview.data.payment.paymentDay} (clamped to month end).`}
+                      </p>
+                      {paymentPreview.data.basis === 'COLLECTED' && <p className="small muted">Expected receipt amounts require collection information or an Owner-entered schedule.</p>}
+                      <label><Input type="checkbox" checked={paymentConfirmation === paymentKey} disabled={saving} onChange={e => setPaymentConfirmation(e.target.checked ? paymentKey : '')} /> I reviewed the carrier commission payment arrangement.</label>
+                    </>
+                  ) : <p className="small muted">Legacy carrier terms: receipt timing is unconfirmed. An Owner can add structured terms; producer earnings continue to follow actual receipts.</p>}
+                </>
+              )}
+              <Button variant="secondary" type="button"  disabled={saving || paymentPreview.loading} onClick={() => { setPaymentConfirmation(''); void paymentPreview.refetch(); }}>Refresh carrier payment terms</Button>
+            </div>
+          )}
+          <label><Input type="checkbox" checked={confirmed} disabled={saving} onChange={e => setConfirmed(e.target.checked)} /> I confirmed the exact premium and agency commission percentage.</label>
           <div className="form-actions quote-flow-actions">
-            <button
-              className="primary"
-              disabled={saving || !billType || !confirmed || !premium || !agencyRate}
+            <Button variant="primary"
+
+              disabled={saving || !billType || (hasBrokerFee && billType !== "AGENCY") || !confirmed || !paymentReady || !premium || !agencyRate}
               onClick={bind}
             >
               {saving ? "Binding…" : "Confirm bind"}
-            </button>
-            <button className="secondary" disabled={saving} onClick={() => onDone(null)}>
+            </Button>
+            <Button variant="secondary"  disabled={saving} onClick={() => onDone(null)}>
               Cancel
-            </button>
+            </Button>
           </div>
         </>
       )}

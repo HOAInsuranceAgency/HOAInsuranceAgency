@@ -53,6 +53,20 @@ function plan(): CommercialPlan {
   };
 }
 describe('complete package commissions', () => {
+  it('uses per-policy client totals while retaining commission and agency revenue as separate calculations', () => {
+    const p = plan();
+    const qs = quotes.map(q => ({ ...q, premium: q.id === 'property' ? 100.104 : 200.104, brokerFee: q.id === 'property' ? 10.02 : 0, billType: 'AGENCY', passThroughCharges: [{ id: 'tax', kind: 'TAX', description: 'Supplier tax', amountCents: 503 }] }));
+    const result = packageAssessment(p, p.options[1], qs, today, false);
+    expect(result).toMatchObject({ complete: true, premiumCents: 30020, passThroughCents: 1006, brokerFeeCents: 1002, clientTotalCents: 32028, commissionCents: 3002, agencyRevenueCents: 4004 });
+  });
+
+  it('separates fee totals from premium/carrier commission and requires review after a fee changes', () => {
+    const p = plan(), feeQuotes = quotes.map(q => ({ ...q, brokerFee: q.id === 'bundle' ? 500 : 0, billType: 'AGENCY' }));
+    expect(packageAssessment(p, p.options[0], feeQuotes, today).problems).toContain('Review this package’s current terms');
+    p.options[0].reviewed!.terms.bundle = packageTerms(feeQuotes[0]);
+    expect(packageAssessment(p, p.options[0], feeQuotes, today)).toMatchObject({ complete: true, premiumCents: 1500000, commissionCents: 150000, brokerFeeCents: 50000, clientTotalCents: 1550000, agencyRevenueCents: 200000 });
+    expect(packageTerms(quotes[0])).toBe(packageTerms({ ...quotes[0], brokerFee: 0 }));
+  });
   it('compares the whole bundle with the combined standalone quotes, without counting all alternatives', () => {
     expect(pendingCommission(plan(), quotes, today)).toMatchObject({
       cents: 135000,

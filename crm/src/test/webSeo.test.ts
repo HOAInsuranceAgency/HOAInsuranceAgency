@@ -455,24 +455,37 @@ describe("the /contact specialist", () => {
 });
 
 describe("owner-confirmed market and service commitments", () => {
+  it("does not publish a universal no-broker-fee promise after optional fees are enabled", () => {
+    function inspect(directory: string) {
+      for (const entry of readdirSync(directory, { withFileTypes: true })) {
+        const target = join(directory, entry.name);
+        if (entry.isDirectory()) inspect(target);
+        else if (/\.(astro|tsx?|json)$/.test(entry.name)) expect(readFileSync(target, "utf8"), target).not.toMatch(/no broker fee|zero dollar broker fee/i);
+      }
+    }
+    inspect(join(basename(process.cwd()) === "crm" ? dirname(process.cwd()) : process.cwd(), "web/src"));
+  });
   it("describes twelve direct appointments without promising universal availability", () => {
     expect(MARKETS).toHaveLength(12);
     expect(STAGES.find((stage) => stage.title === "Compare")?.desc).toContain(
       "our directly appointed markets that write your risk"
     );
-    for (const page of ["index.astro", "why-choose-us.astro", "hoa-insurance-[state].astro"]) {
-      const source = read(`../../../web/src/pages/${page}`);
+    for (const page of ["index.astro", "hoa-insurance-[state].astro"]) {
+      const source = read(`../../../web/src/pages/${page}`).replace(/\s+/g, " ");
       expect(source).toContain("Direct appointments with twelve markets");
       expect(source).toContain("Carrier availability varies by");
       expect(source).toMatch(/not every\s+market is approached on every\s+placement/i);
     }
+    const whyChooseUs = read("../../../web/src/pages/why-choose-us.astro").replace(/\s+/g, " ");
+    expect(whyChooseUs).toContain("12 directly appointed markets. Availability varies by state, association type and risk profile.");
+    expect(whyChooseUs).toContain("we compare the ones that write your association");
   });
 
-  it("retains the confirmed response, no-fee and assessment commitments", () => {
+  it("retains response and assessment commitments with transparent fee disclosure", () => {
     const assessment = read("../../../web/src/components/InstantAssessment.tsx");
     const contact = read("../../../web/src/pages/contact.astro");
     expect(assessment).toContain("within one business day");
-    expect(contact).toContain("No broker fee, now or at renewal.");
+    expect(contact).toContain("<li>Any broker fee disclosed before purchase</li>");
     for (const deliverable of [
       "Personalized coverage recommendation",
       "Gap analysis vs. your current policy",
@@ -523,12 +536,13 @@ describe("the page graph as a whole", () => {
     }
   });
 
-  it("keeps the homepage allocation guidance conditional", () => {
-    const home = read("../../../web/src/pages/index.astro");
+  it("keeps the homepage coverage-boundary guidance conditional", () => {
+    const home = read("../../../web/src/pages/index.astro").replace(/\s+/g, " ");
     expect(home).not.toContain("The master policy stops at the unit");
     expect(home).not.toContain("the cost lands on the owner through loss assessment");
-    expect(home).toContain("The association deductible alone does not determine");
-    expect(home).toContain("applicable law");
+    expect(home).toContain("Whether your policy is bare walls, single entity or all-in (also called walls-in) helps decide where the master policy ends and a unit owner’s HO-6 begins.");
+    expect(home).toContain("The governing documents, applicable law and endorsements decide the rest.");
+    expect(home).toContain("The master policy form, deductible and governing documents decide the rest.");
   });
 
   it("requires Buildium credentials without source fallbacks", () => {
@@ -684,6 +698,7 @@ describe("indexing hygiene", () => {
     for (const prefix of [
       "/documents/",
       "/finance/",
+      "/broker-fee/",
       "/associations/",
       "/get-started/",
       "/quote/",
@@ -715,6 +730,10 @@ describe("indexing hygiene", () => {
     const config = read("../../../web/astro.config.mjs");
     expect(config).toContain("isNoindexRoute");
     expect(config).toContain("./src/data/routes.ts");
+  });
+  it("keeps broker fee signing private and unindexed", () => {
+    const template = read("../../../web/src/pages/broker-fee.astro");
+    expect(template).toMatch(/<Layout[^>]*\bnoindex\b[^>]*\bprivate\b/);
   });
 
   it("writes every internal link in the trailing-slash form", () => {

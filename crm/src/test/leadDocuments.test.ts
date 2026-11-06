@@ -14,7 +14,7 @@ import {
   refusalFor,
 } from "../../amplify/functions/upload-portal/portal";
 import { MAX_FILES } from "../../../shared/leadUpload";
-import { isExtractableCategory } from "../lib/enums";
+import { isExtractableCategory } from "../../../shared/enums";
 
 /**
  * The document portal's rules.

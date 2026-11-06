@@ -1,4 +1,9 @@
-import { currentContacts } from "../../../src/lib/contacts";
+import { accountPath } from '../../../../shared/crmRoutes';
+import { agencyDay } from '../../../../shared/agencyTime';
+import { assertPreviewRead } from "../migration-readonly";
+import { apiFailure, decodeAwsJson, isRecord } from '../../../../shared/apiResponse';
+import { communicationOperationMode } from '../../../../shared/apiOperations';
+import { currentContacts } from "../../../../shared/contacts";
 import { RELATIONSHIP_READS, RELATIONSHIP_WRITES, relationshipOperation } from "./relationships";
 import { receivesNewLeads, salespersonEligibility, salespersonWorkflow } from "../../../../shared/salespersonOwnership";
 import { retiredTaskOperation } from "../../../../shared/retiredTaskOperations";
@@ -28,20 +33,21 @@ import { activeRole, isActiveAdmin, type RoleRequest } from "../crm-access/activ
 import { readLeadSnooze, saveLeadSnooze } from "./snooze";
 import { currentTeamRoles } from "./teamAvailability";
 import { activeTeamUserCheck } from "../crm-access/user-status";
+import { readCompleteModels } from './completeReads';
 
 type Input = Record<string, unknown>;
 function object(value: unknown): Input {
-  const parsed = typeof value === "string" ? JSON.parse(value) : value;
+  const parsed = decodeAwsJson(value);
   if (parsed == null) return {};
-  if (typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Invalid request");
-  return parsed as Input;
+  if (!isRecord(parsed)) throw new Error("Invalid request");
+  return parsed;
 }
 const text = (input: Input, key: string, max = 500) => typeof input[key] === "string" ? (input[key] as string).trim().slice(0, max) : "";
 function version(input: Input) { if (!Number.isInteger(input.version)) throw new Error("Refresh this record before saving"); return Number(input.version); }
 async function roster() {
   const client = await dataClient(), eligibility = await team();
-  const profiles = []; let nextToken: string | null | undefined;
-  do { const p = await client.models.UserProfile.list({ nextToken, limit: 100 }); if (p.errors?.length) throw new Error("Could not load teammates"); profiles.push(...p.data); nextToken = p.nextToken; } while (nextToken);
+  const profiles = await readCompleteModels(nextToken => client.models.UserProfile.list({ nextToken, limit: 100 }),
+    'team', 'Could not load teammates');
   const { available, producers } = await currentTeamRoles(profiles.map(p => p.userId));
   return profiles.map(p => {
     const saved = eligibility.find(t => t.userId === p.userId), producer = producers.has(p.userId);
@@ -54,16 +60,22 @@ function safeCommunication(data: Communication): Communication {
 }
 export const handler = async (event: { arguments: { operation?: string; readOperation?: string; input?: unknown }; identity?: AppSyncIdentityCognito; request?: RoleRequest }) => {
   try {
+    const previewReads = new Set(["searchAccounts", "dashboardOpenQuotesPage", "dashboardBoundPoliciesPage", "dashboardQuotesPage", "dashboardQuoteStates", "dashboardInvoiceAnchors", "dashboardAssignments", "dashboardInterestPage", "dashboardPolicyAnchors", "dashboardLeadPlansPage", "commercialTable", "lastContacts", "accountSummary", "activity", "team", "teamSettings"]);
+    assertPreviewRead(!!event.arguments.readOperation && previewReads.has(event.arguments.readOperation));
     const actor = event.identity?.sub;
     if (!actor) throw new Error("Sign in to the CRM to continue");
     const admin = isActiveAdmin(event.identity, event.request);
     const input = object(event.arguments.input), op = event.arguments.readOperation ?? event.arguments.operation;
+    const transport = communicationOperationMode(op);
+    if (transport && transport !== (event.arguments.readOperation ? 'read' : 'write')) throw new Error('This operation uses a different API transport.');
     if (retiredTaskOperation(op ?? "", input)) tasksRemoved();
     if ((event.arguments.readOperation ? RELATIONSHIP_READS : RELATIONSHIP_WRITES).has(op ?? "")) {
       return { ok: true, ...await relationshipOperation(op!, input, { sub: actor, groups: event.identity?.groups ?? undefined, claims: event.identity?.claims }, event.request) };
     }
     const requireAdmin = () => { if (!admin) throw new Error("Only an admin can change integration or team settings"); };
     if (event.arguments.readOperation) {
+      if (op === 'businessDeliveryContext') return { ok: true, context: await (await import('./businessDelivery')).businessDeliveryContext({ accountId: text(input, 'accountId') }, actor, { admin }) };
+      if (op === 'historyBusinessDeliveries') return { ok: true, ...await (await import('./businessDelivery')).historyBusinessDeliveries(input as unknown as Parameters<typeof import('./businessDelivery').historyBusinessDeliveries>[0], actor, { admin }) };
       if (op === "searchAccounts") return { ok: true, ...await (await import("./accountSearch")).searchAccounts(input, { actor, role: activeRole(event.identity, event.request) }) };
       if (op === 'dashboardOpenQuotesPage') { requireAdmin(); return { ok: true, ...await (await import('./dashboardLeadQueries')).dashboardOpenQuotesPage(input) }; }
       if (op === 'dashboardBoundPoliciesPage') { requireAdmin(); return { ok: true, ...await (await import('./dashboardLeadQueries')).dashboardBoundPoliciesPage(input) }; }
@@ -95,7 +107,7 @@ export const handler = async (event: { arguments: { operation?: string; readOper
         if (contacts.errors?.length || quotes.errors?.length || documents.errors?.length) throw new Error("Could not load account context");
         return { ok: true, summary: { name: account.data.name, source: account.data.source, leadSource: account.data.leadSource, notes: account.data.notes, currentPolicyExpiration: account.data.currentPolicyExpiration,
           contacts: currentContacts(contacts.data).map(c => ({ id: c.id, name: c.name, email: c.email, phone: c.phone })), quotes: quotes.data.map(q => ({ id: q.id, status: q.status, lines: q.lines })), documents: documents.data.map(d => ({ id: d.id, name: d.name, status: d.ocrStatus })),
-          more: !!(contacts.nextToken || quotes.nextToken || documents.nextToken), url: `${process.env.CRM_BASE_URL}/accounts/${id}` } };
+          more: !!(contacts.nextToken || quotes.nextToken || documents.nextToken), url: `${process.env.CRM_BASE_URL}${accountPath(id)}` } };
       }
       if (op === "activity") { const r = await get<Communication>(text(input, "id")); if (!r || r.kind !== "COMMUNICATION") throw new Error("Communication not found"); return { ok: true, communication: safeCommunication({ ...r.data, version: r.version }) }; }
       if (op === "smsComposer") { const c = await config(); if (!c.frontSmsChannelId || !c.activatedAt || c.paused) throw new Error("Activate the shared-line text channel first"); await verifySmsChannel(); return { ok: true, channelId: c.frontSmsChannelId, sender: c.sharedSmsNumber }; }
@@ -170,7 +182,9 @@ export const handler = async (event: { arguments: { operation?: string; readOper
     if (op === "saveCommercial") return { ok: true, plan: await (await import("./commercial")).saveCommercial(input, actor) };
     if (op === "saveLeadSnooze") return { ok: true, snooze: await saveLeadSnooze(input, actor, admin) };
     if (op === 'prepareLeadDeletion') { requireAdmin(); await (await import('./deletion')).prepareLeadDeletion(text(input, 'accountId'), text(input, 'name'), actor); return { ok: true }; }
-    if (op === "prepareBusinessDraft") return { ok: true, draft: await (await import("./businessDelivery")).prepareBusinessDraft(input as unknown as Parameters<typeof import("./businessDelivery").prepareBusinessDraft>[0], actor) };
+    if (op === 'previewBusinessDelivery') return { ok: true, preview: await (await import('./businessDelivery')).previewBusinessDelivery(input as unknown as Parameters<typeof import('./businessDelivery').previewBusinessDelivery>[0], actor, { admin }) };
+    if (op === 'prepareBusinessDraft') return { ok: true, attempt: await (await import('./businessDelivery')).prepareBusinessDraft(input as unknown as Parameters<typeof import('./businessDelivery').prepareBusinessDraft>[0], actor, { admin }) };
+    if (op === 'reconcileBusinessDraft') return { ok: true, attempt: await (await import('./businessDelivery')).reconcileBusinessDraft({ accountId: text(input, 'accountId'), attemptId: text(input, 'attemptId'), recoveryMessageId: text(input, 'recoveryMessageId') || undefined }, actor, { admin }) };
     if (op === "authorizeBind") {
       if (input.clientAuthorized !== true) throw new Error("Client authorization is required before requesting binding");
       const q = await (await dataClient()).models.Quote.get({ id: text(input, "quoteId") });
@@ -183,7 +197,7 @@ export const handler = async (event: { arguments: { operation?: string; readOper
       }
       if (q.data.bindAuthorizedAt && q.data.bindAuthorizedTerms === terms) return { ok: true };
       if (!["QUOTED", "PRESENTED"].includes(q.data.status) || !q.data.carrierId || !validCalendarDate(q.data.effectiveDate) || !validCalendarDate(q.data.expirationDate) || q.data.expirationDate <= q.data.effectiveDate || !(q.data.premium != null && q.data.premium > 0) || !q.data.lines?.filter(Boolean).length) throw new Error("Finish the usable quote before recording client authorization");
-      const today = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+      const today = agencyDay(new Date());
       if (q.data.offerExpiresAt && (!validCalendarDate(q.data.offerExpiresAt) || q.data.offerExpiresAt < today)) throw new Error("The carrier offer has expired. Obtain current terms before requesting binding.");
       if (q.data.updatedAt !== text(input, "updatedAt")) throw new Error("The quote changed. Review its current terms before authorizing binding.");
       const now = new Date().toISOString();
@@ -428,6 +442,8 @@ export const handler = async (event: { arguments: { operation?: string; readOper
     }
     throw new Error("Unknown operation");
   } catch (e) {
-    return { ok: false, error: conflict(e) ? "This record changed. Refresh and try again." : e instanceof Error ? e.message : "The change could not be saved" };
+    return apiFailure({ message: conflict(e) ? "This record changed. Refresh and try again." : e instanceof Error ? e.message : "The change could not be saved",
+      ...(e instanceof Error && e.name === 'Unauthorized' ? { errorType: 'Unauthorized' } : {}),
+      ...(e instanceof Error && 'code' in e && typeof e.code === 'string' && e.code.startsWith('BUSINESS_DRAFT_') ? { code: e.code } : {}) }, 'The change could not be saved');
   }
 };

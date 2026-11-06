@@ -1,16 +1,14 @@
-import { Amplify } from "aws-amplify";
-import { generateClient } from "aws-amplify/data";
-import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtime";
+import { createDataClientGetter } from "../data-client";
+import { captureHandledFailure } from "../monitoring";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
-import type { Schema } from "../../data/resource";
-import { isRealIsoDay } from "../../../src/lib/premiumFinance/noticeSequence";
-import { listAllPages } from "../../../src/lib/pagination";
+import { isRealIsoDay } from "../../../../shared/premiumFinance/noticeSequence";
+import { listAllPages } from "../../../../shared/pagination";
 import {
   PF_DEFAULT_APR,
   PF_DEFAULT_DOWN_PCT,
   PF_DEFAULT_MONTHS,
-} from "../../../src/lib/premiumFinance/quote";
+} from "../../../../shared/premiumFinance/quote";
 import { originateLoan } from "../pfOrigination";
 
 /**
@@ -22,18 +20,7 @@ import { originateLoan } from "../pfOrigination";
  * completeness and tooling; the product's origination path is the send.
  */
 
-type DataClient = ReturnType<typeof generateClient<Schema>>;
-let dataClient: DataClient | undefined;
-async function getDataClient() {
-  if (!dataClient) {
-    const { resourceConfig, libraryOptions } = await getAmplifyDataClientConfig(
-      process.env as never
-    );
-    Amplify.configure(resourceConfig, libraryOptions);
-    dataClient = generateClient<Schema>();
-  }
-  return dataClient;
-}
+const getDataClient = createDataClientGetter();
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient());
 
@@ -140,6 +127,7 @@ export const handler = async (event: {
       }
     );
   } catch (err) {
+    captureHandledFailure(err);
     console.error("pf-originate failed", err);
     return { ok: false, error: "Couldn't evaluate that quote. Try again." };
   }

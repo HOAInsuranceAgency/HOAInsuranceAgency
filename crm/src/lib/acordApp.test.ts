@@ -27,7 +27,7 @@ import {
   priorCoverageBlocks,
 } from "./acordApp";
 import { LINES_OF_BUSINESS } from "./client";
-import { ACORD125_LEGAL_ENTITY_FIELDS, LEGAL_ENTITY_OPTIONS } from "./enums";
+import { ACORD125_LEGAL_ENTITY_FIELDS, LEGAL_ENTITY_OPTIONS } from "../../../shared/enums";
 
 /**
  * The ACORD 125's Legal Entity box.

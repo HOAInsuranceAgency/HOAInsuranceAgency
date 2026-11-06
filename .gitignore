@@ -36,3 +36,9 @@ dist-ssr
 amplify_outputs*
 amplifyconfiguration*
 *.tsbuildinfo
+
+.npm/
+
+# Owned offline verification workspace; never commit fixtures/backups.
+crm/verify-offline.lock
+crm/hoa-crm-offline-*/

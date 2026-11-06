@@ -1,17 +1,17 @@
+import { assertGraphqlErrors } from '../lib/apiResponse';
+import { useLiveUpdateBlock } from "../lib/useLiveUpdates";
+import { Select } from "./ui/Select";
+import { Button } from "./ui/Button";
+import { Table } from "./ui/Table";
+import { Input } from "./ui/Input";
 import { useEffect, useId, useRef, useState } from "react";
 import "./DocumentsPanel.css";
-import { uploadData, remove } from "../lib/scopedStorage";
-import {
-  client,
-  friendlyError,
-  listAllPages,
-  type CrmDocument,
-  type Policy,
-  type Quote,
-} from "../lib/client";
-import { downloadFile } from "../lib/storage";
+import { remove } from "../lib/scopedStorage";
+import { client, friendlyError, type CrmDocument, type Policy, type Quote } from "../lib/client";
+import { listAllPages } from "../../../shared/pagination";
+import { downloadFile, uploadDocument } from "../lib/storage";
 import { useAsyncResource } from "../lib/useAsyncResource";
-import { isAuthorizationError } from "../lib/authorizationError";
+import { isAuthorizationError } from "../../../shared/authorizationError";
 import { allWithAuthorizationPriority } from "../lib/allWithAuthorizationPriority";
 import {
   linkFields,
@@ -24,15 +24,17 @@ import type { Schema } from "../../amplify/data/resource";
 import FilePreviewModal, { canPreview } from "./FilePreview";
 import FileButton from "./FileButton";
 import ConfirmButton from "./ConfirmButton";
+import BusinessDraftButton from "./BusinessDraftButton";
+import { isBusinessDeliveryFile } from "../../../shared/frontBusinessDelivery";
 import { SaveStatus, useSaveStatus } from "./SaveStatus";
 import { Badge, statusBadge, OCR_STATUS_BADGE } from "../lib/badges";
 import { useSort, SortTh } from "../lib/useSort";
-import { withExtension } from "../../amplify/functions/process-document/name";
+import { withExtension } from "../../../shared/documentName";
 import {
   DEFAULT_DOCUMENT_CATEGORY,
   DOCUMENT_CATEGORY_OPTIONS,
   type DocumentCategory as Category,
-} from "../lib/enums";
+} from "../../../shared/enums";
 
 type EntityType = Schema["DocumentEntityType"]["type"];
 
@@ -83,10 +85,6 @@ function DocumentsPanelContent({
   sourceCommunicationId?: string;
 }) {
   const controlId = useId();
-  const [docs, setDocs] = useState<CrmDocument[]>([]);
-  // Hold the table until all authorized pages have loaded.
-  const [docsSynced, setDocsSynced] = useState(false);
-  const [loadError, setLoadError] = useState("");
   const [category, setCategory] = useState<Category>(DEFAULT_DOCUMENT_CATEGORY);
   const [view, setView] = useState(
     initialLink && /^(policy|quote):.+$/.test(initialLink) ? initialLink : ""
@@ -129,7 +127,7 @@ function DocumentsPanelContent({
       };
     },
     [linkAccountId],
-    { initialData: { options: [] }, clearDataOnError: isAuthorizationError }
+    { initialData: { options: [] }, clearDataOnError: isAuthorizationError , live: true }
   );
   const linkOptions = linkTargets.data.options;
   const linkLabel = (key: string) =>
@@ -157,41 +155,23 @@ function DocumentsPanelContent({
   const [matchCount, setMatchCount] = useState(0);
   const viewerRef = useRef<HTMLDivElement>(null);
 
-  const reloadDocuments = useRef<() => Promise<void>>(async () => {});
+  useLiveUpdateBlock(uploading || rowStatus.busy || !!renameId);
+  const documents = useAsyncResource(() => listAllPages(async nextToken => {
+    const page = await client.models.Document.listDocumentByEntityId({ entityId }, { filter: { entityType: { eq: entityType } }, nextToken });
+    if (page.errors?.length) {
+      const denied = page.errors.find(isAuthorizationError);
+      throw Object.assign(new Error((denied ?? page.errors[0]).message), denied ? { name: 'Unauthorized' } : {});
+    }
+    return page;
+  }), [entityId, entityType], { initialData: [] as CrmDocument[], errorMessage: 'Could not load documents.', clearDataOnError: isAuthorizationError, live: { intervalMs: 15_000 } });
+  const docs = documents.data;
+  const docsSynced = documents.loaded && (!documents.error || docs.length > 0);
+  const loadError = documents.error || documents.refreshError || '';
+  const reloadDocuments = useRef(documents.refetch);
+  reloadDocuments.current = documents.refetch;
   useEffect(() => {
-    let active = true, generation = 0;
-    setDocs([]);
-    setDocsSynced(false);
-    setLoadError("");
-    const refresh = async () => {
-      const request = ++generation;
-      try {
-        const items = await listAllPages(async nextToken => {
-          const page = await client.models.Document.listDocumentByEntityId({ entityId }, { filter: { entityType: { eq: entityType } }, nextToken });
-          if (page.errors?.length) {
-            const denied = page.errors.find(isAuthorizationError);
-            throw Object.assign(new Error((denied ?? page.errors[0]).message), denied ? { name: 'Unauthorized' } : {});
-          }
-          return page;
-        });
-        if (active && request === generation) {
-          setDocs(items); setDocsSynced(true); setLoadError("");
-          setPreviewDoc(current => current && items.some(item => item.id === current.id) ? current : null);
-        }
-      } catch (err) {
-        if (active && request === generation) {
-          if (isAuthorizationError(err)) { setDocs([]); setDocsSynced(false); setPreviewDoc(null); }
-          setLoadError(friendlyError(err, "Could not load documents."));
-        }
-      }
-    };
-    reloadDocuments.current = refresh;
-    void refresh();
-    const timer = window.setInterval(() => { if (document.visibilityState === "visible") void refresh(); }, 15_000);
-    const focused = () => { void refresh(); };
-    window.addEventListener("focus", focused);
-    return () => { active = false; window.clearInterval(timer); window.removeEventListener("focus", focused); };
-  }, [entityId, entityType]);
+    setPreviewDoc(current => current && docs.some(item => item.id === current.id) ? current : null);
+  }, [docs]);
 
   async function handleUpload(files: File[] | null) {
     if (!files?.length || uploadLock.current) return;
@@ -199,38 +179,18 @@ function DocumentsPanelContent({
     setUploading(true);
     setError("");
     for (const file of files) {
-      let docId: string | null = null;
       try {
-        const { data: doc, errors } = await client.models.Document.create({
+        await uploadDocument({
           entityType,
           entityId,
           sourceCommunicationId,
           category,
-          name: file.name,
-          s3Key: "pending",
-          contentType: file.type,
-          sizeBytes: file.size,
-          ocrStatus: "PENDING",
+          file,
           // Uploads land where the viewer is looking: the selected policy
           // or quote, or unlinked when viewing everything.
           ...(view ? linkFields(view) : {}),
         });
-        if (errors?.length || !doc) throw new Error(errors?.[0]?.message);
-        docId = doc.id;
-
-        const path = `documents/${entityType}/${entityId}/${doc.id}/${file.name}`;
-        const linked = await client.models.Document.update({ id: doc.id, s3Key: path });
-        if (linked.errors?.length) throw new Error(linked.errors[0].message);
-        await uploadData({
-          path,
-          data: file,
-          options: { contentType: file.type || undefined },
-        }).result;
       } catch (err) {
-        // Don't leave a ghost record behind for a file that never landed.
-        if (docId) {
-          await client.models.Document.delete({ id: docId }).catch(() => {});
-        }
         setError(
           `"${file.name}" failed to upload — ${friendlyError(err, "unknown error")}`
         );
@@ -280,7 +240,7 @@ function DocumentsPanelContent({
           id: doc.id,
           name,
         });
-        if (errors?.length) throw new Error(errors[0].message);
+        assertGraphqlErrors({ errors: errors });
         setRenameId(null);
         await reloadDocuments.current();
       },
@@ -299,7 +259,7 @@ function DocumentsPanelContent({
         }
         // Amplify reports write errors in the response instead of throwing.
         const { errors } = await client.models.Document.delete({ id: doc.id });
-        if (errors?.length) throw new Error(errors[0].message);
+        assertGraphqlErrors({ errors: errors });
         await reloadDocuments.current();
       },
       {
@@ -319,7 +279,7 @@ function DocumentsPanelContent({
           id: doc.id,
           ...linkFields(key),
         });
-        if (errors?.length) throw new Error(errors[0].message);
+        assertGraphqlErrors({ errors: errors });
         await reloadDocuments.current();
       },
       {
@@ -405,19 +365,19 @@ function DocumentsPanelContent({
             {/* One control, two jobs on purpose: it filters the table AND
                 targets uploads — "you are looking at this policy's
                 documents; files you attach here belong to it". */}
-            <select id={`${controlId}-link`} disabled={uploading || linkTargets.loading || !!linkTargets.error} value={view} onChange={(e) => setView(e.target.value)}>
+            <Select id={`${controlId}-link`} disabled={uploading || linkTargets.loading || !!linkTargets.error} value={view} onChange={(e) => setView(e.target.value)}>
               <option value="">Everything</option>
               {linkOptions.map((o) => (
                 <option key={o.key} value={o.key}>
                   {o.label}
                 </option>
               ))}
-            </select>
+            </Select>
           </div>
         )}
         <div className="field">
           <label htmlFor={`${controlId}-category`}>{linkAccountId ? "Upload category" : "Category"}</label>
-          <select
+          <Select
             id={`${controlId}-category`}
             value={category}
             disabled={uploading}
@@ -428,11 +388,11 @@ function DocumentsPanelContent({
                 {c.label}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
         <div className="field documents-upload">
           {!linkAccountId && <label>Attach files (PDF/images are OCR'd automatically)</label>}
-          <FileButton
+          <FileButton variant="primary"
             label={linkAccountId ? "Upload files" : "Choose files…"}
             multiple
             busy={uploading}
@@ -441,7 +401,7 @@ function DocumentsPanelContent({
         </div>
       </div>
       {linkAccountId && view && <p className="documents-filter-note">Showing files for {linkLabel(view)}. New uploads will be linked here.</p>}
-      {linkAccountId && linkTargets.error && <p role="alert" className="error-text">Could not load policy and quote links. {linkTargets.error} <button className="secondary" disabled={linkTargets.loading} onClick={() => void linkTargets.refetch()}>Retry links</button></p>}
+      {linkAccountId && linkTargets.error && <p role="alert" className="error-text">Could not load policy and quote links. {linkTargets.error} <Button variant="secondary"  disabled={linkTargets.loading} onClick={() => void linkTargets.refetch()}>Retry links</Button></p>}
       <div className="documents-feedback">
         {error && <p role="alert" className="error-text">{error}</p>}
         {/* Renames and deletes are per-row with no per-row place to report;
@@ -449,7 +409,7 @@ function DocumentsPanelContent({
         <SaveStatus {...rowStatus.status} />
       </div>
 
-      {loadError && <div role="alert" className="documents-state documents-state--error"><p>{loadError}</p><button className="secondary" onClick={() => void reloadDocuments.current()}>Retry</button></div>}
+      {loadError && <div role="alert" className="documents-state documents-state--error"><p>{loadError}</p><Button variant="secondary"  onClick={() => void reloadDocuments.current()}>Retry</Button></div>}
       {!docsSynced ? (!loadError &&
         <p className="documents-state" role="status">Loading…</p>
       ) : visible.length === 0 ? (
@@ -460,7 +420,7 @@ function DocumentsPanelContent({
         </p>
       ) : (
         <div className="table-wrap documents-table-wrap">
-          <table className="documents-table" aria-label="Documents">
+          <Table className="documents-table" aria-label="Documents">
             <thead>
               <tr>
                 <SortTh label="Name" colKey="name" sortKey={sortKey} dir={dir} onToggle={toggle} />
@@ -489,7 +449,7 @@ function DocumentsPanelContent({
                     <td className="document-name">
                       {renaming ? (
                         <div className="field">
-                          <input
+                          <Input
                             aria-label="Document name"
                             autoFocus
                             value={renameValue}
@@ -507,7 +467,7 @@ function DocumentsPanelContent({
                     </td>
                     <td>
                       <span className="badge gray">
-                        {CATEGORIES.find((c) => c.value === d.category)?.label ?? "—"}
+                        {d.category === "BROKER_FEE_DISCLOSURE" ? "Signed broker fee disclosure" : CATEGORIES.find((c) => c.value === d.category)?.label ?? "—"}
                       </span>
                     </td>
                     {linkAccountId && (
@@ -516,7 +476,7 @@ function DocumentsPanelContent({
                             policy rows: linking existing paper is the whole
                             point — a scan often arrives before the policy
                             it belongs to exists. */}
-                        <select
+                        {(d.quoteIds?.length || d.policyIds?.length) ? <div className="small">{[...(d.policyIds ?? []).filter(Boolean).map(id => linkLabel(`policy:${id}`)), ...(d.quoteIds ?? []).filter(Boolean).map(id => linkLabel(`quote:${id}`))].join(" · ")}</div> : <Select
                           aria-label={`Link ${d.name}`}
                           value={linkKeyOf(d)}
                           disabled={rowStatus.busy || linkTargets.loading || !!linkTargets.error}
@@ -532,7 +492,7 @@ function DocumentsPanelContent({
                             !linkOptions.some((o) => o.key === linkKeyOf(d)) && (
                               <option value={linkKeyOf(d)}>(deleted record)</option>
                             )}
-                        </select>
+                        </Select>}
                       </td>
                     )}
                     <td>
@@ -552,53 +512,54 @@ function DocumentsPanelContent({
                           click that discards the edit without saying so. */}
                       {renaming ? (
                         <>
-                          <button
-                            className="secondary"
+                          <Button variant="secondary"
+
                             disabled={rowStatus.busy}
                             onClick={() => void saveRename(d)}
                           >
                             Save name
-                          </button>
-                          <button
-                            className="link"
+                          </Button>
+                          <Button variant="link"
+
                             disabled={rowStatus.busy}
                             onClick={() => setRenameId(null)}
                           >
                             Cancel
-                          </button>
+                          </Button>
                         </>
                       ) : (
                         <>
                           {d.s3Key !== "pending" && canPreview(d.name) && (
-                            <button
-                              className="link"
+                            <Button variant="link"
+
                               onClick={() => setPreviewDoc(d)}
                             >
                               Preview
-                            </button>
+                            </Button>
                           )}
-                          <button className="link" onClick={() => download(d)}>
+                          <Button variant="link"  onClick={() => download(d)}>
                             Download
-                          </button>
-                          <button
-                            className="link"
-                            disabled={rowStatus.busy}
+                          </Button>
+                          {entityType === "ACCOUNT" && d.s3Key !== "pending" && isBusinessDeliveryFile(d) && <BusinessDraftButton accountId={entityId} kind="DOCUMENT" recordId={d.id} label="Prepare email in Front" disabled={rowStatus.busy || uploading} />}
+                          <Button variant="link"
+
+                            disabled={rowStatus.busy || d.category === "BROKER_FEE_DISCLOSURE"}
                             onClick={() => startRename(d)}
                           >
                             Rename
-                          </button>
+                          </Button>
                           {d.ocrStatus === "COMPLETE" && d.ocrText && (
-                            <button
-                              className="link"
+                            <Button variant="link"
+
                               onClick={() =>
                                 setOpenDocId(openDocId === d.id ? null : d.id)
                               }
                             >
                               {openDocId === d.id ? "Hide text" : "View text"}
-                            </button>
+                            </Button>
                           )}
                           <ConfirmButton
-                            disabled={rowStatus.busy}
+                            disabled={rowStatus.busy || d.category === "BROKER_FEE_DISCLOSURE"}
                             confirmLabel="Confirm delete"
                             cancelLabel="Keep"
                             onConfirm={() => deleteDoc(d)}
@@ -611,7 +572,7 @@ function DocumentsPanelContent({
                 );
               })}
             </tbody>
-          </table>
+          </Table>
         </div>
       )}
 
@@ -628,7 +589,7 @@ function DocumentsPanelContent({
           <h3>Extracted text — {openDoc.name}</h3>
           <div className="ocr-search field">
             <div className="ocr-find">
-              <input
+              <Input
                 aria-label="Find in extracted text"
                 placeholder="Find in text…"
                 value={ocrSearch}
@@ -645,22 +606,22 @@ function DocumentsPanelContent({
                   <span className="ocr-count">
                     {matchCount === 0 ? "0 results" : `${(matchIdx % matchCount + matchCount) % matchCount + 1} of ${matchCount}`}
                   </span>
-                  <button
-                    className="secondary"
+                  <Button variant="secondary"
+
                     title="Previous match (Shift+Enter)"
                     disabled={matchCount === 0}
                     onClick={() => stepMatch(-1)}
                   >
                     ▲
-                  </button>
-                  <button
-                    className="secondary"
+                  </Button>
+                  <Button variant="secondary"
+
                     title="Next match (Enter)"
                     disabled={matchCount === 0}
                     onClick={() => stepMatch(1)}
                   >
                     ▼
-                  </button>
+                  </Button>
                 </>
               )}
             </div>
@@ -675,7 +636,7 @@ function DocumentsPanelContent({
               </h3>
               {openTables.map((table, ti) => (
                 <div className="table-wrap ocr-table" key={ti}>
-                  <table>
+                  <Table>
                     <tbody>
                       {table.map((row, ri) => (
                         <tr key={ri}>
@@ -685,7 +646,7 @@ function DocumentsPanelContent({
                         </tr>
                       ))}
                     </tbody>
-                  </table>
+                  </Table>
                 </div>
               ))}
             </>

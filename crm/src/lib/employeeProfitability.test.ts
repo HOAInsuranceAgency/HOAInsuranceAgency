@@ -17,6 +17,15 @@ const base: EmployeeProfitabilityInput = {
 };
 
 describe('employee profitability calculation', () => {
+  it('applies the same estimated producer share to fee revenue, retaining cancelled fees less actual refunds', () => {
+    const result = calculateEmployeeProfitability({ ...base, policies: [
+      { ...base.policies[0], brokerFee: 500 },
+      { ...base.policies[0], id: 'cancelled-fee', status: 'CANCELLED', brokerFee: 200, brokerFeeRefunded: 50 },
+    ] });
+    expect(result.rows[0]).toMatchObject({ grossCommissionCents: 100000, brokerFeeCents: 70000,
+      brokerFeeRefundedCents: 5000, totalAgencyRevenueCents: 165000, producerShareCents: 41250, netRevenueCents: 123750,
+      policyCount: 1, feePolicyCount: 2 });
+  });
   it('compares retained agency commission with salary, never gross premium', () => {
     const result = calculateEmployeeProfitability(base);
     expect(result.rows[0]).toMatchObject({ grossCommissionCents: 100_000, producerShareCents: 25_000,
@@ -34,7 +43,7 @@ describe('employee profitability calculation', () => {
     ] });
     expect(result.rows[0]).toMatchObject({ grossCommissionCents: 200_000, policyCount: 2 });
     expect(result.cancelledPolicyCount).toBe(1);
-    expect(result.warnings.join(' ')).toContain('cancellation adjustments');
+    expect(result.warnings.join(' ')).toContain('earned broker fees');
   });
 
   it('uses current assignments and retains historical owners outside the current roster', () => {

@@ -1,0 +1,78 @@
+HOA transactional mail: SES operations and recovery
+
+Destination and active transport
+--------------------------------
+AWS account 917680434255, us-east-1, CRM Amplify app d1nuh9rw1hcuxo.
+SES is the only active transactional transport. Main uses configuration set
+hoa-transactional-main; staging uses hoa-transactional-staging. The verified
+identity is protectmyhoa.com. Main senders are noreply@protectmyhoa.com and
+insurance@protectmyhoa.com. Staging uses noreply@protectmyhoa.com or
+jake+testing@protectmyhoa.com and is permanently restricted to jake@getgim.com
+by both runtime validation and IAM. Never remove that staging boundary.
+
+Each environment has a private SNS-bound feedback Lambda and a retained,
+encrypted failure queue. There is no public email-feedback URL, external
+provider API key, or automatic provider fallback. Feedback records independent
+receipt facts and suppressions; it never sends or replays mail.
+
+The independent hoa-transactional-mail stack retains the shared DynamoDB ledger
+HOA-TransactionalMail and versioned private bucket
+hoa-transactional-mail-917680434255-us-east-1. Do not replace or delete these.
+Old Resend operations, receipts, counters, suppressions and payloads remain
+historical evidence. Retiring credentials does not authorize replaying them.
+The shared template no longer declares Resend credentials. Existing secrets
+are retained when detached from CloudFormation, then separately scheduled for
+deletion after both backends and provider credentials have been retired.
+
+Deployment and safeguards
+-------------------------
+Main is the production source branch with automatic builds. The retained
+codex-hoa-staging-migration branch uses the existing staging backend namespace;
+its frontend-only build specification must not be mistaken for a backend
+release. A reviewed mail-only backend update must explicitly target that same
+namespace and preserve its existing resources and stream UUIDs. Do not promote
+the unrelated normal staging branch or create a replacement backend.
+
+Keep HOA_TRANSACTIONAL_MAIL_PROVIDER=ses, the exact SES identity/configuration
+bindings, transactional mail release and existing worker controls. Preview=true
+cannot send. Main application limits remain 1,000 recipient slots/day and
+30,000/calendar month; staging has separate 100/day and 3,000/month counters.
+UTC boundaries apply. Main counter keys are unchanged; staging uses its own
+namespace. CC/BCC slots count; login reserves five daily and fifty monthly
+slots. AWS limits and recipient suppressions still apply.
+
+Verification and monitoring
+---------------------------
+mailVerification has no URL, schedule or API route and normally has reserved
+concurrency zero. A deliberate, reviewed fixture check requires an unexpired
+canonical UTC HOA_SES_VERIFICATION_EXPIRES_AT window of at most one hour and a
+temporary concurrency allowance. The complete fixture is fixed to the owner,
+contains synthetic labeled text/HTML plus PDF/XLSX, and never creates business
+records. Use a unique reviewed runId; repeating it reuses the same operation.
+Close the window and restore concurrency zero immediately after verification.
+Verify a real administrator login separately; a login-request UI message alone
+does not prove delivery. Never print tokens, links or mail payloads in logs.
+
+Inspect DeliveryNeedsReview, feedback processing/notification failures and the
+private feedback queue. Preserve failure events for investigation. Keep the
+confirmed operational-alert route. No automatic recovery worker is scheduled.
+
+Mail-only recovery
+------------------
+ACCEPTED means provider acceptance; independent delivery/bounce timestamps show
+later outcomes. ACCEPTED historical Resend rows remain accepted and must never
+be replayed through SES. UNKNOWN/SENDING are held for explicit reconciliation,
+not retried after a timeout or provider switch. No suppression clears itself.
+
+For an existing RESERVED/DEFERRED operation, first verify its original provider,
+recipients, payload hash, retry deadline and business relevance. Recovery is
+normally disabled. The IAM-only mailRecovery requires explicit enablement,
+active release/workers and the exact operation key/hash. It loads the original
+private envelope and rechecks quota/suppression. A historical provider mismatch
+stays held; it is not converted to a new SES operation. Login/invitation,
+ACCEPTED, UNKNOWN/SENDING, wrong-environment and changed-payload operations are
+not recoverable through this route. Never replay a Stripe/payment/business
+webhook merely to resend email.
+
+Rollback after new destination writes requires a destination freeze and a
+reviewed reverse reconciliation. Do not point DNS to stale source data.

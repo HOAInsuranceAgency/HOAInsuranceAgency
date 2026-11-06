@@ -1,3 +1,7 @@
+import { useLiveMembership } from "./lib/useLiveMembership";
+import { LiveUpdatesProvider } from "./lib/LiveUpdatesProvider";
+import { Button } from "./components/ui/Button";
+import { Select } from "./components/ui/Select";
 import Relationships from "./pages/Relationships";
 import RelationshipDetail from "./pages/RelationshipDetail";
 import FrontSidebar from "./pages/FrontSidebar";
@@ -5,7 +9,8 @@ import { useEffect, useRef, useState } from "react";
 import { Navigate, NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { Authenticator, useAuthenticator } from "@aws-amplify/ui-react";
 import type { AuthUser } from "aws-amplify/auth";
-import { client, listAllPages, type UserProfile } from "./lib/client";
+import { client, type UserProfile } from "./lib/client";
+import { listAllPages } from "../../shared/pagination";
 import { useAsyncResource } from "./lib/useAsyncResource";
 import { loadProducerLicenses, type SavedProducerLicense } from "./lib/producerOnboarding";
 import CopyValue from "./components/CopyValue";
@@ -42,6 +47,8 @@ import SearchResults from "./pages/SearchResults";
 import UniversalSearch from "./components/UniversalSearch";
 import QuotesList from "./pages/QuotesList";
 import PoliciesList from "./pages/PoliciesList";
+import { useEditProtection } from "./lib/editProtection";
+import { clearNewLeadDrafts, clearOtherUsersLeadDrafts, LeadDraftScope } from "./lib/newLeadDraft";
 
 export default function App() {
   return (
@@ -52,9 +59,8 @@ export default function App() {
 }
 
 /**
- * Magic-link only — no password UI. Authenticator.Provider supplies the
- * auth context headlessly; a successful confirmSignIn in MagicLinkSignIn
- * flips authStatus via the Amplify Hub.
+ * Passwordless email links and Google. Authenticator.Provider supplies the
+ * auth context headlessly and restores the session after the OAuth callback.
  */
 function AuthGate() {
   const { authStatus, user, signOut } = useAuthenticator((ctx) => [
@@ -86,13 +92,25 @@ function AuthGate() {
 
 function ProfileGate({ user, signOut }: { user: AuthUser; signOut: () => void }) {
   const navigate = useNavigate();
+  const { requestLeave, cancelPending } = useEditProtection();
+  useEffect(() => { clearOtherUsersLeadDrafts(user.userId); }, [user.userId]);
   const roleSessionVersion = useRef(0);
+  const sessionMounted = useRef(true);
+  const guardedSignOut = () => {
+    const version = roleSessionVersion.current;
+    requestLeave(() => {
+      if (!sessionMounted.current || version !== roleSessionVersion.current) return;
+      clearNewLeadDrafts(); signOut();
+    });
+  };
   // Profile and Cognito groups resolve behind ONE loading gate: settling
   // admin status after first paint would flash the admin-only controls
   // into (or out of) a page that's already on screen. That is why this is a
   // single hook over a tuple rather than one hook per read.
-  const { data, loading, error, refetch, setData } = useAsyncResource(
+  const { data, loading, error, refetch, setData, invalidate } = useAsyncResource(
     async () => {
+      // A queued action belongs to the membership snapshot that requested it.
+      cancelPending();
       const version = ++roleSessionVersion.current;
       clearActiveRole();
       const [rows, gs] = await Promise.all([
@@ -125,23 +143,39 @@ function ProfileGate({ user, signOut }: { user: AuthUser; signOut: () => void })
     }
   );
   const { profile, groups, activeRole, producerLicenses } = data;
+  const latestMembership = useRef(data);
+  latestMembership.current = data;
+  useLiveMembership({ enabled: !loading && !!profile && !error, groups,
+    onChanged: () => { void refetch(); },
+    onDenied: failure => { ++roleSessionVersion.current; cancelPending(); clearActiveRole(); invalidate(failure); },
+  });
   useEffect(() => {
+    sessionMounted.current = true;
     const refreshRoles = () => { void refetch(); };
     window.addEventListener("team-roles-changed", refreshRoles);
     return () => {
+      sessionMounted.current = false;
       roleSessionVersion.current++;
+      cancelPending();
       window.removeEventListener("team-roles-changed", refreshRoles);
       clearActiveRole();
     };
-  }, [refetch]);
+  }, [refetch, cancelPending]);
 
   function switchRole(role: Role) {
     if (!groups.includes(role) || role === activeRole) return;
-    setActiveRole(user.userId, role, groups);
-    setData(current => ({ ...current, activeRole: role }));
-    // A record or settings page from the previous view may be inaccessible.
-    // Remounting the shell also discards its old results and subscriptions.
-    navigate(role === "ADMIN" || role === "OWNER" ? "/" : "/leads", { replace: true });
+    const version = roleSessionVersion.current;
+    requestLeave(() => {
+      if (!sessionMounted.current || version !== roleSessionVersion.current) return;
+      const current = latestMembership.current;
+      if (!current.groups.includes(role) || role === current.activeRole) return;
+      clearNewLeadDrafts(user.userId);
+      setActiveRole(user.userId, role, current.groups);
+      setData(current => ({ ...current, activeRole: role }));
+      // A record or settings page from the previous view may be inaccessible.
+      // Remounting the shell also discards its old results and subscriptions.
+      navigate(role === "ADMIN" || role === "OWNER" ? "/" : "/leads", { replace: true });
+    });
   }
 
   // This read used to have no catch at all: a failed profile/groups fetch
@@ -158,12 +192,12 @@ function ProfileGate({ user, signOut }: { user: AuthUser; signOut: () => void })
             usually clears it.
           </p>
           <div className="form-actions" style={{ justifyContent: "center" }}>
-            <button className="primary" onClick={() => void refetch()}>
+            <Button variant="primary"  onClick={() => void refetch()}>
               Try again
-            </button>
-            <button className="secondary" onClick={signOut}>
+            </Button>
+            <Button variant="secondary"  onClick={guardedSignOut}>
               Sign out
-            </button>
+            </Button>
           </div>
         </div>
       </div>
@@ -190,7 +224,11 @@ function ProfileGate({ user, signOut }: { user: AuthUser; signOut: () => void })
   return (
     <OwnerContext.Provider value={activeRole === "OWNER" && groups.includes("OWNER")}>
       <AdminContext.Provider value={(activeRole === "OWNER" || activeRole === "ADMIN") && groups.includes(activeRole)}>
-        <Shell key={activeRole} profile={profile} signOut={signOut} activeRole={activeRole} roles={rolesFromGroups(groups)} onRoleChange={switchRole} />
+        <LeadDraftScope key={`${user.userId}:${activeRole}`} userId={user.userId} role={activeRole}>
+          <LiveUpdatesProvider userId={user.userId} role={activeRole}>
+          <Shell key={activeRole} profile={profile} signOut={guardedSignOut} activeRole={activeRole} roles={rolesFromGroups(groups)} onRoleChange={switchRole} />
+          </LiveUpdatesProvider>
+        </LeadDraftScope>
       </AdminContext.Provider>
     </OwnerContext.Provider>
   );
@@ -203,7 +241,7 @@ function NotFound() {
       <h2>Page not found</h2>
       <p className="muted small">That page doesn't exist (or moved).</p>
       <NavLink to={isAdmin ? "/" : "/leads"}>
-        <button className="primary">Back to {isAdmin ? "dashboard" : "leads"}</button>
+        <Button variant="primary" >Back to {isAdmin ? "dashboard" : "leads"}</Button>
       </NavLink>
     </div>
   );
@@ -342,9 +380,9 @@ function AgencyIdentifiers() {
 
   return (
     <div className="user-npns">
-      {ids.agencyNpn && <CopyValue label="Agency NPN" value={ids.agencyNpn} />}
-      {ids.drlpNpn && <CopyValue label="DRLP NPN" value={ids.drlpNpn} />}
-      {ids.agencyEin && <CopyValue label="Agency EIN" value={ids.agencyEin} />}
+      {ids.agencyNpn && <CopyValue inverse label="Agency NPN" value={ids.agencyNpn} />}
+      {ids.drlpNpn && <CopyValue inverse label="DRLP NPN" value={ids.drlpNpn} />}
+      {ids.agencyEin && <CopyValue inverse label="Agency EIN" value={ids.agencyEin} />}
     </div>
   );
 }
@@ -385,14 +423,14 @@ function Shell({ profile, signOut, activeRole, roles, onRoleChange }: {
           <NavLink to={homePath} className="brand" onClick={() => setMenuOpen(false)}>
             <img src="/logo.png" alt="HOA Insurance Agency" />
           </NavLink>
-          <button
+          <Button variant="inverse" iconOnly
             className="hamburger"
             aria-label={menuOpen ? "Close menu" : "Open menu"}
             aria-expanded={menuOpen}
             onClick={() => setMenuOpen(!menuOpen)}
           >
             {menuOpen ? <IconClose /> : <IconMenu />}
-          </button>
+          </Button>
         </div>
         <nav onClick={() => setMenuOpen(false)}>
           {navItems.map((item) => (
@@ -410,12 +448,12 @@ function Shell({ profile, signOut, activeRole, roles, onRoleChange }: {
           </div>
           {roles.length > 1 ? (
             <div className="role-switcher">
-              <select id="active-role" aria-label="Active role" value={activeRole} onChange={event => onRoleChange(event.target.value as Role)}>
+              <Select id="active-role" aria-label="Active role" value={activeRole} onChange={event => onRoleChange(event.target.value as Role)}>
                 {roles.map(role => <option key={role} value={role}>{role}</option>)}
-              </select>
+              </Select>
             </div>
           ) : <div className="muted small">{activeRole}</div>}
-          <button onClick={signOut}>Sign out</button>
+          <Button variant="inverse" controlSize="compact" onClick={signOut}>Sign out</Button>
         </div>
       </aside>
       <main className="main">
@@ -430,10 +468,10 @@ function Shell({ profile, signOut, activeRole, roles, onRoleChange }: {
             <Route path="/owner" element={isOwner ? <OwnerProfitability /> : <Navigate to={homePath} replace />} />
             <Route path="/relationships" element={<Relationships />} />
             <Route path="/relationships/:id" element={<RelationshipDetail />} />
-            <Route path="/leads" element={<AccountsList stage="LEAD" />} />
+            <Route path="/leads" element={<AccountsList stage="LEAD" viewScope={`${profile.userId}:${activeRole}`} />} />
             <Route path="/leads/new" element={<NewLead />} />
             <Route path="/lead-work" element={<Navigate to="/leads" replace />} />
-            <Route path="/clients" element={<AccountsList stage="CLIENT" />} />
+            <Route path="/clients" element={<AccountsList stage="CLIENT" viewScope={`${profile.userId}:${activeRole}`} />} />
             <Route path="/accounts/:id" element={<AccountDetail profile={profile} />} />
             <Route path="/carriers" element={<Carriers />} />
             <Route path="/carriers/:id" element={<CarrierDetail />} />

@@ -1,14 +1,17 @@
+import { carrierPath } from '../../../shared/crmRoutes';
+import { num } from "../lib/formCodec";
+import { assertGraphqlErrors } from '../lib/apiResponse';
+import { LiveStatus } from "../components/LiveStatus";
+import { Button } from "../components/ui/Button";
+import { Input } from "../components/ui/Input";
+import { Select } from "../components/ui/Select";
+import { Table } from "../components/ui/Table";
+import { SegmentedControl } from "../components/ui/SegmentedControl";
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import {
-  client,
-  assertNoErrors,
-  fmtMoney,
-  listAllPages,
-  US_STATES,
-  type AppetiteGuide,
-  type Carrier,
-} from "../lib/client";
+import { client, assertNoErrors, fmtMoney, type AppetiteGuide, type Carrier } from "../lib/client";
+import { US_STATES } from "../../../shared/usStates";
+import { listAllPages } from "../../../shared/pagination";
 import { Badge, flagBadge, CARRIER_APPOINTMENT_BADGE } from "../lib/badges";
 import {
   MARKET_TYPE_LABELS,
@@ -16,7 +19,7 @@ import {
   PAPER_TYPE_LABELS,
   PAPER_TYPE_OPTIONS,
   type PaperType,
-} from "../lib/enums";
+} from "../../../shared/enums";
 import {
   guideFits,
   LOSS_LOOKBACK_YEARS,
@@ -44,7 +47,7 @@ export default function Carriers() {
   // Persistent: a successful create navigates away, so what this is really
   // for is the failure that used to be swallowed entirely.
   const saveStatus = useSaveStatus();
-  const { form, setF } = useFormState(
+  const { form, setF, markSaved, reset } = useFormState(
     { name: "", appointed: true },
     { onEdit: saveStatus.markDirty }
   );
@@ -57,7 +60,7 @@ export default function Carriers() {
       return page;
     }),
     [],
-    { initialData: [] as Carrier[], errorMessage: "Failed to load carriers" }
+    { initialData: [] as Carrier[], errorMessage: "Failed to load carriers" , live: true }
   );
   const carriers = carrierRes.data;
 
@@ -71,14 +74,14 @@ export default function Carriers() {
       return page;
     }),
     [],
-    { initialData: [] as AppetiteGuide[], errorMessage: "Failed to load appetite guides" }
+    { initialData: [] as AppetiteGuide[], errorMessage: "Failed to load appetite guides" , live: true }
   );
   const guides = guideRes.data;
 
   // Keep the finder mounted after its first successful read so refreshes and
   // retries retain risk answers. Cached data must not produce a fresh verdict.
   const appetiteAvailable = carrierRes.loaded && guideRes.loaded
-    && !carrierRes.loading && !guideRes.loading && !carrierRes.error && !guideRes.error;
+    && !carrierRes.loading && !guideRes.loading && !carrierRes.error && !guideRes.error && !carrierRes.refreshError && !guideRes.refreshError;
   useEffect(() => {
     if (appetiteAvailable) setFinderReady(true);
   }, [appetiteAvailable]);
@@ -92,7 +95,7 @@ export default function Carriers() {
   );
   const appointedCount = carriers.filter((carrier) => carrier.appointed).length;
   const filtersActive = Boolean(query || statusFilter !== "all" || coverageState || marketType);
-  const guidesAvailable = guideRes.loaded && !guideRes.loading && !guideRes.error;
+  const guidesAvailable = guideRes.loaded && !guideRes.loading && !guideRes.error && !guideRes.refreshError;
 
   function clearFilters() {
     setSearch("");
@@ -115,6 +118,7 @@ export default function Carriers() {
   );
 
   async function create() {
+    const submitted = form;
     if (creating.current || !form.name.trim()) return;
     creating.current = true;
     try {
@@ -124,8 +128,10 @@ export default function Carriers() {
             name: form.name.trim(),
             appointed: form.appointed,
           });
-          if (errors?.length || !data) throw new Error(errors?.[0]?.message);
-          navigate(`/carriers/${data.id}`);
+          assertGraphqlErrors({ errors });
+          if (!data) throw new Error(errors?.[0]?.message);
+          markSaved(submitted);
+          navigate(carrierPath(data.id));
         },
         { errorMessage: "Couldn't create that carrier." }
       );
@@ -136,19 +142,17 @@ export default function Carriers() {
 
   return (
     <div className="carriers-page">
+      <LiveStatus resource={carrierRes} />
       <header className="carriers-header">
         <div>
           <h1>Carriers</h1>
           <p className="sub">Manage your markets and find the right fit for a risk.</p>
         </div>
         <div className="carriers-header-actions">
-          <button className="secondary" disabled={carrierRes.loading || guideRes.loading} onClick={() => {
-            void carrierRes.refetch();
-            void guideRes.refetch();
-          }}>Refresh</button>
-          <button className="primary" disabled={saveStatus.busy} onClick={() => setShowForm(!showForm)} aria-expanded={showForm} aria-controls="add-carrier-form">
+
+          <Button variant="primary"  disabled={saveStatus.busy} onClick={() => { if (showForm) reset({ name: "", appointed: true }); setShowForm(!showForm); }} aria-expanded={showForm} aria-controls="add-carrier-form">
             {showForm ? "Cancel" : "+ Add carrier"}
-          </button>
+          </Button>
         </div>
       </header>
 
@@ -158,26 +162,26 @@ export default function Carriers() {
           <fieldset disabled={saveStatus.busy} className="carrier-create-fields">
             <div className="field">
               <label htmlFor="new-carrier-name">Carrier name *</label>
-              <input id="new-carrier-name" required autoFocus value={form.name} onChange={(e) => setF("name", e.target.value)} />
+              <Input id="new-carrier-name" required autoFocus value={form.name} onChange={(e) => setF("name", e.target.value)} />
             </div>
             <div className="field">
               <label htmlFor="new-carrier-status">Status</label>
-              <select
+              <Select
                 id="new-carrier-status"
                 value={form.appointed ? "1" : "0"}
                 onChange={(e) => setF("appointed", e.target.value === "1")}
               >
                 <option value="1">Appointed</option>
                 <option value="0">Prospective</option>
-              </select>
+              </Select>
             </div>
-            <button
+            <Button variant="primary"
               type="submit"
-              className="primary"
+
               disabled={saveStatus.busy || !form.name.trim()}
             >
               {saveStatus.busy ? "Creating…" : "Create carrier"}
-            </button>
+            </Button>
           </fieldset>
           <div className="carrier-save-status">
             <SaveStatus {...saveStatus.status} />
@@ -189,7 +193,7 @@ export default function Carriers() {
       {finderReady && (
         <AppetiteFinder carriers={carriers} guides={guides} available={appetiteAvailable} />
       )}
-      {guideRes.error && <p className="error-text" role="alert">{guideRes.error} <button className="secondary" disabled={guideRes.loading} onClick={() => void guideRes.refetch()}>Retry appetite guides</button></p>}
+      {(guideRes.error || guideRes.refreshError) && <p className="error-text" role="alert">{guideRes.error || guideRes.refreshError} <Button variant="secondary"  disabled={guideRes.loading} onClick={() => void guideRes.refetch()}>Retry appetite guides</Button></p>}
 
       <section className="card carrier-directory" aria-labelledby="carrier-directory-title">
         <div className="carrier-directory-head">
@@ -199,49 +203,47 @@ export default function Carriers() {
           </div>
           <div className="field carrier-search">
             <label htmlFor="carrier-search">Search carriers</label>
-            <input id="carrier-search" type="search" placeholder="Carrier or underwriter" value={search} onChange={(event) => setSearch(event.target.value)} />
+            <Input id="carrier-search" type="search" placeholder="Carrier or underwriter" value={search} onChange={(event) => setSearch(event.target.value)} />
           </div>
         </div>
         <div className="carrier-directory-filters">
-          <div className="carrier-status-filter" role="group" aria-label="Appointment status">
-            {[
-              ["all", `All (${carriers.length})`],
-              ["appointed", `Appointed (${appointedCount})`],
-              ["prospective", `Prospective (${carriers.length - appointedCount})`],
-            ].map(([value, label]) => <button key={value} aria-pressed={statusFilter === value} onClick={() => setStatusFilter(value)}>{label}</button>)}
-          </div>
+          <SegmentedControl label="Appointment status" value={statusFilter} onChange={setStatusFilter} items={[
+            { value: 'all', label: 'All', count: carriers.length, ariaLabel: `All (${carriers.length})` },
+            { value: 'appointed', label: 'Appointed', count: appointedCount, ariaLabel: `Appointed (${appointedCount})` },
+            { value: 'prospective', label: 'Prospective', count: carriers.length - appointedCount, ariaLabel: `Prospective (${carriers.length - appointedCount})` },
+          ]} />
           <div className="carrier-coverage-filters">
             <div className="field">
               <label htmlFor="carrier-coverage-state">Coverage state</label>
-              <select id="carrier-coverage-state" value={coverageState} onChange={(event) => setCoverageState(event.target.value)}>
+              <Select id="carrier-coverage-state" value={coverageState} onChange={(event) => setCoverageState(event.target.value)}>
                 <option value="">All states</option>
                 {US_STATES.map((state) => <option key={state}>{state}</option>)}
-              </select>
+              </Select>
             </div>
             <div className="field">
               <label htmlFor="carrier-market-type">Market type</label>
-              <select id="carrier-market-type" value={marketType} onChange={(event) => setMarketType(event.target.value)}>
+              <Select id="carrier-market-type" value={marketType} onChange={(event) => setMarketType(event.target.value)}>
                 <option value="">All markets</option>
                 {MARKET_TYPE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-              </select>
+              </Select>
             </div>
           </div>
         </div>
         {carrierRes.loaded && !carrierRes.error && <div className="carrier-result-count" aria-live="polite">
           <span>Showing {filtered.length} of {carriers.length} carriers{carrierRes.loading ? " · Refreshing…" : ""}</span>
-          {filtersActive && <button className="carrier-text-button" onClick={clearFilters}>Clear filters</button>}
+          {filtersActive && <Button variant="link" controlSize="compact" className="carrier-text-button" onClick={clearFilters}>Clear filters</Button>}
         </div>}
         {!carrierRes.loaded ? (
           <p className="muted small">Loading…</p>
         ) : carrierRes.error ? (
-          <p className="error-text" role="alert">{carrierRes.error} <button className="secondary" disabled={carrierRes.loading} onClick={() => void carrierRes.refetch()}>Retry carriers</button></p>
+          <p className="error-text" role="alert">{carrierRes.error || carrierRes.refreshError} <Button variant="secondary"  disabled={carrierRes.loading} onClick={() => void carrierRes.refetch()}>Retry carriers</Button></p>
         ) : carriers.length === 0 ? (
           <p className="muted small">No carriers yet.</p>
         ) : filtered.length === 0 ? (
           <div className="carrier-empty"><p>No carriers match these filters.</p></div>
         ) : (
           <div className="table-wrap">
-            <table className="carrier-table" aria-label="Carrier directory">
+            <Table className="carrier-table" aria-label="Carrier directory">
               <thead>
                 <tr>
                   <SortTh label="Carrier" colKey="name" sortKey={sortKey} dir={dir} onToggle={toggle} />
@@ -272,11 +274,11 @@ export default function Carriers() {
                       key={c.id}
                       className="clickable"
                       onClick={(event) => {
-                        if (!(event.target as HTMLElement).closest("a, button, details")) navigate(`/carriers/${c.id}`);
+                        if (!(event.target as HTMLElement).closest("a, button, details")) navigate(carrierPath(c.id));
                       }}
                     >
                       <td>
-                        <Link to={`/carriers/${c.id}`} className="carrier-name">{c.name}</Link>
+                        <Link to={carrierPath(c.id)} className="carrier-name">{c.name}</Link>
                       </td>
                       <td>
                         <Badge {...flagBadge(c.appointed, CARRIER_APPOINTMENT_BADGE)} />
@@ -301,7 +303,7 @@ export default function Carriers() {
                   );
                 })}
               </tbody>
-            </table>
+            </Table>
           </div>
         )}
       </section>
@@ -365,7 +367,6 @@ function AppetiteFinder({
     setLossIncurred("");
   }
 
-  const num = (v: string) => (v.trim() === "" ? null : Number(v));
   const risk: AppetiteRisk = {
     state: state || null,
     totalInsuredValue: num(tiv),
@@ -400,35 +401,35 @@ function AppetiteFinder({
       <div className="carrier-risk-primary">
         <div className="field">
           <label htmlFor="risk-state">State</label>
-          <select id="risk-state" value={state} onChange={(e) => setState(e.target.value)}>
+          <Select id="risk-state" value={state} onChange={(e) => setState(e.target.value)}>
             <option value="">Any</option>
             {US_STATES.map((s) => (
               <option key={s}>{s}</option>
             ))}
-          </select>
+          </Select>
         </div>
         <div className="field">
           <label htmlFor="risk-tiv">TIV ($)</label>
-          <input id="risk-tiv" type="number" min={0} placeholder="Any value" value={tiv} onChange={(e) => setTiv(e.target.value)} />
+          <Input id="risk-tiv" type="number" min={0} placeholder="Any value" value={tiv} onChange={(e) => setTiv(e.target.value)} />
         </div>
         <div className="field">
           <label htmlFor="risk-paper">Paper</label>
-          <select id="risk-paper" value={paperType} onChange={(e) => setPaperType(e.target.value)}>
+          <Select id="risk-paper" value={paperType} onChange={(e) => setPaperType(e.target.value)}>
             <option value="">Any</option>
             {PAPER_TYPE_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>
                 {o.label}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
         <div className="field">
           <label htmlFor="risk-coastal">Coastal?</label>
-          <select id="risk-coastal" value={coastal} onChange={(e) => setCoastal(e.target.value)}>
+          <Select id="risk-coastal" value={coastal} onChange={(e) => setCoastal(e.target.value)}>
             <option value="">Any</option>
             <option value="yes">Coastal</option>
             <option value="no">Not coastal</option>
-          </select>
+          </Select>
         </div>
       </div>
       <details className="carrier-risk-advanced">
@@ -436,11 +437,11 @@ function AppetiteFinder({
         <div className="carrier-risk-secondary">
         <div className="field">
           <label htmlFor="risk-year">Year built</label>
-          <input id="risk-year" type="number" value={year} onChange={(e) => setYear(e.target.value)} />
+          <Input id="risk-year" type="number" value={year} onChange={(e) => setYear(e.target.value)} />
         </div>
         <div className="field">
           <label htmlFor="risk-coast-distance">Miles to coast</label>
-          <input
+          <Input
             id="risk-coast-distance"
             type="number"
             min={0}
@@ -451,7 +452,7 @@ function AppetiteFinder({
         </div>
         <div className="field">
           <label htmlFor="risk-rental">Rented units (%)</label>
-          <input
+          <Input
             id="risk-rental"
             type="number"
             min={0}
@@ -462,7 +463,7 @@ function AppetiteFinder({
         </div>
         <div className="field">
           <label htmlFor="risk-losses">Losses (last {LOSS_LOOKBACK_YEARS} yrs)</label>
-          <input
+          <Input
             id="risk-losses"
             type="number"
             min={0}
@@ -472,7 +473,7 @@ function AppetiteFinder({
         </div>
         <div className="field">
           <label htmlFor="risk-incurred">Incurred, paid + reserved ($)</label>
-          <input
+          <Input
             id="risk-incurred"
             type="number"
             min={0}
@@ -484,7 +485,7 @@ function AppetiteFinder({
       </details>
       <div className="carrier-finder-help">
         <p className="muted small">{active ? "Matches use all entered details, including collapsed fields." : "Enter the risk details you know to see matching appetite guides."}</p>
-        {active && <button className="carrier-text-button" onClick={clearRisk}>Clear risk details</button>}
+        {active && <Button variant="link" controlSize="compact" className="carrier-text-button" onClick={clearRisk}>Clear risk details</Button>}
       </div>
       {!available && <p className="muted small" role="status">Appetite results are unavailable until carriers and guides finish loading successfully.</p>}
       {active && available && (
@@ -495,7 +496,7 @@ function AppetiteFinder({
             <>
             <p className="small carrier-match-count" aria-live="polite">{matches.length} appointed {matches.length === 1 ? "carrier matches" : "carriers match"} this risk</p>
             <div className="table-wrap">
-              <table aria-label="Appetite matches">
+              <Table aria-label="Appetite matches">
                 <thead>
                   <tr>
                     <th>Carrier</th>
@@ -513,7 +514,7 @@ function AppetiteFinder({
                     gs.map((g) => (
                       <tr key={g.id}>
                         <td>
-                          <Link to={`/carriers/${carrier.id}`} className="carrier-name">{carrier.name}</Link>
+                          <Link to={carrierPath(carrier.id)} className="carrier-name">{carrier.name}</Link>
                         </td>
                         <td className="small">
                           {carrier.marketType
@@ -544,7 +545,7 @@ function AppetiteFinder({
                     ))
                   )}
                 </tbody>
-              </table>
+              </Table>
             </div>
             </>
           )}

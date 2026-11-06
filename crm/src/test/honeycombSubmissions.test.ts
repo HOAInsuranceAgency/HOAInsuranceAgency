@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHmac } from "node:crypto";
 const h = vi.hoisted(() => ({ records: new Map<string, any>(), send: vi.fn() }));
 vi.mock("@aws-sdk/lib-dynamodb", async original => ({ ...await original<typeof import("@aws-sdk/lib-dynamodb")>(), DynamoDBDocumentClient: { from: () => ({ send: h.send }) } }));
-import { businessDate, partialInput, portalUrl, eligibleEstimate, submissionStatus, type SourceEstimate, type SubmissionRecord } from "../../amplify/functions/honeycomb/submission-contract";
+import { businessDate, partialInput, portalUrl, eligibleEstimate, submissionStatus, type SourceEstimate, type SubmissionRecord } from "../../../shared/honeycomb/submission";
 import { createPartial, partialResult, PARTIAL_PATH } from "../../amplify/functions/honeycomb/submission-client";
 import { handler, submissionKey } from "../../amplify/functions/honeycomb/submissions";
 import { processSubmission } from "../../amplify/functions/honeycomb/submission-worker";

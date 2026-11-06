@@ -1,4 +1,4 @@
-import { agencyDay } from "../../../../shared/leadActionGuidance";
+import { agencyDay } from "../../../../shared/agencyTime";
 import {
   emptyLeadSnooze,
   validateLeadSnooze,

@@ -1,7 +1,7 @@
-import { createRoot } from 'react-dom/client';
+import { mountPreview } from '../preview-support/mount';
 import '../../src/styles.css';
 import Commissions from '../../src/pages/Commissions';
-createRoot(document.getElementById('root')!).render(
+mountPreview(
   <div className="shell">
     <aside className="sidebar">
       <div className="brand">

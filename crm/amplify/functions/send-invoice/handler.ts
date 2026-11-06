@@ -1,29 +1,42 @@
-import { currentContacts, billingContact } from "../../../src/lib/contacts";
+import { createDataClientGetter, type LambdaDataClient as DataClient } from "../data-client";
+import { captureHandledFailure } from "../monitoring";
+import { initialQuotePublicationWrites } from "../quote-source-billing";
+import { reserveFeeInvoice, reserveFeeLoan, publishFeeInvoiceLink, completeFeeInvoiceSend } from "../broker-fees/payments";
+import { closeInvoiceCheckoutSessions } from "../invoiceCheckout";
+import { assertBrokerFeeSigned } from "../broker-fees/bindValidation";
+import { invoiceBrokerFeeAllocations, brokerFeeInvoiceRefresh } from "./brokerFeeInvoice";
+import { validateInvoiceSourceCharges } from "./passThroughInvoice";
+import { assertAdjustmentInvoiceProof, assertInitialInvoiceAvailable } from "./adjustmentInvoice";
+import { isNonpayableAdjustmentStatement } from "../../../../shared/invoicePaymentStatus";
+import { prepareBrokerFeeAgreement } from "../broker-fees/agreements";
+import { authorizedQuoteTerms } from "../../../../shared/quoteAuthorization";
+import { brokerFeeCents, feeAllocations, type BrokerFeeAllocation, type BrokerFeeInvoiceSendClaim } from "../../../../shared/brokerFees";
+import { getFee, getModel, modelTable, versionCheck, type Write } from "../broker-fees/store";
+import { TransactionalMailClient } from "../transactional-mail/client";
+import { MailDeliveryError } from "../transactional-mail/contract";
+import { currentContacts, billingContact } from "../../../../shared/contacts";
 import { randomUUID } from "node:crypto";
-import { SESv2Client, SendEmailCommand } from "@aws-sdk/client-sesv2";
+import { SendEmailCommand } from "@aws-sdk/client-sesv2";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, GetCommand, PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
-import { Amplify } from "aws-amplify";
-import { generateClient } from "aws-amplify/data";
-import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtime";
-import type { Schema } from "../../data/resource";
-import { listAllPages } from "../../../src/lib/pagination";
-import { isOpenQuoteStatus } from "../../../src/lib/quoteStatus";
+import { DynamoDBDocumentClient, GetCommand, PutCommand, UpdateCommand, TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
+import { listAllPages } from "../../../../shared/pagination";
+import { isOpenQuoteStatus } from "../../../../shared/quoteStatus";
 import { AGENCY, AGENCY_FMT } from "../../../../shared/agency";
 import Stripe from "stripe";
-import { invoiceTotals, remittanceSplit } from "../../../src/lib/invoiceTotals";
+import { invoiceTotals, remittanceSplit, financeableInvoiceTotal, type RemittanceSplit } from "../../../../shared/invoiceTotals";
 import { electionExpiry, mintElectionToken } from "../pfElectionToken";
 import { originateLoan } from "../pfOrigination";
 import {
   PF_DEFAULT_APR,
   PF_DEFAULT_DOWN_PCT,
   PF_DEFAULT_MONTHS,
-} from "../../../src/lib/premiumFinance/quote";
-import { PF_CONFIG_SHA256 } from "../../../src/lib/premiumFinance/jurisdictions";
+} from "../../../../shared/premiumFinance/quote";
+import { PF_CONFIG_SHA256 } from "../../../../shared/premiumFinance/jurisdictions";
 import { renderInvoice } from "./invoice";
-import { createPaymentLink, toCents } from "./stripeLink";
+import { createPaymentLink, InactivePaymentLink, toCents } from "./stripeLink";
 import { buildMimeMessage } from "./mime";
 import { pdfFilename, renderInvoicePdf } from "./pdf";
+import { beginInvoiceSend, completeInvoiceSend, InvoiceSendBlocked } from "./sendOperation";
 
 /**
  * Custom mutation handler: sendInvoice. See resource.ts for the why.
@@ -33,20 +46,9 @@ import { pdfFilename, renderInvoicePdf } from "./pdf";
  * is read here.
  */
 
-type DataClient = ReturnType<typeof generateClient<Schema>>;
-let dataClient: DataClient | undefined;
-async function getDataClient() {
-  if (!dataClient) {
-    const { resourceConfig, libraryOptions } = await getAmplifyDataClientConfig(
-      process.env as never
-    );
-    Amplify.configure(resourceConfig, libraryOptions);
-    dataClient = generateClient<Schema>();
-  }
-  return dataClient;
-}
+const getDataClient = createDataClientGetter();
 
-const ses = new SESv2Client();
+const ses = new TransactionalMailClient("invoice");
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient());
 
 /**
@@ -90,9 +92,12 @@ async function financeOffer(
   },
   anchor: FinanceAnchor | null,
   retailTotal: number,
-  recipientEmail: string | null
-): Promise<{ url: string; downPayment: number; monthly: number; months: number; apr: number; originationFee: number } | null> {
+  recipientEmail: string | null,
+  allocations: BrokerFeeAllocation[] = []
+): Promise<{ url: string; downPayment: number; monthly: number; months: number; apr: number; originationFee: number; brokerFee: number } | null> {
   if (!anchor || retailTotal <= 0) return null;
+  const brokerFeeTotalCents = allocations.reduce((sum, allocation) => sum + allocation.amountCents, 0);
+  const sameFee = (loan: { brokerFeeCents?: number | null; brokerFeeAllocations?: unknown }) => (loan.brokerFeeCents ?? 0) === brokerFeeTotalCents && JSON.stringify(feeAllocations(loan.brokerFeeAllocations)) === JSON.stringify(allocations);
   const loanTable = process.env.PF_LOAN_TABLE;
   const siteUrl = process.env.SITE_URL;
   if (!loanTable || !siteUrl) return null;
@@ -139,7 +144,7 @@ async function financeOffer(
         (loan.electionCheckoutUrl &&
           loan.electionCheckoutExpiresAt &&
           loan.electionCheckoutExpiresAt > nowIso));
-    if (loan && committed && loan.premium !== retailTotal) {
+    if (loan && committed && (loan.premium !== retailTotal || !sameFee(loan))) {
       console.error(
         `[send-invoice] invoice re-priced to ${retailTotal} over committed election on loan ${loan.id} (quoted ${loan.premium}) — offering nothing; resolve by hand`
       );
@@ -148,7 +153,7 @@ async function financeOffer(
 
     const today = new Date().toISOString().slice(0, 10);
     const stale = loan && (loan.effectiveDate ?? today) < today;
-    if (loan && !committed && (loan.premium !== retailTotal || stale)) {
+    if (loan && !committed && ((loan.premium !== retailTotal || !sameFee(loan)) || stale)) {
       /**
        * The bill changed under the offer, or the offer aged past its send
        * day (the spec anchors the schedule at the send date — a resend
@@ -208,6 +213,8 @@ async function financeOffer(
           account,
           anchor,
           premium: retailTotal,
+          brokerFeeCents: brokerFeeTotalCents,
+          brokerFeeAllocations: allocations,
           downPct: PF_DEFAULT_DOWN_PCT,
           months: PF_DEFAULT_MONTHS,
           apr: PF_DEFAULT_APR,
@@ -242,6 +249,7 @@ async function financeOffer(
       if (!loan) return null;
     }
 
+    for (const allocation of allocations) await reserveFeeLoan(allocation.quoteId, loan.id);
     let token = loan.electionToken ?? null;
     const fresh =
       token &&
@@ -279,6 +287,7 @@ async function financeOffer(
       url: `${siteUrl}/finance/?t=${token}`,
       downPayment: loan.downPayment,
       originationFee: loan.originationFee,
+      brokerFee: (loan.brokerFeeCents ?? 0) / 100,
       monthly: loan.payment,
       months: loan.months,
       apr: loan.apr,
@@ -345,14 +354,22 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 async function ensurePaymentLink(
   invoice: {
     id: string;
+    accountId?: string;
     number?: string | null;
     status?: string | null;
     paymentUrl?: string | null;
     stripePaymentLinkId?: string | null;
     stripeLinkAmountCents?: number | null;
+    remittanceBrokerFeeCents?: number | null;
+    brokerFeeAllocations?: unknown;
+    sourcePricingVersion?: number | null;
   },
   associationName: string,
-  total: number
+  total: number,
+  split: RemittanceSplit,
+  allocations: BrokerFeeAllocation[],
+  claim?: BrokerFeeInvoiceSendClaim,
+  proofGuards: Write[] = []
 ): Promise<string | null> {
   const existingUrl = invoice.paymentUrl?.trim() || null;
   const existingLinkId = invoice.stripePaymentLinkId?.trim() || null;
@@ -409,15 +426,21 @@ async function ensurePaymentLink(
     existingLinkId &&
     wantedCents !== null &&
     invoice.stripeLinkAmountCents === wantedCents &&
+    (invoice.remittanceBrokerFeeCents ?? 0) === split.brokerFeeCents &&
+    JSON.stringify(feeAllocations(invoice.brokerFeeAllocations)) === JSON.stringify(allocations) &&
     key
   ) {
     try {
       const link = await new Stripe(key).paymentLinks.retrieve(existingLinkId);
-      if (link.active) return existingUrl;
+      if (link.active && link.url === existingUrl) {
+        if ((claim || proofGuards.length) && !await storeLink(invoice.id, { linkId: existingLinkId, status: invoice.status ?? null }, { url: existingUrl, linkId: existingLinkId, amountCents: wantedCents, split, allocations, claim, proofGuards })) throw new SendBlocked("The invoice payment setup changed. Retry its existing Send action.");
+        return existingUrl;
+      }
       console.warn(
         `[send-invoice] link ${existingLinkId} on ${invoice.number ?? invoice.id} is no longer active; minting a fresh one`
       );
     } catch (err) {
+      if (err instanceof SendBlocked) throw err;
       console.warn(
         "[send-invoice] could not confirm the old link is live; minting a fresh one",
         err
@@ -426,6 +449,7 @@ async function ensurePaymentLink(
   }
 
   if (!key) {
+    if (allocations.length) throw new SendBlocked("Payments are not configured. Configure payments, then retry this invoice's Send action.");
     console.warn("[send-invoice] STRIPE_SECRET_KEY unset; sending without a link");
     return null;
   }
@@ -459,6 +483,12 @@ async function ensurePaymentLink(
       }
       console.warn(`[send-invoice] old link ${existingLinkId} already gone at Stripe`);
     }
+    // Missing session/intent state cannot be treated as a missing Payment Link.
+    // Existing sessions remain payable even after that link was deactivated.
+    if (allocations.length || [1,2].includes(Number(invoice.sourcePricingVersion))) {
+      try { await closeInvoiceCheckoutSessions(stripe, existingLinkId); }
+      catch { throw new SendBlocked("Couldn't close the previous payment sessions, so the invoice was not sent. Review its payment before trying again."); }
+    }
   }
 
   let minted: { id: string; url: string };
@@ -468,8 +498,13 @@ async function ensurePaymentLink(
       invoiceNumber: invoice.number ?? null,
       associationName,
       total,
+      accountId: invoice.accountId,
+      brokerFeeAllocations: allocations,
+      ...(claim ? { idempotencyToken: claim.token } : {}),
     });
   } catch (err) {
+    if (err instanceof InactivePaymentLink) throw new SendBlocked(err.message);
+    if (allocations.length) throw new SendBlocked("Payment setup was interrupted. Retry Send on this same invoice to recover its existing payment link.");
     // No link minted, nothing untracked. A bill without a Pay button is still
     // a working bill, so this failure alone does not stop the send.
     console.error("[send-invoice] could not create a payment link", err);
@@ -489,11 +524,23 @@ async function ensurePaymentLink(
   const stored = await storeLink(
     invoice.id,
     { linkId: existingLinkId, status: invoice.status ?? null },
-    { url: minted.url, linkId: minted.id, amountCents: wantedCents }
+    { url: minted.url, linkId: minted.id, amountCents: wantedCents, split, allocations, claim, proofGuards }
   );
   if (!stored) {
+    // Stable fee retries can receive the same processor link. A late caller
+    // must never deactivate a link another invocation already published.
+    const current = claim ? await getModel<Record<string, unknown>>("Invoice", invoice.id) : undefined;
+    const currentFees = claim ? await Promise.all(allocations.map(part => getFee(part.quoteId))) : [];
+    // Failed publication can leave this same PREPARING owner intact. Its
+    // stable processor key must recover a live link on the next Send, rather
+    // than replaying an already-disabled link. Missing source state is also
+    // insufficient proof that it is safe to destroy the recoverable link.
+    const lostOwner = !!claim && currentFees.length > 0 && currentFees.every(fee => fee && (fee.invoiceSendClaim?.invoiceId !== invoice.id || fee.invoiceSendClaim.token !== claim.token));
     try {
-      await stripe.paymentLinks.update(minted.id, { active: false });
+      if (!claim || lostOwner && current?.stripePaymentLinkId !== minted.id) {
+        await stripe.paymentLinks.update(minted.id, { active: false });
+        if (claim || [1,2].includes(Number(invoice.sourcePricingVersion))) await closeInvoiceCheckoutSessions(stripe, minted.id);
+      }
     } catch (err) {
       // The orphan survives, but now loudly: someone can kill it by hand.
       console.error(
@@ -520,7 +567,7 @@ async function ensurePaymentLink(
 async function storeLink(
   invoiceId: string,
   seen: { linkId: string | null; status: string | null },
-  next: { url: string; linkId: string; amountCents: number | null }
+  next: { url: string; linkId: string; amountCents: number | null; split: RemittanceSplit; allocations: BrokerFeeAllocation[]; claim?: BrokerFeeInvoiceSendClaim; proofGuards?: Write[] }
 ): Promise<boolean> {
   const tableName = process.env.INVOICE_TABLE;
   if (!tableName) {
@@ -540,6 +587,11 @@ async function storeLink(
     ":writer": "send-invoice",
     ":now": new Date().toISOString(),
     ":seenStatus": seen.status,
+    ":carrier": next.split.carrierCents,
+    ":commission": next.split.commissionCents,
+    ":interest": next.split.interestCents,
+    ":broker": next.split.brokerFeeCents,
+    ":allocations": JSON.stringify(next.allocations),
   };
   /**
    * The link AND the status. The link-only condition had a hole a void could
@@ -556,20 +608,24 @@ async function storeLink(
     values[":seen"] = seen.linkId;
   }
   try {
-    await ddb.send(
-      new UpdateCommand({
+    const update = {
         TableName: tableName,
         Key: { id: invoiceId },
         UpdateExpression:
-          "SET paymentUrl = :url, #link = :link, stripeLinkAmountCents = :cents, lastWriteBy = :writer, updatedAt = :now",
+          "SET paymentUrl = :url, #link = :link, stripeLinkAmountCents = :cents, remittanceCarrierCents = :carrier, remittanceCommissionCents = :commission, remittanceInterestCents = :interest, remittanceBrokerFeeCents = :broker, brokerFeeAllocations = :allocations, lastWriteBy = :writer, updatedAt = :now",
         ConditionExpression: clauses.join(" AND "),
         ExpressionAttributeNames: names,
         ExpressionAttributeValues: values,
-      })
-    );
+      };
+    if (next.allocations.length) {
+      if (!next.claim) throw new SendBlocked("The broker fee invoice has no payment setup reservation.");
+      return await publishFeeInvoiceLink(invoiceId, next.allocations, next.claim.token, next.linkId, { Update: update });
+    }
+    if(next.proofGuards?.length)await ddb.send(new TransactWriteCommand({TransactItems:[{Update:update},...next.proofGuards]}));
+    else await ddb.send(new UpdateCommand(update));
     return true;
   } catch (err) {
-    if ((err as { name?: string }).name === "ConditionalCheckFailedException") {
+    if (["ConditionalCheckFailedException","TransactionCanceledException"].includes((err as { name?: string }).name??'')) {
       return false;
     }
     throw err;
@@ -589,7 +645,7 @@ async function storeLink(
 async function recordSend(
   invoiceId: string,
   seenStatus: string | null,
-  facts: Record<string, string | number | null>,
+  facts: Record<string, unknown>,
   flipToSent: boolean
 ): Promise<boolean> {
   const tableName = process.env.INVOICE_TABLE;
@@ -644,12 +700,13 @@ async function recordSend(
 }
 
 export const handler = async (event: {
-  arguments?: { invoiceId?: string; toEmail?: string };
+  arguments?: { invoiceId?: string; toEmail?: string; expectedSentAt?: string | null };
 }) => {
   const invoiceId = event.arguments?.invoiceId;
   if (!invoiceId) return { ok: false, error: "No invoice was named." };
 
   const client = await getDataClient();
+  let acceptedForReview = false;
 
   try {
     const { data: invoice } = await client.models.Invoice.get({ id: invoiceId });
@@ -669,9 +726,6 @@ export const handler = async (event: {
       ),
     ]);
     if (!account.data) return { ok: false, error: "That account no longer exists." };
-    if (!lines.length) {
-      return { ok: false, error: "Add at least one line before sending." };
-    }
 
     /**
      * Where it goes: the override if one was given, otherwise the account's
@@ -822,7 +876,7 @@ export const handler = async (event: {
     const liveSibling = siblingInvoices.find(
       (i) =>
         i.id !== invoice.id &&
-        ["DRAFT", "SENT", "PROCESSING"].includes(i.status ?? "")
+        ["DRAFT", "SENT", "PROCESSING"].includes(i.status ?? "") && !isNonpayableAdjustmentStatement(i)
     );
     if (liveSibling) {
       return {
@@ -831,26 +885,94 @@ export const handler = async (event: {
       };
     }
 
+    await assertInitialInvoiceAvailable(invoice);
+    const adjustmentProof=await assertAdjustmentInvoiceProof(invoice);
+    const feeSource = policy ?? quoteAnchor;
+    const sourceQuoteId = policy?.quoteId ?? quoteAnchor?.id;
+    const expectedFeeCents = brokerFeeCents(feeSource?.brokerFee);
+    const existingFee = sourceQuoteId && expectedFeeCents > 0 ? await getFee(sourceQuoteId) : null;
+    const feeAlreadySubmitted = !!existingFee && (existingFee.submittedCents > 0 || existingFee.collectedCents > 0 || existingFee.refundedCents > 0);
+    const issuedAllocations = feeAllocations(invoice.brokerFeeAllocations);
+    if (invoice.status === "SENT" && issuedAllocations.length) {
+      const issuedFeeCents = issuedAllocations.reduce((sum, part) => sum + part.amountCents, 0);
+      const issuedTotalCents = invoice.stripeLinkAmountCents ?? (invoice.remittanceCarrierCents ?? 0) + (invoice.remittanceCommissionCents ?? 0) + (invoice.remittanceInterestCents ?? 0) + (invoice.remittanceBrokerFeeCents ?? 0);
+      if (Math.round(invoiceTotals(lines).retail * 100) !== issuedTotalCents || expectedFeeCents !== issuedFeeCents) return { ok: false, error: "This broker fee invoice has already been issued. Void it before changing its charges, then issue the updated invoice." };
+    }
+    const refresh = brokerFeeInvoiceRefresh({ invoice, source: feeSource, quoteId: sourceQuoteId, policyId: headerPolicyId, lines, alreadySubmitted: feeAlreadySubmitted });
+    for (const id of refresh.remove) {
+      const deleted = await client.models.InvoiceLine.delete({ id });
+      if (deleted.errors?.length) throw new SendBlocked("The invoice could not refresh its generated broker fee. Retry sending.");
+      const at = lines.findIndex(line => line.id === id); if (at >= 0) lines.splice(at, 1);
+    }
+    if (refresh.upsert) {
+      const existing = lines.some(line => line.id === refresh.upsert!.id);
+      const saved = existing ? await client.models.InvoiceLine.update(refresh.upsert) : await client.models.InvoiceLine.create(refresh.upsert);
+      if (saved.errors?.length || !saved.data) throw new SendBlocked("The invoice could not refresh its generated broker fee. Retry sending.");
+      const at = lines.findIndex(line => line.id === saved.data!.id); if (at >= 0) lines[at] = saved.data; else lines.push(saved.data);
+    }
+    if (!lines.length) return { ok: false, error: "This invoice no longer has a charge. Review its source quote." };
+    let allocations: BrokerFeeAllocation[];
+    try { allocations = invoiceBrokerFeeAllocations({ invoice, source: feeSource, quoteId: sourceQuoteId, policyId: headerPolicyId, lines, alreadySubmitted: feeAlreadySubmitted }); }
+    catch (error) { return { ok: false, error: error instanceof Error ? error.message : "The broker fee invoice could not be verified." }; }
+    validateInvoiceSourceCharges({ invoice, source: adjustmentProof?{id:String(adjustmentProof.policy.id),accountId:String(adjustmentProof.policy.accountId),billType:adjustmentProof.policy.billType as string|undefined}:feeSource, lines });
+    const split = remittanceSplit(lines);
     const carrierId = policy?.carrierId ?? quoteAnchor?.carrierId ?? null;
     const carrier = carrierId
       ? (await client.models.Carrier.get({ id: carrierId })).data
       : null;
+
+    // Known-local payment failures must not create an unknown processor hold.
+    // A missing key or unsupported amount created no external link to recover.
+    let feeChargeCents: number | undefined;
+    if (allocations.length && invoice.status !== "PAID" && invoice.status !== "PROCESSING") {
+      if (!process.env.STRIPE_SECRET_KEY) throw new SendBlocked("Payments are not configured. Configure payments, then retry this invoice's Send action.");
+      try { feeChargeCents = toCents(invoiceTotals(lines).retail); }
+      catch (error) { throw new SendBlocked(error instanceof Error ? error.message : "This invoice total cannot be collected online."); }
+    }
+
+    // Completed retries must return before starting another fee link claim.
+    // This lease also serializes same-invoice Stripe retries in production.
+    const tracked = ["resend", "ses"].includes(process.env.HOA_TRANSACTIONAL_MAIL_PROVIDER ?? "")
+      ? await beginInvoiceSend(invoice, to, event.arguments?.expectedSentAt, { database: ddb })
+      : undefined;
+    if (tracked?.completed) return tracked.completed;
+
+    let disclosureUrl: string | undefined;
+    let paymentLabel: string | undefined;
+    let feeSendClaim: BrokerFeeInvoiceSendClaim | undefined;
+    if (allocations.length && invoice.status !== "PAID" && invoice.status !== "PROCESSING") {
+      const sourceQuote = quoteAnchor ?? (sourceQuoteId ? (await client.models.Quote.get({ id: sourceQuoteId })).data : null);
+      if (!sourceQuote) return { ok: false, error: "The original quote is required for this broker fee disclosure." };
+      const terms = authorizedQuoteTerms(sourceQuote as unknown as Record<string,unknown>);
+      let feeSigned = !!existingFee?.signedAt && existingFee.terms === terms && existingFee.amountCents === expectedFeeCents;
+      if (feeSigned) { try { await assertBrokerFeeSigned(sourceQuote); } catch { feeSigned = false; } }
+      if (!feeSigned) {
+        const agreement = await prepareBrokerFeeAgreement(invoice.accountId, [{ id: sourceQuote.id, accountId: sourceQuote.accountId, carrierId: sourceQuote.carrierId, carrierName: carrier?.name ?? undefined, lines: sourceQuote.lines, premium: sourceQuote.premium, brokerFee: sourceQuote.brokerFee, billType: sourceQuote.billType, effectiveDate: sourceQuote.effectiveDate, expirationDate: sourceQuote.expirationDate, terms }], undefined, { reuseContainingAgreement: true });
+        disclosureUrl = agreement.url;
+        paymentLabel = "Review and sign broker fee disclosure";
+      }
+      feeSendClaim = await reserveFeeInvoice(sourceQuote, invoice.id, feeChargeCents!);
+    }
 
     /**
      * Before rendering, so the email carries the button. The total comes from
      * the same `invoiceTotals` the screen ran, over rows read here rather than
      * over anything the caller posted.
      */
-    const paymentUrl = await ensurePaymentLink(
+    const paymentUrl = invoice.status === "PAID" || invoice.status === "PROCESSING" ? null : await ensurePaymentLink(
       invoice,
       account.data.name,
-      invoiceTotals(lines).retail
+      invoiceTotals(lines).retail,
+      split,
+      allocations,
+      feeSendClaim,
+      adjustmentProof?[...adjustmentProof.guards,versionCheck(modelTable('Policy'),adjustmentProof.policy as {id:string;updatedAt:string})]:invoice.sourcePricingVersion===1&&quoteAnchor&&!allocations.length?await initialQuotePublicationWrites(invoice,quoteAnchor):[]
     );
 
     // W8: the other side of the fork originates HERE, at fixed terms on
     // the billed total, through every gate — or rides an existing QUOTED
     // offer whose premium still matches.
-    const finance = await financeOffer(
+    const finance = invoice.sourcePricingVersion===2 || invoice.status === "PAID" || invoice.status === "PROCESSING" ? null : await financeOffer(
       client,
       {
         id: account.data.id,
@@ -859,8 +981,9 @@ export const handler = async (event: {
         incorporated: account.data.incorporated,
       },
       anchor,
-      invoiceTotals(lines).retail,
-      to[0] ?? null
+      financeableInvoiceTotal(lines),
+      to[0] ?? null,
+      allocations
     );
 
     /**
@@ -902,11 +1025,13 @@ export const handler = async (event: {
       riskLocation: [account.data.address ?? "", cityStateZip].filter((l) => l.trim()),
       effectiveDate: policy?.effectiveDate ?? quoteAnchor?.effectiveDate ?? null,
       expirationDate: policy?.expirationDate ?? quoteAnchor?.expirationDate ?? null,
+      coverageBound: Boolean(policy?.datePolicyBound),
       issuedAt: invoice.issuedAt,
       dueAt: invoice.dueAt,
       memo: invoice.memo,
-      paymentUrl,
-      finance,
+      paymentUrl: disclosureUrl ?? paymentUrl,
+      paymentLabel,
+      finance: disclosureUrl ? null : finance,
       lines: [...lines].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)),
     };
     const { subject, text, html } = renderInvoice(view);
@@ -953,7 +1078,7 @@ export const handler = async (event: {
       html,
       attachment,
     });
-    await ses.send(
+    const accepted = await ses.send(
       new SendEmailCommand({
         FromEmailAddress: FROM,
         Destination: {
@@ -961,8 +1086,10 @@ export const handler = async (event: {
           ...(selfAddressed ? {} : { BccAddresses: [MAILBOX] }),
         },
         Content: { Raw: { Data: Buffer.from(raw, "utf8") } },
-      })
+      }),
+      { idempotencyKey: tracked?.operation.key ?? `invoice:${invoiceId}:${invoice.updatedAt ?? invoice.sentAt ?? "initial"}:${to.join(",")}`, subject, text, html, replyTo: MAILBOX, attachments: attachment ? [attachment] : [] }
     );
+    acceptedForReview = Boolean(tracked);
 
     /**
      * DRAFT becomes SENT; a resend of an already-SENT or PAID invoice leaves
@@ -978,8 +1105,6 @@ export const handler = async (event: {
      * a split taken from the lines later could describe an amount nobody paid.
      * Rewritten on every send, so a resend after re-costing a line corrects it.
      */
-    const split = remittanceSplit(lines);
-
     /**
      * Conditional on the status the send read, because the unconditional form
      * could revive a void: a DRAFT read at the top, a void landing mid-send,
@@ -993,9 +1118,10 @@ export const handler = async (event: {
     const sentFacts = {
       sentAt: new Date().toISOString(),
       sentTo: to.join(", "),
-      remittanceCarrierCents: split.carrierCents,
-      remittanceCommissionCents: split.commissionCents,
-      remittanceInterestCents: split.interestCents,
+      ...(invoice.status === "PAID" || invoice.status === "PROCESSING" ? {} : {
+        remittanceCarrierCents: split.carrierCents, remittanceCommissionCents: split.commissionCents, remittanceInterestCents: split.interestCents,
+        remittanceBrokerFeeCents: split.brokerFeeCents, brokerFeeAllocations: JSON.stringify(allocations), brokerFeeFinanceUrl: finance?.url ?? null,
+      }),
       // Named, because this write does not go through the browser's actor
       // proxy. Without it the activity log would say "System" sent the bill,
       // when a person pressed the button.
@@ -1012,13 +1138,18 @@ export const handler = async (event: {
         `send-invoice: ${invoice.number ?? invoiceId} changed mid-send; recorded the send without touching its status`
       );
     }
+    if (feeSendClaim) await completeFeeInvoiceSend(invoiceId, allocations, feeSendClaim.token);
 
+    const result = { ok: true as const, sentTo: to.join(", "), subject, sentAt: sentFacts.sentAt };
+    if (tracked) await completeInvoiceSend(invoiceId, tracked.operation, accepted.MessageId, result, { database: ddb });
     console.log(`send-invoice sent ${invoice.number ?? invoiceId} to ${to.join(", ")}`);
-    return { ok: true, sentTo: to.join(", "), subject };
+    return result;
   } catch (err) {
-    if (err instanceof SendBlocked) {
+    if (err instanceof SendBlocked || err instanceof InvoiceSendBlocked || err instanceof MailDeliveryError) {
       return { ok: false, error: err.message };
     }
+    captureHandledFailure(err);
+    if (acceptedForReview) return { ok: false, error: "The invoice email was accepted, but its send details need review. Do not send a replacement." };
     console.error("send-invoice failed", err);
     return { ok: false, error: "We couldn't send that invoice. Please try again." };
   }

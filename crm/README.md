@@ -5,8 +5,11 @@ Internal agency management system replacing EzLynx for the commercial
 
 ## Architecture
 
-- **Auth** — passwordless magic-link sign-in ONLY (Cognito custom auth
-  challenge, [amplify/functions/magic-link](amplify/functions/magic-link)):
+- **Auth** — passwordless email links, plus optional Google sign-in
+  ([Google setup and rollout](../docs/GOOGLE-SIGN-IN.md)). Google connects an
+  invited Gmail or Google Workspace address to its existing team account,
+  preserving its user ID and roles. Email links use a Cognito custom auth
+  challenge ([amplify/functions/magic-link](amplify/functions/magic-link)):
   enter your email → SES sends a link signed with a Secrets Manager HMAC
   secret (15-min expiry) → clicking it signs you in. Sessions last 7 days.
   No self-signup: users are created by an admin (Cognito console/CLI).

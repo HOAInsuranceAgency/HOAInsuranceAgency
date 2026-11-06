@@ -1,21 +1,25 @@
-import { useMemo, useState } from "react";
+import { accountPath } from '../../../shared/crmRoutes';
+import { Select } from "../components/ui/Select";
+import { Button } from "../components/ui/Button";
+import { Table } from "../components/ui/Table";
+import { SegmentedControl } from "../components/ui/SegmentedControl";
+import { useId, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import {
-  client,
-  fmtDate,
-  fmtMoney,
-  listAllPages,
-  type Account,
-  type Carrier,
-  type Quote,
-} from "../lib/client";
+import { client, fmtDate, fmtMoney, type Account, type Carrier, type Quote } from "../lib/client";
+import { listAllPages } from "../../../shared/pagination";
 import { Badge, statusBadge, QUOTE_STATUS_BADGE } from "../lib/badges";
 import { useSort, SortTh } from "../lib/useSort";
-import { isOpenQuoteStatus } from "../lib/quoteStatus";
+import { isOpenQuoteStatus } from "../../../shared/quoteStatus";
 import { useAsyncResource } from "../lib/useAsyncResource";
+import { useAgencyDay } from "../lib/useAgencyDay";
+import { matchesQuoteOfferFilter, quoteOfferDate, type QuoteOfferFilter } from "../lib/quoteOfferExpiry";
+import QuoteOfferExpiry from "../components/QuoteOfferExpiry";
+import PolicyCharges from "../components/PolicyCharges";
 
 export default function QuotesList() {
   const [openOnly, setOpenOnly] = useState(true);
+  const [offerExpiry, setOfferExpiry] = useState<QuoteOfferFilter>("all");
+  const today = useAgencyDay(), filterId = useId();
   const navigate = useNavigate();
 
   // Paginated: a bare .list() returns one ~100-row page and stops — this
@@ -24,7 +28,7 @@ export default function QuotesList() {
     async () =>
       listAllPages((nextToken) => client.models.Quote.list({ nextToken })),
     [],
-    { initialData: [] as Quote[], errorMessage: "Failed to load quotes" }
+    { initialData: [] as Quote[], errorMessage: "Failed to load quotes" , live: true }
   );
   const quotes = quoteRes.data;
 
@@ -34,7 +38,7 @@ export default function QuotesList() {
     async () =>
       listAllPages((nextToken) => client.models.Account.list({ nextToken })),
     [],
-    { initialData: [] as Account[], errorMessage: "Failed to load account names" }
+    { initialData: [] as Account[], errorMessage: "Failed to load account names" , live: true }
   );
   const accounts = accountRes.data;
 
@@ -42,7 +46,7 @@ export default function QuotesList() {
     async () =>
       listAllPages((nextToken) => client.models.Carrier.list({ nextToken })),
     [],
-    { initialData: [] as Carrier[], errorMessage: "Failed to load carrier names" }
+    { initialData: [] as Carrier[], errorMessage: "Failed to load carrier names" , live: true }
   );
   const carriers = carrierRes.data;
 
@@ -55,9 +59,9 @@ export default function QuotesList() {
     [carriers]
   );
 
-  const visible = openOnly
-    ? quotes.filter((q) => isOpenQuoteStatus(q.status))
-    : quotes;
+  const visible = quotes.filter(q => (!openOnly || isOpenQuoteStatus(q.status)) && matchesQuoteOfferFilter(q, offerExpiry, today));
+  const expiringCount = quotes.filter(q => matchesQuoteOfferFilter(q, "expiring", today)).length;
+  const expiredCount = quotes.filter(q => matchesQuoteOfferFilter(q, "expired", today)).length;
 
   const { sorted, sortKey, dir, toggle } = useSort(
     visible,
@@ -66,6 +70,7 @@ export default function QuotesList() {
       carrier: (q) => (q.carrierId ? carrierName.get(q.carrierId) ?? "" : null),
       premium: (q) => q.premium,
       effective: (q) => q.effectiveDate,
+      offerExpiry: quoteOfferDate,
       status: (q) => q.status,
     },
     "account"
@@ -76,36 +81,39 @@ export default function QuotesList() {
       <h1>Quotes</h1>
       <p className="sub">All quotes across leads and clients</p>
 
-      <div className="toolbar">
-        <div className="chip-row">
-          <button className={openOnly ? "on" : ""} onClick={() => setOpenOnly(true)}>
-            In flight
-          </button>
-          <button className={!openOnly ? "on" : ""} onClick={() => setOpenOnly(false)}>
-            All
-          </button>
-        </div>
+      <div className="toolbar quote-offer-filters">
+        <SegmentedControl label="Quote status views" value={openOnly ? 'open' : 'all'} onChange={value => setOpenOnly(value === 'open')}
+          items={[{ value: 'open', label: 'In flight' }, { value: 'all', label: 'All' }]} />
+        <label className="field" htmlFor={`${filterId}-expiry`}>Offer expiry
+          <Select id={`${filterId}-expiry`} value={offerExpiry} aria-describedby={`${filterId}-help`} onChange={e => setOfferExpiry(e.target.value as QuoteOfferFilter)}>
+            <option value="all">Any offer expiry</option>
+            <option value="expiring">Expiring within 7 days ({expiringCount})</option>
+            <option value="expired">Expired ({expiredCount})</option>
+          </Select>
+        </label>
+        <p id={`${filterId}-help`} className="quote-offer-filter-help">Expiry filters include quoted and presented offers. An offer remains valid through the recorded date, including today.</p>
       </div>
 
-      {accountRes.error && <p className="error-text" role="alert">{accountRes.error} <button disabled={accountRes.loading} onClick={() => void accountRes.refetch()}>Retry account names</button></p>}
-      {carrierRes.error && <p className="error-text" role="alert">{carrierRes.error} <button disabled={carrierRes.loading} onClick={() => void carrierRes.refetch()}>Retry carriers</button></p>}
+      {accountRes.error && <p className="error-text" role="alert">{accountRes.error} <Button disabled={accountRes.loading} onClick={() => void accountRes.refetch()}>Retry account names</Button></p>}
+      {carrierRes.error && <p className="error-text" role="alert">{carrierRes.error} <Button disabled={carrierRes.loading} onClick={() => void carrierRes.refetch()}>Retry carriers</Button></p>}
 
       <div className="card">
         {!quoteRes.loaded ? (
           <p className="muted small">Loading…</p>
         ) : quoteRes.error ? (
-          <p className="error-text" role="alert">{quoteRes.error} <button disabled={quoteRes.loading} onClick={() => void quoteRes.refetch()}>Retry quotes</button></p>
+          <p className="error-text" role="alert">{quoteRes.error} <Button disabled={quoteRes.loading} onClick={() => void quoteRes.refetch()}>Retry quotes</Button></p>
         ) : sorted.length === 0 ? (
-          <p className="muted small">No quotes.</p>
+          <p className="muted small">{quotes.length ? "No quotes match these filters." : "No quotes."}</p>
         ) : (
           <div className="table-wrap">
-            <table>
+            <Table aria-label="All carrier quotes">
               <thead>
                 <tr>
                   <SortTh label="Account" colKey="account" sortKey={sortKey} dir={dir} onToggle={toggle} />
                   <SortTh label="Carrier" colKey="carrier" sortKey={sortKey} dir={dir} onToggle={toggle} />
                   <SortTh label="Premium" colKey="premium" sortKey={sortKey} dir={dir} onToggle={toggle} />
                   <SortTh label="Effective" colKey="effective" sortKey={sortKey} dir={dir} onToggle={toggle} />
+                  <SortTh label="Offer valid through" colKey="offerExpiry" sortKey={sortKey} dir={dir} onToggle={toggle} />
                   <SortTh label="Status" colKey="status" sortKey={sortKey} dir={dir} onToggle={toggle} />
                 </tr>
               </thead>
@@ -114,21 +122,22 @@ export default function QuotesList() {
                   <tr
                     key={q.id}
                     className="clickable"
-                    onClick={() => navigate(`/accounts/${q.accountId}?tab=quotes`)}
+                    onClick={() => navigate(accountPath(q.accountId, { tab: 'quotes' }))}
                   >
                     <td>
                       <strong>{accountName.get(q.accountId) ?? "—"}</strong>
                     </td>
                     <td>{q.carrierId ? carrierName.get(q.carrierId) ?? "—" : "—"}</td>
-                    <td>{fmtMoney(q.premium)}</td>
+                    <td>{fmtMoney(q.premium)}<PolicyCharges source={q} /></td>
                     <td>{fmtDate(q.effectiveDate)}</td>
+                    <td><QuoteOfferExpiry quote={q} today={today} /></td>
                     <td>
                       <Badge {...statusBadge(QUOTE_STATUS_BADGE, q.status)} />
                     </td>
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </Table>
           </div>
         )}
       </div>

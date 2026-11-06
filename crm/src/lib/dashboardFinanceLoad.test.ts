@@ -1,24 +1,25 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 const h = vi.hoisted(() => ({
-  invoiceList: vi.fn(), loanList: vi.fn(), request: vi.fn(), assignments: vi.fn(), forbidden: vi.fn(),
+  invoiceList: vi.fn(), loanList: vi.fn(), feePolicies: vi.fn(), request: vi.fn(), assignments: vi.fn(), forbidden: vi.fn(),
 }));
 vi.mock('./client', async () => ({
-  listAllPages: (await import('./pagination')).listAllPages,
+  listAllPages: (await import('../../../shared/pagination')).listAllPages,
   client: { models: {
     Invoice: { list: h.invoiceList }, PfLoan: { list: h.loanList },
-    PfLoanPayment: { list: h.forbidden }, Policy: { list: h.forbidden },
+    PfLoanPayment: { list: h.forbidden }, Policy: { list: h.forbidden, listPolicyByBrokerFeeReportingKey: h.feePolicies },
     InvoiceLine: { list: h.forbidden }, Account: { list: h.forbidden },
   } },
 }));
 vi.mock('./communications', () => ({ communicationRequest: h.request }));
 vi.mock('./dashboardAssignments', () => ({ loadAssignments: h.assignments }));
-import { loadFinanceDashboard, loadFinancePolicyAnchors, loadFinanceInvoiceAnchors, loadRecentFinanceInterest } from './dashboardFinanceLoad';
+import { loadFinanceDashboard, loadFinancePolicyAnchors, loadFinanceInvoiceAnchors, loadFinanceBrokerFeePolicies, loadRecentFinanceInterest } from './dashboardFinanceLoad';
 
 beforeEach(() => {
   for (const mock of Object.values(h)) mock.mockReset();
   h.forbidden.mockRejectedValue(new Error('Whole-history/table read is forbidden'));
   h.invoiceList.mockResolvedValue({ data: [] });
   h.loanList.mockResolvedValue({ data: [] });
+  h.feePolicies.mockResolvedValue({ data: [] });
   h.assignments.mockResolvedValue({ entries: {}, team: [], accounts: [] });
 });
 
@@ -39,6 +40,40 @@ it('fails a broken/repeating page instead of showing partial income', async () =
   await expect(loadRecentFinanceInterest(new Date())).rejects.toThrow('did not advance');
   h.request.mockReset().mockResolvedValueOnce({ items: [], nextToken: 'next' }).mockRejectedValueOnce(new Error('Read failed'));
   await expect(loadRecentFinanceInterest(new Date())).rejects.toThrow('Read failed');
+});
+
+it('reads every fee-only index page, including retained cancelled fees, without scanning policy history', async () => {
+  const active = { id: 'active-fee', accountId: 'a', brokerFee: 500, brokerFeeCollected: 500, brokerFeeRefunded: 0, status: 'ACTIVE' };
+  const cancelled = { id: 'retained-fee', accountId: 'b', brokerFee: 200, brokerFeeCollected: 200, brokerFeeRefunded: 50, status: 'CANCELLED' };
+  h.feePolicies.mockResolvedValueOnce({ data: [active], nextToken: 'fee-page-2' }).mockResolvedValueOnce({ data: [cancelled] });
+  h.request.mockResolvedValue({ items: [] });
+  const result = await loadFinanceDashboard();
+  expect(result.brokerFeePolicies).toEqual([active, cancelled]);
+  expect(h.feePolicies.mock.calls).toEqual([
+    [{ brokerFeeReportingKey: 'BROKER_FEE' }, { nextToken: undefined, selectionSet: ['id', 'accountId', 'brokerFee', 'brokerFeeCollected', 'brokerFeeRefunded', 'status'] }],
+    [{ brokerFeeReportingKey: 'BROKER_FEE' }, { nextToken: 'fee-page-2', selectionSet: ['id', 'accountId', 'brokerFee', 'brokerFeeCollected', 'brokerFeeRefunded', 'status'] }],
+  ]);
+  expect(h.assignments).toHaveBeenCalledWith(['a', 'b']);
+  expect(h.forbidden).not.toHaveBeenCalled();
+});
+
+it('rejects incomplete or repeating fee-index pages instead of publishing partial fee totals', async () => {
+  const policy = { id: 'fee', accountId: 'a', brokerFee: 500 };
+  h.feePolicies.mockResolvedValueOnce({ data: [policy], nextToken: 'next' }).mockResolvedValueOnce({ data: [], errors: [{ message: 'Fee index unavailable' }] });
+  await expect(loadFinanceBrokerFeePolicies()).rejects.toThrow('Fee index unavailable');
+  h.feePolicies.mockReset().mockResolvedValueOnce({ data: [policy], nextToken: 'next' }).mockRejectedValueOnce(new Error('Fee index read failed'));
+  await expect(loadFinanceBrokerFeePolicies()).rejects.toThrow('Fee index read failed');
+  h.feePolicies.mockReset().mockResolvedValue({ data: [], nextToken: 'same-page' });
+  await expect(loadFinanceBrokerFeePolicies()).rejects.toThrow('did not advance');
+  expect(h.feePolicies).toHaveBeenCalledTimes(2);
+  expect(h.forbidden).not.toHaveBeenCalled();
+});
+
+it('preserves GraphQL authorization classification on the final broker-fee index page', async () => {
+  h.feePolicies.mockResolvedValueOnce({ data: [{ id: 'fee', accountId: 'a', brokerFee: 500 }], nextToken: 'final' })
+    .mockResolvedValueOnce({ data: [], errors: [{ message: 'Access revoked', errorType: 'Unauthorized' }] });
+  await expect(loadFinanceBrokerFeePolicies()).rejects.toMatchObject({ name: 'Unauthorized' });
+  expect(h.feePolicies).toHaveBeenCalledTimes(2);
 });
 
 it('reads batched line anchors only for open invoices on outstanding-loan accounts and fetches referenced policy anchors', async () => {

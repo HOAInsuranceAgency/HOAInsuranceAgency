@@ -7,7 +7,7 @@ import {
   contactKey,
   lossAliases,
   lossKey,
-} from "./extractionKeys";
+} from "../../../shared/extractionKeys";
 
 /**
  * The rule that stops re-running an extraction from duplicating everything it

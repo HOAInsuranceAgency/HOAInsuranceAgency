@@ -1,8 +1,9 @@
+import { captureHandledFailure } from "../monitoring";
 import { createHash } from "node:crypto";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, GetCommand, PutCommand, TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
-import { partialInput, portalUrl, submissionStatus, type SourceEstimate, type SubmissionRecord } from "./submission-contract";
-import { isHoneycombEnvironment } from "./environment";
+import { partialInput, portalUrl, submissionStatus, type SourceEstimate, type SubmissionRecord } from "../../../../shared/honeycomb/submission";
+import { isHoneycombEnvironment } from "../../../../shared/honeycomb/environment";
 const db = DynamoDBDocumentClient.from(new DynamoDBClient(), { marshallOptions: { removeUndefinedValues: true } });
 const table = () => process.env.HONEYCOMB_SUBMISSION_TABLE!;
 const validId = (id: unknown): id is string => typeof id === "string" && /^[a-zA-Z0-9_-]{1,100}$/.test(id);
@@ -25,6 +26,7 @@ export async function handler(event: Event) {
     return await start(event.arguments, actor);
   } catch (error) {
     if (error instanceof InputError) return { ok: false, error: error.message };
+    captureHandledFailure(error);
     console.error("Honeycomb submission operation failed", { type: error instanceof Error ? error.name : "Error" });
     return { ok: false, error: "Could not confirm this operation. Refresh the submissions list before trying again." };
   }

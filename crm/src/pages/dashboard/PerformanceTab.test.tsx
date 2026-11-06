@@ -1,3 +1,4 @@
+import { invalidateLiveUpdates } from "../../test/liveUpdates";
 import { beforeEach, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { emptyCommercialPlan } from "../../../../shared/quotePackages";
@@ -42,9 +43,8 @@ it("shows decided quote denominators and retains zero-decision roster members wi
 
 it("blocks charts and downloads for a reversed custom date range", async () => {
   render(<PerformanceTab />);
-  fireEvent.click(screen.getByRole("button", { name: "Custom…" }));
-  fireEvent.change(screen.getByLabelText("Effective from"), { target: { value: "2026-10-01" } });
-  fireEvent.change(screen.getByLabelText("Effective to"), { target: { value: "2026-09-01" } });
+  fireEvent.change(screen.getByLabelText("From date"), { target: { value: "2026-10-01" } });
+  fireEvent.change(screen.getByLabelText("Through date"), { target: { value: "2026-09-01" } });
   expect(screen.getByRole("alert")).toHaveTextContent("The start date must be on or before the end date.");
   expect(screen.queryByRole("combobox", { name: /^Download / })).not.toBeInTheDocument();
   expect(screen.queryByRole("group", { name: "Estimated commission per person" })).not.toBeInTheDocument();
@@ -57,7 +57,7 @@ it("does not present failed assignment loading as unassigned production", async 
   expect(screen.queryByRole("group", { name: "Estimated commission per person" })).not.toBeInTheDocument();
   expect(screen.queryByRole("combobox", { name: /^Download / })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Custom…" })).toBeEnabled();
+  expect(screen.getByLabelText("From date")).toBeEnabled();
 });
 
 it("loads assignments only for selected policies and decided quotes, with projected date-filtered requests", async () => {
@@ -76,15 +76,14 @@ it("loads assignments only for selected policies and decided quotes, with projec
   ] });
   render(<PerformanceTab />);
   await screen.findByRole("group", { name: "Estimated commission per person" });
-  fireEvent.click(screen.getByRole("button", { name: "Custom…" }));
-  fireEvent.change(screen.getByLabelText("Effective from"), { target: { value: "2026-09-01" } });
-  fireEvent.change(screen.getByLabelText("Effective to"), { target: { value: "2026-09-30" } });
+  fireEvent.change(screen.getByLabelText("From date"), { target: { value: "2026-09-01" } });
+  fireEvent.change(screen.getByLabelText("Through date"), { target: { value: "2026-09-30" } });
   await screen.findByRole("group", { name: "Estimated commission per person" });
   expect(h.assignments).toHaveBeenLastCalledWith(["a", "quote-only"]);
   expect(h.accounts).not.toHaveBeenCalled();
   expect(h.policies).toHaveBeenLastCalledWith(expect.objectContaining({
-    filter: { effectiveDate: { ge: "2026-09-01", le: "2026-09-30" }, status: { ne: "CANCELLED" } },
-    selectionSet: ["id", "accountId", "carrierId", "effectiveDate", "premium", "commissionPct", "status"],
+    filter: { effectiveDate: { ge: "2026-09-01", le: "2026-09-30" }, or: [{ status: { ne: "CANCELLED" } }, { brokerFee: { gt: 0 } }] },
+    selectionSet: ["id", "accountId", "carrierId", "effectiveDate", "premium", "commissionPct", "brokerFee", "brokerFeeRefunded", "status"],
   }));
   expect(h.quotes).toHaveBeenLastCalledWith(expect.objectContaining({
     filter: { effectiveDate: { ge: "2026-09-01", le: "2026-09-30" }, or: [{ status: { eq: "BOUND" } }, { status: { eq: "LOST" } }, { status: { eq: "DECLINED" } }] },
@@ -116,10 +115,9 @@ it("keeps filters available while replacing a snapshot and never exports old tot
   let resolvePolicies!: (value: { data: unknown[] }) => void;
   const pendingPolicies = new Promise<{ data: unknown[] }>(resolve => { resolvePolicies = resolve; });
   h.policies.mockImplementation(() => pendingPolicies);
-  fireEvent.click(screen.getByRole("button", { name: "Custom…" }));
-  fireEvent.change(screen.getByLabelText("Effective from"), { target: { value: "2027-01-01" } });
-  fireEvent.change(screen.getByLabelText("Effective to"), { target: { value: "2027-12-31" } });
-  expect(screen.getByLabelText("Effective from")).toBeEnabled();
+  fireEvent.change(screen.getByLabelText("From date"), { target: { value: "2027-01-01" } });
+  fireEvent.change(screen.getByLabelText("Through date"), { target: { value: "2027-12-31" } });
+  expect(screen.getByLabelText("From date")).toBeEnabled();
   expect(screen.getByRole("button", { name: "All time" })).toBeEnabled();
   expect(screen.getByText("Loading…")).toBeInTheDocument();
   expect(screen.queryByRole("group", { name: "Estimated commission per person" })).not.toBeInTheDocument();
@@ -147,12 +145,12 @@ it('retains performance data for transient failures but clears denied data throu
   render(<PerformanceTab />);
   await screen.findByRole('group', { name: 'Estimated commission per person' });
   h.assignments.mockRejectedValueOnce(new Error('Report temporarily unavailable'));
-  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+  await invalidateLiveUpdates();
   await screen.findByText(/Report temporarily unavailable/);
   expect(screen.getByRole('group', { name: 'Estimated commission per person' })).toBeVisible();
   expect(screen.getByRole('combobox', { name: 'Download Estimated commission per person' })).toBeDisabled();
   h.assignments.mockRejectedValueOnce(Object.assign(new Error('Credentials changed'), { name: 'Unauthorized' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+  await invalidateLiveUpdates();
   expect(await screen.findByRole('alert')).toHaveTextContent('Credentials changed');
   expect(screen.queryByRole('group', { name: 'Estimated commission per person' })).toBeNull();
   expect(screen.queryByRole('combobox', { name: /^Download / })).toBeNull();

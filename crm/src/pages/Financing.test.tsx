@@ -1,3 +1,4 @@
+import { invalidateLiveUpdates } from "../test/liveUpdates";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -203,7 +204,7 @@ describe("conditional financing availability", () => {
     expect(await screen.findByRole("listitem", { name: "Virginia: Available" })).toBeInTheDocument();
     const refreshed = deferred<OpinionPage>();
     mocks.opinionIndex.mockImplementation(({ jurisdiction }: { jurisdiction: string }) => jurisdiction === "VA" ? refreshed.promise : Promise.resolve(page()));
-    await userEvent.click(screen.getByRole("button", { name: /refresh/i }));
+    await invalidateLiveUpdates();
     expect(state("Virginia", "Checking…")).toBeInTheDocument();
     expect(list().queryByRole("listitem", { name: "Virginia: Available" })).not.toBeInTheDocument();
     await act(async () => { refreshed.resolve({ data: null, errors: [{ message: "Refresh unavailable" }] }); });

@@ -1,23 +1,40 @@
-import { listAllPages } from "../lib/pagination";
+import { str, inputValue } from "../lib/formCodec";
+import { assertGraphqlErrors } from '../lib/apiResponse';
+import { Select } from "./ui/Select";
+import { Field } from "./ui/Field";
+import { Input } from "./ui/Input";
+import { Button } from "./ui/Button";
+import { Textarea } from "./ui/Textarea";
+import { listAllPages } from "../../../shared/pagination";
 import { useAsyncResource } from "../lib/useAsyncResource";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
+import { useSaveStatus } from "./SaveStatus";
 import {
   client,
-  friendlyError,
   LINES_OF_BUSINESS,
   type Carrier,
   type Policy,
   type Quote,
 } from "../lib/client";
 import { useFormState } from "../lib/useFormState";
-import { SELECTABLE_QUOTE_STATUSES } from "../lib/quoteStatus";
+import { SELECTABLE_QUOTE_STATUSES } from "../../../shared/quoteStatus";
 import {
   AGGREGATE_APPLIES_TO_OPTIONS,
   BILL_TYPE_OPTIONS,
   POLICY_STATUSES,
   REPLACEMENT_COST_OPTIONS,
-} from "../lib/enums";
+} from "../../../shared/enums";
 import { DateInput, MoneyInput, PercentInput } from "./inputs";
+import { brokerFeeCents } from "../../../shared/brokerFees";
+import { clientChargeBreakdown } from "../../../shared/clientCharges";
+import { normalizeClientConditions, normalizePassThroughCharges, type PassThroughCharge } from "../../../shared/passThroughCharges";
+import { formatMoney } from "../../../shared/invoiceTotals";
+
+// Draft monetary inputs preserve invalid intermediate text as NaN, so charge
+// validation cannot mistake an unfinished amount for an absent stored value.
+const num = (value: string) => value.trim() === '' ? null : Number(value);
+
+const CHARGE_KINDS = [["CARRIER_FEE", "Carrier fee"], ["WHOLESALER_FEE", "Wholesaler fee"], ["TAX", "Tax"], ["SURPLUS_LINES", "Surplus lines tax"], ["STAMPING_FEE", "Stamping fee"]] as const;
 
 /**
  * Shared create/edit form for quotes and policies.
@@ -28,11 +45,6 @@ import { DateInput, MoneyInput, PercentInput } from "./inputs";
  * existence by binding a quote, so policy mode is edit-only.
  */
 
-const num = (v: string) => (v.trim() === "" ? null : Number(v));
-// Read side: column value → input string, seeding the form below. This runs
-// the opposite way from `formCodec`'s same-named `str` (input → column);
-// adopting that codec is a separate migration.
-const str = (v: number | null | undefined) => (v == null ? "" : String(v));
 
 export default function CoverageForm({
   kind,
@@ -49,14 +61,15 @@ export default function CoverageForm({
   onSaved: () => void;
   onCancel: () => void;
 }) {
-  const savingNow = useRef(false), mounted = useRef(true);
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const saveStatus = useSaveStatus({ singleFlight: true });
+  const { busy: saving } = saveStatus;
+  const error = saveStatus.status.state === "error" ? saveStatus.status.message : "";
   const isPolicy = kind === "policy";
-  const policies = useAsyncResource(() => isPolicy ? Promise.resolve([]) : listAllPages(token => client.models.Policy.list({ filter: { accountId: { eq: accountId } }, nextToken: token })), [accountId, isPolicy], { initialData: [] });
+  const policies = useAsyncResource(() => isPolicy ? Promise.resolve([]) : listAllPages(token => client.models.Policy.list({ filter: { accountId: { eq: accountId } }, nextToken: token })), [accountId, isPolicy], { initialData: [] , live: true });
   const editing = !!existing;
   const asPolicy = existing as Policy | null;
 
-  const { form, setF, patch } = useFormState({
+  const { form, setF, patch, markSaved } = useFormState({
     carrierId: existing?.carrierId ?? "",
     renewalPolicyId: (existing as Quote | null)?.renewalPolicyId ?? "",
     offerExpiresAt: (existing as Quote | null)?.offerExpiresAt ?? "",
@@ -65,29 +78,32 @@ export default function CoverageForm({
     // MEP rides along as underwriting data. Its screen — and auditable's,
     // and producer-of-record's — all retired 2026-08-24 by signed decision;
     // the form no longer asks any of them.
-    mepPct: str(existing?.minimumEarnedPremiumPct),
+    mepPct: inputValue(existing?.minimumEarnedPremiumPct),
     status: (existing?.status ?? (isPolicy ? "ACTIVE" : "DRAFT")) as string,
     lines: (existing?.lines ?? []).filter((l): l is string => !!l),
-    premium: str(existing?.premium),
-    commissionPct: str(existing?.commissionPct),
-    perOccDed: str(existing?.perOccurrenceDeductible),
-    perUnitDed: str(existing?.perUnitDeductible),
-    blanketLimit: str(existing?.blanketLimit),
-    coinsurance: str(existing?.coinsurancePct),
+    premium: inputValue(existing?.premium),
+    commissionPct: inputValue(existing?.commissionPct),
+    brokerFee: inputValue(existing?.brokerFee ?? 0),
+    passThroughCharges: normalizePassThroughCharges(existing?.passThroughCharges).map(charge => ({ ...charge, amount: String(charge.amountCents / 100) })),
+    clientConditions: existing?.clientConditions ?? "",
+    perOccDed: inputValue(existing?.perOccurrenceDeductible),
+    perUnitDed: inputValue(existing?.perUnitDeductible),
+    blanketLimit: inputValue(existing?.blanketLimit),
+    coinsurance: inputValue(existing?.coinsurancePct),
     rcType: existing?.replacementCostType ?? "",
     // GL limits — these are what actually print on a certificate.
-    glEachOcc: str(existing?.glEachOccurrence),
-    glRented: str(existing?.glDamageToRentedPremises),
-    glMed: str(existing?.glMedicalExpense),
-    glPersAdv: str(existing?.glPersonalAdvInjury),
-    glGenAgg: str(existing?.glGeneralAggregate),
-    glProdAgg: str(existing?.glProductsCompletedOps),
+    glEachOcc: inputValue(existing?.glEachOccurrence),
+    glRented: inputValue(existing?.glDamageToRentedPremises),
+    glMed: inputValue(existing?.glMedicalExpense),
+    glPersAdv: inputValue(existing?.glPersonalAdvInjury),
+    glGenAgg: inputValue(existing?.glGeneralAggregate),
+    glProdAgg: inputValue(existing?.glProductsCompletedOps),
     glClaimsMade: !!existing?.glClaimsMade,
     glAggApplies: existing?.glAggregateAppliesTo ?? "POLICY",
     effectiveDate: existing?.effectiveDate ?? "",
     expirationDate: existing?.expirationDate ?? "",
     notes: existing?.notes ?? "",
-  });
+  }, { onEdit: saveStatus.markDirty });
   // Only autofill the carrier's standard rate on an untouched new quote —
   // never clobber a rate already negotiated on an existing record.
   //
@@ -95,8 +111,18 @@ export default function CoverageForm({
   // value. Deriving it from the form (current ≠ initial) would re-arm the
   // autofill the moment someone typed the standard rate back by hand.
   const [commissionTouched, setCommissionTouched] = useState(editing);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
+
+  // Draft labels and blank rows need not be complete before the amount preview
+  // works. Only committed charges use their actual IDs/labels and strict save
+  // validation below; unfinished numeric input simply has no preview yet.
+  let clientTotal = "—";
+  try {
+    const passThroughCharges = form.passThroughCharges.flatMap(({ kind, amount }, index) => {
+      const amountCents = brokerFeeCents(num(amount));
+      return amountCents ? [{ id: `preview-${index}`, kind, description: 'Supplier charge', amountCents }] : [];
+    });
+    clientTotal = formatMoney(clientChargeBreakdown({ premium: num(form.premium), brokerFee: num(form.brokerFee), passThroughCharges }).clientTotalCents / 100);
+  } catch { /* Keep partially typed amounts editable without showing a false total. */ }
 
   function toggleLine(line: string) {
     setF("lines", (ls) =>
@@ -114,24 +140,36 @@ export default function CoverageForm({
   }
 
   async function save() {
-    if (savingNow.current) return;
+    const submitted = form;
+    if (saveStatus.isPending()) return;
+    let brokerFee: number, passThroughCharges: PassThroughCharge[], clientConditions: string;
+    try {
+      brokerFee = brokerFeeCents(form.brokerFee.trim() === "" ? 0 : Number(form.brokerFee)) / 100;
+      passThroughCharges = normalizePassThroughCharges(form.passThroughCharges.map(({ id, kind, description, amount }) => ({ id, kind, description, amountCents: brokerFeeCents(Number(amount)) })));
+      clientConditions = normalizeClientConditions(form.clientConditions);
+    }
+    catch (error) { saveStatus.markError(error instanceof Error ? error.message : "Check the broker fee."); return; }
+    if (brokerFee > 0 && form.billType !== "AGENCY") {
+      saveStatus.markError("HOA broker fees require agency billing. Choose Agency bill before saving.");
+      return;
+    }
     if (
       form.effectiveDate &&
       form.expirationDate &&
       form.effectiveDate > form.expirationDate
     ) {
-      setError("Effective date can't be after the expiration date.");
+      saveStatus.markError("Effective date can't be after the expiration date.");
       return;
     }
-    savingNow.current = true;
-    setSaving(true);
-    setError("");
 
     const shared = {
       carrierId: form.carrierId || null,
       lines: form.lines,
       premium: num(form.premium),
       commissionPct: num(form.commissionPct),
+      ...(!isPolicy && existing?.status !== "BOUND" ? { brokerFee, billType: (form.billType || null) as Quote["billType"],
+        ...(!existing || existing.passThroughCharges != null || passThroughCharges.length > 0 ? { passThroughCharges: JSON.stringify(passThroughCharges) } : {}),
+        clientConditions: clientConditions || null } : {}),
       perOccurrenceDeductible: num(form.perOccDed),
       perUnitDeductible: num(form.perUnitDed),
       blanketLimit: num(form.blanketLimit),
@@ -147,16 +185,16 @@ export default function CoverageForm({
       glAggregateAppliesTo: form.glAggApplies as Quote["glAggregateAppliesTo"],
       effectiveDate: form.effectiveDate || null,
       expirationDate: form.expirationDate || null,
-      notes: form.notes.trim() || null,
+      notes: str(form.notes),
     };
 
-    try {
+    await saveStatus.run(async current => {
       if (isPolicy) {
         if (!existing) throw new Error("Policies are created by binding a quote.");
         const { errors } = await client.models.Policy.update({
           id: existing.id,
           ...shared,
-          ...(!asPolicy?.commissionSnapshotId ? { policyNumber: form.policyNumber.trim() || null } : {}),
+          ...(!asPolicy?.commissionSnapshotId ? { policyNumber: str(form.policyNumber) } : {}),
           status: form.status as Policy["status"],
           // Nullable on the way back out: a policy bound before this field
           // existed opens with the box empty, and saving other edits must not
@@ -165,7 +203,7 @@ export default function CoverageForm({
           // MEP is underwriting data; blank stays null, never a confident 0.
           minimumEarnedPremiumPct: form.mepPct.trim() === "" ? null : Number(form.mepPct),
         });
-        if (errors?.length) throw new Error(errors[0].message);
+        assertGraphqlErrors({ errors: errors });
       } else if (existing) {
         const { errors } = await client.models.Quote.update({
           id: existing.id,
@@ -177,7 +215,7 @@ export default function CoverageForm({
           ...(form.status === "PRESENTED" && !(existing as Quote | null)?.presentedAt ? { presentedAt: new Date().toISOString() } : {}),
           minimumEarnedPremiumPct: form.mepPct.trim() === "" ? null : Number(form.mepPct),
         });
-        if (errors?.length) throw new Error(errors[0].message);
+        assertGraphqlErrors({ errors: errors });
       } else {
         const { errors } = await client.models.Quote.create({
           accountId,
@@ -189,15 +227,10 @@ export default function CoverageForm({
           ...(form.status === "PRESENTED" && !(existing as Quote | null)?.presentedAt ? { presentedAt: new Date().toISOString() } : {}),
           minimumEarnedPremiumPct: form.mepPct.trim() === "" ? null : Number(form.mepPct),
         });
-        if (errors?.length) throw new Error(errors[0].message);
+        assertGraphqlErrors({ errors: errors });
       }
-      if (mounted.current) onSaved();
-    } catch (err) {
-      if (mounted.current) setError(friendlyError(err, "Save failed"));
-    } finally {
-      savingNow.current = false;
-      if (mounted.current) setSaving(false);
-    }
+      if (current()) { markSaved(submitted); onSaved(); }
+    }, { errorMessage: "Save failed" });
   }
 
   // A bound quote's status is owned by the policy — don't offer to unwind it
@@ -215,67 +248,66 @@ export default function CoverageForm({
       </h3>
       <fieldset disabled={saving} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
       <div className="form-grid">
-        <div className="field">
-          <label>Carrier</label>
-          <select value={form.carrierId} onChange={(e) => pickCarrier(e.target.value)}>
+        <Field label="Carrier">
+          {control => <Select {...control} value={form.carrierId} onChange={(e) => pickCarrier(e.target.value)}>
             <option value="">—</option>
             {carriers.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}
               </option>
             ))}
-          </select>
-        </div>
+          </Select>}
+        </Field>
         {isPolicy && (
-          <div className="field">
-            <label htmlFor="coverage-policy-number">Policy number</label>
-            <input
-              id="coverage-policy-number"
+          <Field label="Policy number" id="coverage-policy-number"
+            help={asPolicy?.commissionSnapshotId && <>The Owner can update this number in <a href="/commissions">Commissions</a> to keep policy and payroll records consistent.</>}>
+            {control => <Input {...control}
               disabled={!!asPolicy?.commissionSnapshotId}
               value={form.policyNumber}
               onChange={(e) => setF("policyNumber", e.target.value)}
-            />
-            {asPolicy?.commissionSnapshotId && <p className="small muted">The Owner can update this number in <a href="/commissions">Commissions</a> to keep policy and payroll records consistent.</p>}
-          </div>
+            />}
+          </Field>
         )}
         {/* The financing-eligibility facts, on quotes and policies alike:
             W8 bills — and offers financing on — a quote before bind, so the
             screens must be answerable where the offer is made. */}
         {(
           <>
-            <div className="field">
-              <label>Minimum earned premium % (from the {isPolicy ? "policy" : "quote"})</label>
-              <PercentInput
+            <Field label={<>Minimum earned premium % (from the {isPolicy ? "policy" : "quote"})</>}>
+              {control => <PercentInput {...control}
                 value={form.mepPct}
                 onChange={(v) => setF("mepPct", v)}
-              />
-            </div>
+              />}
+            </Field>
           </>
         )}
-        {/* Set at bind and correctable here — a placement can move from direct
-            to agency bill mid-term, and the answer decides whether the agency
-            invoices the premium at all. */}
-        {isPolicy && (
-          <div className="field">
-            <label>Bill type</label>
-            <select
+        {/* Fee-bearing quotes need this existing billing answer before the
+            client payment request; fee-free quotes still answer it at bind. */}
+        {(isPolicy || Number(form.brokerFee) > 0) && (
+          <Field label="Bill type" id="coverage-bill-type"
+            help={!isPolicy && (Number(form.brokerFee) > 0 ? "HOA broker fees require agency billing." : "Choose who collects the premium so the client’s payment request includes only the amount the agency collects.")}>
+            {control => <Select {...control}
+              disabled={!isPolicy && existing?.status === "BOUND"}
               value={form.billType}
               onChange={(e) => setF("billType", e.target.value)}
             >
               <option value="">Not recorded</option>
               {BILL_TYPE_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
+                <option key={o.value} value={o.value} disabled={o.value === "DIRECT" && Number(form.brokerFee) > 0}>
                   {o.label}
                 </option>
               ))}
-            </select>
-          </div>
+            </Select>}
+          </Field>
         )}
-        {!isPolicy && policies.data.length > 0 && <label className="field">Renewal of<select value={form.renewalPolicyId} onChange={e => { const p = policies.data.find(p => p.id === e.target.value); setF("renewalPolicyId", e.target.value); if (p?.expirationDate && !form.effectiveDate) setF("effectiveDate", p.expirationDate); }}><option value="">New business</option>{policies.data.map(p => <option value={p.id} key={p.id}>{p.policyNumber || "Policy"} · {p.lines?.join(", ")} · expires {p.expirationDate}</option>)}</select></label>}
-        {!isPolicy && <label className="field">Offer valid through (if specified by carrier)<DateInput value={form.offerExpiresAt} onChange={v => setF("offerExpiresAt", v)} /></label>}
-        <div className="field">
-          <label>Status</label>
-          <select
+        {!isPolicy && policies.data.length > 0 && <Field label="Renewal of">
+          {control => <Select {...control} value={form.renewalPolicyId} onChange={e => { const p = policies.data.find(p => p.id === e.target.value); setF("renewalPolicyId", e.target.value); if (p?.expirationDate && !form.effectiveDate) setF("effectiveDate", p.expirationDate); }}><option value="">New business</option>{policies.data.map(p => <option value={p.id} key={p.id}>{p.policyNumber || "Policy"} · {p.lines?.join(", ")} · expires {p.expirationDate}</option>)}</Select>}
+        </Field>}
+        {!isPolicy && <Field label="Offer valid through (if specified by carrier)">
+          {control => <DateInput {...control} value={form.offerExpiresAt} onChange={v => setF("offerExpiresAt", v)} />}
+        </Field>}
+        <Field label="Status">
+          {control => <Select {...control}
             value={form.status}
             onChange={(e) => setF("status", e.target.value)}
             disabled={statusOptions.length === 1}
@@ -283,78 +315,96 @@ export default function CoverageForm({
             {[...statusOptions].sort((a, b) => a.localeCompare(b)).map((s) => (
               <option key={s}>{s}</option>
             ))}
-          </select>
-        </div>
-        <div className="field">
-          <label>Premium ($)</label>
-          <MoneyInput
+          </Select>}
+        </Field>
+        <Field label="Premium ($)" id="coverage-premium" help={<> Client premium before fees and taxes. Actual carrier or wholesaler remittance is recorded separately on the invoice. </>}>
+          {control => <MoneyInput {...control}
             value={form.premium}
             onChange={(v) => setF("premium", v)}
-          />
-        </div>
-        <div className="field">
-          <label>Commission % (baked into premium)</label>
-          <PercentInput
+          />}
+        </Field>
+        <Field label="Commission % (baked into premium)">
+          {control => <PercentInput {...control}
             value={form.commissionPct}
             onChange={(v) => {
               setCommissionTouched(true);
               setF("commissionPct", v);
             }}
-          />
+          />}
+        </Field>
+        <Field label="HOA broker fee ($)" id="coverage-broker-fee" help={<> Optional agency fee, separate from premium. Disclosed before purchase; the producer’s usual share applies.{(isPolicy || existing?.status === "BOUND") ? " The bound fee is preserved with its signed agreement." : " New and renewal quotes start at $0."} </>}>
+          {control => <MoneyInput {...control} value={form.brokerFee} disabled={isPolicy || existing?.status === "BOUND"} onChange={v => patch({ brokerFee: v, ...(Number(v) > 0 ? { billType: "AGENCY" } : {}) })} />}
+        </Field>
+        <div className="field full">
+          <h4 style={{ margin: "6px 0" }}>Supplier charges and taxes</h4>
+          <p className="small muted">Itemize charges from the carrier or wholesaler. These pass through at cost and do not increase agency revenue.</p>
+          {form.passThroughCharges.map((charge, index) => <fieldset key={charge.id} disabled={isPolicy || existing?.status === "BOUND"} style={{ border: 0, padding: "8px 0", margin: 0 }}>
+            <legend className="small">Charge {index + 1}</legend>
+            <div className="form-grid">
+              <Field label="Charge type">
+                {control => <Select {...control} aria-label={`Charge ${index + 1} type`} value={charge.kind} onChange={e => setF("passThroughCharges", rows => rows.map(row => row.id === charge.id ? { ...row, kind: e.target.value as PassThroughCharge["kind"] } : row))}>{CHARGE_KINDS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</Select>}
+              </Field>
+              <Field label="Description">
+                {control => <Input {...control} aria-label={`Charge ${index + 1} description`} maxLength={160} value={charge.description} onChange={e => setF("passThroughCharges", rows => rows.map(row => row.id === charge.id ? { ...row, description: e.target.value } : row))} />}
+              </Field>
+              <Field label={<>Charge {index + 1} amount</>} id={`charge-amount-${charge.id}`}>
+                {control => <MoneyInput {...control} value={charge.amount} onChange={amount => setF("passThroughCharges", rows => rows.map(row => row.id === charge.id ? { ...row, amount } : row))} />}
+              </Field>
+            </div>
+            <Button variant="danger" type="button"  onClick={() => setF("passThroughCharges", rows => rows.filter(row => row.id !== charge.id))}>Remove charge {index + 1}</Button>
+          </fieldset>)}
+          {!isPolicy && existing?.status !== "BOUND" && <Button variant="secondary" type="button"  disabled={form.passThroughCharges.length >= 30} onClick={() => setF("passThroughCharges", rows => [...rows, { id: `charge-${crypto.randomUUID()}`, kind: "WHOLESALER_FEE", description: "", amountCents: 0, amount: "" }])}>Add supplier charge or tax</Button>}
+          <p className="small"><strong>Client policy total: {clientTotal}</strong> · Premium + supplier charges and taxes + HOA broker fee</p>
+          <Field label="Client conditions" help="Reviewed wording shown to the client with the quote, such as minimum earned premium, cancellation terms or coverage conditions. Keep internal notes below.">
+            {control => <Textarea {...control} aria-label="Client conditions" maxLength={6000} rows={3} disabled={isPolicy || existing?.status === "BOUND"} value={form.clientConditions} onChange={e => setF("clientConditions", e.target.value)} />}
+          </Field>
         </div>
-        <div className="field">
-          <label>Effective date</label>
-          <DateInput
+        <Field label="Effective date">
+          {control => <DateInput {...control}
             value={form.effectiveDate}
             onChange={(v) => setF("effectiveDate", v)}
-          />
-        </div>
-        <div className="field">
-          <label>Expiration date</label>
-          <DateInput
+          />}
+        </Field>
+        <Field label="Expiration date">
+          {control => <DateInput {...control}
             value={form.expirationDate}
             onChange={(v) => setF("expirationDate", v)}
-          />
-        </div>
-        <div className="field">
-          <label>Per-occurrence deductible ($)</label>
-          <MoneyInput
+          />}
+        </Field>
+        <Field label="Per-occurrence deductible ($)">
+          {control => <MoneyInput {...control}
             value={form.perOccDed}
             onChange={(v) => setF("perOccDed", v)}
-          />
-        </div>
-        <div className="field">
-          <label>Per-unit deductible ($)</label>
-          <MoneyInput
+          />}
+        </Field>
+        <Field label="Per-unit deductible ($)">
+          {control => <MoneyInput {...control}
             value={form.perUnitDed}
             onChange={(v) => setF("perUnitDed", v)}
-          />
-        </div>
-        <div className="field">
-          <label>Blanket limit ($)</label>
-          <MoneyInput
+          />}
+        </Field>
+        <Field label="Blanket limit ($)">
+          {control => <MoneyInput {...control}
             value={form.blanketLimit}
             onChange={(v) => setF("blanketLimit", v)}
-          />
-        </div>
-        <div className="field">
-          <label>Coinsurance %</label>
-          <PercentInput
+          />}
+        </Field>
+        <Field label="Coinsurance %">
+          {control => <PercentInput {...control}
             value={form.coinsurance}
             onChange={(v) => setF("coinsurance", v)}
-          />
-        </div>
-        <div className="field">
-          <label>Replacement cost</label>
-          <select value={form.rcType} onChange={(e) => setF("rcType", e.target.value)}>
+          />}
+        </Field>
+        <Field label="Replacement cost">
+          {control => <Select {...control} value={form.rcType} onChange={(e) => setF("rcType", e.target.value)}>
             <option value="">—</option>
             {REPLACEMENT_COST_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>
                 {o.label}
               </option>
             ))}
-          </select>
-        </div>
+          </Select>}
+        </Field>
         <div className="field full">
           <h4 style={{ margin: "6px 0 0" }}>General liability limits</h4>
           <p className="muted small" style={{ margin: "2px 0 0" }}>
@@ -362,44 +412,37 @@ export default function CoverageForm({
             is of no use to the holder.
           </p>
         </div>
-        <div className="field">
-          <label>Each occurrence ($)</label>
-          <MoneyInput value={form.glEachOcc} onChange={(v) => setF("glEachOcc", v)} />
-        </div>
-        <div className="field">
-          <label>Damage to rented premises ($)</label>
-          <MoneyInput value={form.glRented} onChange={(v) => setF("glRented", v)} />
-        </div>
-        <div className="field">
-          <label>Medical expense, any one person ($)</label>
-          <MoneyInput value={form.glMed} onChange={(v) => setF("glMed", v)} />
-        </div>
-        <div className="field">
-          <label>Personal &amp; advertising injury ($)</label>
-          <MoneyInput value={form.glPersAdv} onChange={(v) => setF("glPersAdv", v)} />
-        </div>
-        <div className="field">
-          <label>General aggregate ($)</label>
-          <MoneyInput value={form.glGenAgg} onChange={(v) => setF("glGenAgg", v)} />
-        </div>
-        <div className="field">
-          <label>Products &amp; completed ops aggregate ($)</label>
-          <MoneyInput value={form.glProdAgg} onChange={(v) => setF("glProdAgg", v)} />
-        </div>
-        <div className="field">
-          <label>Aggregate applies per</label>
-          <select value={form.glAggApplies} onChange={(e) => setF("glAggApplies", e.target.value as typeof form.glAggApplies)}>
+        <Field label="Each occurrence ($)">
+          {control => <MoneyInput {...control} value={form.glEachOcc} onChange={(v) => setF("glEachOcc", v)} />}
+        </Field>
+        <Field label="Damage to rented premises ($)">
+          {control => <MoneyInput {...control} value={form.glRented} onChange={(v) => setF("glRented", v)} />}
+        </Field>
+        <Field label="Medical expense, any one person ($)">
+          {control => <MoneyInput {...control} value={form.glMed} onChange={(v) => setF("glMed", v)} />}
+        </Field>
+        <Field label="Personal &amp; advertising injury ($)">
+          {control => <MoneyInput {...control} value={form.glPersAdv} onChange={(v) => setF("glPersAdv", v)} />}
+        </Field>
+        <Field label="General aggregate ($)">
+          {control => <MoneyInput {...control} value={form.glGenAgg} onChange={(v) => setF("glGenAgg", v)} />}
+        </Field>
+        <Field label="Products &amp; completed ops aggregate ($)">
+          {control => <MoneyInput {...control} value={form.glProdAgg} onChange={(v) => setF("glProdAgg", v)} />}
+        </Field>
+        <Field label="Aggregate applies per">
+          {control => <Select {...control} value={form.glAggApplies} onChange={(e) => setF("glAggApplies", e.target.value as typeof form.glAggApplies)}>
             {AGGREGATE_APPLIES_TO_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>
                 {o.label}
               </option>
             ))}
-          </select>
-        </div>
+          </Select>}
+        </Field>
         <div className="field">
           <label>Coverage form</label>
           <label className="small" style={{ display: "flex", gap: 6, alignItems: "center", height: 38 }}>
-            <input
+            <Input
               type="checkbox"
               checked={form.glClaimsMade}
               onChange={(e) => setF("glClaimsMade", e.target.checked)}
@@ -420,7 +463,7 @@ export default function CoverageForm({
                 className="small"
                 style={{ display: "flex", gap: 4, alignItems: "center" }}
               >
-                <input
+                <Input
                   type="checkbox"
                   checked={form.lines.includes(l)}
                   onChange={() => toggleLine(l)}
@@ -430,18 +473,17 @@ export default function CoverageForm({
             ))}
           </div>
         </div>
-        <div className="field full">
-          <label>Notes</label>
-          <textarea rows={2} value={form.notes} onChange={(e) => setF("notes", e.target.value)} />
-        </div>
+        <Field label="Notes" className="full">
+          {control => <Textarea {...control} rows={2} value={form.notes} onChange={(e) => setF("notes", e.target.value)} />}
+        </Field>
       </div>
       <div className="form-actions">
-        <button className="primary" disabled={saving} onClick={save}>
+        <Button variant="primary"  disabled={saving} onClick={save}>
           {saving ? "Saving…" : editing ? "Save changes" : "Save quote"}
-        </button>
-        <button className="link" disabled={saving} onClick={() => { if (!savingNow.current) onCancel(); }}>
+        </Button>
+        <Button variant="link"  disabled={saving} onClick={() => { if (!saveStatus.isPending()) onCancel(); }}>
           Cancel
-        </button>
+        </Button>
         {error && <span className="error-text">{error}</span>}
       </div>
       </fieldset>

@@ -1,13 +1,11 @@
+import { createDataClientGetter } from "../data-client";
 import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
+import { migrationProviderHeld, migrationPendingHeld } from "../migration-pending";
 import { HeadObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { enqueueOperation } from "../communications/operations";
-import { Amplify } from "aws-amplify";
-import { generateClient } from "aws-amplify/data";
-import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtime";
-import type { Schema } from "../../data/resource";
-import { listAllPages } from "../../../src/lib/pagination";
-import { extractedAt, parseStoredJson } from "../../../src/lib/aiExtraction";
-import { isExtractableCategory } from "../../../src/lib/enums";
+import { listAllPages } from "../../../../shared/pagination";
+import { extractedAt, parseStoredJson } from "../../../../shared/aiExtraction";
+import { isExtractableCategory } from "../../../../shared/enums";
 import { REQUESTED_DOCUMENTS } from "../../../../shared/leadDocuments";
 import { decideSweep } from "./decide";
 import { arrivedSections, renderNotification } from "./email";
@@ -19,18 +17,7 @@ import { arrivedSections, renderNotification } from "./email";
  * kick extraction off, or leave it for the next tick.
  */
 
-type DataClient = ReturnType<typeof generateClient<Schema>>;
-let dataClient: DataClient | undefined;
-async function getDataClient() {
-  if (!dataClient) {
-    const { resourceConfig, libraryOptions } = await getAmplifyDataClientConfig(
-      process.env as never
-    );
-    Amplify.configure(resourceConfig, libraryOptions);
-    dataClient = generateClient<Schema>();
-  }
-  return dataClient;
-}
+const getDataClient = createDataClientGetter();
 
 const lambda = new LambdaClient();
 const s3 = new S3Client();
@@ -141,6 +128,9 @@ export const handler = async () => {
   summary.open = portals.length;
 
   for (const portal of portals) {
+    // Existing portals can receive genuine new uploads. Use the upload event,
+    // not the portal's original creation date, as the work's provenance.
+    if (migrationProviderHeld(portal.lastUploadAt, "iso")) continue;
     try {
       const [account, documents] = await Promise.all([
         client.models.Account.get({ id: portal.accountId }),
@@ -166,7 +156,7 @@ export const handler = async () => {
 
       const decision = decideSweep({
         portal,
-        documents,
+        documents: documents.filter(doc => !migrationPendingHeld(doc)),
         account: {
           extractionStatus: account.data.extractionStatus,
           extractedAt: extractedAt(account.data.aiExtraction),
@@ -208,7 +198,7 @@ export const handler = async () => {
        * with no object under it.
        */
       const fresh = await landed(
-        documents.filter((d) => !decision.since || (d.createdAt ?? "") > decision.since)
+        documents.filter((d) => !migrationPendingHeld(d) && (!decision.since || (d.createdAt ?? "") > decision.since))
       );
       const arrived = arrivedSections(fresh);
       if (arrived.length === 0) {

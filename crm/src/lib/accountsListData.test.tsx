@@ -6,13 +6,15 @@ import type { CommercialData } from './commercial';
 
 const h = vi.hoisted(() => ({ accounts: vi.fn(), contacts: vi.fn(), policies: vi.fn(), quotes: vi.fn(), commercial: vi.fn(), isAdmin: true }));
 vi.mock('./client', async () => ({
-  ...(await import('./pagination')),
+  ...(await import('../../../shared/pagination')),
   friendlyError: (error: unknown, fallback: string) => error instanceof Error ? error.message : fallback,
   client: { models: { Account: { list: h.accounts }, Contact: { list: h.contacts }, Policy: { list: h.policies }, Quote: { list: h.quotes } } },
 }));
 vi.mock('./commercial', () => ({ loadCommercial: h.commercial }));
 vi.mock('./auth', () => ({ useIsAdmin: () => h.isAdmin }));
 import { AccountsListDataProvider, useAccountsListData } from './accountsListData';
+import { invalidateLiveUpdates } from '../test/liveUpdates';
+import { liveUpdates } from './liveUpdates';
 
 const account = (id: string, name = id, stage = 'LEAD') => ({ id, name, stage }) as Account;
 const commercial = (ids: string[], version = 1): CommercialData => ({ team: [], entries: Object.fromEntries(ids.map(id => [id, {
@@ -40,6 +42,98 @@ beforeEach(() => {
   h.policies.mockResolvedValue({ data: [] });
   h.quotes.mockResolvedValue({ data: [] });
   h.commercial.mockImplementation(async (ids: string[]) => commercial(ids));
+});
+
+it('does not publish a background account snapshot after an editor opens mid-request', async () => {
+  render(<App />);
+  await settled();
+  h.accounts.mockResolvedValue({ data: [account('a', 'Updated name')] });
+  const details = deferred<CommercialData>();
+  h.commercial.mockReturnValueOnce(details.promise);
+  await invalidateLiveUpdates();
+  expect(latest.loading).toBe(false);
+  expect(latest.data.accounts[0].name).toBe('a');
+  let release!: () => void;
+  act(() => { release = liveUpdates.acquireBlock(); });
+  await act(async () => details.resolve(commercial(['a'], 2)));
+  expect(latest.data.accounts[0].name).toBe('a');
+  expect(latest.data.commercial.entries.a.workflowVersion).toBe(1);
+  h.commercial.mockResolvedValue(commercial(['a'], 3));
+  act(() => release());
+  await waitFor(() => expect(latest.data.accounts[0].name).toBe('Updated name'));
+  expect(latest.data.commercial.entries.a.workflowVersion).toBe(3);
+});
+
+it('clears background-denied account data even if an editor opened while its read was pending', async () => {
+  render(<App />);
+  await settled();
+  let reject!: (error: Error) => void;
+  h.commercial.mockReturnValueOnce(new Promise((_, fail) => { reject = fail; }));
+  await invalidateLiveUpdates();
+  let release!: () => void;
+  act(() => { release = liveUpdates.acquireBlock(); });
+  await act(async () => reject(Object.assign(new Error('Access denied'), { name: 'Unauthorized' })));
+  expect(latest.data.accounts).toEqual([]);
+  expect(latest.data.commercial.entries).toEqual({});
+  expect(latest.error).toBe('Access denied');
+  act(() => release());
+});
+
+it('keeps a successful retry when an already reported background denial settles after another old page', async () => {
+  render(<App />);
+  await settled();
+  const oldContacts = deferred<{ data: never[] }>();
+  h.contacts.mockReturnValueOnce(oldContacts.promise);
+  h.quotes.mockResolvedValueOnce({ data: [], errors: [{ message: 'Access denied', errorType: 'Unauthorized' }] });
+  await invalidateLiveUpdates();
+  // The current denial must clear immediately, without waiting for contacts.
+  expect(latest.error).toBe('Access denied');
+  expect(latest.data.accounts).toEqual([]);
+  expect(h.contacts).toHaveBeenCalledTimes(2);
+
+  h.accounts.mockResolvedValueOnce({ data: [account('recovered')] });
+  await act(async () => { await latest.refetch(); });
+  expect(latest.error).toBe('');
+  expect(latest.data.accounts.map(row => row.id)).toEqual(['recovered']);
+  expect(Object.keys(latest.data.commercial.entries)).toEqual(['recovered']);
+
+  // Completing the old Promise.allSettled must not report its denial twice.
+  await act(async () => { oldContacts.resolve({ data: [] }); });
+  expect(latest.loading).toBe(false);
+  expect(latest.error).toBe('');
+  expect(latest.data.accounts.map(row => row.id)).toEqual(['recovered']);
+  expect(Object.keys(latest.data.commercial.entries)).toEqual(['recovered']);
+});
+
+it('ignores an old cycle first denying after a newer foreground retry has started', async () => {
+  render(<App />);
+  await settled();
+  const oldContacts = deferred<{ data: never[] }>();
+  const oldQuotes = deferred<{ data: never[]; errors?: { message: string; errorType: string }[] }>();
+  h.contacts.mockReturnValueOnce(oldContacts.promise);
+  h.quotes.mockReturnValueOnce(oldQuotes.promise);
+  await invalidateLiveUpdates();
+  expect(h.contacts).toHaveBeenCalledTimes(2); expect(h.quotes).toHaveBeenCalledTimes(2);
+
+  const freshAccounts = deferred<{ data: Account[] }>();
+  h.accounts.mockReturnValueOnce(freshAccounts.promise);
+  let retry!: Promise<void>;
+  act(() => { retry = latest.refetch(); });
+  expect(latest.loading).toBe(true);
+  expect(h.accounts).toHaveBeenCalledTimes(3);
+  await act(async () => {
+    oldQuotes.resolve({ data: [], errors: [{ message: 'Access denied', errorType: 'Unauthorized' }] });
+    oldContacts.resolve({ data: [] });
+  });
+  // The retired background cycle cannot increment the foreground ticket or
+  // replace its loading/error state, even on its first denial callback.
+  expect(latest.loading).toBe(true);
+  expect(latest.error).toBe('');
+  await act(async () => { freshAccounts.resolve({ data: [account('fresh')] }); await retry; });
+  expect(latest.loading).toBe(false);
+  expect(latest.error).toBe('');
+  expect(latest.data.accounts.map(row => row.id)).toEqual(['fresh']);
+  expect(Object.keys(latest.data.commercial.entries)).toEqual(['fresh']);
 });
 
 it('shows admin cache immediately while revalidating details on route return', async () => {
@@ -109,7 +203,7 @@ it('purges both stage caches on a GraphQL authorization error from an optional l
   await settled();
   h.contacts.mockResolvedValue({ data: [], errors: [{ message: 'Temporary issue' }, { message: 'Access denied', errorType: 'Unauthorized' }] });
   await act(async () => { await latest.refetch(); });
-  expect(latest.error).toBe('Access denied');
+  expect(latest.error).toBe('Temporary issue; Access denied');
   expect(latest.data.accounts).toEqual([]);
   const pending = deferred<{ data: Account[] }>();
   h.accounts.mockReturnValue(pending.promise);

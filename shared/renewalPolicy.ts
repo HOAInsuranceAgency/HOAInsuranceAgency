@@ -1,3 +1,4 @@
+import { agencyDay } from './agencyTime';
 import { localHour, morningReminderAt, nextReminderMorning } from "./leadWorkflow";
 
 export const addCalendarDays = (day: string, count: number) => new Date(Date.parse(`${day}T12:00:00Z`) + count * 86400_000).toISOString().slice(0, 10);
@@ -28,7 +29,7 @@ export function quoteMatchesRisk(quote: QuoteEvidence, risk: RiskTerm) {
     && validCalendarDate(quote.expirationDate) && quote.expirationDate > risk.term;
 }
 export function usableQuote(quote: QuoteEvidence, risk: RiskTerm, now: string) {
-  const today = /^\d{4}-\d{2}-\d{2}$/.test(now) ? now : new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(now));
+  const today = /^\d{4}-\d{2}-\d{2}$/.test(now) ? now : agencyDay(now);
   return quoteMatchesRisk(quote, risk) && ["QUOTED", "PRESENTED", "BOUND"].includes(quote.status ?? "")
     && !!quote.carrierId && quote.premium != null && quote.premium > 0 && !!quote.lines?.filter(Boolean).length
     && (quote.status === "BOUND" || !quote.offerExpiresAt || validCalendarDate(quote.offerExpiresAt) && quote.offerExpiresAt >= today);

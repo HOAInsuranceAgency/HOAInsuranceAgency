@@ -1,3 +1,4 @@
+import { brokerFees } from '../functions/broker-fees/resource';
 import { commissions } from '../functions/commissions/resource';
 import { ownerProfitability } from "../functions/owner-profitability/resource";
 import { crmAccess } from "../functions/crm-access/resource";
@@ -40,6 +41,23 @@ import { marketingReportApi } from "../functions/marketing-report/resource";
  */
 const schema = a
   .schema({
+    // Payload-free signals. IAM-only publishing is enforced again in the
+    // resolver; subscriptions only prompt ordinary, authorized data reads.
+    CrmChange: a.customType({ revision: a.string().required() }),
+    OwnerChange: a.customType({ revision: a.string().required() }),
+    PersonalChange: a.customType({ revision: a.string().required(), userId: a.string().required() }),
+    publishCrmChange: a.mutation().returns(a.ref('CrmChange'))
+      .handler(a.handler.custom({ entry: './live-publish.js' })).authorization(allow => [allow.authenticated()]),
+    publishOwnerChange: a.mutation().returns(a.ref('OwnerChange'))
+      .handler(a.handler.custom({ entry: './live-publish.js' })).authorization(allow => [allow.authenticated()]),
+    publishPersonalChange: a.mutation().arguments({ userId: a.string().required() }).returns(a.ref('PersonalChange'))
+      .handler(a.handler.custom({ entry: './live-publish.js' })).authorization(allow => [allow.authenticated()]),
+    onCrmChange: a.subscription().for(a.ref('publishCrmChange'))
+      .handler(a.handler.custom({ entry: './live-subscribe.js' })).authorization(allow => [allow.authenticated()]),
+    onOwnerChange: a.subscription().for(a.ref('publishOwnerChange'))
+      .handler(a.handler.custom({ entry: './live-subscribe.js' })).authorization(allow => [allow.authenticated()]),
+    onPersonalChange: a.subscription().for(a.ref('publishPersonalChange'))
+      .handler(a.handler.custom({ entry: './live-subscribe.js' })).authorization(allow => [allow.authenticated()]),
     // ── Lifecycle enums ────────────────────────────────────────────────
     AccountStage: a.enum(["LEAD", "CLIENT"]),
     AccountType: a.enum(["ASSOCIATION", "PERSONAL", "COMMERCIAL_OTHER"]),
@@ -89,6 +107,7 @@ const schema = a
       "LICENSE",
     ]),
     DocumentCategory: a.enum([
+      "BROKER_FEE_DISCLOSURE",
       "PRIOR_POLICY",
       "CONDO_DOCS",
       "BUDGET",
@@ -144,6 +163,9 @@ const schema = a
      * than as someone forgetting to enter a cost.
      */
     InvoiceLineKind: a.enum([
+      "BROKER_FEE",
+      "CARRIER_FEE",
+      "WHOLESALER_FEE",
       "PREMIUM",
       "ENDORSEMENT",
       "TAX",
@@ -286,7 +308,8 @@ const schema = a
     // the note on `allow.resource` at the bottom of this file.
     Account: a
       .model({
-        stage: a.ref("AccountStage").required(),
+        brokerFeeHistory: a.boolean(), // Server-owned retention marker for signed disclosures.
+      stage: a.ref("AccountStage").required(),
         type: a.ref("AccountType").required(),
         // Confirmed reporting group; existing associations remain unknown.
         propertyType: a.ref("PropertyType"),
@@ -835,6 +858,11 @@ const schema = a
       offerExpiresAt: a.date(),
       lines: a.string().array(), // e.g. ["Commercial Property", "General Liability", "D&O", "Umbrella"]
       premium: a.float(),
+      /** Optional agency fee; never part of carrier premium. */
+      brokerFee: a.float(),
+      passThroughCharges: a.json(),
+      clientConditions: a.string(),
+      billType: a.ref("BillType"),
       // Agency commission, % of premium. NOTE: already baked into the
       // quoted premium — commission $ is informational, never additive.
       commissionPct: a.float(),
@@ -927,6 +955,14 @@ const schema = a
       isAuditable: a.boolean(),
       lines: a.string().array(),
       premium: a.float(),
+      brokerFee: a.float(),
+      passThroughCharges: a.json(),
+      clientConditions: a.string(),
+      /** Server-owned actual fee receipts; independent of policy cancellation. */
+      brokerFeeReportingKey: a.string(), // Server-owned sparse reporting partition.
+      brokerFeeCollected: a.float(),
+      brokerFeeRefunded: a.float(),
+      brokerFeeCollectedAt: a.datetime(),
       commissionPct: a.float(), // carried from the bound quote; baked into premium
       // ── General liability limits (printed on the ACORD 25 COI) ──
       glEachOccurrence: a.float(),
@@ -957,6 +993,7 @@ const schema = a
       invoices: a.hasMany("Invoice", "policyId"),
       invoiceLines: a.hasMany("InvoiceLine", "policyId"),
     }).disableOperations(["subscriptions"])
+      .secondaryIndexes(index => [index("brokerFeeReportingKey")])
       .authorization((allow) => [
         allow.authenticated().to(["read", "create", "update"]),
         allow.groups(["ADMIN", "OWNER"]),
@@ -986,6 +1023,10 @@ const schema = a
      * disagreeing about money.
      */
     Invoice: a.model({
+      /** Versioned initial source pricing; absent only on pre-feature legacy records. */
+      sourcePricingVersion: a.integer(),
+      adjustsInvoiceId: a.id(),
+      adjustsPremiumLineId: a.id(),
       accountId: a.id().required(),
       account: a.belongsTo("Account", "accountId"),
       /** Optional: a policy can have several, and some bill no policy at all. */
@@ -1073,6 +1114,9 @@ const schema = a
       remittanceCarrierCents: a.integer(),
       remittanceCommissionCents: a.integer(),
       remittanceInterestCents: a.integer(),
+      remittanceBrokerFeeCents: a.integer(),
+      brokerFeeAllocations: a.json(),
+      brokerFeeFinanceUrl: a.string(),
       lines: a.hasMany("InvoiceLine", "invoiceId"),
       // Streamed. Money changing hands is the clearest case in the schema for
       // "who did this, and when" — see STREAMED_MODELS in backend.ts.
@@ -1116,6 +1160,10 @@ const schema = a
       policyId: a.id(),
       policy: a.belongsTo("Policy", "policyId"),
       description: a.string(),
+      /** Authoritative quote-term anchor for agency-owned fee revenue. */
+      brokerFeeQuoteId: a.string(),
+      /** Stable charge ID in the source quote/policy's passThroughCharges. */
+      sourceQuoteChargeId: a.string(),
       kind: a.ref("InvoiceLineKind"),
       /** What the association pays for this line. */
       retailAmount: a.float(),
@@ -1213,6 +1261,8 @@ const schema = a
         payment: a.float().required(),
         totalInterest: a.float().required(),
         originationFee: a.float().required(),
+        brokerFeeCents: a.integer(),
+        brokerFeeAllocations: a.json(),
         /** Actual initial receipt; legacy checkouts may have collected no originationFee. */
         initialPaymentAmount: a.float(),
         originationFeeCollected: a.float(),
@@ -1524,10 +1574,16 @@ const schema = a
          */
         policyId: a.id(),
         quoteId: a.id(),
+        policyIds: a.id().array(),
+        quoteIds: a.id().array(),
         sourceCommunicationId: a.string(),
+        brokerFeeAgreementId: a.string(),
+        sha256: a.string(),
+        signatureEvidenceSha256: a.string(),
         deliveredAt: a.datetime(),
         category: a.ref("DocumentCategory"),
         name: a.string().required(),
+        uploadedName: a.string(), // Original filename; renaming only changes name.
         s3Key: a.string().required(),
         contentType: a.string(),
         sizeBytes: a.integer(),
@@ -1776,6 +1832,9 @@ const schema = a
          * Absent means off: the module ships dark.
          */
         premiumFinanceEnabled: a.boolean(),
+        /** Reviewed jurisdiction eligibility and disclosure templates; no per-policy approval. */
+        brokerFeeJurisdictions: a.json(),
+        brokerFeeJurisdictionsVersion: a.integer(),
         /**
          * When the flag last changed — the serialization stamp. Enable writes
          * conditionally on it being unchanged since the invocation began, so
@@ -2198,7 +2257,25 @@ const schema = a
       .authorization((allow) => [allow.publicApiKey()])
       .handler(a.handler.function(pfElection)),
 
+    brokerFeeDisclosure: a.query()
+      .arguments({ token: a.string().required() }).returns(a.json())
+      .authorization(allow => [allow.publicApiKey()])
+      .handler(a.handler.function(brokerFees)),
+    signBrokerFeeDisclosure: a.mutation()
+      .arguments({ token: a.string().required(), signerName: a.string().required(), signerEmail: a.string().required(), signerRole: a.string().required(), consent: a.boolean().required() })
+      .returns(a.json()).authorization(allow => [allow.publicApiKey()])
+      .handler(a.handler.function(brokerFees)),
+    brokerFeeAction: a.mutation()
+      .arguments({ input: a.json().required() }).returns(a.json())
+      .authorization(allow => [allow.authenticated()])
+      .handler(a.handler.function(brokerFees)),
+
     commissionOverview: a.query().returns(a.json())
+      .authorization(allow => [allow.authenticated()])
+      .handler(a.handler.function(commissions)),
+    carrierPaymentPreview: a.query()
+      .arguments({ quoteId: a.string().required(), billType: a.string().required() })
+      .returns(a.json())
       .authorization(allow => [allow.authenticated()])
       .handler(a.handler.function(commissions)),
     commissionAction: a.mutation()
@@ -2315,7 +2392,7 @@ const schema = a
      */
     sendInvoice: a
       .mutation()
-      .arguments({ invoiceId: a.string().required(), toEmail: a.string() })
+      .arguments({ invoiceId: a.string().required(), toEmail: a.string(), expectedSentAt: a.string() })
       .returns(a.json())
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(sendInvoice)),

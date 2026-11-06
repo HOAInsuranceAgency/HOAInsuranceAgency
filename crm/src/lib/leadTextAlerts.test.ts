@@ -6,7 +6,7 @@ import {
   toE164,
   unreachableOptIns,
   type NotifiableProfile,
-} from "../../amplify/functions/lead-intake/sms";
+} from "../../../shared/leadTextAlerts";
 
 /**
  * Who gets a lead text, and what it says.
@@ -122,6 +122,12 @@ describe("leadText", () => {
     expect(leadText(lead, "https://app.protectmyhoa.com/")).toContain(
       "com/accounts/acct-1"
     );
+  });
+
+  it('preserves the configured CRM prefix and encodes the complete account ID in the SMS link', () => {
+    const msg = leadText({ ...lead, id: 'account/?#' }, 'https://crm.example.test/app/');
+    expect(msg).toContain('https://crm.example.test/app/accounts/account%2F%3F%23');
+    expect(msg).toMatch(/account%2F%3F%23$/);
   });
 
   it("drops the detail clause rather than writing an empty one", () => {

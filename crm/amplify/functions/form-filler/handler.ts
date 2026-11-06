@@ -1,12 +1,10 @@
-import { currentContacts } from "../../../src/lib/contacts";
-import { Amplify } from "aws-amplify";
-import { generateClient } from "aws-amplify/data";
-import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtime";
+import { createDataClientGetter, type LambdaDataClient as DataClient } from "../data-client";
+import { currentContacts } from "../../../../shared/contacts";
 import Anthropic from "@anthropic-ai/sdk";
 import type { Schema } from "../../data/resource";
 import { CLAUDE_MODEL } from "../model";
-import { listAllPages } from "../../../src/lib/pagination";
-import { MAX_FIELDS, sanitiseSuggestions, type Suggestion } from "./sanitise";
+import { listAllPages } from "../../../../shared/pagination";
+import { MAX_FIELDS, sanitiseSuggestions, type Suggestion } from "../../../../shared/formSuggestions";
 
 /**
  * AI gap-filling for a carrier-submission PDF.
@@ -23,17 +21,7 @@ import { MAX_FIELDS, sanitiseSuggestions, type Suggestion } from "./sanitise";
  * story for the feature: nothing reaches a carrier unread.
  */
 
-let dataClient: ReturnType<typeof generateClient<Schema>> | undefined;
-async function getDataClient() {
-  if (!dataClient) {
-    const { resourceConfig, libraryOptions } = await getAmplifyDataClientConfig(
-      process.env as never
-    );
-    Amplify.configure(resourceConfig, libraryOptions);
-    dataClient = generateClient<Schema>();
-  }
-  return dataClient;
-}
+const getDataClient = createDataClientGetter();
 
 /** Columns present on every row and interesting on none of them. */
 const DROP_KEYS = new Set([
@@ -75,7 +63,7 @@ function slimAll(rows: Row[]): Row[] {
  * anybody remembering to widen this function.
  */
 async function accountBundle(
-  client: ReturnType<typeof generateClient<Schema>>,
+  client: DataClient,
   accountId: string
 ) {
   const byAccount = <T>(

@@ -31,6 +31,33 @@ npm run dev             # in a second terminal
 
 See [`crm/README.md`](crm/README.md) for CRM architecture and data model notes.
 
+## Repository verification
+
+Use Node 22 and install each app's locked dependencies with `npm ci --prefix crm`
+and `npm ci --prefix web`. Run `npm run verify` from the repository root before
+opening a PR. The same command runs on every PR to `main` or `staging` and on
+pushes to those branches, with read-only repository permissions and no secrets.
+
+Verification includes CRM tests and production build, backend typechecking and
+offline synthesis for the retained main and staging contracts, website tests,
+typechecking, production build, SEO comparison, and architecture checks. It stops
+at the first failure. It never deploys, signs in, sends mail, or calls payment APIs;
+build monitoring uploads and ambient deployment credentials are removed from its
+child-process environment.
+
+The verifier uses one command plan and one cancellation-safe runner for local,
+CI, and audit checks. CRM validation preserves existing generated configuration
+and build output, removes only its own temporary fixture/bundle, and stops its
+owned descendant process group before restoring files. The CRM `verify:offline`
+alias delegates to this same root plan. Never deploy its temporary build output.
+
+Scoped commands are `verify:crm`, `verify:web`, `verify:backend`, and
+`verify:architecture`. Both apps' dependencies are needed for the shared tooling.
+See [maintained code boundaries](docs/CODE-BOUNDARIES.md).
+
+Sentry monitors browser and backend errors through a separate HOA organization.
+See [configuration, privacy, and verification](docs/SENTRY.md).
+
 ## Marketing articles
 
 The marketing site owns a native Astro collection at `web/src/content/articles/`.
@@ -55,8 +82,14 @@ local file existence are checked. Research, professional review and permission
 checks remain editorial responsibilities; schema validation cannot verify claims.
 
 Draft and future-dated entries have no generated route, listing link or sitemap
-entry. A future timestamp does not schedule a release: publication needs a new
-reviewed build when due. This change adds no calendar or publishing service.
+entry. Publication needs a new build when due. The production-only blog workflows
+draft articles in pull requests targeting `main`, support reviewer title/photo
+commands, and request a marketing-site rebuild at the scheduled publication time.
+This article-content workflow is an exception to the staging-first application
+change process above; application changes still go through staging. See the
+[editorial guide](docs/BLOG-EDITORIAL-GUIDE.md) for review, configuration and
+publishing steps. Draft creation still requires a human review and merge; the
+automation does not merge pull requests.
 A production build fails on malformed content. During local development,
 Markdown and article-image changes enter one serialized validation queue. A
 failed reload clears the article store and logs the error; fixing an image

@@ -1,0 +1,33 @@
+# Apply only as the explicit build-spec override for codex-hoa-staging-migration.
+# The backend namespace staging stays dormant; this host deploys its retained root.
+# Production continues to use amplify.yml and its unchanged main contract.
+version: 1
+applications:
+  - appRoot: crm
+    backend:
+      phases:
+        build:
+          commands:
+            - export HOA_DEPLOY_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+            - node scripts/assert-migration-destination.mjs --staging-only
+            - nvm install 22
+            - nvm use 22
+            - npm ci --cache .npm --prefer-offline
+            - npm run typecheck:backend
+            - npm run synth:check
+            - node scripts/deploy-migration-backend.mjs
+            - node scripts/assert-migration-destination.mjs --staging-only
+    frontend:
+      phases:
+        build:
+          commands:
+            - npm run build
+            - node scripts/prepare-migration-preview.mjs
+      artifacts:
+        baseDirectory: dist
+        files:
+          - '**/*'
+      cache:
+        paths:
+          - .npm/**/*
+          - node_modules/**/*

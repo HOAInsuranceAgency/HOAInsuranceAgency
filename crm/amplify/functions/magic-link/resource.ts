@@ -15,18 +15,24 @@ import { defineFunction } from "@aws-amplify/backend";
 // the auth↔function stacks become circularly dependent.
 export const magicLinkDefine = defineFunction({
   name: "magic-link-define",
-  entry: "./define.ts",
+  entry: "./define.sentry.ts",
   resourceGroupName: "auth",
 });
 
 export const magicLinkCreate = defineFunction({
   name: "magic-link-create",
-  entry: "./create.ts",
+  entry: "./create.sentry.ts",
   resourceGroupName: "auth",
 });
 
 export const magicLinkVerify = defineFunction({
   name: "magic-link-verify",
-  entry: "./verify.ts",
+  entry: "./verify.sentry.ts",
+  resourceGroupName: "auth",
+});
+
+export const migrationNativeMessage = defineFunction({
+  name: "migration-native-message",
+  entry: "./native-message.sentry.ts",
   resourceGroupName: "auth",
 });

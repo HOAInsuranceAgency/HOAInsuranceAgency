@@ -7,7 +7,7 @@ import {
   type CommercialPlan,
   type PackageOption,
 } from '../../../../shared/quotePackages';
-import { agencyDay } from '../../../../shared/leadActionGuidance';
+import { agencyDay } from "../../../../shared/agencyTime";
 import { dataClient } from './data';
 import {
   audit,
@@ -24,6 +24,7 @@ import {
 import type { LeadWorkflow } from '../../../../shared/leadWorkflow';
 import type { Schema } from '../../data/resource';
 import { emptyLeadSnooze, type LeadSnooze } from '../../../../shared/leadSnooze';
+import { readCompleteModels } from './completeReads';
 
 const idOf = (id: unknown) => {
   if (typeof id !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(id))
@@ -94,14 +95,8 @@ export async function saveCommercial(
   if (input.action === 'ESTIMATE')
     plan.estimatedCents = parseEstimate(input.amount);
   else {
-    const quotes: Schema['Quote']['type'][] = [];
-    let token: string | null | undefined;
-    do {
-      const page = await account.data.quotes({ nextToken: token, limit: 100 });
-      if (page.errors?.length) throw new Error('Could not load quotes');
-      quotes.push(...page.data);
-      token = page.nextToken;
-    } while (token);
+    const quotes = await readCompleteModels<Schema['Quote']['type']>(
+      nextToken => account.data!.quotes({ nextToken, limit: 100 }), 'relations', 'Could not load quotes');
     if (input.action === 'SAVE_OPTION') {
       if (
         !Array.isArray(input.requiredLines) ||

@@ -6,7 +6,7 @@ import { defineFunction } from "@aws-amplify/backend";
  */
 export const leadIntake = defineFunction({
   name: "lead-intake",
-  entry: "./handler.ts",
+  entry: "./handler.sentry.ts",
   timeoutSeconds: 30,
   resourceGroupName: "data",
 });

@@ -1,12 +1,10 @@
+import { accountPath, carrierPath, relationshipsPath } from '../../../shared/crmRoutes';
+import { Table } from "../components/ui/Table";
+import { Button } from "../components/ui/Button";
 import { useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import {
-  client,
-  fmtDate,
-  friendlyError,
-  listAllPages,
-  type CrmDocument,
-} from "../lib/client";
+import { client, fmtDate, friendlyError, type CrmDocument } from "../lib/client";
+import { listAllPages } from "../../../shared/pagination";
 import { downloadFile } from "../lib/storage";
 import FilePreviewModal, { canPreview } from "../components/FilePreview";
 import { useAsyncResource } from "../lib/useAsyncResource";
@@ -41,7 +39,7 @@ function RecordResults({ group }: { group: SearchGroup }) {
         Showing {visible.length} of {group.hits.length}
       </p>
       <div className="table-wrap">
-        <table aria-label={label}>
+        <Table aria-label={label}>
           <tbody>
             {visible.map((h) => (
               <tr key={h.id} className="clickable" onClick={() => navigate(h.target)}>
@@ -50,15 +48,15 @@ function RecordResults({ group }: { group: SearchGroup }) {
               </tr>
             ))}
           </tbody>
-        </table>
+        </Table>
       </div>
       {remaining > 0 && (
-        <button
+        <Button
           style={{ marginTop: 12 }}
           onClick={() => setVisibleCount(count => count + RECORD_PAGE_SIZE)}
         >
           Show more {label.toLowerCase()}
-        </button>
+        </Button>
       )}
     </section>
   );
@@ -84,7 +82,7 @@ export default function SearchResults() {
   const index = useAsyncResource(fetchSearchIndexRows, [q], {
     initialData: [],
     errorMessage: "Couldn't load records to search",
-  });
+   live: true });
   const groups = useMemo(
     () => (runnable ? searchRows(index.data, q, Infinity) : []),
     [index.data, q, runnable]
@@ -107,7 +105,7 @@ export default function SearchResults() {
           )
         : Promise.resolve(NO_RESULTS),
     [q],
-    { initialData: NO_RESULTS, errorMessage: "Document search failed" }
+    { initialData: NO_RESULTS, errorMessage: "Document search failed" , live: true }
   );
 
   // Most recently uploaded first, as the old page ordered the hits.
@@ -135,15 +133,15 @@ export default function SearchResults() {
 
   function entityLink(doc: CrmDocument) {
     if (doc.entityType === "ACCOUNT")
-      return <Link to={`/accounts/${doc.entityId}`}>View account</Link>;
+      return <Link to={accountPath(doc.entityId)}>View account</Link>;
     if (doc.entityType === "CARRIER")
-      return <Link to={`/carriers/${doc.entityId}`}>View carrier</Link>;
+      return <Link to={carrierPath(doc.entityId)}>View carrier</Link>;
     return <span className="badge gray">{doc.entityType}</span>;
   }
 
   return (
     <>
-      {runnable && <section className="card"><h2>Relationships</h2><Link to={`/relationships?q=${encodeURIComponent(q)}`}>Search the shared directory for “{q}” →</Link></section>}
+      {runnable && <section className="card"><h2>Relationships</h2><Link to={relationshipsPath(q)}>Search the shared directory for “{q}” →</Link></section>}
       <h1>Search</h1>
       <p className="sub">
         {runnable
@@ -153,7 +151,7 @@ export default function SearchResults() {
 
       {runnable && (
         <>
-          {index.error && <p className="error-text" role="alert">{index.error} <button disabled={index.loading} onClick={() => void index.refetch()}>Retry records</button></p>}
+          {index.error && <p className="error-text" role="alert">{index.error} <Button disabled={index.loading} onClick={() => void index.refetch()}>Retry records</Button></p>}
           {index.loading && !index.loaded && (
             <p className="muted small">Searching records…</p>
           )}
@@ -170,12 +168,12 @@ export default function SearchResults() {
             {!docs.loaded ? (
               <p className="muted small">Searching document text…</p>
             ) : docs.error ? (
-              <p className="error-text" role="alert">{docs.error} <button disabled={docs.loading} onClick={() => void docs.refetch()}>Retry document search</button></p>
+              <p className="error-text" role="alert">{docs.error} <Button disabled={docs.loading} onClick={() => void docs.refetch()}>Retry document search</Button></p>
             ) : sorted.length === 0 ? (
               <p className="muted small">No documents match “{q}”.</p>
             ) : (
               <div className="table-wrap">
-                <table>
+                <Table>
                   <thead>
                     <tr>
                       <SortTh label="Document" colKey="document" sortKey={sortKey} dir={dir} onToggle={toggle} />
@@ -203,18 +201,18 @@ export default function SearchResults() {
                         <td className="small">{fmtDate(d.createdAt?.slice(0, 10))}</td>
                         <td style={{ whiteSpace: "nowrap" }}>
                           {canPreview(d.name) && (
-                            <button className="link" onClick={() => setPreviewDoc(d)}>
+                            <Button variant="link"  onClick={() => setPreviewDoc(d)}>
                               Preview
-                            </button>
+                            </Button>
                           )}
-                          <button className="link" onClick={() => download(d)}>
+                          <Button variant="link"  onClick={() => download(d)}>
                             Download
-                          </button>
+                          </Button>
                         </td>
                       </tr>
                     ))}
                   </tbody>
-                </table>
+                </Table>
               </div>
             )}
           </div>

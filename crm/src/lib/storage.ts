@@ -1,3 +1,4 @@
+import { assertGraphqlErrors } from './apiResponse';
 /**
  * S3 upload / download / delete primitives.
  *
@@ -27,8 +28,8 @@ import { getUrl, remove, uploadData } from "./scopedStorage";
 import { client, type CrmDocument } from "./client";
 // Re-exported: `safeSegment` lives dependency-free in storageKeys.ts so the
 // lead-upload Lambda can build the same keys without importing this module.
-import { CONTROL_CHARS, safeSegment } from "./storageKeys";
-export { safeSegment };
+import { CONTROL_CHARS, documentObjectKey } from "../../../shared/storageKeys";
+export { safeSegment } from "../../../shared/storageKeys";
 import type { Schema } from "../../amplify/data/resource";
 
 type DocumentEntityType = Schema["DocumentEntityType"]["type"];
@@ -145,6 +146,9 @@ export async function uploadDocument(opts: {
   entityId: string;
   category: DocumentCategory;
   file: File;
+  sourceCommunicationId?: string;
+  policyId?: string | null;
+  quoteId?: string | null;
 }): Promise<CrmDocument> {
   const { entityType, entityId, category, file } = opts;
 
@@ -152,39 +156,39 @@ export async function uploadDocument(opts: {
     entityType,
     entityId,
     category,
+    sourceCommunicationId: opts.sourceCommunicationId,
+    policyId: opts.policyId,
+    quoteId: opts.quoteId,
     name: file.name,
+    uploadedName: file.name,
     s3Key: PENDING_KEY,
     contentType: file.type,
     sizeBytes: file.size,
     ocrStatus: "PENDING",
   });
-  if (errors?.length || !doc) {
-    throw new Error(errors?.[0]?.message ?? `Couldn't record "${file.name}".`);
-  }
-
   try {
-    const path = assertGrantedPath(
-      [
-        "documents",
-        safeSegment(entityType),
-        safeSegment(entityId),
-        safeSegment(doc.id),
-        safeSegment(file.name),
-      ].join("/")
-    );
+    assertGraphqlErrors({ errors });
+    if (!doc) {
+      throw new Error(`Couldn't record "${file.name}".`);
+    }
+    const path = assertGrantedPath(documentObjectKey(entityType, entityId, doc.id, file.name));
     const { data: linked, errors: linkErrors } = await client.models.Document.update({
       id: doc.id,
       s3Key: path,
     });
-    if (linkErrors?.length) throw new Error(linkErrors[0].message);
+    assertGraphqlErrors({ errors: linkErrors });
 
     await uploadFile({ path, data: file, contentType: file.type });
     return linked ?? { ...doc, s3Key: path };
   } catch (err) {
     // Don't leave a ghost record behind for a file that never landed.
+    // A partial GraphQL response may include the created row and errors.
+    if (!doc?.id) {
+      throw err;
+    }
     try {
       const { errors: delErrors } = await client.models.Document.delete({ id: doc.id });
-      if (delErrors?.length) throw new Error(delErrors[0].message);
+      assertGraphqlErrors({ errors: delErrors });
     } catch (cleanupErr) {
       console.warn(
         `[storage] "${file.name}" failed to upload and its record ${doc.id} could not be ` +

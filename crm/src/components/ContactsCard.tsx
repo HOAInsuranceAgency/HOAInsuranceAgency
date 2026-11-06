@@ -1,5 +1,7 @@
+import { Input } from "./ui/Input";
+import { Select } from "./ui/Select";
 import { useAgencyDay } from "../lib/useAgencyDay";
-import { currentContacts, primaryContact } from "../lib/contacts";
+import { currentContacts, primaryContact } from "../../../shared/contacts";
 import { relationshipCurrent } from "../../../shared/relationships";
 import { useId, useRef } from "react";
 import {
@@ -10,14 +12,15 @@ import {
   type Contact,
 } from "../lib/client";
 import { inputValue, str } from "../lib/formCodec";
-import { contactKey } from "../lib/extractionKeys";
+import { contactKey } from "../../../shared/extractionKeys";
 import { useChildRows } from "../lib/useChildRows";
 import type { FormState } from "../lib/useFormState";
-import { CONTACT_TYPE_LABELS, CONTACT_TYPE_OPTIONS } from "../lib/enums";
+import { CONTACT_TYPE_LABELS, CONTACT_TYPE_OPTIONS } from "../../../shared/enums";
 import ChildRowsCard from "./ChildRowsCard";
 import { SaveStatus, useSaveStatus } from "./SaveStatus";
 import { PhoneInput } from "./inputs";
 import "./ContactsCard.css";
+import ContactActions from "./ContactActions";
 
 /**
  * The people at an association.
@@ -181,7 +184,7 @@ export default function ContactsCard({ accountId }: { accountId: string }) {
           key: "primary",
           label: "Primary",
           cell: (contact) => (
-            <input
+            <Input
               type="radio"
               name={`primary-contact-${accountId}`}
               checked={primaryContact(child.rows)?.id === contact.id}
@@ -213,13 +216,13 @@ export default function ContactsCard({ accountId }: { accountId: string }) {
           key: "email",
           label: "Email",
           sort: (contact) => contact.email,
-          cell: (contact) => contact.email ?? "—",
+          cell: (contact) => <ContactActions kind="email" value={contact.email} contactName={contact.name} />,
         },
         {
           key: "phone",
           label: "Phone",
           sort: (contact) => contact.phone,
-          cell: (contact) => fmtPhone(contact.phone),
+          cell: (contact) => <ContactActions kind="phone" value={contact.phone} display={fmtPhone(contact.phone)} contactName={contact.name} />,
         },
       ]}
     />
@@ -268,7 +271,7 @@ function ContactFields({
     <>
       <div className="field">
         <label htmlFor={`${id}-name`}>Name</label>
-        <input
+        <Input
           id={`${id}-name`}
           placeholder="Pat Alvarez"
           value={form.form.name}
@@ -278,7 +281,7 @@ function ContactFields({
       </div>
       <div className="field">
         <label htmlFor={`${id}-type`}>Role</label>
-        <select
+        <Select
           id={`${id}-type`}
           value={form.form.type}
           onChange={(e) => form.setF("type", e.target.value)}
@@ -289,11 +292,11 @@ function ContactFields({
               {o.label}
             </option>
           ))}
-        </select>
+        </Select>
       </div>
       <div className="field">
         <label htmlFor={`${id}-email`}>Email</label>
-        <input
+        <Input
           id={`${id}-email`}
           type="email"
           value={form.form.email}
@@ -312,7 +315,7 @@ function ContactFields({
       </div>
       <div className="field contacts-notes-field">
         <label htmlFor={`${id}-notes`}>Notes</label>
-        <input
+        <Input
           id={`${id}-notes`}
           placeholder="Best reached mornings"
           value={form.form.notes}

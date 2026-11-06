@@ -78,7 +78,7 @@ const related = articles.filter((other) => other.id !== article.id)
 
         <section class="article-lead" id="article-review" aria-labelledby="article-lead-title">
           <h2 id="article-lead-title">Get a second opinion on your association’s coverage</h2>
-          <p>Our team will review your current policy against your governing documents and flag any gaps. Free, with no broker fee.</p>
+          <p>Our team will review your current policy against your governing documents and flag any gaps at no cost. Any broker fee for a policy is disclosed before purchase.</p>
           <BlogLeadForm variant="review" topic={data.topic} articleTitle={data.title} client:visible />
           <p class="article-lead__alt">Prefer to start online? <a href={cta.href} class="articles-text-link">{cta.label} <span aria-hidden="true">→</span></a></p>
         </section>

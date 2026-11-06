@@ -1,3 +1,4 @@
+import { accountPath } from '../../../../shared/crmRoutes';
 import { AGENCY, AGENCY_FMT } from "../../../../shared/agency";
 import { REQUESTED_DOCUMENTS } from "../../../../shared/leadDocuments";
 
@@ -87,7 +88,7 @@ export function renderNotification(input: NotificationInput): RenderedNotificati
   // association is the only thing that tells one of these from another.
   const subject = `${associationName}: ${total} ${noun} received`;
 
-  const link = `${crmBaseUrl.replace(/\/$/, "")}/accounts/${accountId}`;
+  const link = `${crmBaseUrl.replace(/\/$/, "")}${accountPath(accountId)}`;
   const extractedRows = Object.entries(extracted);
 
   const text = [

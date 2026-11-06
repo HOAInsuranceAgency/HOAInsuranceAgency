@@ -1,4 +1,7 @@
-import { SESv2Client, SendEmailCommand } from "@aws-sdk/client-sesv2";
+import { agencyDay } from '../../../../shared/agencyTime';
+import { TransactionalMailClient } from "../transactional-mail/client";
+import { MailDeliveryError } from "../transactional-mail/contract";
+import { SendEmailCommand } from "@aws-sdk/client-sesv2";
 import { buildMarketingLeadReport } from "../../../../shared/marketingLeadReport";
 import { buildMarketingReportWorkbook } from "./workbook";
 import { buildMimeMessage } from "../send-invoice/mime";
@@ -8,7 +11,7 @@ import type { Row } from "../communications/store";
 
 // Sending is never retried by the SDK: a lost SES response can still mean the
 // recipient received the message. The durable ledger prevents Lambda retries.
-const ses = new SESv2Client({ maxAttempts: 1 });
+const ses = new TransactionalMailClient("report");
 interface Event { trigger?: string; runId?: string; scheduleArn?: string; scheduledAt?: string }
 export function easternScheduleDay(scheduledAt: string): string {
   const parsed = new Date(scheduledAt);
@@ -49,18 +52,20 @@ export const handler = async (event: Event) => {
     const report = buildMarketingLeadReport(await reportSnapshot(), record.data.asOf);
     const workbook = buildMarketingReportWorkbook(report);
     if (workbook.byteLength > 7 * 1024 * 1024) throw new Error("The report exceeds the email attachment size limit. No report was sent.");
-    const date = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(record.data.asOf));
+    const date = agencyDay(record.data.asOf);
     const text = `Attached is the HOA lead update generated from the CRM on ${date}.\n\nIt includes ${report.rows.length} account rows, including converted clients. Blank cells indicate information not recorded in the CRM. The workbook's Report Notes tab describes the field mappings and data limitations.\n\nWeekly delivery is scheduled for Fridays at 8:00 AM Eastern.`;
     const raw = buildMimeMessage({ from: sender, to: record.data.recipient, replyTo: sender, subject: `HOA Lead Update — ${date}`, text, html: text.split("\n\n").map(paragraph => `<p>${paragraph}</p>`).join(""), attachment: { filename: `HOA_LEAD_UPDATE_${date}.xlsx`, contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", content: workbook } });
     record = await updateRun(record, { rowCount: report.rows.length, sendStartedAt: new Date().toISOString() });
     sendAttempted = true;
-    const result = await ses.send(new SendEmailCommand({ FromEmailAddress: sender, Destination: { ToAddresses: [record.data.recipient] }, Content: { Raw: { Data: Buffer.from(raw, "utf8") } } }));
+    const result = await ses.send(new SendEmailCommand({ FromEmailAddress: sender, Destination: { ToAddresses: [record.data.recipient] }, Content: { Raw: { Data: Buffer.from(raw, "utf8") } } }), { idempotencyKey: record.id, subject: `HOA Lead Update — ${date}`, text, html: text.split("\n\n").map(paragraph => `<p>${paragraph}</p>`).join(""), replyTo: sender, attachments: [{ filename: `HOA_LEAD_UPDATE_${date}.xlsx`, contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", content: workbook }] });
     if (!result.MessageId) throw new Error("The email service returned no delivery reference.");
     await updateRun(record, { status: "sent", sentAt: new Date().toISOString(), messageId: result.MessageId, retryable: false, error: undefined });
     return { sent: true, rowCount: report.rows.length };
   } catch (error) {
-    const status = sendAttempted ? "unknown" : "failed";
-    try { await updateRun(record, { status, retryable: !sendAttempted, error: sendAttempted ? "Email acceptance could not be confirmed. Check the recipient inbox and email service before sending again." : safeError(error) }); }
+    const definiteFailure = error instanceof MailDeliveryError && error.state !== "UNKNOWN";
+    const uncertain = sendAttempted && !definiteFailure;
+    const status = uncertain ? "unknown" : "failed";
+    try { await updateRun(record, { status, retryable: !uncertain, error: uncertain ? "Email acceptance could not be confirmed. Check the recipient inbox and email service before sending again." : safeError(error) }); }
     catch (ledgerError) { console.error("Marketing report failure could not be recorded", ledgerError instanceof Error ? ledgerError.name : "UnknownError"); }
     console.error("Marketing report worker failed", { runId: record.id, status, error: error instanceof Error ? error.name : "UnknownError" });
     // Surface failures to the Lambda alarm; retries see a non-queued ledger.

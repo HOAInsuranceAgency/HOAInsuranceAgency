@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile, access } from "node:fs/promises";
+import { closeSync, openSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -29,10 +30,21 @@ async function fixture(slug, extra = {}, text = body) {
   await writeFile(join(content, `${slug}.md`), `---\n${JSON.stringify(data)}\n---\n\n${text}\n`);
 }
 function build(success = true, expected) {
-  const result = spawnSync(process.execPath, [join(web, "node_modules/astro/bin/astro.mjs"), "build"], { cwd: root, encoding: "utf8", env: { ...process.env, PUBLIC_ANALYTICS_DISABLED: "true", ASTRO_TELEMETRY_DISABLED: "1" } });
-  const output = result.stdout + result.stderr;
-  assert.equal(result.status === 0, success, output);
-  if (expected) assert.match(output, expected);
+  const stdout = join(temporary, "astro-stdout.log"), stderr = join(temporary, "astro-stderr.log");
+  const descriptors = [];
+  try {
+    // Preserve the real Astro diagnostics even when a sandbox restricts
+    // Node's socket-backed pipe introspection.
+    descriptors.push(openSync(stdout, "w"));
+    descriptors.push(openSync(stderr, "w"));
+    const result = spawnSync(process.execPath, [join(web, "node_modules/astro/bin/astro.mjs"), "build"], { cwd: root, encoding: "utf8", stdio: ["ignore", descriptors[0], descriptors[1]], env: { ...process.env, PUBLIC_ANALYTICS_DISABLED: "true", ASTRO_TELEMETRY_DISABLED: "1" } });
+    const output = readFileSync(stdout, "utf8") + readFileSync(stderr, "utf8");
+    assert.ifError(result.error);
+    assert.equal(result.status === 0, success, output);
+    if (expected) assert.match(output, expected);
+  } finally {
+    descriptors.forEach(closeSync);
+  }
 }
 const exists = async (path) => { try { await access(path); return true; } catch { return false; } };
 try {

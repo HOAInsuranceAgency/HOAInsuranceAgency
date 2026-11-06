@@ -26,7 +26,7 @@ import { MARKETS } from "../data/markets";
 const META_DESCRIPTION =
   "Contact HOA Insurance Agency about HOA master insurance or HO-6 condo coverage. Call " +
   PHONE +
-  ", report a claim, or send your association's details for a free review. No broker fee.";
+  ", report a claim, or send your association's details for a free review. Fees disclosed before purchase.";
 
 /** Product links use authored SVG only; no user input reaches set:html. */
 const COVER_TYPES = [
@@ -63,7 +63,6 @@ const COVER_TYPES = [
     subtitle="Choose how you’d like to start. A licensed agent replies within one business day."
     backgroundImage="/images/hero-people.jpg"
     backgroundVideo="/images/hero-video.mp4"
-    autoplayVideo
     short
   />
 
@@ -88,7 +87,7 @@ const COVER_TYPES = [
           <a class="btn btn-primary start-path__btn" href={QUOTE_URL}>Request my review</a>
         </div>
       </div>
-      <p class="start-paths__note">No broker fee. Indications are non-binding and subject to underwriting.</p>
+      <p class="start-paths__note">Fees disclosed before purchase. Indications are non-binding and subject to underwriting.</p>
     </div>
   </section>
 
@@ -127,7 +126,7 @@ const COVER_TYPES = [
                  site already makes elsewhere. */}
             <ul class="form-assurance">
               <li>A reply within one business day</li>
-              <li>No broker fee, now or at renewal</li>
+              <li>Any broker fee disclosed before purchase</li>
               <li>No obligation: review first, decide later</li>
             </ul>
           </div>

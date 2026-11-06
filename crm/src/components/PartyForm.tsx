@@ -1,12 +1,17 @@
+import { useLiveUpdateBlock } from "../lib/useLiveUpdates";
+import { Select } from "./ui/Select";
+import { Input } from "./ui/Input";
+import { Button } from "./ui/Button";
+import { Textarea } from "./ui/Textarea";
 import { usePagedList } from '../lib/usePagedList';
-import { useMounted } from '../lib/useMounted';
-import { useRef, useState } from 'react';
+import { useRef } from 'react';
+import { useFormState } from '../lib/useFormState';
+import { useSaveStatus } from './SaveStatus';
 import Modal from './Modal';
 import { communicationRequest } from '../lib/communications';
 import { searchParties, type PartyRecord } from '../lib/relationships';
 import { useIsAdmin } from '../lib/auth';
 import { useAsyncResource } from '../lib/useAsyncResource';
-import type { TeamEligibility } from '../lib/communications';
 
 export default function PartyForm({
   party,
@@ -20,7 +25,11 @@ export default function PartyForm({
   onClose: () => void;
 }) {
   const seed = party ?? initial;
-  const [form, setForm] = useState({
+  useLiveUpdateBlock(true);
+  const saveStatus = useSaveStatus({ singleFlight: true });
+  const { busy } = saveStatus;
+  const error = saveStatus.status.state === 'error' ? saveStatus.status.message : '';
+  const { form, setF } = useFormState(() => ({
     kind: seed?.kind ?? 'ORGANIZATION',
     name: seed?.name ?? '',
     category: seed?.category ?? 'Property management',
@@ -30,17 +39,13 @@ export default function PartyForm({
     notes: seed?.notes ?? '',
     ownerId: seed?.ownerId ?? '',
     archived: seed?.archived ?? false,
-  });
-  const [busy, setBusy] = useState(false),
-    [error, setError] = useState('');
-  const mounted = useMounted();
-  const pending = useRef(false),
-    requestId = useRef(crypto.randomUUID());
+  }), { onEdit: saveStatus.markDirty });
+  const requestId = useRef(crypto.randomUUID());
   const admin = useIsAdmin();
   const team = useAsyncResource(
-    async () => (admin ? (await communicationRequest<{ team: TeamEligibility[] }>('team')).team : []),
+    async () => (admin ? (await communicationRequest('team')).team : []),
     [admin],
-    { initialData: [] },
+    { initialData: [] , live: true },
   );
   const nameQuery = form.name.trim(),
     emailQuery = form.email.trim();
@@ -55,34 +60,25 @@ export default function PartyForm({
     !party && emailQuery.includes('@'),
   );
   const matches = [...new Map([...nameMatches.items, ...emailMatches.items].map((p) => [p.id, p])).values()];
-  function change(key: string, value: string | boolean) {
-    setForm((old) => ({ ...old, [key]: value }));
+  function change<K extends keyof typeof form>(key: K, value: (typeof form)[K]) {
+    setF(key, value);
     requestId.current = crypto.randomUUID();
   }
   async function save() {
-    if (pending.current) return;
-    pending.current = true;
-    setBusy(true);
-    setError('');
-    try {
-      const result = await communicationRequest<{ party: PartyRecord }>(
+    await saveStatus.run(async current => {
+      const result = await communicationRequest(
         'relationshipSaveParty',
         { ...form, id: party?.id, revision: party?.revision ?? 0, requestId: requestId.current },
         true,
       );
-      if (mounted.current) onSaved(result.party);
-    } catch (e) {
-      if (mounted.current) setError(e instanceof Error ? e.message : 'Could not save this profile.');
-    } finally {
-      pending.current = false;
-      if (mounted.current) setBusy(false);
-    }
+      if (current()) onSaved(result.party);
+    }, { errorMessage: 'Could not save this profile.' });
   }
   return (
     <Modal
       title={party ? `Edit ${party.name}` : 'New relationship'}
       onClose={() => {
-        if (!busy) onClose();
+        if (!saveStatus.isPending()) onClose();
       }}
     >
       <form
@@ -98,14 +94,14 @@ export default function PartyForm({
         <fieldset disabled={busy} className="relationship-fields">
           <label className="field">
             Record type
-            <select value={form.kind} disabled={!!party} onChange={(e) => change('kind', e.target.value)}>
+            <Select value={form.kind} disabled={!!party} onChange={(e) => change('kind', e.target.value as PartyRecord['kind'])}>
               <option value="ORGANIZATION">Organization</option>
               <option value="PERSON">Person</option>
-            </select>
+            </Select>
           </label>
           <label className="field">
             Name
-            <input
+            <Input
               required
               maxLength={200}
               value={form.name}
@@ -127,57 +123,57 @@ export default function PartyForm({
               {nameMatches.error && (
                 <p role="alert">
                   {nameMatches.error}{' '}
-                  <button type="button" onClick={() => void nameMatches.more()}>
+                  <Button type="button" onClick={() => void nameMatches.more()}>
                     Retry name check
-                  </button>
+                  </Button>
                 </p>
               )}
               {emailMatches.error && (
                 <p role="alert">
                   {emailMatches.error}{' '}
-                  <button type="button" onClick={() => void emailMatches.more()}>
+                  <Button type="button" onClick={() => void emailMatches.more()}>
                     Retry email check
-                  </button>
+                  </Button>
                 </p>
               )}
               {nameMatches.nextToken && (
                 <p>
-                  <button
+                  <Button variant="secondary"
                     type="button"
-                    className="secondary"
+
                     disabled={nameMatches.loading}
                     onClick={() => void nameMatches.more()}
                   >
                     Continue checking name matches
-                  </button>
+                  </Button>
                 </p>
               )}
               {emailMatches.nextToken && (
                 <p>
-                  <button
+                  <Button variant="secondary"
                     type="button"
-                    className="secondary"
+
                     disabled={emailMatches.loading}
                     onClick={() => void emailMatches.more()}
                   >
                     Continue checking email matches
-                  </button>
+                  </Button>
                 </p>
               )}
               {matches.map((p) => (
                 <p key={p.id}>
                   {p.name}
                   {p.email ? ` · ${p.email}` : ''}{' '}
-                  <button className="secondary" type="button" onClick={() => onSaved(p)}>
+                  <Button variant="secondary"  type="button" onClick={() => onSaved(p)}>
                     Use existing profile
-                  </button>
+                  </Button>
                 </p>
               ))}
             </div>
           )}
           <label className="field">
             Category
-            <input
+            <Input
               list="relationship-categories"
               maxLength={100}
               value={form.category}
@@ -193,7 +189,7 @@ export default function PartyForm({
           </label>
           <label className="field">
             Email
-            <input
+            <Input
               type="email"
               maxLength={320}
               value={form.email}
@@ -202,7 +198,7 @@ export default function PartyForm({
           </label>
           <label className="field">
             Phone
-            <input
+            <Input
               type="tel"
               maxLength={80}
               value={form.phone}
@@ -211,7 +207,7 @@ export default function PartyForm({
           </label>
           <label className="field">
             Website
-            <input
+            <Input
               type="url"
               maxLength={1000}
               placeholder="https://"
@@ -222,7 +218,7 @@ export default function PartyForm({
           {admin && (
             <label className="field">
               Relationship owner
-              <select value={form.ownerId} onChange={(e) => change('ownerId', e.target.value)}>
+              <Select value={form.ownerId} onChange={(e) => change('ownerId', e.target.value)}>
                 <option value="">Me</option>
                 {party?.ownerId && !team.data.some((t) => t.userId === party.ownerId) && (
                   <option value={party.ownerId}>Current owner</option>
@@ -234,12 +230,12 @@ export default function PartyForm({
                       {t.name}
                     </option>
                   ))}
-              </select>
+              </Select>
             </label>
           )}
           <label className="field">
             Relationship notes
-            <textarea
+            <Textarea
               rows={4}
               maxLength={5000}
               value={form.notes}
@@ -248,7 +244,7 @@ export default function PartyForm({
           </label>
           {party && (
             <label>
-              <input
+              <Input
                 type="checkbox"
                 checked={form.archived}
                 onChange={(e) => change('archived', e.target.checked)}
@@ -257,12 +253,12 @@ export default function PartyForm({
             </label>
           )}
           <div className="form-actions">
-            <button className="primary" type="submit">
+            <Button variant="primary"  type="submit">
               {busy ? 'Saving…' : 'Save relationship'}
-            </button>
-            <button className="secondary" type="button" onClick={onClose}>
+            </Button>
+            <Button variant="secondary"  type="button" onClick={onClose}>
               Cancel
-            </button>
+            </Button>
           </div>
         </fieldset>
         {error && (

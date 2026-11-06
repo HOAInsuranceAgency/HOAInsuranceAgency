@@ -1,12 +1,9 @@
+import { assertGraphqlErrors } from '../../lib/apiResponse';
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { remove } from "../../lib/scopedStorage";
-import {
-  client,
-  friendlyError,
-  listAllPages,
-  type Account,
-} from "../../lib/client";
+import { client, friendlyError, type Account } from "../../lib/client";
+import { listAllPages } from "../../../../shared/pagination";
 import { useIsAdmin } from "../../lib/auth";
 import ConfirmButton from "../../components/ConfirmButton";
 import { communicationRequest } from '../../lib/communications';
@@ -32,7 +29,7 @@ import { communicationRequest } from '../../lib/communications';
  */
 function throwFirstError(results: { errors?: { message: string }[] }[]) {
   for (const r of results) {
-    if (r.errors?.length) throw new Error(r.errors[0].message);
+    assertGraphqlErrors(r);
   }
 }
 
@@ -88,7 +85,7 @@ export function DeleteLeadZone({ account }: { account: Account }) {
     throwFirstError(await Promise.all(contacts.map(c => client.models.Contact.delete({ id: c.id }))));
 
     const { errors } = await client.models.Account.delete({ id: account.id });
-    if (errors?.length) throw new Error(errors[0].message);
+    assertGraphqlErrors({ errors: errors });
     if (mounted.current) navigate("/leads");
   }
 
@@ -100,9 +97,9 @@ export function DeleteLeadZone({ account }: { account: Account }) {
       <div className="form-actions" style={{ marginTop: 0 }}>
         <ConfirmButton
           label="Delete this lead…"
-          className="secondary"
+          variant="secondary"
           confirmLabel="Yes, delete this lead"
-          cancelClassName="secondary"
+          cancelVariant="secondary"
           message={`Permanently delete ${account.name}, its contacts, quotes and documents, and retire its automated work? This can't be undone.`}
           onConfirm={deleteLead}
           onError={(err) => setError(friendlyError(err, "Delete failed"))}

@@ -1,3 +1,7 @@
+import { accountPath, carrierPath, crmSearchPath, relationshipPath, relationshipsPath } from '../../../shared/crmRoutes';
+import { Input } from "./ui/Input";
+import { SuggestionList, SuggestionOption } from "./ui/SuggestionList";
+import './UniversalSearch.css';
 import { searchParties, type PartyRecord } from '../lib/relationships';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -138,7 +142,7 @@ export default function UniversalSearch() {
         target: h.target,
       })),
     }));
-    if (partyResult.query === qt) out.push({ name: 'Relationships', note: null, items: [...partyResult.items.slice(0, 5).map(p => ({ key: `party-${p.id}`, type: 'relationship' as const, label: p.name, sub: p.category ?? '', target: `/relationships/${p.id}` })), ...(partyResult.more || partyResult.items.length > 5 ? [{ key: 'party-more', type: 'relationship' as const, label: 'Continue searching relationships', sub: 'Open directory search', target: `/relationships?q=${encodeURIComponent(qt)}` }] : [])] });
+    if (partyResult.query === qt) out.push({ name: 'Relationships', note: null, items: [...partyResult.items.slice(0, 5).map(p => ({ key: `party-${p.id}`, type: 'relationship' as const, label: p.name, sub: p.category ?? '', target: relationshipPath(p.id) })), ...(partyResult.more || partyResult.items.length > 5 ? [{ key: 'party-more', type: 'relationship' as const, label: 'Continue searching relationships', sub: 'Open directory search', target: relationshipsPath(qt) }] : [])] });
     if (docHits.length > 0 || docSearching) {
       out.push({
         name: "Documents",
@@ -159,7 +163,7 @@ export default function UniversalSearch() {
   }, [groups, docHits, docSearching, qt, accountNames, partyResult]);
 
   const flat = useMemo(() => renderGroups.flatMap((g) => g.items), [renderGroups]);
-  const footerTarget = `/search?q=${encodeURIComponent(qt)}`;
+  const footerTarget = crmSearchPath(qt);
   // The arrows walk every hit plus the footer, which is always the last
   // stop — so Enter never has nowhere to go once the query is long enough.
   const selectable = qt.length >= MIN_QUERY_LENGTH ? flat.length + 1 : 0;
@@ -266,7 +270,7 @@ export default function UniversalSearch() {
         <span className="usearch-glass" aria-hidden>
           <IconGlass />
         </span>
-        <input
+        <Input
           ref={inputRef}
           role="combobox"
           aria-expanded={showPop}
@@ -293,7 +297,7 @@ export default function UniversalSearch() {
         <span className="kbd" aria-hidden>/</span>
 
         {showPop && (
-          <div className="usearch-pop" id="usearch-listbox" role="listbox">
+          <SuggestionList className="usearch-pop" id="usearch-listbox">
             {qt.length < MIN_QUERY_LENGTH ? (
               <div className="usearch-note">Keep typing — two characters minimum.</div>
             ) : (
@@ -323,12 +327,11 @@ export default function UniversalSearch() {
                       flatIndex += 1;
                       const i = flatIndex;
                       return (
-                        <div
+                        <SuggestionOption
                           key={item.key}
                           id={`usearch-opt-${i}`}
-                          role="option"
                           aria-selected={i === activeIdx}
-                          className={`usearch-hit${i === activeIdx ? " on" : ""}`}
+                          className="usearch-hit"
                           // mousedown, not click: click fires after the
                           // input's blur has already closed the dropdown.
                           // Left button only — a right-click wants the
@@ -351,16 +354,16 @@ export default function UniversalSearch() {
                               </span>
                             )}
                           </span>
-                        </div>
+                        </SuggestionOption>
                       );
                     })}
                   </div>
                 ))}
-                <div
+                <SuggestionOption
                   id={`usearch-opt-${flat.length}`}
-                  role="option"
                   aria-selected={activeIdx === flat.length}
-                  className={`usearch-foot${activeIdx === flat.length ? " on" : ""}`}
+                  className="usearch-foot"
+                  variant="footer"
                   onMouseDown={(e) => {
                     if (e.button !== 0) return;
                     e.preventDefault();
@@ -373,10 +376,10 @@ export default function UniversalSearch() {
                     <kbd>↑</kbd>
                     <kbd>↓</kbd> move · <kbd>↵</kbd> open · <kbd>esc</kbd> close
                   </span>
-                </div>
+                </SuggestionOption>
               </>
             )}
-          </div>
+          </SuggestionList>
         )}
       </div>
     </div>
@@ -402,9 +405,9 @@ function Marked({ text, query }: { text: string; query: string }) {
  * a page — otherwise the full results page, which renders every entity
  * type honestly. */
 function docTarget(d: DocumentHit): string {
-  if (d.entityType === "ACCOUNT") return `/accounts/${d.entityId}?tab=documents`;
-  if (d.entityType === "CARRIER") return `/carriers/${d.entityId}`;
-  return `/search?q=${encodeURIComponent(d.name)}`;
+  if (d.entityType === "ACCOUNT") return accountPath(d.entityId, { tab: 'documents' });
+  if (d.entityType === "CARRIER") return carrierPath(d.entityId);
+  return crmSearchPath(d.name);
 }
 
 // ── Hit icons: the sidebar's stroke style at 16px, one per type, so a

@@ -135,6 +135,33 @@ describe("UniversalSearch", () => {
     expect(screen.getByTestId("loc").textContent).toBe("/accounts/a1");
   });
 
+  it("keeps shared suggestions tied to the combobox while keyboard and pointer selection agree", async () => {
+    const input = renderBar();
+    act(() => input.focus());
+    fireEvent.change(input, { target: { value: "har" } });
+    const account = (await screen.findByText(hitLabel("Harbor Pointe COA"))).closest('[role="option"]')!;
+    const list = screen.getByRole("listbox");
+
+    expect(list).toHaveClass("ui-suggestion-list");
+    expect(input).toHaveAttribute("aria-controls", list.id);
+    expect(account).toHaveClass("ui-suggestion-option");
+    expect(account).toHaveAttribute("aria-selected", "true");
+    expect(input).toHaveAttribute("aria-activedescendant", account.id);
+
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    expect(account).toHaveAttribute("aria-selected", "false");
+    fireEvent.mouseEnter(account);
+    expect(account).toHaveAttribute("aria-selected", "true");
+    expect(input).toHaveAttribute("aria-activedescendant", account.id);
+
+    fireEvent.mouseDown(account, { button: 2 });
+    expect(screen.getByTestId("loc").textContent).toBe("/");
+    expect(document.activeElement).toBe(input);
+    fireEvent.mouseDown(account, { button: 0 });
+    expect(screen.getByTestId("loc").textContent).toBe("/accounts/a1");
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  });
+
   it("arrows walk every hit across sections and end on the footer, clamped", async () => {
     const input = renderBar();
     fireEvent.focus(input);

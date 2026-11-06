@@ -1,7 +1,10 @@
+import { Input } from "../ui/Input";
+import { SegmentedRadioControl } from "../ui/SegmentedControl";
 import {
   useEffect,
   useRef,
   useState,
+  type AriaAttributes,
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import { fmtNum, normalizePhone } from "../../lib/client";
@@ -57,7 +60,7 @@ import { fmtNum, normalizePhone } from "../../lib/client";
  * behaviour of `type="number"` is a bonus.
  */
 
-export interface FormattedInputProps {
+export interface FormattedInputProps extends AriaAttributes {
   /** Raw value as the form holds it — digits, not the formatted rendering. */
   value: string;
   /** Called with the raw value. Never called with a formatted string. */
@@ -157,6 +160,7 @@ function FormattedInput({
   commitOnBlur = false,
   inputMode,
   type,
+  ...aria
 }: BaseProps) {
   const [focused, setFocused] = useState(false);
   const ref = useRef<HTMLInputElement>(null);
@@ -170,7 +174,8 @@ function FormattedInput({
   }, [focused]);
 
   return (
-    <input
+    <Input
+      {...aria}
       ref={ref}
       id={id}
       type={type}
@@ -318,9 +323,11 @@ export function DateInput({
   placeholder,
   onKeyDown,
   id,
+  ...aria
 }: FormattedInputProps) {
   return (
-    <input
+    <Input
+      {...aria}
       id={id}
       type="date"
       disabled={disabled}
@@ -359,31 +366,7 @@ export function YesNoRadio({
   name: string;
 }) {
   return (
-    <div className="chip-row" role="radiogroup" aria-label={name}>
-      {[
-        ["yes", "Yes"],
-        ["no", "No"],
-      ].map(([v, label]) => (
-        <label
-          key={v}
-          className="small"
-          style={{ display: "flex", gap: 4, alignItems: "center" }}
-        >
-          <input
-            type="radio"
-            name={name}
-            value={v}
-            checked={value === v}
-            disabled={disabled}
-            // `onClick` rather than `onChange`: React fires no change event
-            // when the already-checked radio is clicked, which is exactly the
-            // gesture that has to clear it.
-            onClick={() => onChange(value === v ? "" : v)}
-            onChange={() => {}}
-          />
-          {label}
-        </label>
-      ))}
-    </div>
+    <SegmentedRadioControl label={name} name={name} value={value} onChange={onChange} disabled={disabled} allowEmpty
+      items={[{value: 'yes', label: 'Yes'}, {value: 'no', label: 'No'}]} />
   );
 }

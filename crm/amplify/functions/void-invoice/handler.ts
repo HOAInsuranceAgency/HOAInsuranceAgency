@@ -1,6 +1,11 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, GetCommand, UpdateCommand, TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
 import Stripe from "stripe";
+import { feeAllocations } from "../../../../shared/brokerFees";
+import { feeInvoiceVoidWrites } from "../broker-fees/payments";
+import type { Write } from "../broker-fees/store";
+import { isRetiredInvoiceSend, prepareInvoiceSendRetirement, InvoiceSendBlocked, type InvoiceSendOperation } from "../send-invoice/sendOperation";
+import { closeInvoiceCheckoutSessions } from "../invoiceCheckout";
 
 /**
  * Custom mutation handler: voidInvoice. See resource.ts for the why.
@@ -27,10 +32,12 @@ import Stripe from "stripe";
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient());
 
-interface Row {
+interface Row extends Record<string, unknown> {
+  id: string;
   status: string | null;
   number: string | null;
   stripePaymentLinkId: string | null;
+  hasBrokerFee: boolean;
 }
 
 async function readRow(tableName: string, id: string): Promise<Row | null> {
@@ -40,9 +47,12 @@ async function readRow(tableName: string, id: string): Promise<Row | null> {
   if (!res.Item) return null;
   const str = (v: unknown) => (typeof v === "string" && v ? v : null);
   return {
+    ...res.Item,
+    id,
     status: str(res.Item.status),
     number: str(res.Item.number),
     stripePaymentLinkId: str(res.Item.stripePaymentLinkId),
+    hasBrokerFee: feeAllocations(res.Item.brokerFeeAllocations).length > 0 || Number(res.Item.remittanceBrokerFeeCents ?? 0) > 0,
   };
 }
 
@@ -58,7 +68,9 @@ async function readRow(tableName: string, id: string): Promise<Row | null> {
 async function writeVoid(
   tableName: string,
   id: string,
-  seen: Row
+  seen: Row,
+  feeWrites: Write[],
+  retiredOperation?: InvoiceSendOperation
 ): Promise<boolean> {
   const names: Record<string, string> = { "#s": "status", "#link": "stripePaymentLinkId" };
   const values: Record<string, unknown> = {
@@ -74,9 +86,12 @@ async function writeVoid(
     clauses.push("#link = :seenLink");
     values[":seenLink"] = seen.stripePaymentLinkId;
   }
+  names['#op']='invoiceSendOperation';
+  if(seen.invoiceSendOperation!==undefined){clauses.push('#op = :seenOperation');values[':seenOperation']=seen.invoiceSendOperation;}
+  else clauses.push('attribute_not_exists(#op)');
+  if(retiredOperation)values[':retiredOperation']=retiredOperation;
   try {
-    await ddb.send(
-      new UpdateCommand({
+    const update = {
         TableName: tableName,
         Key: { id },
         // The url is removed, not nulled: a dead link in an email is worse
@@ -84,15 +99,16 @@ async function writeVoid(
         // `updatedAt` by hand because this bypasses the data client, which
         // otherwise stamps it — same as persist.ts.
         UpdateExpression:
-          "SET #s = :void, lastWriteBy = :writer, updatedAt = :now REMOVE paymentUrl",
+          `SET #s = :void, lastWriteBy = :writer, updatedAt = :now${retiredOperation ? ", #op = :retiredOperation" : ""} REMOVE paymentUrl`,
         ConditionExpression: clauses.join(" AND "),
         ExpressionAttributeNames: names,
         ExpressionAttributeValues: values,
-      })
-    );
+      };
+    if (feeWrites.length) await ddb.send(new TransactWriteCommand({ TransactItems: [{ Update: update }, ...feeWrites] }));
+    else await ddb.send(new UpdateCommand(update));
     return true;
   } catch (err) {
-    if ((err as { name?: string }).name === "ConditionalCheckFailedException") {
+    if (["ConditionalCheckFailedException", "TransactionCanceledException"].includes((err as { name?: string }).name ?? '')) {
       return false;
     }
     throw err;
@@ -123,7 +139,7 @@ export const handler = async (event: {
 
       // Already void, and nothing to undo. Idempotent because a producer who
       // pressed it twice should not see an error the second time.
-      if (invoice.status === "VOID") return { ok: true };
+      if (invoice.status === "VOID" && (invoice.invoiceSendOperation === undefined || isRetiredInvoiceSend(invoice))) return { ok: true };
 
       /**
        * A paid invoice is a record of money received. Voiding it would say the
@@ -150,6 +166,10 @@ export const handler = async (event: {
               : "A payment on that invoice is still clearing. Wait for it to land or fail.",
         };
       }
+      // Freeze the exact private send owner before touching Stripe. An
+      // unfinished send without a known link cannot safely release its fee.
+      const retirement = await prepareInvoiceSendRetirement(invoice, { database: ddb });
+      const feeWrites = [...await feeInvoiceVoidWrites(invoice), ...retirement.writes];
 
       /**
        * The link dies before the status changes.
@@ -170,8 +190,9 @@ export const handler = async (event: {
             error: "Payments are not configured, so the payment link cannot be closed.",
           };
         }
+        const stripe = new Stripe(key);
         try {
-          await new Stripe(key).paymentLinks.update(linkId, { active: false });
+          await stripe.paymentLinks.update(linkId, { active: false });
         } catch (err) {
           /**
            * A link Stripe has never heard of is already unpayable, so that is
@@ -188,9 +209,16 @@ export const handler = async (event: {
           }
           console.warn(`[void-invoice] link ${linkId} already gone at Stripe`);
         }
+        if (invoice.hasBrokerFee || invoice.invoiceSendOperation || [1,2].includes(Number(invoice.sourcePricingVersion))) {
+          // Deactivating a Payment Link does not close sessions already opened
+          // from it. Close every unsubmitted source-packet checkout before
+          // releasing its accepted terms for an updated quote and invoice.
+          try { await closeInvoiceCheckoutSessions(stripe, linkId); }
+          catch (error) { return { ok: false, error: error instanceof Error ? error.message : "The payment sessions could not be closed." }; }
+        }
       }
 
-      if (await writeVoid(tableName, invoiceId, invoice)) {
+      if (await writeVoid(tableName, invoiceId, invoice, feeWrites, retirement.operation)) {
         console.log(`void-invoice voided ${invoice.number ?? invoiceId}`);
         return { ok: true };
       }
@@ -208,6 +236,7 @@ export const handler = async (event: {
       error: "The invoice changed while voiding it. Check it and try again.",
     };
   } catch (err) {
+    if(err instanceof InvoiceSendBlocked)return {ok:false,error:err.message};
     console.error("void-invoice failed", err);
     return { ok: false, error: "We couldn't void that invoice. Please try again." };
   }

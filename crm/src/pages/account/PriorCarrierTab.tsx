@@ -1,3 +1,5 @@
+import { Select } from "../../components/ui/Select";
+import { Input } from "../../components/ui/Input";
 import {
   LINES_OF_BUSINESS,
   client,
@@ -7,7 +9,7 @@ import {
   type PriorCarrier,
 } from "../../lib/client";
 import { inputValue, num, str } from "../../lib/formCodec";
-import { priorCarrierKey } from "../../lib/extractionKeys";
+import { priorCarrierKey } from "../../../../shared/extractionKeys";
 import { useChildRows } from "../../lib/useChildRows";
 import type { FormState } from "../../lib/useFormState";
 import ChildRowsCard from "../../components/ChildRowsCard";
@@ -181,7 +183,7 @@ function PriorCarrierFields({
     <>
       <div className="field">
         <label>Line of business</label>
-        <select
+        <Select
           value={form.form.lineOfBusiness}
           onChange={(e) => form.setF("lineOfBusiness", e.target.value)}
         >
@@ -189,11 +191,11 @@ function PriorCarrierFields({
           {LINES_OF_BUSINESS.map((l) => (
             <option key={l}>{l}</option>
           ))}
-        </select>
+        </Select>
       </div>
       <div className="field">
         <label>Carrier</label>
-        <input
+        <Input
           placeholder="Travelers"
           value={form.form.carrierName}
           onChange={(e) => form.setF("carrierName", e.target.value)}
@@ -202,7 +204,7 @@ function PriorCarrierFields({
       </div>
       <div className="field">
         <label>Policy #</label>
-        <input
+        <Input
           value={form.form.policyNumber}
           onChange={(e) => form.setF("policyNumber", e.target.value)}
           onKeyDown={enter}

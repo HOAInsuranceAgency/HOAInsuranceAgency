@@ -1,5 +1,5 @@
 import { AGENCY } from "../../../../shared/agency";
-import { formatMoney } from "../../../src/lib/invoiceTotals";
+import { formatMoney } from "../../../../shared/invoiceTotals";
 
 /**
  * Telling corporate finance how a payment divides.
@@ -39,6 +39,7 @@ export interface RemittanceMail {
   carrierCents: number;
   commissionCents: number;
   interestCents: number;
+  brokerFeeCents?: number;
   totalCents: number;
 }
 
@@ -81,6 +82,7 @@ function rows(m: RemittanceMail): [string, string, number][] {
   return [
     [ACCOUNTS.carrier.code, ACCOUNTS.carrier.name, m.carrierCents],
     [ACCOUNTS.commission.code, ACCOUNTS.commission.name, m.commissionCents],
+    ...(m.brokerFeeCents ? [["", "Broker fee income", m.brokerFeeCents] as [string, string, number]] : []),
     [ACCOUNTS.interest.code, ACCOUNTS.interest.name, m.interestCents],
   ];
 }

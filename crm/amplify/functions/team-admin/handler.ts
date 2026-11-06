@@ -1,3 +1,8 @@
+import { TransactionalMailClient } from "../transactional-mail/client";
+import { publishCrmChange, publishPersonalChange } from '../live-changes';
+import { sendCrmWrite } from '../live-write';
+import { MailDeliveryError } from "../transactional-mail/contract";
+import { randomUUID } from "node:crypto";
 import type { AppSyncResolverEvent } from "aws-lambda";
 import {
   CognitoIdentityProviderClient,
@@ -12,16 +17,17 @@ import {
   AdminListGroupsForUserCommand,
   UsernameExistsException,
 } from "@aws-sdk/client-cognito-identity-provider";
-import { SESv2Client, SendEmailCommand } from "@aws-sdk/client-sesv2";
+import { SendEmailCommand } from "@aws-sdk/client-sesv2";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 // Role names are the schema's `UserRole` and the Cognito group names both —
 // see the note on `isUserRole`. enums.ts pulls in no runtime dependency, the
 // way pagination.ts does not.
-import { isUserRole, type UserRole } from "../../../src/lib/enums";
+import { isUserRole, type UserRole } from "../../../../shared/enums";
 import { isActiveAdmin, isActiveOwner } from "../crm-access/active-role";
 import { listTeamUsers, loadTeamProfile, type TeamRosterArgs } from "./roster";
 import { assertUserSession, readUserAccess } from "../crm-access/user-status";
+import { collectCompletePages } from '../storage/pages';
 
 /**
  * Team administration for active Admin and Owner views. Only an active Owner
@@ -33,7 +39,7 @@ import { assertUserSession, readUserAccess } from "../crm-access/user-status";
  */
 
 const cognito = new CognitoIdentityProviderClient();
-const ses = new SESv2Client();
+const ses = new TransactionalMailClient("invite");
 const db = DynamoDBDocumentClient.from(new DynamoDBClient());
 
 const POOL_ID = process.env.USER_POOL_ID!;
@@ -56,18 +62,17 @@ const ROLE_ERROR = "Choose one or two different roles: Owner, Admin, Staff, or P
 const OWNER_ERROR = "Only an Owner can assign or change Owner access.";
 
 async function groupsFor(username: string) {
-  const groups: string[] = [];
-  let nextToken: string | undefined;
-  do {
+  const groups = await collectCompletePages(async (nextToken?: string) => {
     const result = await cognito.send(new AdminListGroupsForUserCommand({
       UserPoolId: POOL_ID,
       Username: username,
       NextToken: nextToken,
     }));
-    groups.push(...(result.Groups ?? []).flatMap(group => group.GroupName ? [group.GroupName] : []));
-    nextToken = result.NextToken;
-  } while (nextToken);
-  return groups;
+    return { items: result.Groups ?? [], next: result.NextToken };
+  }, { maxPages: 20, maxRows: 1_000, maxBytes: 2 * 1024 * 1024,
+    budget: { pages: 0, rows: 0, bytes: 0, deadline: Date.now() + 5_000 },
+    error: () => new Error('Team group membership could not be verified completely') });
+  return groups.flatMap(group => group.GroupName ? [group.GroupName] : []);
 }
 
 async function inviteUser(args: InviteArgs, invitedBy: string, owner: boolean) {
@@ -79,6 +84,7 @@ async function inviteUser(args: InviteArgs, invitedBy: string, owner: boolean) {
   if (!roles) return { ok: false, error: ROLE_ERROR };
   if (roles.includes("OWNER") && !owner) return { ok: false, error: OWNER_ERROR };
   let username: string;
+  let invitationGeneration: string;
 
   try {
     const created = await cognito.send(
@@ -95,6 +101,7 @@ async function inviteUser(args: InviteArgs, invitedBy: string, owner: boolean) {
       })
     );
     username = created.User?.Username ?? email;
+    invitationGeneration = created.User?.Attributes?.find(attribute => attribute.Name === "sub")?.Value ?? randomUUID();
   } catch (err) {
     if (err instanceof UsernameExistsException) {
       return { ok: false, error: "That email is already on the team." };
@@ -134,9 +141,13 @@ async function inviteUser(args: InviteArgs, invitedBy: string, owner: boolean) {
             },
           },
         },
-      })
+      }),
+      { idempotencyKey: `invite:${invitationGeneration}` }
     );
   } catch (error) {
+    if (error instanceof MailDeliveryError && error.state === "UNKNOWN") {
+      return { ok: false, error: "The member was created, but invitation delivery is uncertain. Review the saved email delivery record before resending; the member can request a sign-in link." };
+    }
     // Only a successful creation enters this block. Existing team members
     // are never removed by a failed or repeated invitation.
     try {
@@ -156,6 +167,7 @@ async function inviteUser(args: InviteArgs, invitedBy: string, owner: boolean) {
   }
 
   console.log(`Invited ${email} as ${roles.join(", ")} (by ${invitedBy})`);
+  await Promise.allSettled([publishCrmChange()]);
   return { ok: true, email, roles };
 }
 
@@ -206,11 +218,13 @@ async function updateUserRoles(args: UpdateRolesArgs, actor: { username: string;
     ]);
     if (restored.some(result => result.status === "rejected")) {
       console.error("Could not restore role groups after failed update", { username, error });
+      await Promise.allSettled([publishCrmChange(), ...(sub ? [publishPersonalChange(sub)] : [])]);
       return { ok: false, error: "The role change only partly completed. Refresh the team and check this member's roles before trying again." };
     }
     throw error;
   }
   console.log(`Updated roles for ${username} to ${roles.join(", ")} (by ${actor.username})`);
+  if (added.length || removed.length) await Promise.allSettled([publishCrmChange(), ...(sub ? [publishPersonalChange(sub)] : [])]);
   return { ok: true, userId: sub ?? userId, roles };
 }
 
@@ -236,12 +250,13 @@ async function setTeamUserEnabled(args: SetEnabledArgs, actor: { username: strin
   try {
     // Persist the denial before contacting Cognito. Cached JWTs can no longer
     // reach any CRM resolver even if a subsequent Cognito request fails.
-    await db.send(new UpdateCommand({
+    await sendCrmWrite(db.send(new UpdateCommand({
       TableName, Key: { userId: sub },
       UpdateExpression: "SET #disabled = :disabled, revokedBefore = :cutoff, changedBy = :actor, updatedAt = :now",
       ExpressionAttributeNames: { "#disabled": "disabled" },
       ExpressionAttributeValues: { ":disabled": true, ":cutoff": revokedBefore, ":actor": actor.sub ?? actor.username, ":now": new Date().toISOString() },
-    }));
+    })));
+    await Promise.allSettled([publishPersonalChange(sub)]);
   } catch (error) {
     console.error("Could not persist team access denial", { userId: sub, error });
     // A transport failure can follow a committed write. Read back the actual
@@ -270,11 +285,12 @@ async function setTeamUserEnabled(args: SetEnabledArgs, actor: { username: strin
     await cognito.send(new AdminEnableUserCommand({ UserPoolId: POOL_ID, Username: username }));
     const restored = await cognito.send(new AdminGetUserCommand({ UserPoolId: POOL_ID, Username: username }));
     if (restored.Enabled !== true) throw new Error("Cognito did not confirm enabled access.");
-    await db.send(new UpdateCommand({
+    await sendCrmWrite(db.send(new UpdateCommand({
       TableName, Key: { userId: sub }, UpdateExpression: "SET #disabled = :disabled, updatedAt = :now",
       ExpressionAttributeNames: { "#disabled": "disabled" },
       ExpressionAttributeValues: { ":disabled": false, ":now": new Date().toISOString() },
-    }));
+    })));
+    await Promise.allSettled([publishPersonalChange(sub)]);
   } catch (error) {
     console.error("Could not complete team access restoration", { userId: sub, error });
     // The final release may have committed despite a lost response.

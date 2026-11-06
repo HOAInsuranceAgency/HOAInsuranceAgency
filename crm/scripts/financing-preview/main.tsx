@@ -1,4 +1,6 @@
-import { createRoot } from 'react-dom/client';
+import { Input } from '../../src/components/ui/Input';
+import '../../src/components/UniversalSearch.css';
+import { mountPreview } from '../preview-support/mount';
 import Financing from '../../src/pages/Financing';
 import { useIsAdmin } from './fixtures';
 import '../../src/styles.css';
@@ -21,10 +23,10 @@ function Preview() {
       <div className="user">Avery Brooks<div className="small">{isAdmin ? 'ADMIN' : 'SALESPERSON'}</div><div className="small" style={{ marginTop: 8 }}>Fictional preview</div></div>
     </aside>
     <main className="main">
-      <div className="topbar"><div className="usearch"><input aria-label="Preview search" placeholder="Search accounts, contacts, policies, invoices, documents…" disabled /></div></div>
+      <div className="topbar"><div className="usearch"><Input aria-label="Preview search" placeholder="Search accounts, contacts, policies, invoices, documents…" disabled /></div></div>
       <Financing />
     </main>
   </div>;
 }
 
-createRoot(document.getElementById('root')!).render(<Preview />);
+mountPreview(<Preview />);

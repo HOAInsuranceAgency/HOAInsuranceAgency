@@ -3,9 +3,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const profileWrites = vi.hoisted(() => ({ create: vi.fn(), update: vi.fn(), get: vi.fn() }));
 const licenseModels = vi.hoisted(() => ({ create: vi.fn(), listLicenseByUserProfileId: vi.fn() }));
+const fetchAuthSession = vi.hoisted(() => vi.fn());
+vi.mock("aws-amplify/auth", () => ({ fetchAuthSession }));
 vi.mock("../lib/client", async () => ({
   client: { models: { UserProfile: profileWrites, License: licenseModels } },
-  listAllPages: (await import("../lib/pagination")).listAllPages,
+  listAllPages: (await import("../../../shared/pagination")).listAllPages,
   US_STATES: ["FL", "NY"],
   friendlyError: (error: unknown, fallback: string) =>
     error instanceof Error ? error.message : fallback,
@@ -38,6 +40,7 @@ const submit = () => fireEvent.click(screen.getByRole("button", { name: "Complet
 
 beforeEach(() => {
   vi.resetAllMocks();
+  fetchAuthSession.mockResolvedValue({ tokens: { idToken: { payload: { email: "alex@example.com" } } } });
   persisted = [];
   storedProfile = { ...existing };
   profileWrites.get.mockImplementation(async ({ id }) => ({ data: storedProfile.id === id ? storedProfile : null }));
@@ -57,6 +60,33 @@ beforeEach(() => {
 });
 
 describe("onboarding assigned roles", () => {
+  it("saves the ID-token email for a first Google sign-in without login details", async () => {
+    const onComplete = vi.fn();
+    render(<Onboarding user={{ userId: "user-one", username: "native-user-id" }} existing={null}
+      role="STAFF" onComplete={onComplete} />);
+    fireEvent.change(field("First name *"), { target: { value: "Alex" } });
+    fireEvent.change(field("Last name *"), { target: { value: "Agent" } });
+    submit();
+
+    await waitFor(() => expect(onComplete).toHaveBeenCalledOnce());
+    expect(profileWrites.create).toHaveBeenCalledWith(expect.objectContaining({
+      userId: "user-one", email: "alex@example.com",
+    }));
+  });
+
+  it("does not save a placeholder email if the federated session has no email", async () => {
+    fetchAuthSession.mockResolvedValue({ tokens: { idToken: { payload: {} } } });
+    const onComplete = vi.fn();
+    render(<Onboarding user={user} existing={null} role="STAFF" onComplete={onComplete} />);
+    fireEvent.change(field("First name *"), { target: { value: "Alex" } });
+    fireEvent.change(field("Last name *"), { target: { value: "Agent" } });
+    submit();
+
+    expect(await screen.findByText("Could not read your sign-in email. Sign out and sign in again.")).toBeInTheDocument();
+    expect(profileWrites.create).not.toHaveBeenCalled();
+    expect(onComplete).not.toHaveBeenCalled();
+  });
+
   it("requires and saves producer details even when ADMIN is the primary assigned role", async () => {
     const onComplete = vi.fn();
     render(<Onboarding user={user} existing={existing} role="ADMIN" roles={["ADMIN", "PRODUCER"]} onComplete={onComplete} />);

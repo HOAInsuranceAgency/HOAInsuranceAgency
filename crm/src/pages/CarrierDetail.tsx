@@ -1,3 +1,4 @@
+import { Button } from "../components/ui/Button";
 import { useParams } from "react-router-dom";
 import { assertNoErrors, client, type Carrier } from "../lib/client";
 import { Badge, flagBadge, CARRIER_APPOINTMENT_BADGE } from "../lib/badges";
@@ -22,12 +23,12 @@ export default function CarrierDetail() {
       return result.data;
     },
     [id],
-    { initialData: null as Carrier | null, errorMessage: "Failed to load carrier" }
+    { initialData: null as Carrier | null, errorMessage: "Failed to load carrier" , live: true }
   );
   const carrier = res.data;
 
   if (!res.loaded) return <p className="muted">Loading…</p>;
-  if (res.error) return <p className="error-text" role="alert">{res.error} <button onClick={() => void res.refetch()}>Retry</button></p>;
+  if (res.error) return <p className="error-text" role="alert">{res.error} <Button onClick={() => void res.refetch()}>Retry</Button></p>;
   if (!carrier) return <p>Carrier not found.</p>;
 
   return (

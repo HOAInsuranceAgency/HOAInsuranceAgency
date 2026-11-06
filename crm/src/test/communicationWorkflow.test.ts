@@ -1,7 +1,7 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import type { Communication, IntegrationConfig, LeadWorkflow } from "../../../shared/leadWorkflow";
 const h = vi.hoisted(() => ({ records: new Map<string, Record<string, any>>(), transactions: [] as any[][], inFlight: 0, maxInFlight: 0, fail: false, failAt: undefined as number | undefined, writeError: undefined as Error | undefined, writeErrors: [] as Error[], accountError: false, userEnabled: true, disabledUsers: new Set<string>(), nonProducers: new Set<string>(), deactivatedUsers: new Set<string>(),
-  reads: [] as string[], readFailureId: undefined as string | undefined, beforeWrite: undefined as (() => void) | undefined, userReads: [] as string[], groupReads: [] as string[], userError: undefined as Error | undefined, queries: [] as any[], queryError: undefined as Error | undefined, cognitoList: vi.fn(), deletionQuery: vi.fn(), batch: vi.fn(), producerEmail: vi.fn(), front: vi.fn(), dialpad: vi.fn(), update: vi.fn(), accountList: vi.fn(), profileList: vi.fn(), profileByUser: vi.fn(), c: {} as IntegrationConfig }));
+  reads: [] as string[], readFailureId: undefined as string | undefined, beforeWrite: undefined as (() => void) | undefined, userReads: [] as string[], groupReads: [] as string[], userError: undefined as Error | undefined, queries: [] as any[], queryError: undefined as Error | undefined, completeQuery: vi.fn(), dueQueryDelayMs: 0, cognitoList: vi.fn(), deletionQuery: vi.fn(), batch: vi.fn(), producerEmail: vi.fn(), front: vi.fn(), dialpad: vi.fn(), update: vi.fn(), accountList: vi.fn(), profileList: vi.fn(), profileByUser: vi.fn(), c: {} as IntegrationConfig }));
 vi.mock("@aws-sdk/lib-dynamodb", async importOriginal => {
   const actual = await importOriginal<typeof import("@aws-sdk/lib-dynamodb")>();
   return { ...actual, DynamoDBDocumentClient: { from: () => ({ send: async (command: any) => {
@@ -10,6 +10,9 @@ vi.mock("@aws-sdk/lib-dynamodb", async importOriginal => {
     if (command.constructor.name === "BatchGetCommand") return h.batch(p);
     if (command.constructor.name === "QueryCommand") {
       h.queries.push(p);
+      const completePage = await h.completeQuery(p);
+      if (completePage !== undefined) return completePage;
+      if (p.IndexName === "due" && h.dueQueryDelayMs) vi.setSystemTime(new Date(Date.now() + h.dueQueryDelayMs));
       if (p.Select === 'COUNT') {
         const override = await h.deletionQuery(p);
         if (override !== undefined) return override;
@@ -41,6 +44,10 @@ vi.mock("@aws-sdk/lib-dynamodb", async importOriginal => {
           continue;
         }
         const old = h.records.get(`${w.TableName}:${w.Item?.id ?? w.Key?.id}`);
+        if (entry.ConditionCheck && w.ConditionExpression === 'attribute_not_exists(brokerFeeHistory) OR brokerFeeHistory = :clear') {
+          if (old?.brokerFeeHistory && old.brokerFeeHistory !== w.ExpressionAttributeValues[':clear']) throw Object.assign(new Error('Signed fee history must be retained'), { name: 'TransactionCanceledException' });
+          continue;
+        }
         if (entry.ConditionCheck && w.ConditionExpression === '#stage = :lead') {
           if (old?.stage !== w.ExpressionAttributeValues[':lead']) throw Object.assign(new Error('Lead stage changed'), { name: 'TransactionCanceledException', CancellationReasons: [{ Code: 'ConditionalCheckFailed' }] });
           continue;
@@ -61,8 +68,10 @@ vi.mock("@aws-sdk/lib-dynamodb", async importOriginal => {
       for (const { Put: w } of writes.filter((w: any) => w.Put)) h.records.set(`${w.TableName}:${w.Item.id}`, structuredClone(w.Item));
       for (const { Update: u } of writes.filter((w: any) => w.Update)) {
         const key = `${u.TableName}:${u.Key.id}`, record = { ...h.records.get(key) };
-        for (const assignment of u.UpdateExpression.replace(/^SET /, "").split(", ")) {
-          const [raw, variable] = assignment.split(" = "); record[u.ExpressionAttributeNames?.[raw] ?? raw] = u.ExpressionAttributeValues[variable];
+        for (const assignment of u.UpdateExpression.replace(/^SET /, "").split(/, (?![^()]*\))/)) {
+          const [raw, variable] = assignment.split(" = "), field = u.ExpressionAttributeNames?.[raw] ?? raw;
+          const fallback = /^if_not_exists\(([^,]+), (:[^)]+)\)$/.exec(variable);
+          record[field] = fallback ? record[fallback[1]] ?? u.ExpressionAttributeValues[fallback[2]] : u.ExpressionAttributeValues[variable];
         }
         h.records.set(key, record);
       }
@@ -132,13 +141,15 @@ async function seedLegacyPromise(input: any, actor: string) {
   return data;
 }
 beforeEach(async () => {
-  vi.useFakeTimers(); vi.setSystemTime(NOW); h.records.clear(); h.transactions.length = 0; h.inFlight = 0; h.maxInFlight = 0; h.fail = false; h.failAt = undefined; h.accountError = false; h.userEnabled = true; h.writeError = undefined; vi.clearAllMocks();
+  vi.useFakeTimers(); vi.setSystemTime(NOW); h.records.clear(); h.transactions.length = 0; h.inFlight = 0; h.maxInFlight = 0; h.fail = false; h.failAt = undefined; h.accountError = false; h.userEnabled = true; h.writeError = undefined; h.dueQueryDelayMs = 0; vi.clearAllMocks();
   h.disabledUsers.clear(); h.nonProducers.clear(); h.deactivatedUsers.clear();
   h.groupReads.length = 0;
   h.writeErrors.length = 0;
   h.reads.length = 0; h.readFailureId = undefined; h.beforeWrite = undefined; h.userReads.length = 0; h.queries.length = 0; h.userError = undefined; h.queryError = undefined;
   h.producerEmail.mockReset().mockImplementation(async member => emailIdentity(member.userId));
   h.deletionQuery.mockReset();
+  h.completeQuery.mockReset();
+  delete process.env.ACCESS_API_ID;
   h.cognitoList.mockReset().mockResolvedValue(undefined);
   h.batch.mockReset().mockImplementation((p: { RequestItems: Record<string, { Keys: { id: string }[] }> }) => ({
     Responses: Object.fromEntries(Object.entries(p.RequestItems).map(([name, request]) => [name,
@@ -157,6 +168,104 @@ beforeEach(async () => {
   h.front.mockImplementation(async (path: string) => path.includes("/messages") && path.includes("/conversations") ? { _results: [] } : {});
 });
 afterEach(() => vi.useRealTimers());
+describe('complete communications reads', () => {
+  const accountReadError = 'Account communication records could not be loaded completely';
+  const teamReadError = 'Team eligibility records could not be loaded completely';
+  function repeatedPrivatePages(index: string) {
+    let calls = 0;
+    h.completeQuery.mockImplementation(async request => {
+      if (request.IndexName !== index) return;
+      calls++;
+      if (calls > 2) throw new Error('An unsafe third page was fetched');
+      return { Items: [], LastEvaluatedKey: { id: 'repeated' } };
+    });
+  }
+  function repeatedRelation() {
+    return vi.fn().mockResolvedValueOnce({ data: [], nextToken: 'repeated' })
+      .mockResolvedValueOnce({ data: [], nextToken: 'repeated' })
+      .mockRejectedValue(new Error('An unsafe third page was fetched'));
+  }
+  it('rejects a repeated private-account cursor without returning a partial history', async () => {
+    repeatedPrivatePages('account');
+    const { accountRows } = await import('../../amplify/functions/communications/workflow');
+    await expect(accountRows('a1', 'COMMUNICATION')).rejects.toThrow(accountReadError);
+    expect(h.completeQuery).toHaveBeenCalledTimes(2);
+    expect(h.queries.every(query => query.ExpressionAttributeValues[':k'] === 'a1' && query.ExpressionAttributeValues[':prefix'] === 'COMMUNICATION#' && query.Limit === 100)).toBe(true);
+  });
+  it('rejects a repeated eligibility cursor instead of routing with an incomplete team', async () => {
+    repeatedPrivatePages('kind');
+    const { team } = await import('../../amplify/functions/communications/workflow');
+    await expect(team()).rejects.toThrow(teamReadError);
+    expect(h.completeQuery).toHaveBeenCalledTimes(2);
+  });
+  it('stops an advancing team cursor at the page budget', async () => {
+    let calls = 0;
+    h.completeQuery.mockImplementation(async () => {
+      if (++calls > 20) throw new Error('An unsafe twenty-first page was fetched');
+      return { Items: [], LastEvaluatedKey: { id: `page-${calls}` } };
+    });
+    const { team } = await import('../../amplify/functions/communications/workflow');
+    await expect(team()).rejects.toThrow(teamReadError);
+    expect(calls).toBe(20);
+  });
+  it('stops before another account page when its read deadline is exhausted', async () => {
+    h.completeQuery.mockImplementationOnce(async () => {
+      vi.setSystemTime(Date.now() + 8001);
+      return { Items: [], LastEvaluatedKey: { id: 'next' } };
+    }).mockRejectedValue(new Error('An unsafe page after the deadline was fetched'));
+    const { accountRows } = await import('../../amplify/functions/communications/workflow');
+    await expect(accountRows('a1', 'COMMUNICATION')).rejects.toThrow(accountReadError);
+    expect(h.completeQuery).toHaveBeenCalledTimes(1);
+  });
+  it('keeps empty filtered pages and all subsequent contact data in order', async () => {
+    const contacts = vi.fn().mockResolvedValueOnce({ data: [], nextToken: 'empty' })
+      .mockResolvedValueOnce({ data: [{ email: 'first@example.com' }], nextToken: 'last' })
+      .mockResolvedValueOnce({ data: [{ phone: '+15085550123' }] });
+    h.records.set('Account:a1', { contacts });
+    const { accountContactPairs } = await import('../../amplify/functions/communications/contactProgress');
+    expect(await accountContactPairs('a1')).toEqual([{ email: 'first@example.com' }, { phone: '+15085550123' }]);
+    expect(contacts.mock.calls).toEqual([[{ limit: 100, nextToken: undefined }], [{ limit: 100, nextToken: 'empty' }], [{ limit: 100, nextToken: 'last' }]]);
+  });
+  it('rejects repeated contact pages before they can become identity evidence', async () => {
+    const contacts = repeatedRelation();
+    h.records.set('Account:a1', { contacts });
+    const { accountContactPairs } = await import('../../amplify/functions/communications/contactProgress');
+    await expect(accountContactPairs('a1')).rejects.toThrow("The lead's contacts could not be loaded");
+    expect(contacts).toHaveBeenCalledTimes(2);
+  });
+  it('preserves a late GraphQL page error instead of publishing partial contact evidence', async () => {
+    const contacts = vi.fn().mockResolvedValueOnce({ data: [{ email: 'first@example.com' }], nextToken: 'next' })
+      .mockResolvedValueOnce({ data: [], errors: [{ message: 'Unauthorized' }] });
+    h.records.set('Account:a1', { contacts });
+    const { accountContactPairs } = await import('../../amplify/functions/communications/contactProgress');
+    await expect(accountContactPairs('a1')).rejects.toThrow("The lead's contacts could not be loaded");
+  });
+  it('refuses routing reconciliation when quote pagination repeats, without committing a partial quote state', async () => {
+    const wf = await lead(), quotes = repeatedRelation();
+    h.records.set('Account:a1', { quotes });
+    const before = h.transactions.length;
+    const { reconcileAccountWork } = await import('../../amplify/functions/communications/coverage');
+    await expect(reconcileAccountWork({ id: 'a1', name: 'Willow HOA', createdAt: NOW, updatedAt: NOW }, wf)).rejects.toThrow('Account records could not be verified');
+    expect(quotes).toHaveBeenCalledTimes(2);
+    expect(h.transactions).toHaveLength(before);
+  });
+  it('refuses a commercial-package write when its complete quote read repeats', async () => {
+    const quotes = repeatedRelation();
+    h.records.set('Account:a1', { quotes });
+    const before = h.transactions.length;
+    const { saveCommercial } = await import('../../amplify/functions/communications/commercial');
+    await expect(saveCommercial({ accountId: 'a1', version: 0, action: 'SAVE_OPTION', quoteIds: ['q1'], name: 'Property', requiredLines: ['Property'], reviewed: true }, 'brian')).rejects.toThrow('Could not load quotes');
+    expect(quotes).toHaveBeenCalledTimes(2);
+    expect(h.transactions).toHaveLength(before);
+  });
+  it('fails the team API without returning profiles from repeated pages', async () => {
+    h.profileList.mockImplementation(repeatedRelation());
+    const { handler } = await import('../../amplify/functions/communications/handler');
+    expect(await handler({ arguments: { readOperation: 'team' }, identity: { sub: 'brian', groups: ['ADMIN'] } as never })).toMatchObject({ ok: false, error: 'Could not load teammates' });
+    expect(h.profileList).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe('producer lead snoozes', () => {
   const input = { accountId: 'a1', version: 0, followUpOn: '2026-09-10', note: '  Call after the board meeting  ' };
   async function setup() {
@@ -534,6 +643,17 @@ describe('commercial package persistence', () => {
   });
 });
 describe('deleted lead cleanup', () => {
+  it('rejects a signed-fee lead before writing a deletion tombstone', async () => {
+    h.records.set('Account:a1', { id: 'a1', brokerFeeHistory: true });
+    await expect((await import('../../amplify/functions/communications/deletion')).prepareLeadDeletion('a1', 'Willow HOA', 'admin')).rejects.toThrow('signed broker fee disclosure');
+    expect(record('deleted-account:a1')).toBeUndefined(); expect(record('account-delete:a1')).toBeUndefined();
+  });
+  it('retains a fee signed concurrently after deletion preflight but before the tombstone commit', async () => {
+    h.records.set('Account:a1', { id: 'a1' });
+    h.beforeWrite = () => h.records.set('Account:a1', { id: 'a1', brokerFeeHistory: true });
+    await expect((await import('../../amplify/functions/communications/deletion')).prepareLeadDeletion('a1', 'Willow HOA', 'admin')).rejects.toThrow('must be retained');
+    expect(record('deleted-account:a1')).toBeUndefined(); expect(record('account-delete:a1')).toBeUndefined();
+  });
   it('requires admin permission at the API', async () => {
     const { handler } = await import('../../amplify/functions/communications/handler');
     expect(await handler({ arguments: { operation: 'prepareLeadDeletion', input: { accountId: 'a1', name: 'Willow HOA' } }, identity: { sub: 'staff', groups: ['STAFF'] } as never })).toMatchObject({ ok: false, error: 'Only an admin can change integration or team settings' });
@@ -622,6 +742,42 @@ describe('deleted lead cleanup', () => {
       if (input.TableName === model) throw new Error('Access denied');
     });
     await expect((await import('../../amplify/functions/communications/deletion')).prepareLeadDeletion('a1', 'Willow HOA', 'admin')).rejects.toThrow(new RegExp(`Could not verify this lead.s ${model === 'Policy' ? 'policies' : 'billing records'}`));
+    expect(record('deleted-account:a1')).toBeUndefined();
+  });
+  it.each(['Policy', 'Invoice'])('preserves the identical indexed retention check when %s table aliases are derived', async model => {
+    const run = async (explicit: boolean) => {
+      process.env.ACCESS_API_ID = 'trusted-api';
+      for (const name of ['Policy', 'Invoice']) {
+        const key = `LEAD_DELETION_${name.toUpperCase()}_TABLE`;
+        if (explicit) process.env[key] = `${name}-trusted-api-NONE`; else delete process.env[key];
+      }
+      h.queries.length = 0; let reads = 0;
+      h.deletionQuery.mockImplementation((input: any) => input.TableName === `${model}-trusted-api-NONE`
+        ? reads++ === 0 ? { Count: 0, LastEvaluatedKey: { id: 'continuation', accountId: 'a1' } } : { Count: 1 }
+        : { Count: 0 });
+      await expect((await import('../../amplify/functions/communications/deletion')).prepareLeadDeletion('a1', 'Willow HOA', 'admin')).rejects.toThrow(/cannot be deleted/);
+      expect(record('deleted-account:a1')).toBeUndefined();
+      return [...h.queries];
+    };
+    const explicit = await run(true), derived = await run(false);
+    expect(derived).toEqual(explicit);
+    expect(derived.filter(query => query.TableName === `${model}-trusted-api-NONE`)).toHaveLength(2);
+    expect(derived.every(query => query.Select === 'COUNT' && query.Limit === 1 && query.IndexName === `gsi-Account.${query.TableName.startsWith('Policy-') ? 'policies' : 'invoices'}`)).toBe(true);
+  });
+  it('can delete a verified empty lead using derived Policy and Invoice tables', async () => {
+    process.env.ACCESS_API_ID = 'trusted-api';
+    delete process.env.LEAD_DELETION_POLICY_TABLE; delete process.env.LEAD_DELETION_INVOICE_TABLE;
+    h.deletionQuery.mockResolvedValue({ Count: 0 });
+    await (await import('../../amplify/functions/communications/deletion')).prepareLeadDeletion('a1', 'Willow HOA', 'admin');
+    expect(h.queries.filter(query => query.Select === 'COUNT').map(query => query.TableName)).toEqual(['Policy-trusted-api-NONE', 'Invoice-trusted-api-NONE']);
+    expect(record('deleted-account:a1')).toBeDefined();
+  });
+  it.each(['POLICY', 'INVOICE'])('still blocks deletion without the %s index even when table derivation is available', async model => {
+    process.env.ACCESS_API_ID = 'trusted-api';
+    delete process.env.LEAD_DELETION_POLICY_TABLE; delete process.env.LEAD_DELETION_INVOICE_TABLE;
+    delete process.env[`LEAD_DELETION_${model}_INDEX`];
+    h.deletionQuery.mockResolvedValue({ Count: 0 });
+    await expect((await import('../../amplify/functions/communications/deletion')).prepareLeadDeletion('a1', 'Willow HOA', 'admin')).rejects.toThrow(/Could not verify this lead.s/);
     expect(record('deleted-account:a1')).toBeUndefined();
   });
   it.each(['LEAD_DELETION_POLICY_TABLE', 'LEAD_DELETION_POLICY_INDEX', 'LEAD_DELETION_INVOICE_TABLE', 'LEAD_DELETION_INVOICE_INDEX'])('blocks deletion if %s is not configured', async setting => {
@@ -2233,8 +2389,10 @@ describe("native Front quote presentation", () => {
     h.records.set("Quote:q1", { id: "q1", accountId: "a1", carrierId: "c1", status: "QUOTED", premium: 1000, effectiveDate: "2026-10-01", expirationDate: "2027-10-01", lines: ["Property"], createdAt: NOW, updatedAt: NOW });
     h.records.set("Carrier:c1", { id: "c1", name: "Example Carrier" });
     h.front.mockResolvedValue({ _results: [{ id: "msg_original", is_inbound: true, recipients: [{ role: "from", handle: "jane@example.com" }] }] });
-    const { prepareBusinessDraft } = await import("../../amplify/functions/communications/businessDelivery");
-    return prepareBusinessDraft({ accountId: "a1", conversationId: "cnv_a", kind: "QUOTE", recordId: "q1" }, "brian");
+    // Legacy prepared proofs remain readable after new drafting moves to reviewed packages.
+    const reference = "HOA-ABCDEF012345", facts = ["Carrier: Example Carrier", "Premium: $1,000.00", "Coverage: Property", "Term: 2026-10-01 to 2027-10-01"];
+    await save(row("BUSINESS_DELIVERY", `delivery:${reference}`, { accountId: "a1", conversationId: "cnv_a", kind: "QUOTE", recordId: "q1", recordVersion: NOW, recipient: "jane@example.com", reference, facts, files: [], state: "PREPARED", preparedBy: "brian" }, { accountId: "a1" }));
+    return { body: facts.map(f => `<p>${f}</p>`).join("") + `<p>Reference: ${reference}</p>` };
   }
   it("a draft is not presentation; the actual matching sent quote is", async () => {
     const draft = await prepare(); expect(h.records.get("Quote:q1")!.status).toBe("QUOTED");
@@ -2263,6 +2421,20 @@ describe("native Front quote presentation", () => {
     await expect(applyBusinessDelivery(comm)).rejects.toThrow("changed");
     expect(h.records.get("Quote:q1")).toMatchObject({ status: "QUOTED", premium: 2000 });
     expect(entries("ISSUE").some(i => String(i.data.message).includes("changed after"))).toBe(true);
+  });
+  it('preserves the first presentation time when reconciling a historical resend', async () => {
+    const draft = await prepare(), original = '2026-09-07T15:00:00Z'; h.records.get('Quote:q1')!.presentedAt = original;
+    const comm = await inbound('resend', '2026-09-08T15:00:00Z', { direction:'OUTBOUND', to:['jane@example.com'], text:draft.body.replace(/<[^>]*>/g,'\n') });
+    await (await import('../../amplify/functions/communications/businessDelivery')).applyBusinessDelivery(comm);
+    expect(h.records.get('Quote:q1')!.presentedAt).toBe(original); expect(entries('BUSINESS_DELIVERY')[0].data.sentAt).toBe(comm.at);
+    expect(Date.parse(h.records.get('Quote:q1')!.updatedAt)).toBeGreaterThan(Date.parse(NOW));
+  });
+  it.each(['CERTIFICATE','DOCUMENT'])('records historical %s sending without asserting recipient delivery', async kind => {
+    const draft=await prepare(),proof=entries('BUSINESS_DELIVERY')[0]; proof.data.kind=kind;
+    const comm=await inbound('document-send','2026-09-08T15:00:00Z',{direction:'OUTBOUND',to:['jane@example.com'],text:draft.body.replace(/<[^>]*>/g,'\n')});
+    await (await import('../../amplify/functions/communications/businessDelivery')).applyBusinessDelivery(comm);
+    expect(entries('BUSINESS_DELIVERY')[0].data).toMatchObject({state:'SENT',sentAt:comm.at});
+    expect(h.transactions.flat().filter(w=>w.Update && [process.env.CERTIFICATE_TABLE,process.env.DOCUMENT_TABLE].includes(w.Update.TableName))).toHaveLength(0);
   });
 });
 
@@ -2698,6 +2870,7 @@ describe("CRM task retirement", () => {
     const { handler } = await import("../../amplify/functions/communications/handler");
     const context = await handler({ arguments: { readOperation: "context", input: { accountId: "a1" } }, identity: { sub: "brian", groups: [] } as never });
     expect(context.ok).toBe(true);
+    if (!("issues" in context)) throw new Error("Expected an authorized workflow context");
     expect(context.issues?.map(r => r.id).sort()).toEqual(activeIds.map(id => `issue:${id}`).sort());
     const { workPage } = await import("../../amplify/functions/communications/work");
     const page = await workPage({ kind: "ISSUE", actor: "brian" });
@@ -2790,5 +2963,100 @@ describe("batched issue-source visibility", () => {
     await vi.runAllTimersAsync(); await assertion;
     expect(h.front).not.toHaveBeenCalled();
     expect(sourceBatches()).toHaveLength(failure === "outage" ? 1 : 4);
+  });
+});
+
+describe('destination inherited communications remain review-only', () => {
+  const cutoff = '2026-09-08T13:59:00.000Z';
+  beforeEach(() => {
+    for (const [key,value] of Object.entries({ HOA_MIGRATION_APP_ID:'d1nuh9rw1hcuxo', HOA_MIGRATION_PENDING_ACCOUNT:'917680434255', AWS_REGION:'us-east-1', HOA_MIGRATION_BRANCH:'codex-hoa-account-migration', AWS_LAMBDA_FUNCTION_NAME:'amplify-d1nuh9rw1hcuxo-main-branch-worker', HOA_MIGRATION_PREVIEW:'false', HOA_MIGRATION_WORKERS_ENABLED:'true', HOA_MIGRATION_PENDING_CUTOFF:cutoff })) vi.stubEnv(key,value);
+  });
+  afterEach(() => vi.unstubAllEnvs());
+  function inherited<T extends {id:string}>(r:T) { const old={...r,createdAt:cutoff,updatedAt:NOW};h.records.set('comms:'+r.id,structuredClone(old));return old; }
+  it('resumes beyond held pages after the time budget without changing any held record', async () => {
+    h.c.paused = true;
+    const held = Array.from({length:120}, (_,i) => inherited(row('TRIAGE', `held:${String(i).padStart(3,'0')}`, { preserved: i }, {dueAt:NOW})));
+    const fresh = await save(row('TRIAGE','fresh:after-held',{ fresh: true },{dueAt:NOW}));
+    h.dueQueryDelayMs=25_000;
+    const {handler}=await import('../../amplify/functions/communications/worker');
+    expect((await handler() as {handled:number}).handled).toBe(0);
+    const progress=entries('QUEUE_CURSOR')[0];
+    h.queries.length=0;
+    expect((await handler() as {handled:number}).handled).toBe(1);
+    expect(progress.data.nextToken).toBeTruthy();
+    expect(h.queries.find(q=>q.IndexName==='due').ExclusiveStartKey.id).toBe('held:089');
+    expect(h.queries.find(q=>q.IndexName==='due').ExpressionAttributeValues[':now']).toBe(NOW);
+    expect(record(fresh.id).dueAt).toBeUndefined(); expect(record('issue:'+fresh.id)).toBeTruthy();
+    for(const r of held)expect(record(r.id)).toEqual(r);
+    expect(h.front).not.toHaveBeenCalled(); expect(h.dialpad).not.toHaveBeenCalled();
+  });
+  it('does not let an overlapping tick overwrite another cursor checkpoint', async () => {
+    const {openQueueCursor,saveQueueCursor}=await import('../../amplify/functions/communications/queueCursor');
+    const first=await openQueueCursor('test',NOW), concurrent=await openQueueCursor('test',NOW);
+    await saveQueueCursor(first,'page-one');
+    await expect(saveQueueCursor(concurrent,'stale-page')).rejects.toThrow('Conflict');
+    expect((await openQueueCursor('test',new Date(Date.parse(NOW)+60_000).toISOString()))).toMatchObject({nextToken:'page-one',through:NOW});
+  });
+  it('retains a fixed sweep window with seen first-page IDs and bounds that checkpoint', async () => {
+    const {openQueueCursor,saveQueueCursor}=await import('../../amplify/functions/communications/queueCursor');
+    const first=await openQueueCursor('seen-test',NOW);
+    await saveQueueCursor(first,undefined,['ocr-pending']);
+    const resumed=await openQueueCursor('seen-test',new Date(Date.parse(NOW)+60_000).toISOString());
+    expect(resumed).toMatchObject({nextToken:undefined,through:NOW,seenIds:['ocr-pending']});
+    const writes=h.transactions.length;
+    await expect(saveQueueCursor(resumed,undefined,Array.from({length:101},(_,i)=>`row-${i}`))).rejects.toThrow('bound');
+    await expect(saveQueueCursor(resumed,undefined,['duplicate','duplicate'])).rejects.toThrow('bound');
+    expect(h.transactions).toHaveLength(writes);
+    await saveQueueCursor(resumed);
+    const nextNow=new Date(Date.parse(NOW)+120_000).toISOString();
+    expect(await openQueueCursor('seen-test',nextNow)).toMatchObject({through:nextNow,seenIds:[]});
+  });
+  it('retries a partially processed page instead of advancing past untouched fresh work', async () => {
+    h.c.paused=true;
+    const fresh=await Promise.all(Array.from({length:31},(_,i)=>save(row('TRIAGE',`fresh:${i}`,{}, {dueAt:NOW}))));
+    const slowFirstWrite=()=>{
+      if(h.queries.some(q=>q.IndexName==='due'))vi.setSystemTime(new Date(Date.now()+76_000));
+      else h.beforeWrite=slowFirstWrite;
+    };
+    h.beforeWrite=slowFirstWrite;
+    const {handler}=await import('../../amplify/functions/communications/worker');
+    expect((await handler() as {handled:number}).handled).toBe(1);
+    expect(entries('QUEUE_CURSOR')[0].data.nextToken).toBeUndefined();
+    expect((await handler() as {handled:number}).handled).toBe(30);
+    for(const r of fresh)expect(record(r.id).dueAt).toBeUndefined();
+  });
+  it('rejects a cursor with inherited provenance instead of rewriting it', async () => {
+    const {openQueueCursor,saveQueueCursor}=await import('../../amplify/functions/communications/queueCursor');
+    const cursor=await openQueueCursor('test-held',NOW);const saved=await saveQueueCursor(cursor,'page-one');
+    const old=inherited(saved);h.transactions.length=0;
+    await expect(openQueueCursor('test-held',NOW)).rejects.toThrow('unreviewed migration provenance');
+    expect(record(old.id)).toEqual(old);expect(h.transactions).toHaveLength(0);
+  });
+  it.each(['READY','RETRY_WAIT','ACCEPTED','UNKNOWN','LEASED'] as const)('does not mutate or send an inherited %s operation through direct dispatch', async state => {
+    await lead();const op=inherited(await save(row<Operation>('OPERATION','op:old',{type:'COMMENT',state,accountId:'a1',attempts:1,uid:'existing-uid',text:'Preserved'},{accountId:'a1',dueAt:NOW})));const before=structuredClone(op);h.front.mockClear();h.transactions.length=0;
+    await runOperation(op);expect(record(op.id)).toEqual(before);expect(h.transactions).toHaveLength(0);expect(h.front).not.toHaveBeenCalled();
+  });
+  it('holds old EVENT/TASK/TRIAGE and operations in the scheduled sweep', async () => {
+    await lead();h.c.paused=true;
+    const snapshots=['EVENT','TASK','TRIAGE','OPERATION'].map(kind=>inherited({...row(kind,'held:'+kind,{type:'COMMENT',state:'RETRY_WAIT',accountId:'a1',provider:'front',payload:{},attempts:0},{dueAt:NOW}),dueAt:NOW,dueGroup:'DUE'}));
+    const worker=await import('../../amplify/functions/communications/worker');await worker.handler();
+    for(const old of snapshots)expect(record(old.id)).toEqual(old);
+    expect(h.front.mock.calls.filter(c=>c[1]==='POST'||c[1]==='PATCH')).toHaveLength(0);
+    expect(h.queries.find(q=>q.IndexName==='due').KeyConditionExpression).toContain('BETWEEN');
+  });
+  it('does not let direct old events or newly captured old provider messages create actions', async () => {
+    const event=inherited(await save(row('EVENT','event:old',{provider:'front' as const,payload:{type:'inbound_received'},attempts:0},{dueAt:NOW})));h.transactions.length=0;h.front.mockClear();
+    await processEvent(event);await ingestFrontMessage({id:'msg_old',created_at:Date.parse(cutoff)/1000,is_inbound:true,text:'Old'},'cnv_a');
+    await dialpadEvent({call_id:'1',date_started:Date.parse(cutoff),direction:'inbound'});
+    expect(h.transactions).toHaveLength(0);expect(h.front).not.toHaveBeenCalled();expect(record(event.id)).toEqual(event);
+  });
+  it('leaves inherited backfill jobs and inherited event receipts untouched', async () => {
+    const {backfillConversation}=await import('../../amplify/functions/communications/events');const old=inherited(await save(row('CONVERSATION_BACKFILL','history:old',{conversationId:'cnv_a'},{dueAt:NOW})));h.front.mockClear();await backfillConversation(old);expect(h.front).not.toHaveBeenCalled();expect(record(old.id)).toEqual(old);
+    const fresh=await save(row('CONVERSATION_BACKFILL','history:new',{conversationId:'cnv_a'},{dueAt:NOW}));const message={id:'msg_new',created_at:Date.parse(NOW)/1000,is_inbound:true,text:'New'};const event=inherited(await save(row('EVENT','front-history:cnv_a:msg_new:0:draft-v2:sent',{provider:'front',payload:{},snapshot:{message,conversationId:'cnv_a'},attempts:0},{dueAt:NOW})));h.front.mockResolvedValue({_results:[message]});await backfillConversation(fresh);expect(record(event.id)).toEqual(event);expect(entries('COMMUNICATION')).toHaveLength(0);
+  });
+  it('allows fresh operations and requires explicit reviewed retry for an old one', async () => {
+    await lead();h.front.mockResolvedValue({id:'comment_new'});const fresh=await enqueueOperation('op:new',{type:'COMMENT',accountId:'a1',text:'New deliberate comment'});await runOperation(fresh);expect(record(fresh.id).data.state).toBe('CONFIRMED');
+    const old=inherited(await save(row<Operation>('OPERATION','op:review',{type:'COMMENT',state:'UNKNOWN',accountId:'a1',attempts:1,text:'Held'},{accountId:'a1'})));const {reviewOperation}=await import('../../amplify/functions/communications/review');await expect(reviewOperation({id:old.id,version:old.version,action:'retry',reason:'Reviewed'},'owner')).rejects.toThrow('confirm');
+    await reviewOperation({id:old.id,version:old.version,action:'retry',reason:'Confirmed no send',verifiedNotSent:true},'owner');expect(record(old.id).data.migrationReview).toMatchObject({cutoff,actor:'owner',action:'retry',sourceVersion:old.version});await runOperation(record(old.id) as any);expect(record(old.id).data.state).toBe('CONFIRMED');
   });
 });

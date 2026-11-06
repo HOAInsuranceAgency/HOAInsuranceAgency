@@ -1,6 +1,9 @@
+import { Input } from "./ui/Input";
+import { Button } from "./ui/Button";
+import { Select } from "./ui/Select";
 import { useState } from 'react';
 import { communicationRequest } from '../lib/communications';
-import { usePagedList, type Page } from '../lib/usePagedList';
+import { usePagedList } from '../lib/usePagedList';
 export default function AccountPicker({
   value,
   onChange,
@@ -15,7 +18,7 @@ export default function AccountPicker({
   const [selected, setSelected] = useState<{ id: string; name: string }>();
   const page = usePagedList(
     (token) =>
-      communicationRequest<Page<{ id: string; name: string }>>('searchAccounts', { query, nextToken: token }),
+      communicationRequest('searchAccounts', { query, nextToken: token }),
     [query],
     !!query,
   );
@@ -25,7 +28,7 @@ export default function AccountPicker({
       <label className="field">
         Find insured account
         <div className="toolbar">
-          <input
+          <Input
             value={text}
             maxLength={200}
             onChange={(e) => setText(e.target.value)}
@@ -36,9 +39,9 @@ export default function AccountPicker({
               }
             }}
           />
-          <button
+          <Button variant="secondary"
             type="button"
-            className="secondary"
+
             disabled={disabled || !text.trim() || page.loading}
             onClick={() => {
               if (query === text.trim()) void page.reload();
@@ -46,12 +49,12 @@ export default function AccountPicker({
             }}
           >
             Search accounts
-          </button>
+          </Button>
         </div>
       </label>
       <label className="field">
         Insured account
-        <select
+        <Select
           value={value}
           required
           disabled={disabled}
@@ -66,7 +69,7 @@ export default function AccountPicker({
               {r.name}
             </option>
           ))}
-        </select>
+        </Select>
       </label>
       {query && !page.items.length && !page.loading && (
         <p className="muted small">
@@ -77,20 +80,20 @@ export default function AccountPicker({
       {page.error && (
         <p role="alert" className="error-text">
           {page.error}{' '}
-          <button type="button" onClick={() => void page.more()}>
+          <Button type="button" onClick={() => void page.more()}>
             Retry
-          </button>
+          </Button>
         </p>
       )}
       {page.nextToken && (
-        <button
+        <Button variant="secondary"
           type="button"
-          className="secondary"
+
           disabled={disabled || page.loading}
           onClick={() => void page.more()}
         >
           Continue searching accounts
-        </button>
+        </Button>
       )}
     </div>
   );

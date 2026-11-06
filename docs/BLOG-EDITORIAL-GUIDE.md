@@ -162,7 +162,51 @@ the front matter must match the file.
 
 Articles are published by HOA Insurance Agency. No individual author or license
 number appears. Every article is approved by the reviewer before it is merged,
-and nothing publishes without that approval.
+and nothing publishes without that approval. Configure the repository's `main`
+branch rules to require an approving human review; the automation does not
+approve or merge pull requests. Review commands are available only to repository
+owners, members and collaborators.
+
+## Automation setup
+
+Configure these under this repository's **Settings → Secrets and variables →
+Actions**, using repository secrets and variables rather than environment-only
+settings:
+
+| Type | Name | Value |
+| --- | --- | --- |
+| Secret | `ANTHROPIC_API_KEY` | Anthropic API key for article research and drafting |
+| Secret | `AWS_SES_ROLE_ARN` | Dedicated SES sender role trusted by GitHub OIDC for this repository's `main` branch |
+| Secret | `AMPLIFY_WEBHOOK_URL` | Incoming rebuild webhook for the marketing Web app's `main` branch |
+| Variable | `REVIEWER_EMAIL` | The reviewer who receives draft and reminder emails |
+| Variable | `BLOG_EMAIL_FROM` | SES-verified sender email address |
+| Variable | `AWS_SES_REGION` | Region where the sender is verified; `us-east-1` for the existing `protectmyhoa.com` identity |
+
+The SES role's OIDC trust must match audience `sts.amazonaws.com` and subject
+`repo:HOAInsuranceAgency/HOAInsuranceAgency:ref:refs/heads/main`. Limit its mail
+permission to `ses:SendEmail` for the selected verified sender and reviewer.
+If SES is in its sandbox in that region, verify the reviewer address too.
+This is a separate GitHub role, not a CRM runtime role. The Amplify webhook
+must rebuild the marketing website, not the CRM or staging branch.
+
+Allow GitHub Actions to create pull requests in **Settings → Actions → General**.
+The workflows request their own contents/pull-request permissions. Empty sender
+or reviewer variables skip email without failing the run, so verify the actual
+email step and receipt when testing configuration.
+
+The drafting and publishing jobs run only from `main`. Automated article pull
+requests target `main`; this content workflow is the exception to the README's
+staging-first rule for application changes. Keep application and workflow changes
+subject to the normal staging verification before production promotion.
+
+Run `npm ci --prefix .github/blog` and `npm test --prefix .github/blog` for the
+offline automation checks, then the repository's `npm run verify`. A manual
+**Blog drafts** run defaults to `dry_run=true`, saving an artifact without a
+pull request or email. It still calls the paid Anthropic API. After reviewing
+that output, a full run checks draft creation and reviewer email; upload a photo,
+apply the review commands, and verify the build before human approval and merge.
+**Blog publishing → rebuild-now** starts a production marketing rebuild, so use
+it only when that release is intended.
 
 ## How the automation works
 
@@ -204,7 +248,7 @@ If a run cannot verify a topic, it tries an evergreen topic in the same
 category. If that also fails, the reviewer gets a "no draft this run" email
 instead. Any run can be started by hand from the Actions tab. "Blog drafts"
 defaults to a dry run that saves the draft as a download without opening a
-pull request or sending email.
+pull request or sending email. The dry run still calls the paid Anthropic API.
 
 ## Article template
 

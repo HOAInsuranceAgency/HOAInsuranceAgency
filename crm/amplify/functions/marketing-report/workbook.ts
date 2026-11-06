@@ -62,5 +62,5 @@ ${report.rows.map((values, i) => `<row r="${i + 2}" ht="${rowHeight(values, repo
     "xl/_rels/workbook.xml.rels": `${xmlHeader}<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`,
     "xl/styles.xml": styles, "xl/worksheets/sheet1.xml": dataSheet, "xl/worksheets/sheet2.xml": noteSheet,
   };
-  return zipSync(Object.fromEntries(Object.entries(files).map(([name, content]) => [name, strToU8(content)])), { level: 6 });
+  return zipSync(Object.fromEntries(Object.entries(files).map(([name, content]) => [name, strToU8(content)])), { level: 6, mtime: new Date(2000, 0, 1) });
 }

@@ -35,6 +35,7 @@ import {
   DEFAULT_CONTACT_TYPE,
   DOCUMENT_CATEGORY_EXTRACTION_PRIORITY,
   DOCUMENT_CATEGORY_OPTIONS,
+  isExtractableCategory,
   LEGAL_ENTITY_LABELS,
   LEGAL_ENTITY_OPTIONS,
   LICENSE_CLASS_LABELS,
@@ -77,7 +78,7 @@ import {
   type PolicyStatus,
   type ReplacementCostType,
   type UserRole,
-} from "./enums";
+} from "../../../shared/enums";
 
 /**
  * The `satisfies Record<TheEnum, …>` guards in enums.ts only bite while the
@@ -380,11 +381,13 @@ describe("option lists reproduce the hand-written ones they replaced", () => {
     expect(schemaEnum("DocumentCategory")).toContain("ACORD_FORM");
     // Generated forms and historical resolution categories are not offered for upload.
     expect(DOCUMENT_CATEGORY_OPTIONS).toHaveLength(
-      schemaEnum("DocumentCategory").length - 4
+      schemaEnum("DocumentCategory").length - 5
     );
     expect(valuesOf(DOCUMENT_CATEGORY_OPTIONS)).not.toContain("PF_AGREEMENT");
     expect(valuesOf(DOCUMENT_CATEGORY_OPTIONS)).not.toContain("PF_BOARD_RESOLUTION");
     expect(valuesOf(DOCUMENT_CATEGORY_OPTIONS)).not.toContain("PF_RESOLUTION_EXECUTED");
+    expect(valuesOf(DOCUMENT_CATEGORY_OPTIONS)).not.toContain("BROKER_FEE_DISCLOSURE");
+    expect(isExtractableCategory("BROKER_FEE_DISCLOSURE")).toBe(false);
   });
 
   it("DOCUMENT_CATEGORY_EXTRACTION_PRIORITY — extract-lead CATEGORY_PRIORITY", () => {
@@ -403,6 +406,7 @@ describe("option lists reproduce the hand-written ones they replaced", () => {
       PF_AGREEMENT: 9,
       PF_BOARD_RESOLUTION: 9,
       PF_RESOLUTION_EXECUTED: 9,
+      BROKER_FEE_DISCLOSURE: 9,
       CONDO_DOCS: 7,
       ACORD_FORM: 8,
       LICENSE: 9,
@@ -625,15 +629,15 @@ describe("bill type at bind", () => {
     "utf8"
   );
 
-  it("starts unset, so the producer has to choose", () => {
-    expect(src).toMatch(/useState<BillType \| "">\(""\)/);
+  it("carries the quote's explicit billing choice and otherwise starts unset", () => {
+    expect(src).toMatch(/useState<BillType \| "">\(quote\.billType \?\? ""\)/);
   });
 
   it("will not submit without one", () => {
     // The button is disabled…
-    expect(src).toMatch(/disabled=\{saving \|\| !billType \|\| !confirmed/);
+    expect(src).toMatch(/disabled=\{saving \|\| !billType \|\|[^\n]*!confirmed/);
     // …and `bind` itself refuses, so a re-enabled button is not a way in.
-    expect(src).toMatch(/if \(!billType \|\| !confirmed \|\| bindLock.current\) return;/);
+    expect(src).toMatch(/if \(!billType \|\|[^\n]*!confirmed \|\| !paymentReady \|\| bindLock.current\) return;/);
   });
 
   it("writes it onto the policy it creates", () => {

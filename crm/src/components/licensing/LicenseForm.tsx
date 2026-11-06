@@ -1,17 +1,21 @@
-import { useRef, useState } from "react";
-import {
-  client,
-  friendlyError,
+import { Select } from "../ui/Select";
+import { Field } from "../ui/Field";
+import { Input } from "../ui/Input";
+import { Textarea } from "../ui/Textarea";
+import { Button } from "../ui/Button";
+import { useSaveStatus } from "../SaveStatus";
+import { str } from "../../lib/formCodec";
+import { client,
+  unwrap,
   LINES_OF_AUTHORITY,
-  US_STATES,
   type License,
-  type UserProfile,
-} from "../../lib/client";
+  type UserProfile } from "../../lib/client";
+import { US_STATES } from "../../../../shared/usStates";
 import {
   LICENSE_CLASS_LABELS,
   LICENSE_RESIDENCY_OPTIONS,
   LICENSE_STATUS_LABELS,
-} from "../../lib/enums";
+} from "../../../../shared/enums";
 import { useFormState } from "../../lib/useFormState";
 import type { HolderType } from "./holder";
 
@@ -30,7 +34,10 @@ export default function LicenseForm({
   onSaved: (l: License) => void;
   onSaving?: (saving: boolean) => void;
 }) {
-  const { form, setF } = useFormState({
+  const saveStatus = useSaveStatus({ singleFlight: true });
+  const { busy: saving } = saveStatus;
+  const error = saveStatus.status.state === "error" ? saveStatus.status.message : "";
+  const { form, setF, markSaved } = useFormState({
     userProfileId: existing?.userProfileId ?? "",
     state: existing?.state ?? "",
     licenseNumber: existing?.licenseNumber ?? "",
@@ -50,19 +57,17 @@ export default function LicenseForm({
     // Was hoisted out of `form` only because the curried setter couldn't type
     // a `string[]`; it is a field like any other.
     loa: (existing?.linesOfAuthority ?? []).filter((x): x is string => !!x),
-  });
-  const inFlight = useRef(false);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
+  }, { onEdit: saveStatus.markDirty });
 
   async function save() {
-    if (inFlight.current) return;
+    const submitted = form;
+    if (saveStatus.isPending()) return;
     if (!form.state || !form.licenseNumber.trim()) {
-      setError("State and license number are required.");
+      saveStatus.markError("State and license number are required.");
       return;
     }
     if (holderType === "PRODUCER" && !form.userProfileId) {
-      setError("Pick which team member this license belongs to.");
+      saveStatus.markError("Pick which team member this license belongs to.");
       return;
     }
     if (
@@ -70,13 +75,9 @@ export default function LicenseForm({
       form.expirationDate &&
       form.effectiveDate > form.expirationDate
     ) {
-      setError("Effective date can't be after the expiration date.");
+      saveStatus.markError("Effective date can't be after the expiration date.");
       return;
     }
-    inFlight.current = true;
-    setSaving(true);
-    onSaving?.(true);
-    setError("");
     const holder = profiles.find((p) => p.id === form.userProfileId);
     const payload = {
       holderType,
@@ -88,7 +89,7 @@ export default function LicenseForm({
           : null,
       state: form.state,
       licenseNumber: form.licenseNumber.trim(),
-      npn: form.npn.trim() || null,
+      npn: str(form.npn),
       licenseClass: form.licenseClass as never,
       residency: form.residency as never,
       status: form.status as never,
@@ -96,21 +97,18 @@ export default function LicenseForm({
       effectiveDate: form.effectiveDate || null,
       expirationDate: form.expirationDate || null,
       continuingEducationDueDate: form.continuingEducationDueDate || null,
-      notes: form.notes.trim() || null,
+      notes: str(form.notes),
     };
-    try {
-      const { data, errors } = existing
-        ? await client.models.License.update({ id: existing.id, ...payload })
-        : await client.models.License.create(payload);
-      if (errors?.length || !data) throw new Error(errors?.[0]?.message || "Save failed");
-      onSaved(data);
-    } catch (error) {
-      setError(friendlyError(error, "Save failed"));
-    } finally {
-      inFlight.current = false;
-      setSaving(false);
-      onSaving?.(false);
-    }
+    await saveStatus.run(async current => {
+      onSaving?.(true);
+      try {
+        const response = existing
+          ? await client.models.License.update({ id: existing.id, ...payload })
+          : await client.models.License.create(payload);
+        const data = unwrap(response);
+        if (current()) { markSaved(submitted); onSaved(data); }
+      } finally { onSaving?.(false); }
+    }, { errorMessage: 'Save failed' });
   }
 
   /**
@@ -123,9 +121,8 @@ export default function LicenseForm({
     <fieldset disabled={saving} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
       <div className="form-grid">
         {holderType === "PRODUCER" && (
-          <div className="field">
-            <label>Team member *</label>
-            <select value={form.userProfileId} onChange={(e) => setF("userProfileId", e.target.value)}>
+          <Field label="Team member *">
+            {control => <Select {...control} value={form.userProfileId} onChange={(e) => setF("userProfileId", e.target.value)}>
               <option value="">—</option>
               {[...profiles]
                 .sort((a, b) =>
@@ -138,29 +135,25 @@ export default function LicenseForm({
                     {p.firstName} {p.lastName}
                   </option>
                 ))}
-            </select>
-          </div>
+            </Select>}
+          </Field>
         )}
-        <div className="field">
-          <label>State *</label>
-          <select value={form.state} onChange={(e) => setF("state", e.target.value)}>
+        <Field label="State *">
+          {control => <Select {...control} value={form.state} onChange={(e) => setF("state", e.target.value)}>
             <option value="">—</option>
             {US_STATES.map((s) => (
               <option key={s}>{s}</option>
             ))}
-          </select>
-        </div>
-        <div className="field">
-          <label>License number *</label>
-          <input value={form.licenseNumber} onChange={(e) => setF("licenseNumber", e.target.value)} />
-        </div>
-        <div className="field">
-          <label>NPN</label>
-          <input value={form.npn} onChange={(e) => setF("npn", e.target.value)} />
-        </div>
-        <div className="field">
-          <label>License class</label>
-          <select value={form.licenseClass} onChange={(e) => setF("licenseClass", e.target.value)}>
+          </Select>}
+        </Field>
+        <Field label="License number *">
+          {control => <Input {...control} value={form.licenseNumber} onChange={(e) => setF("licenseNumber", e.target.value)} />}
+        </Field>
+        <Field label="NPN">
+          {control => <Input {...control} value={form.npn} onChange={(e) => setF("npn", e.target.value)} />}
+        </Field>
+        <Field label="License class">
+          {control => <Select {...control} value={form.licenseClass} onChange={(e) => setF("licenseClass", e.target.value)}>
             {Object.entries(LICENSE_CLASS_LABELS)
               .sort((a, b) => a[1].localeCompare(b[1]))
               .map(([v, label]) => (
@@ -168,21 +161,19 @@ export default function LicenseForm({
                   {label}
                 </option>
               ))}
-          </select>
-        </div>
-        <div className="field">
-          <label>Residency</label>
-          <select value={form.residency} onChange={(e) => setF("residency", e.target.value)}>
+          </Select>}
+        </Field>
+        <Field label="Residency">
+          {control => <Select {...control} value={form.residency} onChange={(e) => setF("residency", e.target.value)}>
             {LICENSE_RESIDENCY_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>
                 {o.label}
               </option>
             ))}
-          </select>
-        </div>
-        <div className="field">
-          <label>Status</label>
-          <select value={form.status} onChange={(e) => setF("status", e.target.value)}>
+          </Select>}
+        </Field>
+        <Field label="Status">
+          {control => <Select {...control} value={form.status} onChange={(e) => setF("status", e.target.value)}>
             {Object.entries(LICENSE_STATUS_LABELS)
               .sort((a, b) => a[1].localeCompare(b[1]))
               .map(([v, label]) => (
@@ -190,24 +181,21 @@ export default function LicenseForm({
                   {label}
                 </option>
               ))}
-          </select>
-        </div>
-        <div className="field">
-          <label>Effective date</label>
-          <input type="date" value={form.effectiveDate} onChange={(e) => setF("effectiveDate", e.target.value)} />
-        </div>
-        <div className="field">
-          <label>Expiration date</label>
-          <input type="date" value={form.expirationDate} onChange={(e) => setF("expirationDate", e.target.value)} />
-        </div>
-        <div className="field">
-          <label>CE due date</label>
-          <input
+          </Select>}
+        </Field>
+        <Field label="Effective date">
+          {control => <Input {...control} type="date" value={form.effectiveDate} onChange={(e) => setF("effectiveDate", e.target.value)} />}
+        </Field>
+        <Field label="Expiration date">
+          {control => <Input {...control} type="date" value={form.expirationDate} onChange={(e) => setF("expirationDate", e.target.value)} />}
+        </Field>
+        <Field label="CE due date">
+          {control => <Input {...control}
             type="date"
             value={form.continuingEducationDueDate}
             onChange={(e) => setF("continuingEducationDueDate", e.target.value)}
-          />
-        </div>
+          />}
+        </Field>
         <div className="field full">
           <label>Lines of authority</label>
           <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 14px" }}>
@@ -217,7 +205,7 @@ export default function LicenseForm({
                 className="small"
                 style={{ display: "flex", gap: 4, alignItems: "center" }}
               >
-                <input
+                <Input
                   type="checkbox"
                   checked={form.loa.includes(l)}
                   onChange={() =>
@@ -231,18 +219,17 @@ export default function LicenseForm({
             ))}
           </div>
         </div>
-        <div className="field full">
-          <label>Notes</label>
-          <textarea rows={2} value={form.notes} onChange={(e) => setF("notes", e.target.value)} />
-        </div>
+        <Field label="Notes" className="full">
+          {control => <Textarea {...control} rows={2} value={form.notes} onChange={(e) => setF("notes", e.target.value)} />}
+        </Field>
       </div>
       <div className="form-actions">
-        <button className="primary" disabled={saving} onClick={save}>
+        <Button variant="primary"  disabled={saving} onClick={save}>
           {saving ? "Saving…" : existing ? "Save changes" : "Add license"}
-        </button>
-        <button className="link" onClick={onCancel}>
+        </Button>
+        <Button variant="link"  onClick={onCancel}>
           Cancel
-        </button>
+        </Button>
         {error && <span role="alert" className="error-text">{error}</span>}
       </div>
       {!existing && (

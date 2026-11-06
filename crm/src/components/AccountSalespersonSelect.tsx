@@ -1,3 +1,6 @@
+import { useLiveUpdateBlock } from "../lib/useLiveUpdates";
+import { Select } from "./ui/Select";
+import { Button } from "./ui/Button";
 import { useId, useRef, useState } from 'react';
 import { useIsAdmin } from '../lib/auth';
 import { friendlyError } from '../lib/client';
@@ -27,6 +30,7 @@ export function AccountSalespersonSelect({
   // Native dropdowns can trigger window focus while their menu is open.
   // Keep the row mounted from focus through selection/cancel and any save.
   useRowInteraction(`assignment:${accountId}`, focused || pending !== null, onInteractionChange);
+  useLiveUpdateBlock(focused || pending !== null);
   const eligible = team.filter(isAssignableSalesperson);
 
   async function assign(nextId: string) {
@@ -38,7 +42,7 @@ export function AccountSalespersonSelect({
     setError('');
     setSaved(false);
     try {
-      const result = await communicationRequest<{ workflow: LeadWorkflow }>(
+      const result = await communicationRequest(
         'setResponsibilities', { accountId, salespersonId: nextId, version: workflowVersion }, true,
       );
       onSaved(result.workflow);
@@ -54,7 +58,7 @@ export function AccountSalespersonSelect({
   if (!isAdmin) return null;
   return (
     <div className="account-salesperson" onClick={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()}>
-      <select
+      <Select
         aria-label={`Salesperson for ${accountName}`}
         aria-describedby={messageId}
         aria-invalid={!!error}
@@ -71,9 +75,9 @@ export function AccountSalespersonSelect({
           <option value={salespersonId} disabled>{team.find(member => member.userId === salespersonId)?.name ?? 'Assigned teammate'} (unavailable)</option>
         )}
         {eligible.map(member => <option key={member.userId} value={member.userId}>{member.name}</option>)}
-      </select>
+      </Select>
       <div id={messageId}>
-        {error ? <div className="error-text small" role="alert">{error} <button type="button" className="link" onClick={() => void onRefresh()}>Refresh assignments</button></div>
+        {error ? <div className="error-text small" role="alert">{error} <Button variant="link" type="button"  onClick={() => void onRefresh()}>Retry</Button></div>
           : <span className="muted small" role="status">{pending !== null ? 'Saving…' : saved ? 'Saved' : eligible.length === 0 ? 'No eligible salespeople' : ''}</span>}
       </div>
     </div>

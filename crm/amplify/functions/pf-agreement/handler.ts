@@ -1,13 +1,11 @@
+import { createDataClientGetter } from "../data-client";
+import { captureHandledFailure } from "../monitoring";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
-import { Amplify } from "aws-amplify";
-import { generateClient } from "aws-amplify/data";
-import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtime";
-import type { Schema } from "../../data/resource";
 import {
   renderAgreementPdf,
   type AgreementView,
 } from "./agreementPdf";
-import { parseScheduleJson } from "../../../src/lib/premiumFinance/quote";
+import { parseScheduleJson } from "../../../../shared/premiumFinance/quote";
 
 /**
  * Custom mutation handler: generatePfAgreement. See resource.ts.
@@ -18,18 +16,7 @@ import { parseScheduleJson } from "../../../src/lib/premiumFinance/quote";
  * (number, carrier, term), which appear on the paper as identification.
  */
 
-type DataClient = ReturnType<typeof generateClient<Schema>>;
-let dataClient: DataClient | undefined;
-async function getDataClient() {
-  if (!dataClient) {
-    const { resourceConfig, libraryOptions } = await getAmplifyDataClientConfig(
-      process.env as never
-    );
-    Amplify.configure(resourceConfig, libraryOptions);
-    dataClient = generateClient<Schema>();
-  }
-  return dataClient;
-}
+const getDataClient = createDataClientGetter();
 
 const s3 = new S3Client();
 
@@ -110,6 +97,7 @@ export const handler = async (event: {
       months: loan.months,
       payment: loan.payment,
       originationFee: loan.originationFee,
+      brokerFee: (loan.brokerFeeCents ?? 0) / 100,
       effectiveDate: loan.effectiveDate,
       schedule,
       signedName: loan.agreementSignedName,
@@ -165,6 +153,7 @@ export const handler = async (event: {
     console.log(`pf-agreement: rendered agreement for loan ${loan.id}`);
     return { ok: true, documentIds: created };
   } catch (err) {
+    captureHandledFailure(err);
     console.error("pf-agreement failed", err);
     return { ok: false, error: "Couldn't generate the agreement. Try again." };
   }

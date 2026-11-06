@@ -1,3 +1,4 @@
+import { Button } from "./ui/Button";
 import {
   useEffect,
   useId,
@@ -124,9 +125,9 @@ export default function Modal({
           <div>
             {actions}
             {actions ? " " : null}
-            <button className="secondary" onClick={onClose}>
+            <Button variant="secondary"  onClick={onClose}>
               {closeLabel}
-            </button>
+            </Button>
           </div>
         </div>
         <div className="preview-body">{children}</div>

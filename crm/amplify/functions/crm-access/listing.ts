@@ -1,7 +1,10 @@
+import { parseAccessIndexes, resolveAccessIndex } from '../storage/index-config';
+import { requireModelIndexKey } from '../storage/model-indexes';
 import { createHash } from "node:crypto";
 import { QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { AccountAccess, db, tableName } from "./access";
-import { ACCOUNT_MODELS, RETIRED_MODELS, LIST_PARENTS, AccessDenied, id, listPartition, object, type RecordData } from "./policy";
+import { ACCOUNT_MODELS, RETIRED_MODELS, LIST_PARENTS, AccessDenied, id, listPartition, type RecordData } from "./policy";
+import { object } from '../api-input';
 
 import { queryFilter, matchesFilter } from "./filters";
 export { matchesFilter } from "./filters";
@@ -13,9 +16,9 @@ const sharedDocuments = ["CARRIER", "LICENSE", "USER_PROFILE"];
 const documentParents = ["Account", "Quote", "Policy", "Certificate"];
 const naturalKey = (model: string) => ["GlApplication", "DoApplication"].includes(model);
 async function query(model: string, field: string, key: string, limit: number, cursor?: Key, filter: RecordData = {}) {
-  const indexes = JSON.parse(process.env.ACCESS_INDEXES ?? "{}") as Record<string, string>;
-  const index = model === "Communication" ? "assignment" : indexes[`${model}.${field}`];
-  if (!index) throw new Error(`Missing list index for ${model}.${field}`);
+  const error = () => new Error(`Missing list index for ${model}.${field}`);
+  const indexes = parseAccessIndexes(process.env.ACCESS_INDEXES, error);
+  const index = model === "Communication" ? "assignment" : resolveAccessIndex(indexes, requireModelIndexKey(model, field, error), { error });
   const pushed = queryFilter(filter, field);
   const page = await db.send(new QueryCommand({ TableName: tableName(model), IndexName: index,
     KeyConditionExpression: "#scope = :scope", ...pushed,

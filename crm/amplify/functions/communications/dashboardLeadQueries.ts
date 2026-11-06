@@ -1,5 +1,6 @@
 import { QueryCommand } from '@aws-sdk/lib-dynamodb';
-import { isOpenQuoteStatus } from '../../../src/lib/quoteStatus';
+import { isOpenQuoteStatus } from '../../../../shared/quoteStatus';
+import { resolveModelTable, type StoredModel } from '../storage/models';
 import { db } from './store';
 import { reportBatchGet, reportIds } from './dashboardStore';
 import { reportDatePage } from './reportDatePage';
@@ -9,7 +10,7 @@ const QUOTE_FIELDS = ['id', 'accountId', 'status'];
 // Exact inputs to shared packageTerms/authorizedQuoteTerms. Keep signing
 // snapshots and unrelated quote metadata out of the work-list response.
 const QUOTE_TERM_FIELDS = [
-  ...QUOTE_FIELDS, 'carrierId', 'premium', 'effectiveDate', 'expirationDate',
+  ...QUOTE_FIELDS, 'carrierId', 'premium', 'brokerFee', 'billType', 'passThroughCharges', 'clientConditions', 'effectiveDate', 'expirationDate',
   'perOccurrenceDeductible', 'perUnitDeductible', 'blanketLimit', 'coinsurancePct',
   'replacementCostType', 'glEachOccurrence', 'glDamageToRentedPremises',
   'glMedicalExpense', 'glPersonalAdvInjury', 'glGeneralAggregate',
@@ -18,7 +19,8 @@ const QUOTE_TERM_FIELDS = [
   'renewalPolicyId', 'notes',
 ];
 function configured(name: string): string {
-  const value = process.env[name];
+  const model = ({ DASHBOARD_QUOTE_TABLE: 'Quote', DASHBOARD_POLICY_TABLE: 'Policy' } as Record<string, StoredModel>)[name];
+  const value = model ? resolveModelTable(model, { envNames: [name], useTableMap: false, error: () => new Error('Dashboard lead storage is not configured') }) : process.env[name];
   if (!value) throw new Error('Dashboard lead storage is not configured');
   return value;
 }

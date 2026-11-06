@@ -15,7 +15,7 @@
 .activity-workspace .activity-history-heading { justify-content: space-between; align-items: center; margin: 0 0 14px; gap: 12px; }
 .activity-workspace .activity-history-heading h3 { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .activity-workspace .activity-history-count { color: var(--muted); background: var(--bg); border: 1px solid var(--border); border-radius: 5px; padding: 2px 6px; font-size: 11px; font-weight: 500; }
-.activity-workspace .activity-history-heading select { width: auto; min-width: 132px; font-size: 13px; }
+.activity-workspace .activity-history-heading select { width: auto; min-width: 132px; }
 .activity-workspace .activity-empty { border: 1px dashed var(--border); border-radius: 8px; padding: 24px; background: #fafbfd; font-size: 13px; color: var(--muted); line-height: 1.5; }
 .activity-workspace .activity-empty strong { color: var(--text); font-size: 14px; }
 .activity-workspace .activity-empty p { margin: 6px 0 0; }
@@ -29,11 +29,10 @@
 .activity-workspace .activity-load-more { margin-top: 4px; }
 .activity-workspace .activity-note-editor { margin-top: 20px; padding: 18px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
 .activity-workspace .activity-note-editor h3 { margin: 0 0 12px; }
-.activity-workspace .activity-note-editor textarea { min-height: 100px; resize: vertical; line-height: 1.5; }
 .activity-workspace .activity-note-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; }
 .activity-workspace .activity-note-actions .toolbar { margin: 0; }
 .activity-workspace .workflow-note-publish { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; color: var(--muted); line-height: 1.5; }
-.activity-workspace .workflow-note-publish input { margin: 1px 0 0; width: 16px; height: 16px; flex: 0 0 16px; accent-color: var(--accent); }
+.activity-workspace .workflow-note-publish input { margin: 1px 0 0; flex: 0 0 auto; }
 .activity-workspace .activity-controls { display: grid; gap: 16px; }
 .activity-workspace .activity-owner, .activity-workspace .activity-tools { border: 1px solid var(--border); border-radius: 8px; padding: 16px; background: #fafbfd; }
 .activity-workspace .activity-owner .toolbar, .activity-workspace .activity-tools > .toolbar { margin: 0 0 12px; gap: 8px; }
@@ -48,7 +47,7 @@
 .activity-workspace .activity-tools > .toolbar { justify-content: space-between; }
 .activity-workspace .activity-tools .front-disclosure { padding: 12px; margin: 0 0 10px; border-radius: 6px; }
 .activity-workspace .activity-tools .front-tool-action { margin: 14px 0 0; }
-.activity-workspace .activity-tools .front-tool-action > button { width: 100%; text-align: left; line-height: 1.5; }
+.activity-workspace .activity-tools .front-tool-action > button { width: 100%; text-align: left; }
 .activity-workspace .activity-tools > .toolbar:last-child { margin-top: 10px; margin-bottom: 0; }
 .activity-workspace .activity-tools .field { margin: 12px 0; min-width: 0; }
 .activity-workspace label.field { color: var(--muted); font-size: 12px; font-weight: 600; }
@@ -59,8 +58,6 @@
 .activity-workspace details[open] > summary::after { transform: rotate(45deg); }
 .activity-workspace .workflow-task > summary { padding-right: 36px; }
 .activity-workspace .workflow-task > summary::after { top: 21px; right: 16px; }
-.activity-workspace :is(button, summary, a):focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
-.activity-workspace button:disabled { opacity: .55; cursor: default; }
 .activity-workspace .activity-controls button { max-width: 100%; }
 
 @media (max-width: 1100px) {

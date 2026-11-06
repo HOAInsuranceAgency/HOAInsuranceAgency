@@ -1,5 +1,5 @@
 /** Browser-only fixture store. No credentials, API client, or real writes. */
-export { listAllPages } from '../../src/lib/pagination';
+export { listAllPages } from '../../../shared/pagination';
 const params = new URLSearchParams(window.location.search);
 export const useIsAdmin = () => params.get('role') === 'admin';
 export const friendlyError = (error: unknown, fallback = 'Please try again.') =>

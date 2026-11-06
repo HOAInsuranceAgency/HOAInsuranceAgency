@@ -1,3 +1,6 @@
+import { Select } from "../../components/ui/Select";
+import { Input } from "../../components/ui/Input";
+import { Textarea } from "../../components/ui/Textarea";
 import {
   LINES_OF_BUSINESS,
   client,
@@ -7,7 +10,7 @@ import {
   type Loss,
 } from "../../lib/client";
 import { bool, boolValue, inputValue, num, str } from "../../lib/formCodec";
-import { lossKey } from "../../lib/extractionKeys";
+import { lossKey } from "../../../../shared/extractionKeys";
 import { useChildRows } from "../../lib/useChildRows";
 import type { FormState } from "../../lib/useFormState";
 import ChildRowsCard from "../../components/ChildRowsCard";
@@ -205,7 +208,7 @@ function LossFields({
       </div>
       <div className="field">
         <label>Line of business *</label>
-        <select
+        <Select
           value={f.lineOfBusiness}
           onChange={(e) => set("lineOfBusiness", e.target.value)}
         >
@@ -213,11 +216,11 @@ function LossFields({
           {LINES_OF_BUSINESS.map((l) => (
             <option key={l}>{l}</option>
           ))}
-        </select>
+        </Select>
       </div>
       <div className="field">
         <label>Type of loss</label>
-        <input
+        <Input
           placeholder="Water damage"
           value={f.typeOfLoss}
           onChange={(e) => set("typeOfLoss", e.target.value)}
@@ -264,7 +267,7 @@ function LossFields({
           </div>
           <div className="field full">
             <label>Description</label>
-            <textarea
+            <Textarea
               rows={2}
               value={f.description}
               onChange={(e) => set("description", e.target.value)}

@@ -62,12 +62,8 @@ describe("cancellation and its notice are one write", () => {
 
   it("the notice table is wired with its grant", () => {
     const BACKEND = read("amplify/backend.ts");
-    expect(BACKEND).toMatch(/\["PF_NOTICE_TABLE", "PfNotice"\]/);
-    // It rides in the loop that calls grantReadWriteData for pfServicing.
-    const loop = BACKEND.slice(
-      BACKEND.indexOf('["PF_NOTICE_TABLE", "PfNotice"]') - 400,
-      BACKEND.indexOf('["PF_NOTICE_TABLE", "PfNotice"]') + 400
-    );
-    expect(loop).toContain("grantReadWriteData(backend.pfServicing.resources.lambda)");
+    // financeBindings.test.ts checks the real rendered notice-table grant;
+    // retain the connection from this handler's deployment to that binding.
+    expect(BACKEND).toContain("bindPremiumFinanceTables(backend, 'servicing')");
   });
 });

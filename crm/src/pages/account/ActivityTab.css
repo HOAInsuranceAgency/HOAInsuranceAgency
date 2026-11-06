@@ -99,7 +99,6 @@
 .account-changes-table {
   table-layout: fixed;
   min-width: 730px;
-  font-size: 13px;
 }
 
 .account-changes-table .account-change-when {
@@ -115,14 +114,8 @@
 }
 
 .account-changes-table td {
-  padding: 14px 10px;
   overflow-wrap: anywhere;
   vertical-align: top;
-  line-height: 1.5;
-}
-
-.account-changes-table tbody tr:last-child td {
-  border-bottom: 0;
 }
 
 .account-change-date {

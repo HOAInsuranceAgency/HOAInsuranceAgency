@@ -32,6 +32,7 @@ import {
   uploadDocument,
   uploadFile,
 } from "./storage";
+import { documentObjectKey } from "../../../shared/storageKeys";
 
 /** uploadData returns a handle whose `.result` is the promise to await. */
 function uploadResolves() {
@@ -108,6 +109,19 @@ describe("safeSegment", () => {
   it("never yields an empty segment", () => {
     expect(safeSegment("..")).toBe("file");
     expect(safeSegment("   ")).toBe("file");
+  });
+});
+
+describe("documentObjectKey", () => {
+  it.each([
+    ["ACCOUNT", "a1", "d1", "budget.pdf", "documents/ACCOUNT/a1/d1/budget.pdf"],
+    ["ACCOUNT", "../a/1", "_d1", "_scan.pdf", "documents/ACCOUNT/a_1/d1/scan.pdf"],
+    ["POLICY", " p1 ", "d/1", "../packet\\budget..pdf", "documents/POLICY/p1/d_1/packet_budget.pdf"],
+    ["ACCOUNT", "", "..", "  ", "documents/ACCOUNT/file/file/file"],
+  ])("keeps each OCR identity inside one segment (%s, %s, %s, %s)", (type, entity, doc, name, expected) => {
+    expect(documentObjectKey(type, entity, doc, name)).toBe(expected);
+    expect(assertGrantedPath(expected)).toBe(expected);
+    expect(expected.split("/")).toHaveLength(5);
   });
 });
 
@@ -267,11 +281,30 @@ describe("uploadDocument", () => {
   });
 
   it("keeps a hostile filename inside the record's own folder", async () => {
-    await uploadDocument({ ...opts, file: file("../../../templates/acord-25.pdf") });
+    const original = file("../../../templates/acord-25.pdf");
+    await uploadDocument({ ...opts, file: original });
 
     expect(s3.uploadData.mock.calls[0][0].path).toBe(
       "documents/ACCOUNT/acc-1/doc-1/templates_acord-25.pdf"
     );
+    expect(Document.create).toHaveBeenCalledWith(expect.objectContaining({ name: original.name, uploadedName: original.name }));
+    expect(s3.uploadData.mock.calls[0][0].data).toBe(original);
+  });
+
+  it.each([
+    { policyId: "policy-1", quoteId: null },
+    { policyId: null, quoteId: "quote-1" },
+  ])("records only the allowed link metadata ($policyId, $quoteId)", async links => {
+    const input = { ...opts, ...links, sourceCommunicationId: "communication-1",
+      id: "injected-id", name: "injected-name", uploadedName: "injected-original.pdf", s3Key: "templates/injected.pdf", ocrStatus: "COMPLETE" };
+    await uploadDocument(input);
+
+    expect(Document.create).toHaveBeenCalledWith({
+      entityType: "ACCOUNT", entityId: "acc-1", category: "BUDGET", ...links,
+      sourceCommunicationId: "communication-1", name: opts.file.name, uploadedName: opts.file.name,
+      s3Key: PENDING_KEY, contentType: opts.file.type, sizeBytes: opts.file.size, ocrStatus: "PENDING",
+    });
+    expect(Document.update).toHaveBeenCalledWith({ id: "doc-1", s3Key: "documents/ACCOUNT/acc-1/doc-1/budget.pdf" });
   });
 
   it("deletes the ghost record when the upload fails, and rethrows", async () => {
@@ -297,12 +330,22 @@ describe("uploadDocument", () => {
     expect(Document.delete).not.toHaveBeenCalled();
   });
 
+  it("cleans up a created row returned with GraphQL errors before linking or uploading", async () => {
+    Document.create.mockResolvedValue({ data: { id: "partial-doc" }, errors: [{ message: "Could not return the document" }] });
+
+    await expect(uploadDocument(opts)).rejects.toThrow("Could not return the document");
+    expect(Document.delete).toHaveBeenCalledWith({ id: "partial-doc" });
+    expect(Document.update).not.toHaveBeenCalled();
+    expect(s3.uploadData).not.toHaveBeenCalled();
+  });
+
   it("warns, but still reports the upload error, when the ghost record survives", async () => {
     uploadRejects("upload blew up");
-    Document.delete.mockResolvedValue({ data: null, errors: [{ message: "delete denied" }] });
+    Document.delete.mockResolvedValue({ data: null, errors: [{ message: "delete denied" }, { message: "record still exists" }] });
 
     await expect(uploadDocument(opts)).rejects.toThrow("upload blew up");
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("doc-1"));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("delete denied; record still exists"));
   });
 });
 

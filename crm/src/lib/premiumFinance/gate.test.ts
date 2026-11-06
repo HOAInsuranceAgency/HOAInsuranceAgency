@@ -6,10 +6,10 @@ import {
   jurisdictionFor,
   minPrincipalViolation,
   originationGate,
-} from "./gate";
-import { coverageVerdict, normalizeLine, PERSONAL_LINES_WARNING } from "./coverage";
-import { buildQuote } from "./quote";
-import { PF_COVERAGE_ALLOW, PF_COVERAGE_DENY, PF_JURISDICTIONS } from "./jurisdictions";
+} from "../../../../shared/premiumFinance/gate";
+import { coverageVerdict, normalizeLine, PERSONAL_LINES_WARNING } from "../../../../shared/premiumFinance/coverage";
+import { buildQuote } from "../../../../shared/premiumFinance/quote";
+import { PF_COVERAGE_ALLOW, PF_COVERAGE_DENY, PF_JURISDICTIONS } from "../../../../shared/premiumFinance/jurisdictions";
 
 describe("jurisdictionFor", () => {
   it("resolves USPS codes, full names, any casing, stray whitespace", () => {
@@ -88,7 +88,7 @@ describe("originationGate", () => {
 describe("the gate reads nothing but a state", () => {
   it("references no mailing/city/zip/address field", () => {
     const src = readFileSync(
-      resolve(process.cwd(), "src/lib/premiumFinance/gate.ts"),
+      resolve(process.cwd(), "../shared/premiumFinance/gate.ts"),
       "utf8"
     );
     // Strip comments — the warning about mailing addresses lives there.
@@ -125,7 +125,7 @@ describe("aprCapViolation", () => {
     // message; no pf source assigns a default from maxApr.
     for (const file of ["gate.ts", "quote.ts", "coverage.ts"]) {
       const src = readFileSync(
-        resolve(process.cwd(), "src/lib/premiumFinance", file),
+        resolve(process.cwd(), "../shared/premiumFinance", file),
         "utf8"
       );
       expect(src, file).not.toMatch(/DEFAULT_APR\s*=\s*[^;]*maxApr/);
@@ -233,21 +233,21 @@ describe("opinion currency", () => {
   const opinion = { effectiveAt: "2026-08-01", reviewBy: "2028-08-01" };
 
   it("is current inside the window, inclusive at both ends", async () => {
-    const { isOpinionCurrent } = await import("./gate");
+    const { isOpinionCurrent } = await import("../../../../shared/premiumFinance/gate");
     expect(isOpinionCurrent(opinion, "2026-08-01")).toBe(true);
     expect(isOpinionCurrent(opinion, "2027-01-15")).toBe(true);
     expect(isOpinionCurrent(opinion, "2028-08-01")).toBe(true);
   });
 
   it("is not current before effective or past review", async () => {
-    const { isOpinionCurrent } = await import("./gate");
+    const { isOpinionCurrent } = await import("../../../../shared/premiumFinance/gate");
     expect(isOpinionCurrent(opinion, "2026-07-31")).toBe(false);
     // A 2026 opinion must not silently authorize a later origination.
     expect(isOpinionCurrent(opinion, "2028-08-02")).toBe(false);
   });
 
   it("any current opinion among several suffices", async () => {
-    const { hasCurrentOpinion } = await import("./gate");
+    const { hasCurrentOpinion } = await import("../../../../shared/premiumFinance/gate");
     const stale = { effectiveAt: "2022-01-01", reviewBy: "2024-01-01" };
     expect(hasCurrentOpinion([stale, opinion], "2027-01-01")).toBe(true);
     expect(hasCurrentOpinion([stale], "2027-01-01")).toBe(false);
@@ -255,7 +255,7 @@ describe("opinion currency", () => {
   });
 
   it("defaults the review horizon to 24 months, clamped at month ends", async () => {
-    const { defaultReviewBy } = await import("./gate");
+    const { defaultReviewBy } = await import("../../../../shared/premiumFinance/gate");
     expect(defaultReviewBy("2026-08-21")).toBe("2028-08-21");
     expect(defaultReviewBy("2024-02-29")).toBe("2026-02-28"); // leap → not
   });
@@ -290,9 +290,9 @@ describe("the lending schema cannot express producer compensation", () => {
       expect(block, model).not.toMatch(
         /commission|referral|bonus|kickback|producer(Fee|Pay|Split|Comp)|revenue.?share/i
       );
-      // The only fee anywhere in lending is the flat origination fee.
+      // Upfront broker fee collection metadata is separate from lending income.
       const fees = [...block.matchAll(/\w*[Ff]ee\w*/g)].map((m) => m[0]);
-      expect(fees.every((f) => /originationFee/i.test(f)), `${model}: ${fees}`).toBe(true);
+      expect(fees.every((f) => /^(originationFee(?:Collected)?|brokerFeeCents|brokerFeeAllocations)$/i.test(f)), `${model}: ${fees}`).toBe(true);
     }
   });
 });
@@ -328,5 +328,21 @@ describe("the fee counts toward Rhode Island's ceiling", () => {
       effectiveDate: "2026-08-24",
     });
     expect(aprCapViolation(14, ri, q)).toBeNull();
+  });
+});
+
+
+describe("broker fees are collected outside lending economics", () => {
+  it("leaves financed principal, interest and installments unchanged when the upfront fee varies", async () => {
+    const { initialPaymentTotals } = await import("../../../../shared/premiumFinance/initialPayment");
+    const quote=buildQuote({premium:10000,downPct:25,months:11,apr:14,effectiveDate:"2026-11-04"});
+    const originalSchedule=JSON.stringify(quote.schedule);
+    const base=initialPaymentTotals({...quote,brokerFeeCents:0});
+    const withFee=initialPaymentTotals({...quote,brokerFeeCents:50000});
+    expect(withFee.totalCents-base.totalCents).toBe(50000);
+    expect(withFee.premiumCents).toBe(base.premiumCents);
+    expect(quote.amountFinanced).toBe(7500);
+    expect(JSON.stringify(quote.schedule)).toBe(originalSchedule);
+    expect(quote.schedule.reduce((sum,row)=>sum+Math.round(row.principal*100),0)).toBe(750000);
   });
 });

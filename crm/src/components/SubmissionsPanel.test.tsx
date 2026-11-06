@@ -1,10 +1,12 @@
+import { invalidateLiveUpdates } from "../test/liveUpdates";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
+import { Profiler } from 'react';
 import type { Account } from "../lib/client";
 const h = vi.hoisted(() => ({ list: vi.fn(), estimates: vi.fn(), settings: vi.fn(), start: vi.fn(), resolve: vi.fn() }));
 vi.mock("../lib/client", () => ({ client: { models: { HoneycombSubmission: { listHoneycombSubmissionByAccountId: h.list }, HoneycombEstimate: { listHoneycombEstimateByAccountId: h.estimates } }, queries: { honeycombSubmissionSettings: h.settings }, mutations: { startHoneycombSubmission: h.start, resolveHoneycombSubmission: h.resolve } }, friendlyError: (e: Error) => e.message }));
 import SubmissionsPanel, { initialDetails } from "./SubmissionsPanel";
-import { businessDate } from "../../amplify/functions/honeycomb/submission-contract";
+import { businessDate } from "../../../shared/honeycomb/submission";
 const account = { id: "account", name: "Example Association", type: "ASSOCIATION", stage: "LEAD", address: "9 Changed St", city: "Chicago", state: "IL", zip: "60601", unitCount: 12, totalInsuredValue: 9000000, currentPolicyExpiration: businessDate() } as Account;
 const estimate = { id: "estimate", accountId: "account", status: "READY", price: 1234, estimationId: "carrier-id", createdAt: "2026-09-23T12:00:00Z", input: JSON.stringify({ address: "1 Original St, Chicago, IL", submissionData: { buildingType: "condominium", grossSQFeet: 15000, replacementValue: 2500000, numUnits: 12 } }), result: '{"isOkToSubmit":true}' };
 const job = { id: "job", accountId: "account", effectiveDate: businessDate(), status: "PENDING", attempt: 1, input: JSON.stringify({ address: "Address", submissionData: { effectiveDate: businessDate(), nameInsured: "Example Association" } }), requestedAt: new Date().toISOString(), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
@@ -13,6 +15,18 @@ beforeEach(() => {
   h.start.mockImplementation(async () => { h.list.mockResolvedValue({ data: [job] }); return { data: JSON.stringify({ ok: true, id: "job", status: "PENDING" }) }; }); h.resolve.mockResolvedValue({ data: { ok: true } });
 });
 afterEach(() => vi.useRealTimers());
+it('preserves an explicit open made before the initial history effect finishes', async () => {
+  h.list.mockResolvedValue({ data: [{ ...job, status: 'CREATED', submissionId: 'existing' }] });
+  let opened = false;
+  render(<Profiler id="initial-history" onRender={() => {
+    const button = [...document.querySelectorAll('button')].find(button => button.textContent === 'New submission');
+    if (button && !opened) { opened = true; button.click(); }
+  }}><SubmissionsPanel account={account} /></Profiler>);
+  expect(await screen.findByRole('form', { name: 'Review Honeycomb submission' })).toBeVisible();
+  expect(opened).toBe(true);
+  expect(screen.getByRole('checkbox')).toBeVisible();
+  expect(h.start).not.toHaveBeenCalled();
+});
 it("uses production portal links and removes staging language for production", async () => {
   h.settings.mockResolvedValue({ data: { enabled: true, environment: "production" } });
   h.list.mockResolvedValue({ data: [{ ...job, status: "CREATED", submissionId: "live", portalUrl: "https://evil.test", submissionStatus: "incomplete" }] });
@@ -52,7 +66,7 @@ it("closes an empty composer when canceled", async () => {
 });
 it("does not allow creation when lists fail or the integration is disabled", async () => {
   h.list.mockResolvedValue({ data: [], errors: [{ message: "denied" }] }); const view = render(<SubmissionsPanel account={account} />); await screen.findByRole("alert"); expect(screen.queryByRole("form")).toBeNull(); view.unmount();
-  h.list.mockResolvedValue({ data: [] }); h.settings.mockResolvedValue({ data: { enabled: false } }); render(<SubmissionsPanel account={account} />); await screen.findByText("Honeycomb submissions are not enabled in this environment."); expect(screen.queryByRole("form")).toBeNull();
+  h.list.mockResolvedValue({ data: [] }); h.settings.mockResolvedValue({ data: { enabled: false, environment: 'disabled' } }); render(<SubmissionsPanel account={account} />); await screen.findByText("Honeycomb submissions are not enabled in this environment."); expect(screen.queryByRole("form")).toBeNull();
 });
 it("shows a timeout review path rather than an automatic retry", async () => {
   h.list.mockResolvedValue({ data: [{ ...job, status: "RUNNING", updatedAt: new Date(Date.now()-130000).toISOString() }] }); render(<SubmissionsPanel account={account} />);
@@ -76,13 +90,13 @@ it("keeps edited submission details through failed refresh and blocks creation u
   fireEvent.change(screen.getByLabelText("Legal insured name *"), { target: { value: "Unsaved legal name" } });
   fireEvent.click(screen.getByRole("checkbox"));
   h.list.mockRejectedValueOnce(new Error("Temporary history failure"));
-  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  await invalidateLiveUpdates();
   await screen.findByRole("alert");
   expect(screen.getByLabelText("Legal insured name *")).toHaveValue("Unsaved legal name");
   expect(screen.getByRole("button", { name: "Create partial submission" })).toBeDisabled();
   fireEvent.submit(screen.getByRole("form"));
   expect(h.start).not.toHaveBeenCalled();
-  fireEvent.click(screen.getAllByRole("button", { name: "Refresh" })[0]);
+  fireEvent.click(screen.getByRole("button", { name: "Retry submissions" }));
   await waitFor(() => expect(screen.getByRole("button", { name: "Create partial submission" })).toBeEnabled());
   expect(screen.getByLabelText("Legal insured name *")).toHaveValue("Unsaved legal name");
 });
@@ -99,7 +113,7 @@ it("clears cached submission details when a refreshed read denies access", async
   render(<SubmissionsPanel account={account} />);
   await screen.findByRole("form");
   h.list.mockResolvedValue({ data: [], errors: [{ errorType: "Unauthorized", message: "Not authorized" }] });
-  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  await invalidateLiveUpdates();
   await screen.findByRole("alert");
   expect(screen.queryByRole("form")).toBeNull();
   expect(screen.queryByLabelText("Legal insured name *")).toBeNull();
@@ -122,7 +136,7 @@ it("keeps the draft open when a refresh discovers another submission", async () 
   await screen.findByRole("form");
   fireEvent.change(screen.getByLabelText("Legal insured name *"), { target: { value: "Draft being reviewed" } });
   h.list.mockResolvedValue({ data: [{ ...job, status: "CREATED", submissionId: "other" }] });
-  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  await invalidateLiveUpdates();
   await screen.findByText(/A submission already exists for this effective date/);
   expect(screen.getByLabelText("Legal insured name *")).toHaveValue("Draft being reviewed");
   expect(screen.getByRole("button", { name: "Create partial submission" })).toBeDisabled();

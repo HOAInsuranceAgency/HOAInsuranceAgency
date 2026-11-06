@@ -5,6 +5,7 @@
  */
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { parse } from "yaml";
 
 export const TIME_ZONE = "America/New_York";
 
@@ -156,9 +157,12 @@ export function writeArticle(data, body) {
 }
 
 export function readArticle(text) {
-  const match = /^---\n([\s\S]*?)\n---\n\n?([\s\S]*)$/.exec(text);
+  const match = /^\uFEFF?---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)(?:\r?\n)?([\s\S]*)$/.exec(text);
   if (!match) throw new Error("Article front matter is missing.");
-  return { data: JSON.parse(match[1]), body: match[2] };
+  // Native Astro articles accept YAML, including JSON as a YAML subset.
+  const data = parse(match[1]);
+  if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("Article front matter must be an object.");
+  return { data, body: match[2] };
 }
 
 /** Titles of everything already published or queued, for de-duplication. */

@@ -1,4 +1,5 @@
-import { useEffect, useRef } from "react";
+import { Input } from "../components/ui/Input";
+import { useEffect, useRef, type AriaAttributes } from "react";
 
 /**
  * Google Places address autocomplete for CRM address fields.
@@ -45,11 +46,14 @@ export function AddressAutocomplete({
   onChange,
   onPlace,
   placeholder,
-}: {
+  id,
+  ...aria
+}: AriaAttributes & {
   value: string;
   onChange: (v: string) => void;
   onPlace: (parts: AddressParts) => void;
   placeholder?: string;
+  id?: string;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const acRef = useRef<google.maps.places.Autocomplete | null>(null);
@@ -91,7 +95,9 @@ export function AddressAutocomplete({
   }, []);
 
   return (
-    <input
+    <Input
+      {...aria}
+      id={id}
       ref={inputRef}
       value={value}
       placeholder={placeholder ?? "Start typing an address…"}

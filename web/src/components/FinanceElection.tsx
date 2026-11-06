@@ -1,3 +1,4 @@
+import { formatUsdDollars as money } from '../../../shared/money';
 import { useEffect, useState } from "react";
 import {
   acceptElection,
@@ -52,8 +53,7 @@ function takeToken(): { token: string | null; done: boolean } {
   }
 }
 
-const money = (n: number) =>
-  n.toLocaleString("en-US", { style: "currency", currency: "USD" });
+
 
 export function FinanceElection() {
   const [{ token, done }] = useState(takeToken);
@@ -171,6 +171,7 @@ export function FinanceElection() {
         <tbody>
           <tr><td>Total premium</td><td>{money(terms.premium)}</td></tr>
           <tr><td>Premium down payment</td><td>{money(terms.downPayment)}</td></tr>
+          {terms.brokerFee > 0 && <tr><td>Broker fee (paid in full today; not financed)</td><td>{money(terms.brokerFee)}</td></tr>}
           <tr><td>Total initial payment (payment 1 of {totalPayments})</td><td>{money(terms.initialPaymentAmount)}</td></tr>
           <tr><td>Amount financed</td><td>{money(terms.amountFinanced)}</td></tr>
           <tr><td>Annual percentage rate</td><td>{terms.apr}%</td></tr>
@@ -180,11 +181,10 @@ export function FinanceElection() {
         </tbody>
       </table>
       <p className="fe-fine">
-        Today's bank transfer includes the premium down payment and origination
-        fee. Once it settles, monthly payments are automatically collected from
+        Today's bank transfer includes the premium down payment, origination fee{terms.brokerFee > 0 ? ', and the full broker fee' : ''}. Once it settles, monthly payments are automatically collected from
         the same account on the agreed schedule. No separate activation is needed. Early
         payoff is the outstanding principal only — the actuarial method; no
-        other charge exists. Accepting closes the pay-in-full link on your
+        other financing charge exists. The broker fee remains subject to its signed disclosure. Accepting closes the pay-in-full link on your
         invoice.
       </p>
 

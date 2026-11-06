@@ -1,13 +1,15 @@
+import { useLiveUpdateBlock } from "../lib/useLiveUpdates";
+import { Button } from "./ui/Button";
+import { Input } from "./ui/Input";
 import { useRef, useState } from 'react';
 import { useCommercial } from '../lib/commercial';
 import { communicationRequest } from '../lib/communications';
 import {
-  fmtMoney,
   LINES_OF_BUSINESS,
   type Carrier,
   type Quote,
 } from '../lib/client';
-import { agencyDay } from '../../../shared/leadActionGuidance';
+import { agencyDay } from "../../../shared/agencyTime";
 import {
   formatCommission,
   emptyCommercialPlan,
@@ -17,6 +19,8 @@ import {
   type PackageOption,
 } from '../../../shared/quotePackages';
 import { OpportunityEstimate } from './OpportunityEstimate';
+import { formatMoney } from '../../../shared/invoiceTotals';
+import BusinessDraftButton from './BusinessDraftButton';
 import './QuotePackages.css';
 
 export default function QuotePackages(props: Parameters<typeof QuotePackagesContent>[0]) {
@@ -54,14 +58,15 @@ function QuotePackagesContent({
         [accountId]: { ...data.entries[accountId], accountId, plan: next },
       },
     }));
+  useLiveUpdateBlock(!!editor || saving);
   const writeLock = useRef(false);
-  async function write(input: Record<string, unknown>) {
+  async function write(input: import('../lib/communicationContracts').CommercialChange) {
     if (writeLock.current) return;
     writeLock.current = true;
     setSaving(true);
     setError('');
     try {
-      const result = await communicationRequest<{ plan: CommercialPlan }>(
+      const result = await communicationRequest(
         'saveCommercial',
         { accountId, version: plan.version, ...input },
         true,
@@ -119,8 +124,8 @@ function QuotePackagesContent({
             Group quotes into complete coverage options for the client.
           </p>
         </div>
-        <button
-          className="secondary"
+        <Button variant="secondary"
+
           disabled={
             resource.loading ||
             !!resource.error ||
@@ -130,7 +135,7 @@ function QuotePackagesContent({
           onClick={() => edit()}
         >
           + Package option
-        </button>
+        </Button>
       </div>
       {!resource.loaded ? (
         <p className="package-empty" role="status">
@@ -139,9 +144,9 @@ function QuotePackagesContent({
       ) : resource.error ? (
         <p className="error-text" role="alert">
           {resource.error}{' '}
-          <button className="secondary" onClick={() => void resource.refetch()}>
+          <Button variant="secondary"  onClick={() => void resource.refetch()}>
             Retry
-          </button>
+          </Button>
         </p>
       ) : (
         <>
@@ -198,7 +203,7 @@ function QuotePackagesContent({
                   <dl className="package-totals">
                     <div>
                       <dt>Premium</dt>
-                      <dd>{fmtMoney(assessment.premiumCents / 100)}</dd>
+                      <dd>{formatMoney(assessment.premiumCents / 100)}</dd>
                     </div>
                     <div>
                       <dt>Commission</dt>
@@ -208,6 +213,10 @@ function QuotePackagesContent({
                           : '—'}
                       </dd>
                     </div>
+                    <div><dt>Supplier fees and taxes</dt><dd>{formatMoney(assessment.passThroughCents / 100)}</dd></div>
+                    <div><dt>HOA broker fees</dt><dd>{formatMoney(assessment.brokerFeeCents / 100)}</dd></div>
+                    <div><dt>Client policy total</dt><dd>{formatMoney(assessment.clientTotalCents / 100)}</dd></div>
+                    <div><dt>Total agency revenue</dt><dd>{assessment.complete ? formatMoney(assessment.agencyRevenueCents / 100) : '—'}</dd></div>
                   </dl>
                   {assessment.problems.length ? (
                     <p className="muted small">
@@ -221,18 +230,19 @@ function QuotePackagesContent({
                     </p>
                   )}
                   <div className="form-actions">
+                    <BusinessDraftButton accountId={accountId} kind="PACKAGE" recordId={option.id} label="Prepare proposal in Front" disabled={saving || !assessment.complete} />
                     {(!plan.selectedOptionId || chosen) && (
                       <>
-                        <button
-                          className="secondary"
+                        <Button variant="secondary"
+
                           disabled={saving}
                           onClick={() => edit(option)}
                         >
                           {chosen ? 'Review / revise option' : 'Edit option'}
-                        </button>
+                        </Button>
                         {(!chosen || forecast.cents == null) && (
-                          <button
-                            className="primary"
+                          <Button variant="primary"
+
                             disabled={saving || !assessment.complete}
                             onClick={() =>
                               void write({
@@ -245,11 +255,11 @@ function QuotePackagesContent({
                             {chosen
                               ? 'Client approved revised option'
                               : 'Client chose this option'}
-                          </button>
+                          </Button>
                         )}
                         {!chosen && (
-                          <button
-                            className="link"
+                          <Button variant="link"
+
                             disabled={saving}
                             onClick={() =>
                               void write({
@@ -259,7 +269,7 @@ function QuotePackagesContent({
                             }
                           >
                             Remove option
-                          </button>
+                          </Button>
                         )}
                       </>
                     )}
@@ -267,15 +277,15 @@ function QuotePackagesContent({
                       <>
                         <a href="#quote-list">Continue binding policies</a>
                         {!assessment.boundCount && (
-                          <button
-                            className="link"
+                          <Button variant="link"
+
                             disabled={saving}
                             onClick={() =>
                               void write({ action: 'CLEAR_SELECTION' })
                             }
                           >
                             Clear client selection
-                          </button>
+                          </Button>
                         )}
                       </>
                     )}
@@ -307,7 +317,7 @@ function QuotePackagesContent({
               </h3>
               <div className="field package-name">
                 <label htmlFor="package-option-name">Option name</label>
-                <input
+                <Input
                   id="package-option-name"
                   value={editor.name}
                   disabled={saving}
@@ -332,7 +342,7 @@ function QuotePackagesContent({
                         key={line}
                         className={`package-choice${editor.requiredLines.includes(line) ? ' is-selected' : ''}`}
                       >
-                        <input
+                        <Input
                           type="checkbox"
                           checked={editor.requiredLines.includes(line)}
                           onChange={(e) =>
@@ -370,7 +380,7 @@ function QuotePackagesContent({
                         key={q.id}
                         className={`package-choice package-quote-choice${editor.quoteIds.includes(q.id) ? ' is-selected' : ''}`}
                       >
-                        <input
+                        <Input
                           type="checkbox"
                           checked={editor.quoteIds.includes(q.id)}
                           onChange={(e) =>
@@ -388,7 +398,7 @@ function QuotePackagesContent({
                             'Carrier not recorded'}{' '}
                           · {(q.lines ?? []).join(', ')}
                           <small>
-                            {fmtMoney(q.premium)} premium ·{' '}
+                            {formatMoney(q.premium)} premium ·{' '}
                             {q.effectiveDate ?? 'No effective date'} to{' '}
                             {q.expirationDate ?? 'No expiration date'}
                           </small>
@@ -411,7 +421,7 @@ function QuotePackagesContent({
                 </p>
               )}
               <label className="package-review">
-                <input
+                <Input
                   type="checkbox"
                   checked={editor.reviewed}
                   disabled={saving}
@@ -425,20 +435,20 @@ function QuotePackagesContent({
                 </span>
               </label>
               <div className="form-actions">
-                <button
-                  className="primary"
+                <Button variant="primary"
+
                   disabled={saving || !editor.quoteIds.length}
                 >
                   Save option
-                </button>
-                <button
-                  className="secondary"
+                </Button>
+                <Button variant="secondary"
+
                   type="button"
                   disabled={saving}
                   onClick={() => setEditor(null)}
                 >
                   Cancel
-                </button>
+                </Button>
               </div>
             </form>
           )}

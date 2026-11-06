@@ -9,10 +9,15 @@ import {
   type ReactNode,
   type SetStateAction,
 } from 'react';
-import { client, friendlyError, listAllPages, type Account, type Contact, type Policy, type Quote } from './client';
+import { client, friendlyError, type Account, type Contact, type Policy, type Quote } from "./client";
+import { listAllPages } from "../../../shared/pagination";
 import { loadCommercial, type CommercialData, type CommercialEntry } from './commercial';
-import { isAuthorizationError } from './authorizationError';
+import { isAuthorizationError } from '../../../shared/authorizationError';
 import { useIsAdmin } from './auth';
+import { liveUpdates } from './liveUpdates';
+import { useLiveRefresh } from './useLiveUpdates';
+import { ACCOUNT_REFRESH_PAGE_SIZE, createAccountListRefreshCycle } from './accountsListRefresh';
+import { mergeLiveSnapshot } from './liveSnapshot';
 
 type Stage = 'LEAD' | 'CLIENT';
 export interface AccountsListData {
@@ -31,6 +36,7 @@ interface ResourceState {
   loaded: boolean;
   error: string;
   refreshError: string;
+  refreshing?: boolean;
 }
 interface CacheEntry { data: AccountsListData; detailsComplete: boolean }
 type CacheKey = `${Stage}:${'admin' | 'scoped'}`;
@@ -83,17 +89,7 @@ const covered = (entry: CacheEntry, accounts: Account[]) => {
 
 interface ModelPage<T> { data: T[]; nextToken?: string | null; errors?: readonly unknown[] }
 async function checkedList<T>(fetchPage: (nextToken?: string) => Promise<ModelPage<T>>): Promise<T[]> {
-  return listAllPages(async nextToken => {
-    const page = await fetchPage(nextToken);
-    if (page.errors?.length) {
-      // Keep access failures recognizable even if another field failed first.
-      const denied = page.errors.find(isAuthorizationError);
-      const raw = denied ?? page.errors[0];
-      const message = raw && typeof raw === 'object' && 'message' in raw ? String(raw.message) : String(raw);
-      throw Object.assign(new Error(message), denied ? { name: 'Unauthorized' } : {});
-    }
-    return page;
-  });
+  return listAllPages(fetchPage);
 }
 
 /** Access is validated first. Details can fail independently, but any access
@@ -155,6 +151,14 @@ export function useAccountsListData(stage: Stage) {
   const ticket = useRef(0);
   const scope = useRef({ key, cache });
   scope.current = { key, cache };
+  const backgroundCycle = useRef<{
+    reader: ReturnType<typeof createAccountListRefreshCycle>;
+    fence: ReturnType<typeof liveUpdates.getSnapshot>;
+    version: number;
+    accessApplied: boolean;
+    reportDenial: (error: unknown) => void;
+  }>();
+  const nextBackgroundAt = useRef(0);
 
   const publish = useCallback((next: ResourceState) => {
     current.current = next;
@@ -163,10 +167,11 @@ export function useAccountsListData(stage: Stage) {
 
   const run = useCallback(async (mode: 'all' | 'commercial'): Promise<void> => {
     if (!mounted.current) return;
+    backgroundCycle.current = undefined; nextBackgroundAt.current = 0;
     const id = ++ticket.current;
     const previous = current.current.stage === stage && current.current.isAdmin === isAdmin ? current.current : initialState(stage, cache, isAdmin);
     const cached = cache.get(key);
-    publish({ ...previous, loaded: previous.loaded && !previous.error, loading: true, error: '', refreshError: '' });
+    publish({ ...previous, loaded: previous.loaded && !previous.error, loading: true, error: '', refreshError: '', refreshing: false });
     const stillCurrent = () => mounted.current && ticket.current === id && scope.current.key === key && scope.current.cache === cache;
     // Only a snapshot authorized in this mounted view can survive a failed
     // account read. A non-admin route entry has no such snapshot yet.
@@ -180,7 +185,8 @@ export function useAccountsListData(stage: Stage) {
       // fail. Both stage caches contain the same authorized account universe.
       for (const [otherKey, entry] of cache) {
         if (!otherKey.endsWith(isAdmin ? ':admin' : ':scoped')) continue;
-        cache.set(otherKey, { data: surviving(entry.data, accounts), detailsComplete: covered(entry, accounts) && entry.detailsComplete });
+        const retained = surviving(entry.data, accounts);
+        cache.set(otherKey, { data: retained, detailsComplete: covered(entry, accounts) && entry.detailsComplete });
       }
       if (fallback) publish({ stage, isAdmin, data: fallback, loaded: true, loading: true, error: '', refreshError: '' });
       // Related records change independently of Account.updatedAt. On every
@@ -213,13 +219,99 @@ export function useAccountsListData(stage: Stage) {
     }
   }, [stage, cache, key, isAdmin, publish]);
 
-  const refetch = useCallback(() => run('all'), [run]);
-  const refreshCommercial = useCallback(() => run('commercial'), [run]);
+  const refetch = useCallback(async () => { await run('all'); }, [run]);
+  const refreshCommercial = useCallback(async () => { await run('commercial'); }, [run]);
+  const denyBackground = useCallback((error: unknown) => {
+    if (!mounted.current || scope.current.key !== key || scope.current.cache !== cache) return;
+    ticket.current++; cache.clear(); backgroundCycle.current = undefined; nextBackgroundAt.current = 0;
+    publish({ stage, isAdmin, data: emptyData(), loaded: true, loading: false, refreshing: false, error: friendlyError(error, 'Account access changed.'), refreshError: '' });
+  }, [stage, isAdmin, key, cache, publish]);
+  useLiveRefresh(async () => {
+    if (!mounted.current) return true;
+    let cycle = backgroundCycle.current;
+    if (cycle && (cycle.version !== ticket.current || !liveUpdates.canPublish(cycle.fence))) {
+      backgroundCycle.current = undefined; nextBackgroundAt.current = 0; cycle = undefined;
+      publish({ ...current.current, refreshing: false });
+    }
+    const fence = liveUpdates.getSnapshot();
+    if (!liveUpdates.canPublish(fence)) return false;
+    if (!cycle) {
+      // Opaque events do not identify a changed account. Keep exact whole-book
+      // semantics, but never restart/drain the book for every notification.
+      if (Date.now() < nextBackgroundAt.current) return false;
+      let team: CommercialData['team'] | undefined;
+      const version = ++ticket.current;
+      let denied = false;
+      // Parallel reads may reject before advance() finishes settling its other
+      // jobs. Deliver this cycle's denial once, and never retire a newer read.
+      const reportDenial = (error: unknown) => {
+        if (denied) return;
+        denied = true;
+        if (!mounted.current || scope.current.key !== key || scope.current.cache !== cache
+          || ticket.current !== version || backgroundCycle.current?.version !== version) return;
+        denyBackground(error);
+      };
+      cycle = {
+        fence, version, accessApplied: false, reportDenial,
+        reader: createAccountListRefreshCycle(stage, current.current.data, {
+          accounts: nextToken => client.models.Account.list({ nextToken, limit: ACCOUNT_REFRESH_PAGE_SIZE }),
+          contacts: nextToken => client.models.Contact.list({ nextToken, limit: ACCOUNT_REFRESH_PAGE_SIZE }),
+          policies: nextToken => client.models.Policy.list({ nextToken, limit: ACCOUNT_REFRESH_PAGE_SIZE }),
+          quotes: nextToken => client.models.Quote.list({ nextToken, limit: ACCOUNT_REFRESH_PAGE_SIZE }),
+          commercial: async (ids, snoozeIds) => {
+            const result = team ? await loadCommercial(ids, snoozeIds, team) : await loadCommercial(ids, snoozeIds);
+            team = result.team; return result;
+          },
+        }, reportDenial),
+      };
+      backgroundCycle.current = cycle;
+      publish({ ...current.current, refreshing: true, refreshError: '' });
+    }
+    const active = () => mounted.current && scope.current.key === key && scope.current.cache === cache && backgroundCycle.current === cycle && ticket.current === cycle!.version;
+    try {
+      const step = await cycle.reader.advance();
+      if (!active()) return true;
+      if (step.accounts && !cycle.accessApplied) {
+        cycle.accessApplied = true;
+        const allowed = new Set(step.accounts.map(account => account.id));
+        for (const [otherKey, entry] of cache) {
+          if (!otherKey.endsWith(isAdmin ? ':admin' : ':scoped')) continue;
+          cache.set(otherKey, { data: restrict(entry.data, entry.data.accounts.filter(account => allowed.has(account.id))), detailsComplete: false });
+        }
+        const previous = current.current.data;
+        if (previous.accounts.some(account => !allowed.has(account.id)))
+          publish({ ...current.current, data: restrict(previous, previous.accounts.filter(account => allowed.has(account.id))) });
+      }
+      if (!liveUpdates.canPublish(cycle.fence)) {
+        backgroundCycle.current = undefined; nextBackgroundAt.current = 0;
+        publish({ ...current.current, refreshing: false });
+        return false;
+      }
+      if (!step.complete || !step.snapshot) return false;
+      const merged = mergeLiveSnapshot(current.current.data, step.snapshot);
+      const data = { ...merged, commercial: mergeCommercial(merged.commercial, current.current.data.commercial, merged.accounts) };
+      cache.set(key, { data, detailsComplete: !step.refreshError });
+      backgroundCycle.current = undefined; nextBackgroundAt.current = Date.now() + 60_000;
+      publish({ stage, isAdmin, data, loaded: true, loading: false, refreshing: false, error: '', refreshError: step.refreshError ?? '' });
+    } catch (error) {
+      if (isAuthorizationError(error)) { cycle.reportDenial(error); return true; }
+      if (!active()) return true;
+      backgroundCycle.current = undefined;
+      if (!liveUpdates.canPublish(cycle.fence)) {
+        nextBackgroundAt.current = 0; publish({ ...current.current, refreshing: false }); return false;
+      }
+      nextBackgroundAt.current = Date.now() + 60_000;
+      const entry = cache.get(key); if (entry) cache.set(key, { ...entry, detailsComplete: false });
+      publish({ ...current.current, refreshing: false, refreshError: friendlyError(error, 'Could not update the complete account list.') });
+    }
+    return true;
+  }, { paused: state.loading || !state.loaded, topics: ['CRM'], onDenied: denyBackground });
   const setCommercial: Dispatch<SetStateAction<CommercialData>> = useCallback(action => {
     if (!mounted.current || scope.current.key !== key || scope.current.cache !== cache) return;
     const previous = current.current;
     if (previous.stage !== stage || previous.isAdmin !== isAdmin || !previous.loaded || previous.error) return;
     const commercial = typeof action === 'function' ? action(previous.data.commercial) : action;
+    if (commercial !== previous.data.commercial) liveUpdates.touchEdit();
     const data = restrict({ ...previous.data, commercial }, previous.data.accounts);
     cache.set(key, { data, detailsComplete: cache.get(key)?.detailsComplete ?? false });
     // Both lists may include a partially bound client. A confirmed edit must
@@ -237,11 +329,11 @@ export function useAccountsListData(stage: Stage) {
     mounted.current = true;
     publish(initialState(stage, cache, isAdmin));
     void run('all');
-    return () => { mounted.current = false; ++ticket.current; };
+    return () => { mounted.current = false; ++ticket.current; backgroundCycle.current = undefined; nextBackgroundAt.current = 0; };
   }, [stage, cache, isAdmin, run, publish]);
 
   // React may reuse the component between Leads and Clients or role views.
   // Never expose the previous scope while its effect is waiting to initialize.
   const visible = state.stage === stage && state.isAdmin === isAdmin ? state : initialState(stage, cache, isAdmin);
-  return { data: visible.data, loading: visible.loading, loaded: visible.loaded, error: visible.error, refreshError: visible.refreshError, refetch, refreshCommercial, setCommercial };
+  return { data: visible.data, loading: visible.loading, loaded: visible.loaded, refreshing: !!visible.refreshing, error: visible.error, refreshError: visible.refreshError, refetch, refreshCommercial, setCommercial };
 }

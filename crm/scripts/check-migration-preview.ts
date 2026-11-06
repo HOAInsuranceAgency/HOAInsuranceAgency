@@ -1,0 +1,90 @@
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+import { Stack, CfnResource } from "aws-cdk-lib";
+import { migrationStreamPhase, businessBranch } from "../amplify/migration-config";
+import { PREVIEW_DENIED_ACTIONS } from "../amplify/migration-preview";
+import { hasNoBucketNotifications } from "../amplify/migration-notifications";
+
+type Resource = { Type: string; Properties?: Record<string, any> };
+export function checkMigrationPreview(backend: any, outdir: string) {
+  const templates = readdirSync(outdir, { recursive: true }).filter(name => String(name).endsWith(".template.json"))
+    .map(name => JSON.parse(readFileSync(join(outdir, String(name)), "utf8")));
+  const resources: Resource[] = templates.flatMap(t => Object.values(t.Resources ?? {}) as Resource[]);
+  const require = (ok: unknown, reason: string) => { if (!ok) throw new Error(`Unsafe migration preview: ${reason}`); };
+  let mutations = 0, mappings = 0, schedules = 0;
+  for (const r of resources) {
+    const p = r.Properties ?? {};
+    if (r.Type === "Custom::AmplifyDynamoDBTable") require(p.pointInTimeRecoverySpecification?.pointInTimeRecoveryEnabled === true && p.deletionProtectionEnabled === true, "custom table recovery protection does not match its provider contract");
+    if (r.Type === "Custom::AmplifyBranchLinkerResource") require(p.branchName === businessBranch, "backend namespace does not match its Amplify branch link");
+    if (r.Type === "AWS::AppSync::Resolver" && p.TypeName === "Mutation") {
+      mutations++; require(JSON.stringify(p.RequestMappingTemplate ?? p.Code ?? "").includes("MigrationPreviewReadOnly"), `unguarded mutation ${p.FieldName}`);
+    }
+    if (r.Type === "AWS::Lambda::EventSourceMapping") { mappings++; require(p.Enabled === (migrationStreamPhase === "armed"), "wrong stream phase"); if (migrationStreamPhase === "armed") require(p.StartingPosition === "LATEST", "armed stream without fresh LATEST cursor"); }
+    if (["AWS::Scheduler::Schedule", "AWS::Events::Rule"].includes(r.Type)) { schedules++; require(p.State === "DISABLED", "enabled schedule"); }
+    if (r.Type === "Custom::S3BucketNotifications") require(hasNoBucketNotifications(p.NotificationConfiguration), "S3 notification provider configuration missing or events enabled");
+    if (r.Type === "AWS::S3::Bucket") require(p.NotificationConfiguration === undefined || hasNoBucketNotifications(p.NotificationConfiguration), "S3 events enabled");
+    if (r.Type === "AWS::Lambda::Url") require(p.AuthType === "AWS_IAM", "unexpected public webhook URL");
+    if (r.Type === "AWS::Lambda::Permission" && p.Principal === "*") require(false, "unexpected public Lambda permission");
+    if (r.Type === "AWS::CloudWatch::Alarm") require(p.ActionsEnabled === false, "alarm notifications enabled");
+    if (r.Type === "AWS::Lambda::Function") {
+      const env = p.Environment?.Variables ?? {};
+      require(!Object.keys(env).some(k => /^(ANTHROPIC_API_KEY|STRIPE_SECRET_KEY|STRIPE_WEBHOOK_SECRET|HONEYCOMB_API_)/.test(k)), "live provider secret configured");
+    }
+  }
+  require(mutations > 100 && mappings >= 22 && schedules >= 8, "expected writer inventory missing from synth");
+  const auth = new Set(["magicLinkDefine", "magicLinkCreate", "magicLinkVerify", "migrationNativeMessage", "googleSignIn", "mailVerification"]);
+  const reads = new Set(["crmAccess", "communications", "commissions", "ownerProfitability", "migrateProducerLicenses"]);
+  const guard = backend.stack.node.root.node.findAll().find((n: any) => n.node.id === "ReadOnlyBusinessFunctions");
+  require(guard, "missing shared preview deny policy");
+  const guardResource = guard.node.defaultChild as CfnResource, guardStack = Stack.of(guardResource);
+  const guardTemplate = JSON.parse(readFileSync(join(outdir, guardStack.templateFile), "utf8"));
+  const guardStatements = guardTemplate.Resources[guardStack.getLogicalId(guardResource)].Properties.PolicyDocument.Statement;
+  const denied = new Set(guardStatements.filter((s: any) => s.Effect === "Deny" && [s.Resource].flat().includes("*")).flatMap((s: any) => [s.Action].flat()));
+  require(PREVIEW_DENIED_ACTIONS.every(a => denied.has(a)), "shared preview policy is incomplete");
+  let functions = 0;
+  for (const [name, resource] of Object.entries(backend) as [string, any][]) {
+    if (!resource?.resources?.lambda || typeof resource.addEnvironment !== "function") continue;
+    functions++;
+    const fn = resource.resources.lambda, cfn = fn.node.defaultChild;
+    const stack = Stack.of(cfn), template = JSON.parse(readFileSync(join(outdir, stack.templateFile), "utf8"));
+    const deployed = template.Resources[stack.getLogicalId(cfn)];
+    require(deployed.Properties.Environment.Variables.HOA_MIGRATION_PREVIEW === "true", `missing mode for ${name}`);
+    if (auth.has(name)) {
+      if (name === "googleSignIn") {
+        require(deployed.Properties.ReservedConcurrentExecutions !== 0, "invite-only signup guard is paused");
+        // It must handle AdminCreateUser, but Google account linking is a
+        // mutation and must have no execution grant while preview is held.
+        const role = fn.role.node.defaultChild as CfnResource, roleStack = Stack.of(role), roleId = roleStack.getLogicalId(role);
+        const roleTemplate = JSON.parse(readFileSync(join(outdir, roleStack.templateFile), "utf8"));
+        const roleProps = roleTemplate.Resources[roleId].Properties;
+        const roleRef = JSON.stringify({ Ref: roleId });
+        const referencesRole = (value: unknown) => JSON.stringify(value) === roleRef;
+        const documents = [
+          ...(roleProps.Policies ?? []).map((policy: any) => policy.PolicyDocument),
+          ...Object.entries(roleTemplate.Resources).flatMap(([id, resource]) => {
+            const policy = resource as Resource, props = policy.Properties ?? {};
+            const attached = policy.Type === "AWS::IAM::RolePolicy"
+              ? referencesRole(props.RoleName)
+              : ["AWS::IAM::Policy", "AWS::IAM::ManagedPolicy"].includes(policy.Type) &&
+                ((props.Roles ?? []).some(referencesRole) ||
+                  (roleProps.ManagedPolicyArns ?? []).some((arn: unknown) => JSON.stringify(arn) === JSON.stringify({ Ref: id })));
+            return attached ? [props.PolicyDocument] : [];
+          }),
+        ];
+        const grantsLinking = documents.flatMap(document => document?.Statement ?? []).some(statement =>
+          statement.Effect === "Allow" && [statement.Action].flat().some((action: unknown) =>
+            typeof action === "string" && new RegExp(`^${action.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\\\*/g, ".*").replace(/\\\?/g, ".")}$`, "i")
+              .test("cognito-idp:AdminLinkProviderForUser")));
+        require(!grantsLinking, "preview signup guard can link Google identities");
+      }
+      continue;
+    }
+    if (!reads.has(name)) require(deployed.Properties.ReservedConcurrentExecutions === 0, `business function enabled: ${name}`);
+    const role = fn.role.node.defaultChild as CfnResource, roleStack = Stack.of(role), roleId = roleStack.getLogicalId(role);
+    const roleTemplate = JSON.parse(readFileSync(join(outdir, roleStack.templateFile), "utf8"));
+    const expected = JSON.stringify(roleStack.resolve(guard.managedPolicyArn));
+    require((roleTemplate.Resources[roleId].Properties.ManagedPolicyArns ?? []).some((arn: unknown) => JSON.stringify(arn) === expected), `missing business write deny for ${name}`);
+  }
+  require(functions >= 40, "application function inventory incomplete");
+  console.log(`Preview isolation verified: ${mutations} blocked mutations, ${mappings} ${migrationStreamPhase === "armed" ? "armed LATEST" : "disabled"} streams, ${schedules} disabled schedules, ${functions} guarded functions.`);
+}

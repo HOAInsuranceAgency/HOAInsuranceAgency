@@ -1,5 +1,5 @@
-import { commissionPolicy, line, statement } from '../../src/test/commissionFixtures';
-import { appendEntry, type CommissionOverview } from '../../../shared/commissions';
+import { commissionPolicy, line, statement } from '../../fixtures/commissions';
+import { appendEntry, carrierReconciliationBalances, type CommissionOverview, type CommissionPolicy } from '../../../shared/commissions';
 const base = commissionPolicy();
 base.producerName = 'Avery Brooks';
 base.carrierName = 'Harbor Mutual';
@@ -11,6 +11,30 @@ policy = appendEntry(
   statement(),
   'cancel-oct',
 );
+const installmentPolicy: CommissionPolicy = {
+  ...base,
+  id: 'installments',
+  policyNumber: 'HARBOR-INSTALLMENTS',
+  accountName: 'Seaside HOA',
+  receiptForecast: {
+    items: [{ dueOn: '2026-11-01', agencyCents: 100000 }, { dueOn: '2026-12-01', agencyCents: 100000 }],
+    evidence: 'Fictional carrier installment schedule',
+    confirmed: true,
+    complete: false,
+  },
+  entries: [],
+};
+const receivedInstallment = appendEntry(
+  installmentPolicy,
+  line({ policyId: 'installments', agencyCents: 90000, lineRef: 'INSTALLMENT-1' }),
+  { ...statement(), receivedOn: '2026-11-03' },
+  'installment-receipt',
+);
+const previewDate = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+}).format(new Date());
+for (const previewPolicy of [policy, receivedInstallment])
+  previewPolicy.reconciliationBalances = carrierReconciliationBalances(previewPolicy, previewDate);
 export const data: CommissionOverview = {
   plans: [
     {
@@ -29,7 +53,7 @@ export const data: CommissionOverview = {
     },
   ],
   carriers: [base.carrierTerms],
-  policies: [policy],
+  policies: [receivedInstallment, policy],
   statements: [{ ...statement(), lines: [line()], totalCents: 100000 }],
   batches: [],
 };

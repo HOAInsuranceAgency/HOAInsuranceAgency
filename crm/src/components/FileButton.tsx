@@ -1,4 +1,6 @@
 import type { ChangeEvent } from "react";
+import { FilePicker } from "./ui/FilePicker";
+import type { ButtonVariant, ControlSize } from "./ui/Button";
 
 /** Platform-styled file picker — hides the native input behind a button. */
 export default function FileButton({
@@ -8,8 +10,12 @@ export default function FileButton({
   disabled,
   busy,
   onFiles,
+  variant = "secondary",
+  controlSize,
 }: {
   label: string;
+  variant?: ButtonVariant;
+  controlSize?: ControlSize;
   multiple?: boolean;
   accept?: string;
   disabled?: boolean;
@@ -31,7 +37,7 @@ export default function FileButton({
   }
 
   return (
-    <label className={`file-btn${disabled || busy ? " disabled" : ""}`}>
+    <FilePicker variant={variant} controlSize={controlSize} multiple={multiple} accept={accept} disabled={disabled || busy} onChange={handle} label={<>
       <svg
         width="15"
         height="15"
@@ -47,13 +53,6 @@ export default function FileButton({
         <path d="M4 20h16" />
       </svg>
       {busy ? "Uploading…" : label}
-      <input
-        type="file"
-        multiple={multiple}
-        accept={accept}
-        disabled={disabled || busy}
-        onChange={handle}
-      />
-    </label>
+    </>} />
   );
 }

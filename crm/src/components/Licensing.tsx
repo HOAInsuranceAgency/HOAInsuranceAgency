@@ -1,11 +1,11 @@
+import { assertGraphqlErrors } from '../lib/apiResponse';
+import { Button } from "./ui/Button";
+import { Input } from "./ui/Input";
+import { SegmentedControl } from "./ui/SegmentedControl";
+import { Tabs, TabPanel } from "./ui/Tabs";
 import { Suspense, lazy, useMemo, useState } from "react";
-import {
-  client,
-  listAllPages,
-  licenseHealth,
-  type License,
-  type UserProfile,
-} from "../lib/client";
+import { client, licenseHealth, type License, type UserProfile } from "../lib/client";
+import { listAllPages } from "../../../shared/pagination";
 import { useAsyncResource } from "../lib/useAsyncResource";
 import { useIsAdmin } from "../lib/auth";
 import Modal from "./Modal";
@@ -78,12 +78,12 @@ export default function Licensing() {
   const lic = useAsyncResource(
     () => listAllPages(nextToken => client.models.License.list({ nextToken })),
     [],
-    { initialData: [] as License[], errorMessage: "Failed to load licenses" }
+    { initialData: [] as License[], errorMessage: "Failed to load licenses" , live: true }
   );
   const prof = useAsyncResource(
     () => listAllPages(nextToken => client.models.UserProfile.list({ nextToken })),
     [],
-    { initialData: [] as UserProfile[], errorMessage: "Failed to load team profiles" }
+    { initialData: [] as UserProfile[], errorMessage: "Failed to load team profiles" , live: true }
   );
   const licenses = lic.data;
   const setLicenses = lic.setData;
@@ -169,13 +169,14 @@ export default function Licensing() {
 
   async function del(id: string) {
     const { data, errors } = await client.models.License.delete({ id });
-    if (errors?.length || !data) throw new Error(errors?.[0]?.message || "Could not confirm the license was deleted.");
+    assertGraphqlErrors({ errors });
+    if (!data) throw new Error(errors?.[0]?.message || "Could not confirm the license was deleted.");
     setLicenses((ls) => ls.filter((l) => l.id !== id));
   }
 
   if (loading) return <p className="muted small">Loading licenses…</p>;
   // An incomplete read must never paint the licensing map as unlicensed.
-  if (error) return <div role="alert"><p className="error-text">{error}</p><button onClick={() => { void lic.refetch(); void prof.refetch(); }}>Retry licensing</button></div>;
+  if (error) return <div role="alert"><p className="error-text">{error}</p><Button onClick={() => { void lic.refetch(); void prof.refetch(); }}>Retry licensing</Button></div>;
 
   return (
     <>
@@ -198,17 +199,7 @@ export default function Licensing() {
         </div>
 
         <div className="lic-controls">
-          <div className="view-switch" role="group" aria-label="Licensing view">
-            {VIEWS.map((v) => (
-              <button
-                key={v.key}
-                aria-pressed={view === v.key}
-                onClick={() => setView(v.key)}
-              >
-                {v.label}
-              </button>
-            ))}
-          </div>
+          <Tabs id="licensing" label="Licensing view" value={view} onChange={setView} items={VIEWS.map(item => ({value: item.key, label: item.label}))} />
 
           {/* The filter belongs to the tables. On the map it would be a lie:
               narrowing the rows to "NH" would repaint the other fifty states
@@ -216,7 +207,7 @@ export default function Licensing() {
               filtered them out". */}
           {view !== "map" && (
             <>
-              <input
+              <Input
                 className="lic-search"
                 type="search"
                 placeholder="Filter by state, license #, NPN, person…"
@@ -224,24 +215,19 @@ export default function Licensing() {
                 onChange={(e) => setQuery(e.target.value)}
               />
               {attentionCount > 0 && (
-                <button
-                  className={`lic-chip${attentionOnly ? " on" : ""}`}
-                  onClick={() => setAttentionOnly((v) => !v)}
-                  title="Expired, inactive, or expiring within 60 days"
-                >
-                  ⚠ {attentionCount} need{attentionCount === 1 ? "s" : ""} attention
-                </button>
+                <SegmentedControl label="License attention" value={attentionOnly ? 'attention' : undefined} onChange={() => setAttentionOnly(value => !value)}
+                  items={[{ value: 'attention', label: `⚠ ${attentionCount} need${attentionCount === 1 ? 's' : ''} attention`, title: 'Expired, inactive, or expiring within 60 days' }]} />
               )}
               {filtering && (
-                <button
-                  className="link"
+                <Button variant="link"
+
                   onClick={() => {
                     setQuery("");
                     setAttentionOnly(false);
                   }}
                 >
                   Clear
-                </button>
+                </Button>
               )}
             </>
           )}
@@ -254,6 +240,7 @@ export default function Licensing() {
         )}
       </div>
 
+      <TabPanel tabsId="licensing" value={view}>
       {view === "map" && (
         <Suspense fallback={<p className="muted small">Loading map…</p>}>
           {/* Unfiltered on purpose — see the note on the filter above. */}
@@ -322,6 +309,8 @@ export default function Licensing() {
       {view === "coverage" && (
         <StateCoverage firm={firm} personal={personal} profiles={profiles} />
       )}
+
+      </TabPanel>
 
       {/*
         In a modal, not appended to the page.

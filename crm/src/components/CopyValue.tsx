@@ -1,3 +1,4 @@
+import { Button } from "./ui/Button";
 import { useEffect, useRef, useState } from "react";
 
 /**
@@ -15,7 +16,9 @@ export default function CopyValue({
   label,
   value,
   className,
+  inverse = false,
 }: {
+  inverse?: boolean;
   label: string;
   value: string;
   /** Extra class on the wrapper, for per-caller placement. */
@@ -58,7 +61,7 @@ export default function CopyValue({
       <span className="copy-value__row">
         {/* Tabular figures so two NPNs of the same length line up. */}
         <span className="copy-value__num">{value}</span>
-        <button
+        <Button variant={inverse ? "inverse" : "link"} controlSize="compact"
           type="button"
           className="copy-value__btn"
           onClick={copy}
@@ -67,7 +70,7 @@ export default function CopyValue({
           aria-label={`Copy ${label}`}
         >
           {state === "copied" ? "Copied" : state === "failed" ? "Press ⌘C" : "Copy"}
-        </button>
+        </Button>
       </span>
     </div>
   );

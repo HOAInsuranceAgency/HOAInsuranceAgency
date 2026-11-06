@@ -1,3 +1,5 @@
+import { Button } from "../ui/Button";
+import { Table } from "../ui/Table";
 import { Fragment, useMemo, useState } from "react";
 import {
   fmtDate,
@@ -6,7 +8,7 @@ import {
   type License,
   type UserProfile,
 } from "../../lib/client";
-import { LICENSE_CLASS_LABELS } from "../../lib/enums";
+import { LICENSE_CLASS_LABELS } from "../../../../shared/enums";
 import { Badge } from "../../lib/badges";
 import ConfirmButton from "../ConfirmButton";
 import DocumentsPanel from "../DocumentsPanel";
@@ -154,8 +156,8 @@ export default function LicenseTable({
         {/* Hidden while a filter forces every group open — it would be a
             no-op control claiming to do something. */}
         {groups && groups.length > 1 && !forceOpen && (
-          <button
-            className="link"
+          <Button variant="link"
+
             onClick={() =>
               setExpanded(
                 allOpen ? new Set() : new Set(groups.map(([n]) => n))
@@ -163,12 +165,12 @@ export default function LicenseTable({
             }
           >
             {allOpen ? "Collapse all" : "Expand all"}
-          </button>
+          </Button>
         )}
         {canEdit && (
-          <button className="primary" onClick={onAdd}>
+          <Button variant="primary"  onClick={onAdd}>
             + Add license
-          </button>
+          </Button>
         )}
       </div>
 
@@ -180,7 +182,7 @@ export default function LicenseTable({
         </p>
       ) : (
         <div className="table-wrap">
-          <table>
+          <Table>
             <thead>
               <tr>
                 <SortTh label="State" colKey="state" sortKey={sortKey} dir={dir} onToggle={toggle} />
@@ -206,9 +208,9 @@ export default function LicenseTable({
                     }).length;
                     return (
                       <Fragment key={name}>
-                        <tr className="license-group">
+                        <tr className="ui-table-group">
                           <td colSpan={colSpan}>
-                            <button
+                            <Button variant="ghost"
                               className="license-group-toggle"
                               onClick={() => toggleGroup(name)}
                               aria-expanded={!isCollapsed}
@@ -227,7 +229,7 @@ export default function LicenseTable({
                                   {needsAttention === 1 ? "s" : ""} attention
                                 </span>
                               )}
-                            </button>
+                            </Button>
                           </td>
                         </tr>
                         {!isCollapsed && groupRows.map(renderRow)}
@@ -236,7 +238,7 @@ export default function LicenseTable({
                   })
                 : sorted.map(renderRow)}
             </tbody>
-          </table>
+          </Table>
         </div>
       )}
     </div>
@@ -293,16 +295,16 @@ function FragmentRow({
           <Badge {...h} />
         </td>
         <td>
-          <button className="link" onClick={onToggleDocs}>
+          <Button variant="link"  onClick={onToggleDocs}>
             {isOpen ? "Hide files" : "Files"}
-          </button>
+          </Button>
         </td>
         {canEdit && (
           <td style={{ whiteSpace: "nowrap" }}>
-            <button className="link" onClick={onEdit}>
+            <Button variant="link"  onClick={onEdit}>
               Edit
-            </button>
-            <ConfirmButton className="link" onConfirm={async () => { setDeleteError(""); await onDelete(); }} onError={error => setDeleteError(friendlyError(error, "Could not delete license."))} />
+            </Button>
+            <ConfirmButton variant="link" onConfirm={async () => { setDeleteError(""); await onDelete(); }} onError={error => setDeleteError(friendlyError(error, "Could not delete license."))} />
             {deleteError && <p role="alert" className="error-text small">{deleteError}</p>}
           </td>
         )}

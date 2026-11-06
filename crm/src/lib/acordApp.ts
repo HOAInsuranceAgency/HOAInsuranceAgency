@@ -5,7 +5,7 @@ import { AGENCY } from "./agency";
 import type { Account } from "./client";
 import type { AcordFormDef } from "./acordRegistry";
 import { amt, fmtUs, todayUs } from "./acordFormat";
-import { inspectionContact, primaryContact, type ContactLike } from "./contacts";
+import { inspectionContact, primaryContact, type ContactLike } from "../../../shared/contacts";
 import {
   ACORD125_LEGAL_ENTITY_FIELDS,
   BUILDING_DEDUCTIBLE_TYPE_LABELS,
@@ -16,7 +16,7 @@ import {
   DEFAULT_ASSOCIATION_LEGAL_ENTITY,
   REPLACEMENT_COST_CODES,
   type LegalEntityType,
-} from "./enums";
+} from "../../../shared/enums";
 import {
   fillTemplate,
   type FieldValues,

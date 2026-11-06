@@ -6,8 +6,30 @@ vi.mock("../lib/communications", () => ({ communicationRequest: h.request }));
 vi.mock("../lib/client", () => ({ LINES_OF_BUSINESS: ["Property"], fmtMoney: (v: number) => `$${v}` }));
 vi.mock("./OpportunityEstimate", () => ({ OpportunityEstimate: () => null }));
 import QuotePackages from "./QuotePackages";
-import { emptyCommercialPlan } from "../../../shared/quotePackages";
-beforeEach(() => { vi.clearAllMocks(); h.resource.loading = false; h.resource.loaded = true; h.resource.error = ""; });
+import { emptyCommercialPlan, packageTerms } from "../../../shared/quotePackages";
+import type { Quote } from "../lib/client";
+beforeEach(() => { vi.clearAllMocks(); h.resource.loading = false; h.resource.loaded = true; h.resource.error = ""; h.resource.data.entries = {}; });
+it("offers package delivery only after the complete current terms have been reviewed", () => {
+  const quote = { id: "q1", accountId: "a1", carrierId: "c1", lines: ["Property"], status: "QUOTED", premium: 1000, commissionPct: 10, effectiveDate: "2099-01-01", expirationDate: "2100-01-01" } as Quote;
+  const option = { id: "option-one", name: "Complete package", quoteIds: [quote.id] };
+  const plan = { ...emptyCommercialPlan("a1"), requiredLines: ["Property"], options: [option] };
+  h.resource.data.entries = { a1: { plan } };
+  const view = render(<QuotePackages accountId="a1" quotes={[quote]} carriers={[]} />);
+  expect(screen.getByRole("button", { name: "Prepare proposal in Front" })).toBeDisabled();
+  h.resource.data.entries = { a1: { plan: { ...plan, options: [{ ...option, reviewed: { at: "2026-11-01", by: "teammate", terms: { q1: packageTerms(quote) } } }] } } };
+  view.rerender(<QuotePackages accountId="a1" quotes={[quote]} carriers={[]} />);
+  expect(screen.getByRole("button", { name: "Prepare proposal in Front" })).toBeEnabled();
+  expect(h.request).not.toHaveBeenCalled();
+});
+it("shows the complete client cost to the cent and excludes supplier charges from agency revenue", () => {
+  const quote = { id: "q1", accountId: "a1", carrierId: "c1", lines: ["Property"], status: "QUOTED", premium: 55541, commissionPct: 10, brokerFee: 500, billType: "AGENCY", passThroughCharges: JSON.stringify([{ id: "rt", kind: "WHOLESALER_FEE", description: "RT fee", amountCents: 25000 }, { id: "tax", kind: "SURPLUS_LINES", description: "Surplus lines tax", amountCents: 222164 }]), effectiveDate: "2099-01-01", expirationDate: "2100-01-01" } as Quote;
+  const option = { id: "option-one", name: "Complete package", quoteIds: [quote.id], reviewed: { at: "2026-11-01", by: "teammate", terms: { q1: packageTerms(quote) } } };
+  h.resource.data.entries = { a1: { plan: { ...emptyCommercialPlan("a1"), requiredLines: ["Property"], options: [option] } } };
+  render(<QuotePackages accountId="a1" quotes={[quote]} carriers={[]} />);
+  expect(screen.getByText('Client policy total').nextElementSibling).toHaveTextContent('$58,512.64');
+  expect(screen.getByText('Supplier fees and taxes').nextElementSibling).toHaveTextContent('$2,471.64');
+  expect(screen.getByText('Total agency revenue').nextElementSibling).toHaveTextContent('$6,054.10');
+});
 it("retains a package draft through refresh and account navigation resets it", async () => {
   const view = render(<QuotePackages accountId="a1" quotes={[]} carriers={[]} />);
   fireEvent.click(screen.getByRole("button", { name: "+ Package option" }));

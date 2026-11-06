@@ -1,16 +1,14 @@
+import { Button } from "../../components/ui/Button";
+import { Select } from "../../components/ui/Select";
+import { Table } from "../../components/ui/Table";
 import { useMemo, useState } from "react";
-import {
-  client,
-  fmtDateTime,
-  fmtMoney,
-  listAllPages,
-  type Activity,
-} from "../../lib/client";
+import { client, fmtDateTime, fmtMoney, type Activity } from "../../lib/client";
+import { listAllPages } from "../../../../shared/pagination";
 import { useAsyncResource } from "../../lib/useAsyncResource";
-import { communicationRequest, type Communication } from "../../lib/communications";
-import { isAuthorizationError } from "../../lib/authorizationError";
+import { communicationRequest } from "../../lib/communications";
+import { isAuthorizationError } from "../../../../shared/authorizationError";
 import LeadWorkflowPanel from "../../components/LeadWorkflowPanel";
-import { fieldLabel } from "../../../amplify/functions/activity-log/diff";
+import { fieldLabel } from "../../../../shared/activity";
 import "./ActivityTab.css";
 
 /**
@@ -98,7 +96,7 @@ function AccountChanges({ accountId }: { accountId: string }) {
         )
       ),
     [accountId],
-    { initialData: [] as Activity[], errorMessage: "Failed to load activity" }
+    { initialData: [] as Activity[], errorMessage: "Failed to load activity" , live: true }
   );
 
   const [subjectFilter, setSubjectFilter] = useState("");
@@ -123,7 +121,7 @@ function AccountChanges({ accountId }: { accountId: string }) {
       entries.push([userId, name || profile?.email || "Unknown teammate"]);
     }
     return Object.fromEntries(entries);
-  }, [unresolvedActors], { initialData: {} as Record<string, string>, errorMessage: "Teammate names could not be loaded." });
+  }, [unresolvedActors], { initialData: {} as Record<string, string>, errorMessage: "Teammate names could not be loaded." , live: true });
   const actorLabel = (r: Activity) => needsName(r)
     ? names.data[r.actor!] || "Unknown teammate"
     : r.actorName || (r.actor ? "Unknown teammate" : "System");
@@ -157,7 +155,7 @@ function AccountChanges({ accountId }: { accountId: string }) {
       ) : res.error ? (
         <div className="account-changes-state account-changes-state--error" role="alert">
           <p>{res.error}</p>
-          <button className="secondary" onClick={() => void res.refetch()}>Retry account changes</button>
+          <Button variant="secondary"  onClick={() => void res.refetch()}>Retry account changes</Button>
         </div>
       ) : rows.length === 0 ? (
         <div className="account-changes-state">
@@ -166,11 +164,11 @@ function AccountChanges({ accountId }: { accountId: string }) {
         </div>
       ) : (
         <>
-          {names.error && <p className="account-changes-notice">Activity is available, but some teammate names could not be loaded. <button className="btn secondary small" onClick={() => void names.refetch()}>Retry names</button></p>}
+          {names.error && <p className="account-changes-notice">Activity is available, but some teammate names could not be loaded. <Button variant="secondary" controlSize="compact"  onClick={() => void names.refetch()}>Retry names</Button></p>}
           <div className="account-changes-filters">
             <div className="field">
               <label htmlFor="activity-subject">Subject</label>
-              <select
+              <Select
                 id="activity-subject"
                 value={subjectFilter}
                 onChange={(e) => setSubjectFilter(e.target.value)}
@@ -179,11 +177,11 @@ function AccountChanges({ accountId }: { accountId: string }) {
                 {subjects.map((s) => (
                   <option key={s}>{s}</option>
                 ))}
-              </select>
+              </Select>
             </div>
             <div className="field">
               <label htmlFor="activity-actor">Who</label>
-              <select
+              <Select
                 id="activity-actor"
                 value={actorFilter}
                 onChange={(e) => setActorFilter(e.target.value)}
@@ -192,7 +190,7 @@ function AccountChanges({ accountId }: { accountId: string }) {
                 {actors.map((a) => (
                   <option key={a.key} value={a.key}>{a.label}</option>
                 ))}
-              </select>
+              </Select>
             </div>
             <span className="account-changes-results" role="status">{filtered.length} of {rows.length} changes</span>
           </div>
@@ -201,7 +199,7 @@ function AccountChanges({ accountId }: { accountId: string }) {
             <p className="account-changes-state">Nothing matches those filters.</p>
           ) : (
             <div className="table-wrap account-changes-table-wrap">
-              <table className="account-changes-table" aria-label="Account change history">
+              <Table className="account-changes-table" aria-label="Account change history">
                 <colgroup><col className="account-change-when" /><col className="account-change-who" /><col className="account-change-what" /><col /></colgroup>
                 <thead>
                   <tr>
@@ -232,7 +230,7 @@ function AccountChanges({ accountId }: { accountId: string }) {
                     );
                   })}
                 </tbody>
-              </table>
+              </Table>
             </div>
           )}
         </>
@@ -270,19 +268,19 @@ function ChangeDetails({ accountId, summary, changes, noteId }: { accountId: str
 /** Unmount on collapse so reopening checks current access and note content. */
 function InternalNoteContent({ accountId, noteId }: { accountId: string; noteId: string }) {
   const note = useAsyncResource(async () => {
-    const result = await communicationRequest<{ communication?: Communication | null }>("activity", { id: noteId, accountId });
+    const result = await communicationRequest("activity", { id: noteId, accountId });
     const communication = result.communication;
     if (!communication || communication.id !== noteId || communication.accountId !== accountId || communication.channel !== "NOTE") {
       throw new Error("Could not load this note.");
     }
     return typeof communication.text === "string" && communication.text.trim() ? communication.text : null;
-  }, [accountId, noteId], { initialData: null, errorMessage: "Could not load this note.", clearDataOnError: isAuthorizationError });
+  }, [accountId, noteId], { initialData: null, errorMessage: "Could not load this note.", clearDataOnError: isAuthorizationError , live: true });
 
   return (
     <div className="account-change-note">
       {!note.loaded || note.loading ? <p className="account-change-note-state" role="status">Loading note…</p>
-        : note.error ? <div role="alert"><p className="account-change-note-state error-text">Could not load this note.</p><button className="secondary small" onClick={() => void note.refetch()}>Retry note</button></div>
-          : note.data === null ? <div><p className="account-change-note-state">Note text is unavailable.</p><button className="secondary small" onClick={() => void note.refetch()}>Retry note</button></div>
+        : note.error ? <div role="alert"><p className="account-change-note-state error-text">Could not load this note.</p><Button variant="secondary" controlSize="compact"  onClick={() => void note.refetch()}>Retry note</Button></div>
+          : note.data === null ? <div><p className="account-change-note-state">Note text is unavailable.</p><Button variant="secondary" controlSize="compact"  onClick={() => void note.refetch()}>Retry note</Button></div>
             : <p className="account-change-note-text">{note.data}</p>}
     </div>
   );

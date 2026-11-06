@@ -1,29 +1,19 @@
-/** The initial receipt contains premium and a fee; the fee never reduces loan principal. */
-export const PF_CHECKOUT_BILLING_VERSION = 2;
+import { initialPaymentTotals, type InitialPaymentLoan } from "../../../shared/premiumFinance/initialPayment";
 
-export function initialPaymentTotals(loan: { downPayment: number; originationFee: number }) {
-  const cents = (amount: number) => {
-    if (!Number.isFinite(amount) || amount < 0) throw new Error("Invalid initial payment amount");
-    return Math.round(amount * 100);
-  };
-  const premiumCents = cents(loan.downPayment);
-  const originationFeeCents = cents(loan.originationFee);
-  return { premiumCents, originationFeeCents, totalCents: premiumCents + originationFeeCents };
-}
+export const PF_CHECKOUT_BILLING_VERSION = 3;
 
-/** Old in-flight checkouts collected premium only. Record that fact without charging again. */
-export function initialPaymentReceipt(
-  loan: { downPayment: number; originationFee: number },
-  amount: number | null,
-  billingVersion: number | null,
-) {
+/** Preserve what older in-flight checkouts actually collected; never invent fee receipts. */
+export function initialPaymentReceipt(loan: InitialPaymentLoan, amount: number | null, billingVersion: number | null) {
   const expected = initialPaymentTotals(loan);
   const received = amount == null ? NaN : Math.round(amount * 100);
   if (received === expected.totalCents) {
-    return { initialPaymentAmount: received / 100, originationFeeCollected: expected.originationFeeCents / 100 };
+    return { initialPaymentAmount: received / 100, originationFeeCollected: expected.originationFeeCents / 100, brokerFeeCollectedCents: expected.brokerFeeCents };
+  }
+  if (billingVersion === 2 && received === expected.premiumCents + expected.originationFeeCents) {
+    return { initialPaymentAmount: received / 100, originationFeeCollected: expected.originationFeeCents / 100, brokerFeeCollectedCents: 0 };
   }
   if (billingVersion == null && received === expected.premiumCents) {
-    return { initialPaymentAmount: received / 100, originationFeeCollected: 0 };
+    return { initialPaymentAmount: received / 100, originationFeeCollected: 0, brokerFeeCollectedCents: 0 };
   }
-  throw new Error("Initial payment does not match the premium down payment and origination fee");
+  throw new Error("Initial payment does not match the premium down payment and upfront fees");
 }

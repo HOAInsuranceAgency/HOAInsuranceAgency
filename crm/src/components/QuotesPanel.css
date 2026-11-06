@@ -86,10 +86,6 @@
   vertical-align: middle;
 }
 
-.quotes-table tbody tr:last-child td {
-  border-bottom: 0;
-}
-
 .quotes-row-actions {
   display: flex;
   align-items: center;
@@ -101,28 +97,7 @@
 
 .quotes-row-actions .quote-action,
 .quotes-row-actions .quote-status-select {
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 6px 8px;
-  background-color: var(--card);
-  font: inherit;
-  font-size: 12px;
-  line-height: 1.2;
   white-space: nowrap;
-}
-
-.quotes-row-actions .quote-action:hover {
-  background: var(--blue-bg);
-  text-decoration: none;
-}
-
-.quotes-row-actions .quote-status-select {
-  padding-right: 30px;
-}
-
-.quote-status-select:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
 }
 
 .quotes-row-actions .quote-confirmation {
@@ -164,7 +139,6 @@
 .quote-authorization-check input {
   flex: 0 0 auto;
   margin: 3px 0 0;
-  accent-color: var(--accent);
 }
 
 .quote-flow-actions {

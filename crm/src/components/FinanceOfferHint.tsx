@@ -1,5 +1,7 @@
+import { Button } from "./ui/Button";
 import { useMemo } from "react";
-import { client, listAllPages, type Account } from "../lib/client";
+import { client, type Account } from "../lib/client";
+import { listAllPages } from "../../../shared/pagination";
 import type { Schema } from "../../amplify/data/resource";
 import { useAsyncResource } from "../lib/useAsyncResource";
 import {
@@ -8,15 +10,15 @@ import {
   jurisdictionFor,
   minPrincipalViolation,
   originationGate,
-} from "../lib/premiumFinance/gate";
-import { evaluateEligibility } from "../lib/premiumFinance/eligibility";
+} from "../../../shared/premiumFinance/gate";
+import { evaluateEligibility } from "../../../shared/premiumFinance/eligibility";
 import {
   buildQuote,
   PF_DEFAULT_APR,
   PF_DEFAULT_DOWN_PCT,
   PF_DEFAULT_MONTHS,
-} from "../lib/premiumFinance/quote";
-import { formatMoney } from "../lib/invoiceTotals";
+} from "../../../shared/premiumFinance/quote";
+import { formatMoney } from "../../../shared/invoiceTotals";
 
 type PfLoan = Schema["PfLoan"]["type"];
 
@@ -45,10 +47,12 @@ export function FinanceOfferHint({
   account,
   anchor,
   retailTotal,
+  brokerFee = 0,
 }: {
   account: Account;
   anchor: HintAnchor;
   retailTotal: number;
+  brokerFee?: number;
 }) {
   const j = useMemo(() => jurisdictionFor(account.state), [account.state]);
   const res = useAsyncResource(
@@ -78,10 +82,10 @@ export function FinanceOfferHint({
       return { hasOpinion: opinions, loans: loans as PfLoan[] };
     },
     [anchor.id, anchor.kind, j?.code, j?.status],
-    { initialData: null, errorMessage: "Couldn't check financing." }
+    { initialData: null, errorMessage: "Couldn't check financing." , live: true }
   );
 
-  if (res.error) return <p className="muted small">{res.error} <button type="button" disabled={res.loading} onClick={() => void res.refetch()}>Retry financing check</button></p>;
+  if (res.error) return <p className="muted small">{res.error} <Button type="button" disabled={res.loading} onClick={() => void res.refetch()}>Retry financing check</Button></p>;
   if (!res.loaded || !res.data) return null;
   const { hasOpinion, loans } = res.data;
 
@@ -173,7 +177,7 @@ export function FinanceOfferHint({
   return (
     <div className="offer-banner">
       <strong>Financing will be offered</strong> beside pay-in-full:{" "}
-      {formatMoney(preview.downPayment)} down (payment 1 of {PF_DEFAULT_MONTHS + 1}),
+      {formatMoney(preview.downPayment)} down (payment 1 of {PF_DEFAULT_MONTHS + 1}){brokerFee > 0 ? ` plus the ${formatMoney(brokerFee)} broker fee paid in full upfront` : ""},
       then {PF_DEFAULT_MONTHS} monthly payments of {formatMoney(preview.payment)} at{" "}
       {PF_DEFAULT_APR}% APR.
       {standing && standing.premium !== retailTotal

@@ -1,9 +1,15 @@
+import { assertGraphqlErrors } from '../lib/apiResponse';
+import { ControlSizeProvider } from "../components/ui/ControlDensity";
+import { Input } from "../components/ui/Input";
+import { Textarea } from "../components/ui/Textarea";
+import { Button } from "../components/ui/Button";
+import { Select } from "../components/ui/Select";
 import { useEffect, useState, useRef } from "react";
 import Front from "@frontapp/plugin-sdk";
 import LeadWorkflowPanel from "../components/LeadWorkflowPanel";
 import { client, friendlyError } from "../lib/client";
 import { communicationRequest as request } from "../lib/communications";
-import { listAllPages } from "../lib/pagination";
+import { listAllPages } from "../../../shared/pagination";
 
 export default function FrontSidebar() {
   const activeId = useRef<string | null>(null);
@@ -14,7 +20,7 @@ export default function FrontSidebar() {
   const [conversationId, setConversationId] = useState<string | null>(null), [status, setStatus] = useState("Select one conversation in Front.");
   const [search, setSearch] = useState(""), [matches, setMatches] = useState<{ id: string; name: string }[]>([]), [error, setError] = useState("");
   const [searchBusy, setSearchBusy] = useState(false), [searched, setSearched] = useState(false);
-  const [revision, setRevision] = useState(0), [purpose, setPurpose] = useState("PROSPECT");
+  const [revision, setRevision] = useState(0), [purpose, setPurpose] = useState<"PROSPECT" | "CARRIER">("PROSPECT");
   useEffect(() => {
     const subscription = Front.contextUpdates.subscribe(context => {
       const id = "conversation" in context && context.conversation ? context.conversation.id : null;
@@ -27,7 +33,7 @@ export default function FrontSidebar() {
     return () => { scope.current++; searchVersion.current++; smsFlight.current = null; linkFlight.current = null; subscription.unsubscribe(); };
   }, []);
   const open = (url: string) => { void Front.openUrl(url); };
-  return <main className="front-crm-sidebar">{status && <div className="card front-empty"><h1>Your lead workspace</h1><p>{status}</p><p className="muted small">Contact details, communication history, and the account salesperson will appear here.</p></div>}
+  return <ControlSizeProvider size="compact"><main className="front-crm-sidebar">{status && <div className="card front-empty"><h1>Your lead workspace</h1><p>{status}</p><p className="muted small">Contact details, communication history, and the account salesperson will appear here.</p></div>}
     {error && <p role="alert" className="error-text workflow-notice">{friendlyError(error, "Could not complete that action. Please try again.")}</p>}
     {conversationId && <><LeadWorkflowPanel key={`${conversationId}:${revision}`} conversationId={conversationId} onOpen={open} />
       <div key={conversationId} className="front-extra-tools"><details className="front-disclosure"><summary>Send a text <span className="front-summary-hint">From the shared main line</span></summary><p className="muted small">Prepare a draft, then review and send it in Front.</p>
@@ -38,19 +44,19 @@ export default function FrontSidebar() {
         smsFlight.current = attempt; setSmsBusy(true); setError("");
         const current = () => captured === scope.current && smsFlight.current === attempt;
         try {
-          const setup = await request<{ channelId: string; sender: string }>("smsComposer");
+          const setup = await request("smsComposer");
           if (!current()) return;
           await Front.createDraft({ channelId: setup.channelId as Parameters<typeof Front.createDraft>[0]["channelId"], to: [smsTo.trim()], content: { body: smsBody, type: "text" } });
         } catch(e) { if (current()) setError(`Could not open the text draft: ${String(e)}. Use Front's native composer and select the shared main line.`); }
         finally { if (current()) { smsFlight.current = null; setSmsBusy(false); } }
       }}>
-      <label className="field">Prospect number<input required type="tel" value={smsTo} onChange={e => setSmsTo(e.target.value)} placeholder="(617) 555-0123" /></label><label className="field">Message<textarea required rows={3} value={smsBody} onChange={e => setSmsBody(e.target.value)} placeholder="Write your message…" /></label><button disabled={smsBusy || !smsTo.trim() || !smsBody.trim()}>Open draft in Front</button></form></details>
+      <label className="field">Prospect number<Input required type="tel" value={smsTo} onChange={e => setSmsTo(e.target.value)} placeholder="(617) 555-0123" /></label><label className="field">Message<Textarea required rows={3} value={smsBody} onChange={e => setSmsBody(e.target.value)} placeholder="Write your message…" /></label><Button disabled={smsBusy || !smsTo.trim() || !smsBody.trim()}>Open draft in Front</Button></form></details>
       <details className="front-disclosure"><summary>Find or link a lead <span className="front-summary-hint">Choose the right CRM account</span></summary><form onSubmit={async e => { e.preventDefault(); const captured = conversationId, version = ++searchVersion.current, term = search.trim().toLocaleLowerCase(); setError(""); setMatches([]); setSearched(false); setSearchBusy(true); try {
         // DynamoDB's limit applies before filtering. Search every page, and
         // compare locally so capitalization cannot hide an existing account.
         const accounts = await listAllPages(async nextToken => {
           const p = await client.models.Account.list({ nextToken, limit: 200, selectionSet: ["id", "name"] });
-          if (p.errors?.length) throw new Error(p.errors[0].message);
+          assertGraphqlErrors(p);
           return p;
         });
         if (captured === activeId.current && version === searchVersion.current) {
@@ -59,10 +65,10 @@ export default function FrontSidebar() {
         }
       } catch(e) { if (captured === activeId.current && version === searchVersion.current) setError(String(e)); }
       finally { if (captured === activeId.current && version === searchVersion.current) setSearchBusy(false); }
-      }}><label className="field">Association or client name<input required value={search} onChange={e => { setSearch(e.target.value); searchVersion.current++; setMatches([]); setSearched(false); setSearchBusy(false); }} placeholder="Search by name" /></label><button disabled={searchBusy || !search.trim()}>{searchBusy ? "Searching…" : "Search CRM"}</button></form>
+      }}><label className="field">Association or client name<Input required value={search} onChange={e => { setSearch(e.target.value); searchVersion.current++; setMatches([]); setSearched(false); setSearchBusy(false); }} placeholder="Search by name" /></label><Button disabled={searchBusy || !search.trim()}>{searchBusy ? "Searching…" : "Search CRM"}</Button></form>
       {searched && !matches.length && <p role="status" className="muted small">No matching CRM leads or clients. Try another part of the name.</p>}
-      <label className="field">Conversation purpose<select value={purpose} onChange={e => setPurpose(e.target.value)}><option value="PROSPECT">Prospect</option><option value="CARRIER">Carrier</option></select></label>
-      {matches.map(m => <p key={m.id}><button className="link" disabled={linkBusy} onClick={async () => {
+      <label className="field">Conversation purpose<Select value={purpose} onChange={e => { if (e.target.value === "PROSPECT" || e.target.value === "CARRIER") setPurpose(e.target.value); }}><option value="PROSPECT">Prospect</option><option value="CARRIER">Carrier</option></Select></label>
+      {matches.map(m => <p key={m.id}><Button variant="link"  disabled={linkBusy} onClick={async () => {
         if (linkFlight.current) return;
         const attempt = {}, captured = scope.current, searchAtStart = searchVersion.current;
         linkFlight.current = attempt; setLinkBusy(true); setError("");
@@ -72,7 +78,7 @@ export default function FrontSidebar() {
           if (current()) { setRevision(n => n + 1); if (searchAtStart === searchVersion.current) setMatches([]); }
         } catch(e) { if (current()) setError(String(e)); }
         finally { if (current()) { linkFlight.current = null; setLinkBusy(false); } }
-      }}>{m.name}</button></p>)}
+      }}>{m.name}</Button></p>)}
       </details></div></>}
-  </main>;
+  </main></ControlSizeProvider>;
 }

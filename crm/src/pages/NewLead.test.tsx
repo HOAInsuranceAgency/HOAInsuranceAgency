@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -8,7 +8,9 @@ const h = vi.hoisted(() => ({
   contactCreate: vi.fn(),
   documentCreate: vi.fn(),
   documentUpdate: vi.fn(),
+  documentDelete: vi.fn(),
   upload: vi.fn(),
+  accountGet: vi.fn(),
 }));
 vi.mock("react-router-dom", () => ({ useNavigate: () => h.navigate, useSearchParams: () => [new URLSearchParams()] }));
 vi.mock("../lib/relationships", () => ({ loadPartyIds: async () => [], searchParties: async () => ({ items: [] }) }));
@@ -24,7 +26,8 @@ vi.mock("aws-amplify/auth", () => ({ getCurrentUser: async () => ({ userId: "act
 vi.mock("aws-amplify/data", () => ({
   generateClient: () => ({ models: {
     Contact: { create: h.contactCreate },
-    Document: { create: h.documentCreate, update: h.documentUpdate },
+    Account: { get: h.accountGet },
+    Document: { create: h.documentCreate, update: h.documentUpdate, delete: h.documentDelete },
   } }),
 }));
 import NewLead from "./NewLead";
@@ -36,7 +39,12 @@ beforeEach(() => {
   h.contactCreate.mockReset().mockResolvedValue({ data: { id: "contact-1" } });
   h.documentCreate.mockReset().mockResolvedValue({ data: { id: "document-1" } });
   h.documentUpdate.mockReset().mockResolvedValue({});
+  h.documentDelete.mockReset().mockResolvedValue({});
   h.upload.mockReset().mockReturnValue({ result: Promise.resolve() });
+  h.accountGet.mockReset().mockImplementation(async () => {
+    const fields = h.request.mock.calls.filter(([operation]) => operation === "createLead").at(-1)?.[1]?.fields ?? {};
+    return { data: { id: "new-lead", ...fields, propertyType: fields.propertyType ?? (fields.type === "PERSONAL" ? "INDIVIDUAL_UNIT_OWNER" : null) } };
+  });
 });
 
 it("recovers from a rejected contact write after creation without offering another create", async () => {
@@ -110,6 +118,43 @@ describe("new lead property classification", () => {
 });
 
 describe("new lead form", () => {
+  it.each([
+    ["Name (association / insured) *", "Name", 200],
+    ["Street address", "Street address", 500],
+    ["City", "City", 500],
+    ["Current agent / broker", "Current agent / broker", 500],
+    ["Notes", "Notes", 10000],
+  ])("rejects an oversized %s before creation and focuses the field", (label, errorLabel, limit) => {
+    render(<NewLead />); fillRequired();
+    const field = screen.getByLabelText(label);
+    fireEvent.change(field, { target: { value: "x".repeat(Number(limit) + 1) } });
+    fireEvent.click(screen.getByRole("button", { name: "Create lead" }));
+    expect(screen.getByRole("alert")).toHaveTextContent(`${errorLabel} must be ${Number(limit).toLocaleString("en-US")} characters or fewer.`);
+    expect(field).toHaveFocus();
+    if (field.closest("details")) expect(field.closest("details")).toHaveAttribute("open");
+    expect(h.request.mock.calls.filter(([op]) => op === "createLead")).toHaveLength(0);
+    expect(h.contactCreate).not.toHaveBeenCalled();
+  });
+
+  it("creates primary fields at their trimmed server limits and still saves the contact", async () => {
+    render(<NewLead />); fillRequired();
+    const values = {
+      "Name (association / insured) *": ` ${"n".repeat(200)} `,
+      "Street address": ` ${"a".repeat(500)} `,
+      City: "c".repeat(500),
+      "Current agent / broker": "b".repeat(500),
+      Notes: ` ${"t".repeat(10000)} `,
+      "Contact name": "Pat",
+    };
+    for (const [label, value] of Object.entries(values)) fireEvent.change(screen.getByLabelText(label), { target: { value } });
+    fireEvent.click(screen.getByRole("button", { name: "Create lead" }));
+    await waitFor(() => expect(h.navigate).toHaveBeenCalledWith("/accounts/new-lead?tab=documents"));
+    expect(h.request.mock.calls.find(([op]) => op === "createLead")![1].fields).toMatchObject({
+      name: "n".repeat(200), address: "a".repeat(500), city: "c".repeat(500), currentAgent: "b".repeat(500), notes: "t".repeat(10000),
+    });
+    expect(h.contactCreate).toHaveBeenCalledOnce();
+  });
+
   it("retains optional details and notes when their sections are closed before saving", async () => {
     render(<NewLead />);
     const property = disclosure("Property & current coverage");
@@ -216,7 +261,7 @@ describe("new lead form", () => {
     await submit();
     expect(h.documentCreate).toHaveBeenCalledTimes(1);
     expect(h.documentCreate).toHaveBeenCalledWith(expect.objectContaining({
-      entityType: "ACCOUNT", entityId: "new-lead", name: "budget.pdf",
+      entityType: "ACCOUNT", entityId: "new-lead", name: "budget.pdf", uploadedName: "budget.pdf",
       contentType: "application/pdf", sizeBytes: budget.size, ocrStatus: "PENDING",
     }));
     expect(h.documentUpdate).toHaveBeenCalledWith(expect.objectContaining({
@@ -228,7 +273,55 @@ describe("new lead form", () => {
     });
   });
 
-  it("prevents edits and duplicate submissions while saving, then allows a failed request to be retried", async () => {
+  it.each(["create", "link", "put"])("cleans a failed %s, continues the remaining staged files and preserves the created-lead recovery", async stage => {
+    if (stage === "create") h.documentCreate.mockResolvedValueOnce({ data: { id: "partial-doc" }, errors: [{ message: "Partial create failed" }] });
+    if (stage === "link") h.documentUpdate.mockResolvedValueOnce({ errors: [{ message: "Link failed" }] });
+    if (stage === "put") h.upload.mockImplementationOnce(() => ({ result: Promise.reject(new Error("PUT failed")) }));
+    render(<NewLead />);
+    fireEvent.click(disclosure("Notes & documents"));
+    const failed = new File(["first"], "_scan.pdf", { type: "application/pdf" });
+    const retained = new File(["second"], "budget.pdf", { type: "application/pdf" });
+    fireEvent.change(screen.getByLabelText("Add documents…"), { target: { files: [failed, retained] } });
+    fillRequired();
+    fireEvent.click(screen.getByRole("button", { name: /^Create lead/ }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("1 document didn't upload: _scan.pdf");
+    expect(h.documentDelete).toHaveBeenCalledExactlyOnceWith({ id: stage === "create" ? "partial-doc" : "document-1" });
+    expect(h.documentCreate).toHaveBeenCalledTimes(2);
+    expect(h.documentCreate.mock.calls[0][0]).toMatchObject({ name: "_scan.pdf", uploadedName: "_scan.pdf" });
+    expect(h.upload).toHaveBeenLastCalledWith({ path: "documents/ACCOUNT/new-lead/document-1/budget.pdf", data: retained, options: { contentType: "application/pdf" } });
+    if (stage === "put") expect(h.upload.mock.calls[0][0].path).toBe("documents/ACCOUNT/new-lead/document-1/scan.pdf");
+    expect(h.navigate).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "Create lead" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Go to the lead" }));
+    expect(h.navigate).toHaveBeenCalledWith("/accounts/new-lead?tab=documents");
+    expect(h.request.mock.calls.filter(([operation]) => operation === "createLead")).toHaveLength(1);
+  });
+
+  it.each([false, true])("finishes or cleans the started file after unmount without launching another upload (failure=%s)", async fails => {
+    let finish!: (value: { data: { id: string } }) => void;
+    h.documentCreate.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    if (fails) h.upload.mockImplementationOnce(() => ({ result: Promise.reject(new Error("PUT failed")) }));
+    const view = render(<NewLead />);
+    fireEvent.click(disclosure("Notes & documents"));
+    fireEvent.change(screen.getByLabelText("Add documents…"), { target: { files: [new File(["a"], "_scan.pdf"), new File(["b"], "next.pdf")] } });
+    fillRequired();
+    fireEvent.click(screen.getByRole("button", { name: /^Create lead/ }));
+    await waitFor(() => expect(h.documentCreate).toHaveBeenCalledOnce());
+    expect(screen.getByRole("button", { name: "Creating & uploading…" })).toBeDisabled();
+    fireEvent.submit(screen.getByRole("form", { name: "New lead" }));
+    expect(h.request.mock.calls.filter(([operation]) => operation === "createLead")).toHaveLength(1);
+    view.unmount();
+    await act(async () => { finish({ data: { id: "started-doc" } }); });
+
+    expect(h.documentUpdate).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ id: "started-doc", s3Key: "documents/ACCOUNT/new-lead/started-doc/scan.pdf" }));
+    expect(h.upload).toHaveBeenCalledOnce();
+    expect(h.documentDelete).toHaveBeenCalledTimes(fails ? 1 : 0);
+    expect(h.documentCreate).toHaveBeenCalledOnce();
+    expect(h.navigate).not.toHaveBeenCalled();
+  });
+
+  it("prevents duplicate submissions and requires review after retrying an uncertain creation", async () => {
     let failRequest!: (error: Error) => void;
     h.request.mockImplementation((operation: string) => operation === "team"
       ? Promise.resolve({ team: [] })
@@ -246,7 +339,11 @@ describe("new lead form", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Unable to create the lead right now.");
     expect(screen.getByLabelText("Name (association / insured) *")).toBeEnabled();
     h.request.mockImplementation(async (operation: string) => operation === "team" ? { team: [] } : { id: "new-lead" });
-    await submit();
+    fireEvent.click(screen.getByRole("button", { name: "Create lead" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("latest draft details have not been confirmed as saved");
+    expect(h.navigate).not.toHaveBeenCalled();
     expect(h.request.mock.calls.filter(([operation]) => operation === "createLead")).toHaveLength(2);
+    const attempts = h.request.mock.calls.filter(([operation]) => operation === "createLead");
+    expect(attempts[1][1].requestId).toBe(attempts[0][1].requestId);
   });
 });

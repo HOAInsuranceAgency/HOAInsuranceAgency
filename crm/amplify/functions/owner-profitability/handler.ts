@@ -1,8 +1,12 @@
+import { assertPreviewRead } from "../migration-readonly";
+import { apiFailure, decodeAwsJson } from '../../../../shared/apiResponse';
+import { sendOwnerWrite } from '../live-write';
 import { randomUUID } from 'node:crypto';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, GetCommand, QueryCommand, ScanCommand, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
 import { isActiveOwner, type RoleRequest } from '../crm-access/active-role';
 import { reportBatchGet } from '../communications/dashboardStore';
+import { collectCompletePages } from '../storage/pages';
 import {
   calculateEmployeeProfitability, validateCompensationRecord, validateProfitabilityWindow, isProfitabilityDate,
   type EmployeeCompensation, type ProfitabilityEmployee, type ProfitabilityPolicy,
@@ -37,19 +41,12 @@ function projection(fields: string[]) {
 /** Follow every page, including empty filtered pages. Fail rather than render
  * partial financial totals when the bounded snapshot cannot be completed. */
 async function collect(fetch: (cursor?: RecordData) => Promise<{ Items?: RecordData[]; LastEvaluatedKey?: RecordData }>) {
-  const rows: RecordData[] = [], seen = new Set<string>();
-  let cursor: RecordData | undefined;
-  for (let page = 0; page < 200; page++) {
+  return collectCompletePages<RecordData>(async cursor => {
     const result = await fetch(cursor);
-    rows.push(...result.Items ?? []);
-    if (rows.length > 25000) throw new Error('This report is too large to load safely. Contact support.');
-    cursor = result.LastEvaluatedKey;
-    if (!cursor || !Object.keys(cursor).length) return rows;
-    const key = JSON.stringify(cursor);
-    if (seen.has(key)) throw new Error('The report could not finish loading. Please retry.');
-    seen.add(key);
-  }
-  throw new Error('The report could not finish loading. Please retry.');
+    return { items: result.Items ?? [], next: result.LastEvaluatedKey };
+  }, { maxPages: 200, maxRows: 25000,
+    sizeError: () => new Error('This report is too large to load safely. Contact support.'),
+    error: () => new Error('The report could not finish loading. Please retry.') });
 }
 const profiles = () => collect(cursor => db.send(new ScanCommand({
   TableName: configured('USER_PROFILE_TABLE'), ConsistentRead: true, Limit: 250, ExclusiveStartKey: cursor,
@@ -63,7 +60,7 @@ export const repository: ProfitabilityRepository = {
     const results = await Promise.allSettled([
       profiles(),
       collect(cursor => db.send(new ScanCommand({ TableName: configured('POLICY_TABLE'), ConsistentRead: true, Limit: 250, ExclusiveStartKey: cursor,
-        ...projection(['id', 'accountId', 'effectiveDate', 'premium', 'commissionPct', 'status']),
+        ...projection(['id', 'accountId', 'effectiveDate', 'premium', 'commissionPct', 'brokerFee', 'brokerFeeRefunded', 'status']),
       }))),
       // A strongly consistent partition query includes just-saved pay settings
       // without reading the growing private audit history or relying on a GSI.
@@ -150,14 +147,15 @@ export const repository: ProfitabilityRepository = {
 type Event = { fieldName?: string; info?: { fieldName?: string }; identity?: unknown; request?: RoleRequest; arguments?: RecordData };
 export function createHandler(store: ProfitabilityRepository) {
   return async (event: Event) => {
+    assertPreviewRead((event.fieldName ?? event.info?.fieldName) === "ownerProfitability");
     try {
       const actor = text((event.identity as { sub?: string } | undefined)?.sub);
-      if (!actor || !isActiveOwner(event.identity, event.request)) throw new Error('Only Owners can access employee profitability and compensation.');
+      if (!actor || !isActiveOwner(event.identity, event.request)) throw Object.assign(new Error('Only Owners can access employee profitability and compensation.'), { name: 'Unauthorized' });
       const args = event.arguments ?? {}, field = event.fieldName ?? event.info?.fieldName;
       if (field === 'ownerProfitability') {
         const window = validateProfitabilityWindow(args.from, args.to);
         const source = await store.read();
-        const owners = new Set(source.policies.filter(policy => policy.status !== 'CANCELLED' &&
+        const owners = new Set(source.policies.filter(policy => (policy.status !== 'CANCELLED' || (policy.brokerFee ?? 0) > 0) &&
           (!isProfitabilityDate(policy.effectiveDate) || policy.effectiveDate >= window.from && policy.effectiveDate <= window.to))
           .map(policy => source.assignments[policy.accountId]?.salespersonId));
         const report = calculateEmployeeProfitability({ ...window, ...source,
@@ -166,10 +164,10 @@ export function createHandler(store: ProfitabilityRepository) {
         return { ok: true, employees: source.employees, compensations: source.compensations, report };
       }
       if (field === 'saveEmployeeCompensation') {
-        const terms = typeof args.terms === 'string' ? JSON.parse(args.terms) : args.terms;
+        const terms = decodeAwsJson(args.terms);
         const compensation = validateCompensationRecord({ userId: args.userId, version: args.version, terms });
         if (!/^[a-zA-Z0-9_-]{1,128}$/.test(compensation.userId)) throw new Error('Choose an existing employee.');
-        return { ok: true, compensation: await store.save(compensation, actor) };
+        return { ok: true, compensation: await sendOwnerWrite(store.save(compensation, actor)) };
       }
       throw new Error('Unknown owner reporting request.');
     } catch (error) {
@@ -177,7 +175,7 @@ export function createHandler(store: ProfitabilityRepository) {
       const message = kind === 'TransactionCanceledException' || kind === 'ConditionalCheckFailedException'
         ? 'Compensation changed. Refresh before saving.'
         : error instanceof Error ? error.message : 'Could not load owner reporting. Please retry.';
-      return { ok: false, error: message };
+      return apiFailure({ message, ...(kind === 'Unauthorized' ? { errorType: 'Unauthorized' } : {}) }, message);
     }
   };
 }

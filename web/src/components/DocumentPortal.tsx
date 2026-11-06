@@ -2,9 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   fetchPortalStatus,
   uploadPortalFile,
-  type PortalSection,
-  type PortalStatus,
 } from "../lib/uploadPortal";
+import type { PortalSection, PortalStatus } from "../../../shared/publicUploads";
 import { MAX_FILE_BYTES, UPLOAD_ACCEPT, rejectUpload, REJECTION_MESSAGE } from "../../../shared/leadUpload";
 import "./DocumentPortal.css";
 

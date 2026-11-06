@@ -1,8 +1,11 @@
+import { formatUsdDollars } from '../../../shared/money';
+import { liveUpdates } from "./liveUpdates";
+import { assertGraphqlErrors } from './apiResponse';
 import { generateClient } from "aws-amplify/data";
 import { getCurrentUser } from "aws-amplify/auth";
 import type { Schema } from "../../amplify/data/resource";
 import { urgencyBadge, LICENSE_EXPIRY_SCALE, type BadgeClass } from "./badges";
-import { LICENSE_STATUS_LABELS } from "./enums";
+import { LICENSE_STATUS_LABELS } from "../../../shared/enums";
 import { activeRoleHeaders } from "./activeRole";
 
 /**
@@ -71,35 +74,68 @@ export function currentActor(): Promise<string | null> {
  * argument object and changes nothing else, so the cast is describing what is
  * true rather than papering over what isn't.
  *
- * Only `create` and `update` are wrapped. A `delete` takes `{ id }` and has
+ * Only `create` and `update` receive attribution. All writes also hold a
+ * live-update barrier and publish metadata-only invalidations. A `delete` takes `{ id }` and has
  * nowhere to put an actor — the stream still sees the removal, and the row it
  * writes is attributed to "system". That is a real gap in attribution and it
  * is called out in the Activity tab rather than hidden.
  */
+/** A few legacy read APIs use GraphQL mutation fields. They must not create
+ * write barriers or invalidate themselves when polled. Unknown operations
+ * remain writes; this allowlist grants no API permissions. */
+function isReadOnlyMutation(field: string, argument: unknown): boolean {
+  const input = argument && typeof argument === 'object' ? argument as Record<string, unknown> : {};
+  if (field === 'crmFile') return input.operation === 'read' || input.operation === 'list';
+  if (field === 'brokerFeeAction') {
+    try {
+      const value = typeof input.input === 'string' ? JSON.parse(input.input) : input.input;
+      return value?.op === 'status';
+    } catch { return false; }
+  }
+  return false;
+}
+
 function withActor<T extends object>(raw: T): T {
   const models = (raw as { models: Record<string, Record<string, unknown>> }).models;
   const wrapped = new Proxy(models, {
     get(target, modelName: string) {
       const model = target[modelName];
-      if (!model || !ATTRIBUTED_MODELS.has(modelName)) return model;
+      if (!model) return model;
       return new Proxy(model, {
         get(m, op: string) {
           const fn = m[op];
-          if (typeof fn !== "function" || (op !== "create" && op !== "update")) {
+          if (typeof fn !== "function" || (op !== "create" && op !== "update" && op !== "delete")) {
             return fn;
           }
           return async (input: Record<string, unknown>, ...rest: unknown[]) => {
-            const actor = await currentActor();
-            const stamped = actor ? { ...input, lastWriteBy: actor } : input;
-            return (fn as (...a: unknown[]) => unknown).call(m, stamped, ...rest);
+            const release = liveUpdates.acquireBlock("write");
+            try {
+              const actor = op !== "delete" && ATTRIBUTED_MODELS.has(modelName) ? await currentActor() : null;
+              const stamped = actor ? { ...input, lastWriteBy: actor } : input;
+              return await (fn as (...a: unknown[]) => unknown).call(m, stamped, ...rest);
+            } finally { release(); liveUpdates.invalidate(); }
           };
         },
       });
     },
   });
+  const mutations = (raw as { mutations?: Record<string, unknown> }).mutations;
+  const wrappedMutations = mutations && new Proxy(mutations, {
+    get(target, prop: string) {
+      const fn = target[prop];
+      if (typeof fn !== 'function') return fn;
+      return async (...args: unknown[]) => {
+        if (isReadOnlyMutation(prop, args[0])) return fn.apply(target, args);
+        const release = liveUpdates.acquireBlock("write");
+        try { return await fn.apply(target, args); }
+        finally { release(); liveUpdates.invalidate(); }
+      };
+    },
+  });
   return new Proxy(raw, {
     get(target, prop: string) {
       if (prop === "models") return wrapped;
+      if (prop === "mutations") return wrappedMutations;
       return (target as Record<string, unknown>)[prop];
     },
   }) as T;
@@ -131,9 +167,6 @@ export type License = Schema["License"]["type"];
 export type AgencySettings = Schema["AgencySettings"]["type"];
 export type MarketingTask = Schema["MarketingTask"]["type"];
 
-/** The one paginated-list helper. Defined in pagination.ts so the Lambdas
- *  can import it without dragging generateClient() into their bundle. */
-export { listAllPages } from "./pagination";
 
 // Lines of authority are the licensing counterpart to lines of business —
 // they're what a state license actually grants. Alphabetical.
@@ -192,13 +225,6 @@ export function licenseHealth(l: {
     level: level === "overdue" ? "expired" : level === "calm" ? "ok" : level,
   };
 }
-
-export const US_STATES = [
-  "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA",
-  "KS","KY","LA","ME","MD","MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ",
-  "NM","NY","NC","ND","OH","OK","OR","PA","RI","SC","SD","TN","TX","UT","VT",
-  "VA","WA","WV","WI","WY","DC",
-];
 
 // Alphabetical.
 export const LINES_OF_BUSINESS = [
@@ -259,7 +285,8 @@ export function fmtNum(n: number | null | undefined): string {
 
 export function fmtMoney(n: number | null | undefined): string {
   if (n == null) return "—";
-  return n.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+  if (typeof n === "number") return formatUsdDollars(n, "whole");
+  return (n as number).toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 }
 
 export function fmtDate(d: string | null | undefined): string {
@@ -360,9 +387,7 @@ export function unwrap<T>(r: {
  * reporting it on every retry.
  */
 export function assertNoErrors(r: { errors?: { message: string }[] }): void {
-  if (r.errors?.length) {
-    throw new Error(r.errors.map((e) => e.message).join("; "));
-  }
+  assertGraphqlErrors(r);
 }
 
 // Keep the existing form API while previews import the pure module directly.

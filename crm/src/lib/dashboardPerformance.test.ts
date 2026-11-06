@@ -14,6 +14,16 @@ const carriers = [{ id: "carrier", name: "Test Carrier" }];
 const base = { entries, series, accounts, carriers, policies: [], quotes: [] };
 
 describe("performance by salesperson", () => {
+  it("keeps broker fees separate from premium and carrier commission and retains earned fees after cancellation", () => {
+    const result = performanceBySalesperson({ ...base, from: "2026-09-01", to: "2026-09-30", policies: [
+      { accountId: "a", effectiveDate: "2026-09-01", premium: 1000, commissionPct: 10, brokerFee: 500 },
+      { accountId: "a", effectiveDate: "2026-09-10", premium: 3000, commissionPct: 10, brokerFee: 200, brokerFeeRefunded: 50, status: "CANCELLED" },
+      { accountId: "b", effectiveDate: "2026-10-01", brokerFee: 900 },
+    ] });
+    expect(result.people[0]).toMatchObject({ commission: 100, brokerFees: 700, brokerFeeRefunds: 50, netBrokerFees: 650, agencyRevenue: 750, policies: 1, feePolicies: 2 });
+    expect(result.months[0].total).toBe(1000);
+    expect(result.people[1].brokerFees).toBe(0);
+  });
   it("reconciles all stacked totals and retains absent account, owner, carrier and date data", () => {
     const result = performanceBySalesperson({ ...base, policies: [
       { accountId: "a", carrierId: "carrier", effectiveDate: "2026-09-01", premium: 1000, commissionPct: 10 },

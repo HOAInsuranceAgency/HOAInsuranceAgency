@@ -1,3 +1,4 @@
+import { Table } from "./ui/Table";
 import type { AiFilledField } from "../lib/acord";
 
 /**
@@ -32,7 +33,7 @@ export default function AiFilledList({
         account's data. Check each one before the document leaves the agency.
       </p>
       <div className="table-wrap">
-        <table>
+        <Table>
           <thead>
             <tr>
               <th>Field</th>
@@ -49,7 +50,7 @@ export default function AiFilledList({
               </tr>
             ))}
           </tbody>
-        </table>
+        </Table>
       </div>
     </div>
   );

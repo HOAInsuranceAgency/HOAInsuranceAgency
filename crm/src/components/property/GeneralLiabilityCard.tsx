@@ -1,3 +1,8 @@
+import { Field } from "../ui/Field";
+import { Select } from "../ui/Select";
+import { Textarea } from "../ui/Textarea";
+import { Button } from "../ui/Button";
+import { Input } from "../ui/Input";
 import {
   client,
   fmtNum,
@@ -13,7 +18,7 @@ import {
   GL_DEDUCTIBLE_TYPE_OPTIONS,
   GL_PREMIUM_BASIS_LABELS,
   GL_PREMIUM_BASIS_OPTIONS,
-} from "../../lib/enums";
+} from "../../../../shared/enums";
 import ChildRowsCard from "../ChildRowsCard";
 import { SaveStatus } from "../SaveStatus";
 import { IntegerInput, MoneyInput, PercentInput, YesNoRadio } from "../inputs";
@@ -138,10 +143,9 @@ function GlApplicationCard({ accountId }: { accountId: string }) {
 
   const { form, setF } = gl.form;
   const money = (key: keyof GlForm, label: string) => (
-    <div className="field" key={key}>
-      <label>{label}</label>
-      <MoneyInput value={form[key]} onChange={(v) => setF(key, v)} />
-    </div>
+    <Field label={label} key={key}>
+      {control => <MoneyInput {...control} value={form[key]} onChange={(v) => setF(key, v)} />}
+    </Field>
   );
 
   return (
@@ -162,9 +166,8 @@ function GlApplicationCard({ accountId }: { accountId: string }) {
           <div className="form-grid">
             {money("eachOccurrence", "Each occurrence ($)")}
             {money("generalAggregate", "General aggregate ($)")}
-            <div className="field">
-              <label>General aggregate applies per</label>
-              <select
+            <Field label="General aggregate applies per">
+              {control => <Select {...control}
                 value={form.limitAppliesPer}
                 onChange={(e) => setF("limitAppliesPer", e.target.value)}
               >
@@ -174,8 +177,8 @@ function GlApplicationCard({ accountId }: { accountId: string }) {
                     {o.label}
                   </option>
                 ))}
-              </select>
-            </div>
+              </Select>}
+            </Field>
             {money("productsCompletedOpsAggregate", "Products / completed ops ($)")}
             {money("personalAdvInjury", "Personal & advertising injury ($)")}
             {money("damageToRentedPremises", "Damage to rented premises ($)")}
@@ -184,9 +187,8 @@ function GlApplicationCard({ accountId }: { accountId: string }) {
 
           <h3>Deductibles</h3>
           <div className="form-grid">
-            <div className="field">
-              <label>Applies</label>
-              <select
+            <Field label="Applies">
+              {control => <Select {...control}
                 value={form.deductibleType}
                 onChange={(e) => setF("deductibleType", e.target.value)}
               >
@@ -196,8 +198,8 @@ function GlApplicationCard({ accountId }: { accountId: string }) {
                     {o.label}
                   </option>
                 ))}
-              </select>
-            </div>
+              </Select>}
+            </Field>
             {money("propertyDamageDeductible", "Property damage ($)")}
             {money("bodilyInjuryDeductible", "Bodily injury ($)")}
           </div>
@@ -223,41 +225,37 @@ function GlApplicationCard({ accountId }: { accountId: string }) {
               </div>
             ))}
             {money("paidToSubcontractors", "Paid to sub-contractors ($)")}
-            <div className="field">
-              <label>Work sub-contracted</label>
-              <PercentInput
+            <Field label="Work sub-contracted">
+              {control => <PercentInput {...control}
                 value={form.workSubcontractedPct}
                 onChange={(v) => setF("workSubcontractedPct", v)}
-              />
-            </div>
-            <div className="field">
-              <label>Full-time employees</label>
-              <IntegerInput
+              />}
+            </Field>
+            <Field label="Full-time employees">
+              {control => <IntegerInput {...control}
                 value={form.fullTimeEmployees}
                 onChange={(v) => setF("fullTimeEmployees", v)}
-              />
-            </div>
-            <div className="field">
-              <label>Part-time employees</label>
-              <IntegerInput
+              />}
+            </Field>
+            <Field label="Part-time employees">
+              {control => <IntegerInput {...control}
                 value={form.partTimeEmployees}
                 onChange={(v) => setF("partTimeEmployees", v)}
-              />
-            </div>
-            <div className="field full">
-              <label>Description of work sub-contracted</label>
-              <textarea
+              />}
+            </Field>
+            <Field label="Description of work sub-contracted" className="full">
+              {control => <Textarea {...control}
                 rows={2}
                 value={form.subcontractedWorkDescription}
                 onChange={(e) => setF("subcontractedWorkDescription", e.target.value)}
-              />
-            </div>
+              />}
+            </Field>
           </div>
 
           <div className="form-actions">
-            <button className="primary" disabled={gl.status.busy} onClick={gl.save}>
+            <Button variant="primary"  disabled={gl.status.busy} onClick={gl.save}>
               {gl.status.busy ? "Saving…" : "Save general liability"}
-            </button>
+            </Button>
             <SaveStatus {...gl.status.status} />
           </div>
         </>
@@ -379,26 +377,23 @@ function ClassCodeFields({
     : undefined;
   return (
     <>
-      <div className="field">
-        <label>Class code</label>
-        <input
+      <Field label="Class code">
+        {control => <Input {...control}
           placeholder="62003"
           value={form.form.classCode}
           onChange={(e) => form.setF("classCode", e.target.value)}
           onKeyDown={enter}
-        />
-      </div>
-      <div className="field">
-        <label>Hazard #</label>
-        <input
+        />}
+      </Field>
+      <Field label="Hazard #">
+        {control => <Input {...control}
           value={form.form.hazardNumber}
           onChange={(e) => form.setF("hazardNumber", e.target.value)}
           onKeyDown={enter}
-        />
-      </div>
-      <div className="field">
-        <label>Premium basis</label>
-        <select
+        />}
+      </Field>
+      <Field label="Premium basis">
+        {control => <Select {...control}
           value={form.form.premiumBasis}
           onChange={(e) => form.setF("premiumBasis", e.target.value)}
         >
@@ -408,25 +403,23 @@ function ClassCodeFields({
               {o.label}
             </option>
           ))}
-        </select>
-      </div>
-      <div className="field">
-        <label>Exposure</label>
-        <IntegerInput
+        </Select>}
+      </Field>
+      <Field label="Exposure">
+        {control => <IntegerInput {...control}
           value={form.form.exposure}
           onChange={(v) => form.setF("exposure", v)}
           onKeyDown={enter}
-        />
-      </div>
-      <div className="field full">
-        <label>Description</label>
-        <input
+        />}
+      </Field>
+      <Field label="Description" className="full">
+        {control => <Input {...control}
           placeholder="Condominiums — residential"
           value={form.form.description}
           onChange={(e) => form.setF("description", e.target.value)}
           onKeyDown={enter}
-        />
-      </div>
+        />}
+      </Field>
     </>
   );
 }

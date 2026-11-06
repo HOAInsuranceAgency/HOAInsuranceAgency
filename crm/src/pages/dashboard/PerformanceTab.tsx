@@ -1,16 +1,21 @@
+import { SegmentedControl } from "../../components/ui/SegmentedControl";
 import { useMemo, useState } from "react";
 import { ReportDownload } from "../../components/ReportDownload";
+import { DateRangeFilter } from "../../components/DateRangeFilter";
+import { dateRangeError, type DateRange } from "../../lib/dateRange";
+import { useReportDateRange } from "../../lib/useReportDateRange";
 import { StackedBars, type ChartRow, type ChartSeries } from "../../components/StackedBars";
-import { client, fmtMoney, listAllPages, type Carrier, type Policy, type Quote } from "../../lib/client";
+import { client, fmtMoney, type Carrier, type Policy, type Quote } from "../../lib/client";
+import { listAllPages } from "../../../../shared/pagination";
 import { loadAssignments, type AssignmentData } from "../../lib/dashboardAssignments";
 import { salespersonSeries } from "../../lib/dashboardPeople";
 import { effectiveInWindow, performanceBySalesperson, type PerformanceMoneyRow } from "../../lib/dashboardPerformance";
 import { useAsyncResource } from "../../lib/useAsyncResource";
-import { isAuthorizationError } from "../../lib/authorizationError";
+import { isAuthorizationError } from "../../../../shared/authorizationError";
 import { allWithAuthorizationPriority } from "../../lib/allWithAuthorizationPriority";
-import { localToday, TabFrame } from "./common";
+import { TabFrame } from "./common";
 
-type PerformancePolicy = Pick<Policy, "id" | "accountId" | "carrierId" | "effectiveDate" | "premium" | "commissionPct" | "status">;
+type PerformancePolicy = Pick<Policy, "id" | "accountId" | "carrierId" | "effectiveDate" | "premium" | "commissionPct" | "brokerFee" | "brokerFeeRefunded" | "status">;
 type PerformanceQuote = Pick<Quote, "id" | "accountId" | "effectiveDate" | "status">;
 interface PerformanceData {
   policies: PerformancePolicy[];
@@ -20,44 +25,22 @@ interface PerformanceData {
   commercial: AssignmentData;
 }
 const EMPTY: PerformanceData = { policies: [], carriers: [], accounts: [], quotes: [], commercial: { entries: {}, team: [], accounts: [] } };
-type Preset = "all" | "ytd" | "12mo" | "custom";
 const DECIDED_STATUSES = ["BOUND", "LOST", "DECLINED"] as const;
 
 export default function PerformanceTab() {
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
-  const [preset, setPreset] = useState<Preset>("all");
+  const [range, setRange] = useState<DateRange>({ from: '', to: '' });
   const [excludeCancelled, setExcludeCancelled] = useState(true);
-  const invalidRange = Boolean(from && to && from > to);
-
-  function applyPreset(value: Exclude<Preset, "custom">) {
-    setPreset(value);
-    const today = localToday();
-    if (value === "all") { setFrom(""); setTo(""); }
-    else if (value === "ytd") { setFrom(`${today.slice(0, 4)}-01-01`); setTo(today); }
-    else {
-      // Clamp Feb 29 to Feb 28 when the preceding year is not a leap year.
-      const year = Number(today.slice(0, 4)) - 1;
-      const month = Number(today.slice(5, 7));
-      const day = Math.min(Number(today.slice(8, 10)), new Date(year, month, 0).getDate());
-      setFrom(`${year}-${today.slice(5, 7)}-${String(day).padStart(2, "0")}`);
-      setTo(today);
-    }
-  }
+  const invalidRange = !!dateRangeError(range, { allowOpenEnded: true });
+  const applied = useReportDateRange(range, !invalidRange);
 
   return <>
-    <div className="chip-row" style={{ marginBottom: 12, flexWrap: "wrap" }}>
-      {([["all", "All time"], ["ytd", "YTD"], ["12mo", "Last 12 mo"]] as const).map(([value, label]) => <button key={value} className={preset === value ? "on" : ""} onClick={() => applyPreset(value)}>{label}</button>)}
-      <button className={preset === "custom" ? "on" : ""} onClick={() => setPreset("custom")}>Custom…</button>
-      <button aria-pressed={excludeCancelled} className={excludeCancelled ? "on" : ""} onClick={() => setExcludeCancelled(value => !value)}>Exclude cancelled</button>
+    <DateRangeFilter label="Policy effective dates" value={range} onChange={setRange} allowOpenEnded />
+    <div style={{ marginBottom: 12 }}>
+      <SegmentedControl label="Policy status" value={excludeCancelled ? 'exclude' : undefined} onChange={() => setExcludeCancelled(value => !value)}
+        items={[{ value: 'exclude', label: 'Exclude cancelled' }]} />
     </div>
-    <p className="muted small">Policy and quote effective dates · current account salesperson. Unassigned records stay in the totals.</p>
-    {preset === "custom" && <div className="card"><div className="filter-row">
-      <div className="field"><label htmlFor="dashboard-effective-from">Effective from</label><input id="dashboard-effective-from" type="date" value={from} onChange={event => setFrom(event.target.value)} /></div>
-      <div className="field"><label htmlFor="dashboard-effective-to">Effective to</label><input id="dashboard-effective-to" type="date" value={to} onChange={event => setTo(event.target.value)} /></div>
-    </div></div>}
-    {invalidRange ? <p className="error-text" role="alert">The start date must be on or before the end date.</p> :
-      <PerformanceSnapshot key={`${from}|${to}|${excludeCancelled}`} from={from} to={to} excludeCancelled={excludeCancelled} />}
+    <p className="muted small">Policy and quote effective dates · current account salesperson. Unassigned records stay in the totals. Earned broker fees remain after cancellation; recorded refunds reduce fee revenue.</p>
+    {applied ? <PerformanceSnapshot key={`${applied.from}|${applied.to}|${excludeCancelled}`} {...applied} excludeCancelled={excludeCancelled} /> : !invalidRange && <p className="muted small">Loading…</p>}
   </>;
 }
 
@@ -69,8 +52,8 @@ function PerformanceSnapshot({ from, to, excludeCancelled }: { from: string; to:
     const [rawPolicies, carriers, rawQuotes] = await allWithAuthorizationPriority([
       listAllPages(nextToken => client.models.Policy.list({
         nextToken,
-        ...(from || to || excludeCancelled ? { filter: { ...dateFilter, ...(excludeCancelled ? { status: { ne: "CANCELLED" as const } } : {}) } } : {}),
-        selectionSet: ["id", "accountId", "carrierId", "effectiveDate", "premium", "commissionPct", "status"],
+        ...(from || to || excludeCancelled ? { filter: { ...dateFilter, ...(excludeCancelled ? { or: [{ status: { ne: "CANCELLED" as const } }, { brokerFee: { gt: 0 } }] } : {}) } } : {}),
+        selectionSet: ["id", "accountId", "carrierId", "effectiveDate", "premium", "commissionPct", "brokerFee", "brokerFeeRefunded", "status"],
       })),
       listAllPages(nextToken => client.models.Carrier.list({ nextToken, selectionSet: ["id", "name"] })),
       listAllPages(nextToken => client.models.Quote.list({
@@ -81,16 +64,16 @@ function PerformanceSnapshot({ from, to, excludeCancelled }: { from: string; to:
     ]);
     // Scope account/workflow reads to rows that actually contribute. This also
     // preserves undated all-time production without requesting every CRM account.
-    const policies = rawPolicies.filter(policy => (!excludeCancelled || policy.status !== "CANCELLED") && effectiveInWindow(policy.effectiveDate, from, to));
+    const policies = rawPolicies.filter(policy => (!excludeCancelled || policy.status !== "CANCELLED" || (policy.brokerFee ?? 0) > 0) && effectiveInWindow(policy.effectiveDate, from, to));
     const quotes = rawQuotes.filter(quote => DECIDED_STATUSES.some(status => status === quote.status) && effectiveInWindow(quote.effectiveDate, from, to));
     const commercial = await loadAssignments([...new Set([...policies, ...quotes].map(row => row.accountId))]);
     return { policies, carriers, quotes, accounts: commercial.accounts, commercial };
-  }, [from, to, excludeCancelled], { initialData: EMPTY, errorMessage: "Failed to load dashboard", clearDataOnError: isAuthorizationError });
+  }, [from, to, excludeCancelled], { initialData: EMPTY, errorMessage: "Failed to load dashboard", clearDataOnError: isAuthorizationError , live: true });
   const series = useMemo(() => salespersonSeries(res.data.commercial), [res.data.commercial]);
   const result = useMemo(() => performanceBySalesperson({
     ...res.data, entries: res.data.commercial.entries, series, from, to, excludeCancelled,
   }), [res.data, series, from, to, excludeCancelled]);
-  const exportFilters = `${from || "Beginning"} through ${to || "all dates"} · policy/quote effective dates · current account salesperson · cancelled policies ${excludeCancelled ? "excluded" : "included"} · ${result.missingCommissionPct} policies missing commission %`;
+  const exportFilters = `${from || "Beginning"} through ${to || "all dates"} · policy/quote effective dates · current account salesperson · cancelled premium/carrier commission ${excludeCancelled ? "excluded" : "included"}; earned broker fees retained and refunds deducted · ${result.missingCommissionPct} policies missing commission %`;
   const commissionRows: ChartRow[] = result.people.map(person => ({ key: person.key, label: person.label, values: { [person.key]: person.commission } }));
   const decidedPeople = result.people.filter(person => person.winRate != null);
   const noDecisions = result.people.filter(person => person.winRate == null);
@@ -110,6 +93,18 @@ function PerformanceSnapshot({ from, to, excludeCancelled }: { from: string; to:
           <p className="muted small">Bound ÷ decided quotes (bound, lost or declined). Open quotes are excluded.</p>
           <StackedBars label="Quote win rate per person" rows={winRateRows} series={series} formatValue={value => `${Math.round(value)}%`} maxValue={100} />
           {noDecisions.length > 0 && <p className="muted small">No decided quotes: {noDecisions.map(person => person.label).join(", ")}.</p>}
+        </div>
+      </div>
+      <div className="dashboard-chart-grid">
+        <div className="card">
+          <div className="card-head"><h2>Broker fees per person</h2><ReportDownload report={{ title: "Broker fees per person", filters: exportFilters, sections: [{ title: "Broker fees", columns: ["Salesperson", "Booked broker fees (USD)", "Refunded fees (USD)", "Net fee revenue (USD)", "Policies with a fee"], rows: result.people.map(person => [person.label, person.brokerFees, person.brokerFeeRefunds, person.netBrokerFees, person.feePolicies]) }] }} /></div>
+          <p className="muted small">Booked fees less recorded refunds, by policy effective date. Includes fees retained on cancelled policies.</p>
+          <StackedBars label="Broker fees per person" rows={result.people.map(person => ({ key: person.key, label: person.label, values: { [person.key]: person.netBrokerFees } }))} series={series} formatValue={fmtMoney} />
+        </div>
+        <div className="card">
+          <div className="card-head"><h2>Total agency revenue per person</h2><ReportDownload report={{ title: "Total agency revenue per person", filters: exportFilters, sections: [{ title: "Agency revenue", columns: ["Salesperson", "Estimated carrier commission (USD)", "Net broker fees (USD)", "Total agency revenue (USD)"], rows: result.people.map(person => [person.label, person.commission, person.netBrokerFees, person.agencyRevenue]) }] }} /></div>
+          <p className="muted small">Estimated carrier commission + net broker fees, before producer compensation. Actual producer earnings are in Commissions.</p>
+          <StackedBars label="Total agency revenue per person" rows={result.people.map(person => ({ key: person.key, label: person.label, values: { [person.key]: person.agencyRevenue } }))} series={series} formatValue={fmtMoney} />
         </div>
       </div>
       {result.missingCommissionPct > 0 && <p className="muted small">{result.missingCommissionPct} {result.missingCommissionPct === 1 ? "policy has" : "policies have"} no commission percentage and {result.missingCommissionPct === 1 ? "counts" : "count"} as $0 in the commission charts.</p>}
