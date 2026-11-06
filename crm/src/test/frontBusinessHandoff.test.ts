@@ -6,7 +6,7 @@ const fee = vi.hoisted(() => ({ prepare: vi.fn(), disclosure: vi.fn() }));
 vi.mock('../../amplify/functions/broker-fees/agreements', () => ({ prepareBrokerFeeAgreement: fee.prepare }));
 vi.mock('../../amplify/functions/broker-fees/store', () => ({ getAgreement: async () => ({ id: 'bfa_test', quotes: [], stateForms: [] }) }));
 vi.mock('../../amplify/functions/broker-fees/disclosurePdf', () => ({ createBrokerFeeDisclosurePdf: fee.disclosure }));
-const h=vi.hoisted(()=>({rows:new Map<string,any>(),models:new Map<string,any>(),objects:new Map<string,Uint8Array>(),messages:new Map<string,any>(),front:vi.fn(),pdf:vi.fn(),identity:vi.fn(),enabled:vi.fn(),recipients:vi.fn(),attachment:vi.fn(),beforeCommit:undefined as undefined|(()=>void),posts:0,signatureHtml:'',threadSubject:undefined as string|undefined,conversationResolver:undefined as undefined|((id:string)=>Promise<{id:string;subject?:string}>)}));
+const h=vi.hoisted(()=>({rows:new Map<string,any>(),models:new Map<string,any>(),objects:new Map<string,Uint8Array>(),messages:new Map<string,any>(),front:vi.fn(),pdf:vi.fn(),identity:vi.fn(),enabled:vi.fn(),recipients:vi.fn(),attachment:vi.fn(),documents:vi.fn(),beforeCommit:undefined as undefined|(()=>void),posts:0,signatureHtml:'',threadSubject:undefined as string|undefined,conversationResolver:undefined as undefined|((id:string)=>Promise<{id:string;subject?:string}>)}));
 vi.mock('@aws-sdk/client-s3',()=>({S3Client:class{async send(command:any){const p=command.input;if(command.constructor.name==='PutObjectCommand'){h.objects.set(p.Key,new Uint8Array(p.Body));return{};}const body=h.objects.get(p.Key);if(!body)throw new Error('Missing object');return{ContentLength:body.length,Body:{transformToByteArray:async()=>body}};}},GetObjectCommand:class GetObjectCommand{constructor(public input:any){}},PutObjectCommand:class PutObjectCommand{constructor(public input:any){}}}));
 vi.mock('../../amplify/functions/communications/config',()=>({config:async()=>({environment:'main'})}));
 vi.mock('../../amplify/functions/communications/producerEmail',()=>({resolveProducerEmail:h.identity}));
@@ -15,7 +15,7 @@ vi.mock('../../amplify/functions/crm-access/user-status',()=>({activeTeamUserChe
 vi.mock('../../amplify/functions/communications/businessProposalPdf',()=>({createBusinessProposalPdf:h.pdf}));
 vi.mock('../../amplify/functions/communications/attachments',()=>({downloadFrontAttachment:h.attachment}));
 vi.mock('../../amplify/functions/communications/providers',async original=>({...await original<typeof import('../../amplify/functions/communications/providers')>(),front:h.front,assertRecipient:h.recipients,permittedConversation:async(id:string)=>h.conversationResolver?h.conversationResolver(id):({id:id==='cnv_old'?'cnv_client':id,subject:h.threadSubject})}));
-vi.mock('../../amplify/functions/communications/data',()=>({dataClient:async()=>({models:Object.fromEntries(['Account','Quote','Carrier','Document','Certificate'].map(model=>[model,{get:async({id}:{id:string})=>({data:h.models.get(`${model}:${id}`)}),listDocumentByEntityId:async({entityId}:{entityId:string})=>({data:[...h.models.entries()].filter(([key,value])=>key.startsWith('Document:') && value.entityId===entityId).map(([,v])=>v)})}]))})}));
+vi.mock('../../amplify/functions/communications/data',()=>({dataClient:async()=>({models:Object.fromEntries(['Account','Quote','Carrier','Document','Certificate'].map(model=>[model,{get:async({id}:{id:string})=>({data:h.models.get(`${model}:${id}`)}),listDocumentByEntityId:h.documents}]))})}));
 vi.mock('../../amplify/functions/communications/store',async original=>{
   const actual=await original<typeof import('../../amplify/functions/communications/store')>();
   const execute=async(writes:any[])=>{
@@ -57,6 +57,7 @@ beforeEach(()=>{
   fee.prepare.mockResolvedValue({ url: 'https://agency.example.test/broker-fee/?t=client-fee-token', agreementId: 'bfa_test' });
   fee.disclosure.mockResolvedValue({ bytes: PDF, filename: 'Broker fee disclosure.pdf', contentType: 'application/pdf' });
   const account={id:'a1',name:'Willow HOA',updatedAt:NOW,contacts:async()=>({data:[{name:'Current manager',email:'client@example.com',isPrimary:true},{name:'Former manager',email:'former@example.com',validUntil:'2026-11-01'}]}),quotes:async()=>({data:[h.models.get('Quote:q1')]}),certificates:async()=>({data:[...h.models.entries()].filter(([k])=>k.startsWith('Certificate:')).map(([,v])=>v)})};
+  h.documents.mockImplementation(async({entityId}:{entityId:string})=>({data:[...h.models.entries()].filter(([key,value])=>key.startsWith('Document:') && value.entityId===entityId).map(([,value])=>value)}));
   h.models.set('Account:a1',account);h.models.set('Quote:q1',{id:'q1',accountId:'a1',carrierId:'c1',status:'QUOTED',premium:1200,commissionPct:15,notes:'PRIVATE NOTES',lines:['Property'],effectiveDate:'2026-12-01',expirationDate:'2027-12-01',updatedAt:NOW});h.models.set('Carrier:c1',{id:'c1',name:'Test Carrier',updatedAt:NOW});
   h.rows.set('workflow:a1',row('WORKFLOW','workflow:a1',{accountId:'a1',salespersonId:'actor'},{accountId:'a1'}));
   h.rows.set('eligibility:actor',row('ELIGIBILITY','eligibility:actor',{userId:'actor',enabled:true,salesperson:false,frontId:'tea_actor'}));
@@ -76,6 +77,111 @@ beforeEach(()=>{
   });
 });
 afterEach(()=>{vi.useRealTimers();});
+function contextReaders() {
+  const contacts = vi.fn().mockResolvedValue({ data: [] }), quotes = vi.fn().mockResolvedValue({ data: [] });
+  const certificates = vi.fn().mockResolvedValue({ data: [] });
+  Object.assign(h.models.get('Account:a1'), { contacts, quotes, certificates });
+  h.documents.mockResolvedValue({ data: [] });
+  return { contacts, quotes, documents: h.documents, certificates };
+}
+const contextErrors = {
+  contacts: 'Could not load current account contacts', quotes: 'Could not load package quotes',
+  documents: 'Could not load account PDFs', certificates: 'Could not load certificates',
+} as const;
+
+describe('complete business-delivery context reads', () => {
+  it('includes all four paginated relations, following empty pages and preserving source-selection filters', async () => {
+    const readers = contextReaders(), quote = h.models.get('Quote:q1');
+    readers.contacts.mockResolvedValueOnce({ data: [], nextToken: 'contacts-next' }).mockResolvedValueOnce({ data: [
+      { name: 'Current manager', email: 'client@example.com' }, { name: 'Former manager', email: 'former@example.com', validUntil: '2026-11-01' },
+    ] });
+    readers.quotes.mockResolvedValueOnce({ data: [], nextToken: 'quotes-next' }).mockResolvedValueOnce({ data: [quote] });
+    const document = { id: 'd1', entityType: 'ACCOUNT', entityId: 'a1', name: 'Carrier.pdf', category: 'OTHER', contentType: 'application/pdf', s3Key: 'documents/ACCOUNT/a1/d1/carrier.pdf' };
+    readers.documents.mockResolvedValueOnce({ data: [{ ...document, id: 'foreign', entityId: 'a2' }], nextToken: 'documents-next' })
+      .mockResolvedValueOnce({ data: [document, { ...document, id: 'unsafe', s3Key: 'documents/ACCOUNT/a1/unsafe/../carrier.pdf' }] });
+    readers.certificates.mockResolvedValueOnce({ data: [{ id: 'wrong', s3Key: 'certificates/a2/wrong.pdf' }], nextToken: 'certificates-next' })
+      .mockResolvedValueOnce({ data: [{ id: 'cert1', certificateNumber: 'C-1', holderName: 'Board', s3Key: 'certificates/a1/cert1.pdf' }] });
+    const context = await businessDeliveryContext({ accountId: 'a1' }, 'actor');
+    expect(context.recipientSuggestions).toEqual([{ email: 'client@example.com', label: 'Current manager' }]);
+    expect(context.choices).toEqual([
+      { kind: 'PACKAGE', recordId: 'option', label: 'Reviewed option' },
+      { kind: 'DOCUMENT', recordId: 'd1', label: 'Carrier.pdf' },
+      { kind: 'CERTIFICATE', recordId: 'cert1', label: 'Certificate C-1 — Board' },
+    ]);
+    expect(context.documents).toEqual([expect.objectContaining({ id: 'd1', name: 'Carrier.pdf' })]);
+    for (const name of ['contacts', 'quotes', 'certificates'] as const) {
+      expect(readers[name]).toHaveBeenNthCalledWith(1, { nextToken: undefined, limit: 100 });
+      expect(readers[name]).toHaveBeenNthCalledWith(2, { nextToken: `${name}-next`, limit: 100 });
+    }
+    expect(readers.documents).toHaveBeenNthCalledWith(2, { entityId: 'a1' }, { filter: { entityType: { eq: 'ACCOUNT' } }, nextToken: 'documents-next', limit: 100 });
+    expect(h.front).not.toHaveBeenCalled();
+    expect(h.posts).toBe(0);
+  });
+
+  it.each(Object.keys(contextErrors) as (keyof typeof contextErrors)[])('rejects a later %s error instead of publishing an incomplete context', async name => {
+    const readers = contextReaders();
+    readers[name].mockResolvedValueOnce({ data: [], nextToken: 'next' })
+      .mockResolvedValueOnce({ data: [{ id: 'partial' }], errors: [{ message: 'GraphQL source failed' }] });
+    await expect(businessDeliveryContext({ accountId: 'a1' }, 'actor')).rejects.toMatchObject({
+      message: contextErrors[name], code: 'BUSINESS_DRAFT_NOT_DISPATCHED',
+    });
+    expect(readers[name]).toHaveBeenCalledTimes(2);
+    expect(h.posts).toBe(0);
+  });
+
+  it.each(Object.keys(contextErrors) as (keyof typeof contextErrors)[])('stops a repeated %s cursor without a third provider read', async name => {
+    const readers = contextReaders();
+    readers[name].mockResolvedValueOnce({ data: [], nextToken: 'same' })
+      .mockResolvedValueOnce({ data: [], nextToken: 'same' })
+      .mockRejectedValue(new Error('The old loop would continue reading'));
+    await expect(businessDeliveryContext({ accountId: 'a1' }, 'actor')).rejects.toMatchObject({
+      message: contextErrors[name], code: 'BUSINESS_DRAFT_NOT_DISPATCHED',
+    });
+    expect(readers[name]).toHaveBeenCalledTimes(2);
+  });
+
+  it('shares the page cap across relations rather than restarting it for each collection', async () => {
+    const readers = contextReaders(); let page = 0;
+    readers.contacts.mockImplementation(async () => ({ data: [], nextToken: ++page < 99 ? `page-${page}` : undefined }));
+    await expect(businessDeliveryContext({ accountId: 'a1' }, 'actor')).rejects.toMatchObject({
+      message: contextErrors.documents, code: 'BUSINESS_DRAFT_NOT_DISPATCHED',
+    });
+    expect(readers.contacts).toHaveBeenCalledTimes(99);
+    expect(readers.quotes).toHaveBeenCalledTimes(1);
+    expect(readers.documents).not.toHaveBeenCalled();
+    expect(readers.certificates).not.toHaveBeenCalled();
+  });
+
+  it('rejects a slow final page using the aggregate context deadline', async () => {
+    const readers = contextReaders();
+    for (const [name, elapsed] of [['contacts', 2000], ['quotes', 3000], ['documents', 2500], ['certificates', 1000]] as const) {
+      readers[name].mockImplementation(async () => { vi.setSystemTime(Date.now() + elapsed); return { data: [] }; });
+    }
+    await expect(businessDeliveryContext({ accountId: 'a1' }, 'actor')).rejects.toMatchObject({
+      message: contextErrors.certificates, code: 'BUSINESS_DRAFT_NOT_DISPATCHED',
+    });
+    for (const reader of Object.values(readers)) expect(reader).toHaveBeenCalledTimes(1);
+  });
+
+  it('starts the shared read budget after optional mailbox lookup while keeping senderError nonblocking', async () => {
+    const readers = contextReaders();
+    h.identity.mockImplementation(async () => { vi.setSystemTime(Date.now() + 15_000); throw new Error('Personal mailbox needs setup'); });
+    for (const reader of Object.values(readers)) reader.mockImplementation(async () => { vi.setSystemTime(Date.now() + 1000); return { data: [] }; });
+    const context = await businessDeliveryContext({ accountId: 'a1' }, 'actor');
+    expect(context.senderError).toBe('Personal mailbox needs setup');
+    expect(context.sender).toBeUndefined();
+    for (const reader of Object.values(readers)) expect(reader).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['reassigned', 'deleted'])('preserves %s account denial before any relation read', async state => {
+    const readers = contextReaders();
+    if (state === 'reassigned') h.rows.get('workflow:a1').data.salespersonId = 'other';
+    else h.rows.set('deleted-account:a1', row('DELETED', 'deleted-account:a1', {}));
+    await expect(businessDeliveryContext({ accountId: 'a1' }, 'actor')).rejects.toMatchObject({ code: 'BUSINESS_DRAFT_NOT_DISPATCHED' });
+    for (const reader of Object.values(readers)) expect(reader).not.toHaveBeenCalled();
+    expect(h.identity).not.toHaveBeenCalled();
+  });
+});
 describe('reviewed Front business handoff',()=>{
   it.each([false, true])('includes the fee disclosure in the same quote email and verifies its signature link (changed: %s)', async changed => {
     const quote = h.models.get('Quote:q1'); quote.brokerFee = 250; quote.billType = 'AGENCY';

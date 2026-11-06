@@ -1,4 +1,4 @@
-import { collectCompletePages } from '../storage/pages';
+import { collectCompletePages, type ReadBudget } from '../storage/pages';
 
 // Complete communication reads must fit the interactive API's 30-second budget
 // as well as the worker. History gets more bytes than profiles and model rows;
@@ -11,24 +11,28 @@ const limits = {
 type ReadScope = keyof typeof limits;
 type Page<T> = { items: T[]; nextToken?: string | null };
 type ModelPage<T> = { data: T[]; nextToken?: string | null; errors?: readonly unknown[] };
+type ReadOptions = { budget?: ReadBudget; error?: (message: string) => Error };
+export const createCompleteReadBudget = (): ReadBudget => ({ pages: 0, rows: 0, bytes: 0, deadline: Date.now() + 8_000 });
 
 /** Page-returning APIs and resumable workers keep their own contracts. */
 export function readCompleteRows<T>(
-  fetch: (cursor?: string) => Promise<Page<T>>, scope: ReadScope, message: string,
+  fetch: (cursor?: string) => Promise<Page<T>>, scope: ReadScope, message: string, options: ReadOptions = {},
 ): Promise<T[]> {
+  const budget = options.budget ?? createCompleteReadBudget(), failure = () => options.error?.(message) ?? new Error(message);
   return collectCompletePages<T, string>(async cursor => {
     const page = await fetch(cursor);
+    if (budget.deadline != null && Date.now() > budget.deadline) throw failure();
     return { items: page.items, next: page.nextToken };
-  }, { ...limits[scope], budget: { pages: 0, rows: 0, bytes: 0, deadline: Date.now() + 8_000 }, error: () => new Error(message) });
+  }, { ...limits[scope], budget, error: failure });
 }
 
 /** Amplify reports page errors as values; keep the caller's existing message. */
 export function readCompleteModels<T>(
-  fetch: (cursor?: string) => Promise<ModelPage<T>>, scope: 'relations' | 'team', message: string,
+  fetch: (cursor?: string) => Promise<ModelPage<T>>, scope: 'relations' | 'team', message: string, options: ReadOptions = {},
 ): Promise<T[]> {
   return readCompleteRows(async cursor => {
     const page = await fetch(cursor);
-    if (page.errors?.length) throw new Error(message);
+    if (page.errors?.length) throw options.error?.(message) ?? new Error(message);
     return { items: page.data, nextToken: page.nextToken };
-  }, scope, message);
+  }, scope, message, options);
 }

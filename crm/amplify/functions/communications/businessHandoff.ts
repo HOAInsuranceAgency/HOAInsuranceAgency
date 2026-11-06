@@ -14,12 +14,13 @@ import { front, assertRecipient, permittedConversation, htmlEscape, messageConve
 import { get, row, save, commit, put, check, absent, hash, canonical, query, conflict, type Row, type Write } from './store';
 import { activeTeamUserCheck } from '../crm-access/user-status';
 import { downloadFrontAttachment } from './attachments';
-import { allowedDocument, deliveryAccount, deliveryId, loadDeliverySource, deliverySourceChecks, businessValidation, type Quote, type Document } from './businessDeliverySources';
+import { allowedDocument, deliveryAccount, deliveryId, loadDeliverySource, deliverySourceChecks, businessValidation } from './businessDeliverySources';
 import { createBusinessProposalPdf } from './businessProposalPdf';
 import { prepareBrokerFeeAgreement } from '../broker-fees/agreements';
 import { getAgreement } from '../broker-fees/store';
 import { createBrokerFeeDisclosurePdf } from '../broker-fees/disclosurePdf';
 import { brokerFeeCents } from '../../../../shared/brokerFees';
+import { createCompleteReadBudget, readCompleteModels } from './completeReads';
 
 const s3 = new S3Client(), MAX = 25 * 1024 * 1024;
 interface FrozenFile { id: string; name: string; key: string; contentType: string; size: number; sha256: string; sourceKey?: string; }
@@ -200,21 +201,20 @@ export async function businessDeliveryContext(input:{accountId:string},actor:str
   const account=await deliveryAccount(input.accountId),client=await dataClient();
   const context:BusinessDeliveryContext={accountId:account.id,accountName:account.name,choices:[],documents:[],conversations:[{id:'NEW',label:'New conversation — no quoted history'}],recipientSuggestions:[]};
   try{context.sender=(await sender(actor)).sender;}catch(error){context.senderError=error instanceof Error?error.message:'Your Front mailbox needs setup';}
-  const contacts=[];let token:string|null|undefined;
-  do{const page=await account.contacts({nextToken:token,limit:100});if(page.errors?.length)throw businessValidation('Could not load current account contacts');contacts.push(...page.data);token=page.nextToken;}while(token);
+  // One budget covers the four relation reads, after optional mailbox setup.
+  const reads = { budget: createCompleteReadBudget(), error: businessValidation };
+  const contacts = await readCompleteModels(nextToken => account.contacts({ nextToken, limit: 100 }), 'relations', 'Could not load current account contacts', reads);
   context.recipientSuggestions=currentContacts(contacts).filter(c=>!!c.email).map(c=>({email:c.email!,label:c.name || c.email!}));
-  const plan=await get<CommercialPlan>(`commercial:${account.id}`),quotes:Quote[]=[];token=undefined;
-  do{const page=await account.quotes({nextToken:token,limit:100});if(page.errors?.length)throw businessValidation('Could not load package quotes');quotes.push(...page.data);token=page.nextToken;}while(token);
+  const plan=await get<CommercialPlan>(`commercial:${account.id}`);
+  const quotes = await readCompleteModels(nextToken => account.quotes({ nextToken, limit: 100 }), 'relations', 'Could not load package quotes', reads);
   for(const option of plan?.data.options ?? []){
     const assessment=packageAssessment(plan!.data,option,quotes,agencyDay(new Date().toISOString()));
     context.choices.push({kind:'PACKAGE',recordId:option.id,label:option.name,...(!assessment.complete || option.quoteIds.some(id=>!quotes.some(q=>q.id===id && ['QUOTED','PRESENTED'].includes(q.status)))?{disabledReason:'Review the package and current open offers first'}:{})});
   }
-  token=undefined;
-  do{const page:{data:Document[];errors?:{message:string}[];nextToken?:string|null}=await client.models.Document.listDocumentByEntityId({entityId:account.id},{filter:{entityType:{eq:'ACCOUNT'}},nextToken:token,limit:100});if(page.errors?.length)throw businessValidation('Could not load account PDFs');
-    for(const d of page.data)if(allowedDocument(d,account.id)){context.documents.push({id:d.id,name:d.name,contentType:d.contentType!,size:d.sizeBytes ?? undefined,category:d.category ?? undefined});context.choices.push({kind:'DOCUMENT',recordId:d.id,label:d.name});}token=page.nextToken;
-  }while(token);
-  token=undefined;
-  do{const page=await account.certificates({nextToken:token,limit:100});if(page.errors?.length)throw businessValidation('Could not load certificates');for(const cert of page.data)if(cert.s3Key===`certificates/${account.id}/${cert.id}.pdf`)context.choices.push({kind:'CERTIFICATE',recordId:cert.id,label:`Certificate ${cert.certificateNumber ?? cert.id} — ${cert.holderName}`});token=page.nextToken;}while(token);
+  const documents = await readCompleteModels(nextToken => client.models.Document.listDocumentByEntityId({ entityId: account.id }, { filter: { entityType: { eq: 'ACCOUNT' } }, nextToken, limit: 100 }), 'relations', 'Could not load account PDFs', reads);
+  for(const d of documents)if(allowedDocument(d,account.id)){context.documents.push({id:d.id,name:d.name,contentType:d.contentType!,size:d.sizeBytes ?? undefined,category:d.category ?? undefined});context.choices.push({kind:'DOCUMENT',recordId:d.id,label:d.name});}
+  const certificates = await readCompleteModels(nextToken => account.certificates({ nextToken, limit: 100 }), 'relations', 'Could not load certificates', reads);
+  for(const cert of certificates)if(cert.s3Key===`certificates/${account.id}/${cert.id}.pdf`)context.choices.push({kind:'CERTIFICATE',recordId:cert.id,label:`Certificate ${cert.certificateNumber ?? cert.id} — ${cert.holderName}`});
   for(const link of await accountRows<{conversationId:string;purpose?:string}>(account.id,'LINK'))if(link.data.purpose==='PROSPECT')context.conversations.push({id:link.data.conversationId,label:`Linked client conversation ${link.data.conversationId}`});
   return context;
 }
