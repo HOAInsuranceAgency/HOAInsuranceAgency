@@ -2,6 +2,7 @@ import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf
 import { AGENCY, AGENCY_FMT } from "../../../../shared/agency";
 import { formatMoney } from "../../../../shared/invoiceTotals";
 import type { ScheduleRow } from "../../../../shared/premiumFinance/quote";
+import { initialPaymentTotalRoundedDollars } from "../../../../shared/premiumFinance/initialPayment";
 
 /**
  * The single premium finance agreement signed at deposit.
@@ -102,6 +103,7 @@ function paragraph(page: PDFPage, fonts: Fonts, title: string | null, body: stri
 }
 
 export async function renderAgreementPdf(v: AgreementView): Promise<Uint8Array> {
+  const initialPayment = initialPaymentTotalRoundedDollars(v);
   const doc = await PDFDocument.create();
   doc.setTitle(`Premium Finance Agreement — ${v.associationName}`);
   doc.setProducer(AGENCY.name);
@@ -166,7 +168,7 @@ export async function renderAgreementPdf(v: AgreementView): Promise<Uint8Array> 
   y = boxTop - 92;
 
   y = paragraph(page, fonts, null,
-    `Total premium ${formatMoney(v.premium)}, paid as ${v.months + 1} payments over the policy year. Payment 1 is the down payment of ${formatMoney(v.downPayment)}, due at inception and paid to the Lender's premium trust account. Payments 2 through ${v.months + 1} are ${v.months} monthly payments of ${formatMoney(v.payment)} (the final payment may differ by cents), first due one month after ${v.effectiveDate}. A flat origination fee of ${formatMoney(v.originationFee)} is collected with the down payment, with the full broker fee of ${formatMoney(v.brokerFee ?? 0)} paid upfront separately from the loan, making the initial payment ${formatMoney(Math.round((v.downPayment + v.originationFee + (v.brokerFee ?? 0)) * 100) / 100)}. The origination fee is refundable on prepayment and does not reduce principal. The broker fee is not financed and remains subject to its separate signed disclosure. Monthly payments start automatically on the agreed schedule after the initial payment clears. There are no late fees, delinquency charges, or reinstatement fees under this agreement.`,
+    `Total premium ${formatMoney(v.premium)}, paid as ${v.months + 1} payments over the policy year. Payment 1 is the down payment of ${formatMoney(v.downPayment)}, due at inception and paid to the Lender's premium trust account. Payments 2 through ${v.months + 1} are ${v.months} monthly payments of ${formatMoney(v.payment)} (the final payment may differ by cents), first due one month after ${v.effectiveDate}. A flat origination fee of ${formatMoney(v.originationFee)} is collected with the down payment, with the full broker fee of ${formatMoney(v.brokerFee ?? 0)} paid upfront separately from the loan, making the initial payment ${formatMoney(initialPayment)}. The origination fee is refundable on prepayment and does not reduce principal. The broker fee is not financed and remains subject to its separate signed disclosure. Monthly payments start automatically on the agreed schedule after the initial payment clears. There are no late fees, delinquency charges, or reinstatement fees under this agreement.`,
     y);
 
   // ── Payment schedule ──────────────────────────────────────────────────
@@ -189,7 +191,7 @@ export async function renderAgreementPdf(v: AgreementView): Promise<Uint8Array> 
    */
   page.drawText("1", { x: M.left, y, size: 8.5, font: fonts.regular, color: INK });
   page.drawText(`${v.effectiveDate} (down payment)`, { x: M.left + 30, y, size: 8.5, font: fonts.regular, color: INK });
-  drawRight(page, formatMoney(Math.round((v.downPayment + v.originationFee + (v.brokerFee ?? 0)) * 100) / 100), M.left + 220, y, fonts.regular, 8.5);
+  drawRight(page, formatMoney(initialPayment), M.left + 220, y, fonts.regular, 8.5);
   drawRight(page, formatMoney(0), M.left + 310, y, fonts.regular, 8.5);
   drawRight(page, formatMoney(v.downPayment), M.left + 410, y, fonts.regular, 8.5);
   drawRight(page, formatMoney(v.amountFinanced), M.right, y, fonts.regular, 8.5);

@@ -1,17 +1,6 @@
-/** Upfront fees never reduce financed principal or enter the installment schedule. */
+import { initialPaymentTotals, type InitialPaymentLoan } from "../../../shared/premiumFinance/initialPayment";
+
 export const PF_CHECKOUT_BILLING_VERSION = 3;
-export interface InitialPaymentLoan { downPayment: number; originationFee: number; brokerFeeCents?: number | null }
-export function initialPaymentTotals(loan: InitialPaymentLoan) {
-  const cents = (amount: number) => {
-    if (!Number.isFinite(amount) || amount < 0) throw new Error("Invalid initial payment amount");
-    return Math.round(amount * 100);
-  };
-  const premiumCents = cents(loan.downPayment);
-  const originationFeeCents = cents(loan.originationFee);
-  const brokerFeeCents = loan.brokerFeeCents ?? 0;
-  if (!Number.isSafeInteger(brokerFeeCents) || brokerFeeCents < 0) throw new Error("Invalid broker fee amount");
-  return { premiumCents, originationFeeCents, brokerFeeCents, totalCents: premiumCents + originationFeeCents + brokerFeeCents };
-}
 
 /** Preserve what older in-flight checkouts actually collected; never invent fee receipts. */
 export function initialPaymentReceipt(loan: InitialPaymentLoan, amount: number | null, billingVersion: number | null) {

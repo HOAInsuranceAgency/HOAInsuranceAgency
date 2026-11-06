@@ -1,5 +1,6 @@
 import { publicApi } from "./publicApi";
 import { isFinanceElectionTerms, isFinanceElectionAcceptance } from '../../../shared/financeElection';
+import { initialPaymentTotalDollars } from '../../../shared/premiumFinance/initialPayment';
 /**
  * The finance election's two calls against the CRM's public AppSync API.
  *
@@ -60,7 +61,9 @@ export async function fetchElectionTerms(token: string): Promise<ElectionTerms> 
     months: Number(r.months ?? 0),
     apr: Number(r.apr ?? 0),
     downPayment: Number(r.downPayment ?? 0),
-    initialPaymentAmount: Number(r.initialPaymentAmount ?? (Number(r.downPayment ?? 0) + Number(r.originationFee ?? 0) + Number(r.brokerFee ?? 0))),
+    initialPaymentAmount: Number(r.initialPaymentAmount ?? initialPaymentTotalDollars({
+      downPayment: Number(r.downPayment ?? 0), originationFee: Number(r.originationFee ?? 0), brokerFee: Number(r.brokerFee ?? 0),
+    })),
     amountFinanced: Number(r.amountFinanced ?? 0),
     payment: Number(r.payment ?? 0),
     totalInterest: Number(r.totalInterest ?? 0),
