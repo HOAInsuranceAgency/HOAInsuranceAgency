@@ -32,6 +32,7 @@ import {
   uploadDocument,
   uploadFile,
 } from "./storage";
+import { documentObjectKey } from "../../../shared/storageKeys";
 
 /** uploadData returns a handle whose `.result` is the promise to await. */
 function uploadResolves() {
@@ -108,6 +109,19 @@ describe("safeSegment", () => {
   it("never yields an empty segment", () => {
     expect(safeSegment("..")).toBe("file");
     expect(safeSegment("   ")).toBe("file");
+  });
+});
+
+describe("documentObjectKey", () => {
+  it.each([
+    ["ACCOUNT", "a1", "d1", "budget.pdf", "documents/ACCOUNT/a1/d1/budget.pdf"],
+    ["ACCOUNT", "../a/1", "_d1", "_scan.pdf", "documents/ACCOUNT/a_1/d1/scan.pdf"],
+    ["POLICY", " p1 ", "d/1", "../packet\\budget..pdf", "documents/POLICY/p1/d_1/packet_budget.pdf"],
+    ["ACCOUNT", "", "..", "  ", "documents/ACCOUNT/file/file/file"],
+  ])("keeps each OCR identity inside one segment (%s, %s, %s, %s)", (type, entity, doc, name, expected) => {
+    expect(documentObjectKey(type, entity, doc, name)).toBe(expected);
+    expect(assertGrantedPath(expected)).toBe(expected);
+    expect(expected.split("/")).toHaveLength(5);
   });
 });
 
@@ -273,7 +287,7 @@ describe("uploadDocument", () => {
     expect(s3.uploadData.mock.calls[0][0].path).toBe(
       "documents/ACCOUNT/acc-1/doc-1/templates_acord-25.pdf"
     );
-    expect(Document.create).toHaveBeenCalledWith(expect.objectContaining({ name: original.name }));
+    expect(Document.create).toHaveBeenCalledWith(expect.objectContaining({ name: original.name, uploadedName: original.name }));
     expect(s3.uploadData.mock.calls[0][0].data).toBe(original);
   });
 

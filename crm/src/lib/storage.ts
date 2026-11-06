@@ -28,8 +28,8 @@ import { getUrl, remove, uploadData } from "./scopedStorage";
 import { client, type CrmDocument } from "./client";
 // Re-exported: `safeSegment` lives dependency-free in storageKeys.ts so the
 // lead-upload Lambda can build the same keys without importing this module.
-import { CONTROL_CHARS, safeSegment } from "../../../shared/storageKeys";
-export { safeSegment };
+import { CONTROL_CHARS, documentObjectKey } from "../../../shared/storageKeys";
+export { safeSegment } from "../../../shared/storageKeys";
 import type { Schema } from "../../amplify/data/resource";
 
 type DocumentEntityType = Schema["DocumentEntityType"]["type"];
@@ -171,15 +171,7 @@ export async function uploadDocument(opts: {
     if (!doc) {
       throw new Error(`Couldn't record "${file.name}".`);
     }
-    const path = assertGrantedPath(
-      [
-        "documents",
-        safeSegment(entityType),
-        safeSegment(entityId),
-        safeSegment(doc.id),
-        safeSegment(file.name),
-      ].join("/")
-    );
+    const path = assertGrantedPath(documentObjectKey(entityType, entityId, doc.id, file.name));
     const { data: linked, errors: linkErrors } = await client.models.Document.update({
       id: doc.id,
       s3Key: path,

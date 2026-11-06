@@ -5,7 +5,7 @@ import { Amplify } from "aws-amplify";
 import { generateClient } from "aws-amplify/data";
 import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtime";
 import type { Schema } from "../../data/resource";
-import { safeSegment } from "../../../../shared/storageKeys";
+import { documentObjectKey } from "../../../../shared/storageKeys";
 import { listAllPages } from "../../../../shared/pagination";
 import { REJECTION_MESSAGE, rejectUpload } from "../../../../shared/leadUpload";
 import { PORTAL_MAX_FILES } from "../../../../shared/leadDocuments";
@@ -181,6 +181,7 @@ async function handleRequestUpload(
     // instead of as an untyped blob for someone to open and categorise.
     category: category as Schema["Document"]["type"]["category"],
     name: filename,
+    uploadedName: filename,
     s3Key: "pending",
     contentType,
     sizeBytes,
@@ -193,13 +194,7 @@ async function handleRequestUpload(
 
   // Same layout as a staff upload, so `process-document` parses the Document id
   // back out of the key and OCR fires with no special case.
-  const key = [
-    "documents",
-    "ACCOUNT",
-    safeSegment(portal.accountId),
-    safeSegment(doc.id),
-    safeSegment(filename),
-  ].join("/");
+  const key = documentObjectKey("ACCOUNT", portal.accountId, doc.id, filename);
 
   const url = await getSignedUrl(
     s3,
