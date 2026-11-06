@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { initialPaymentReceipt, initialPaymentTotals } from "../../amplify/functions/pfInitialPayment";
+import { initialPaymentReceipt } from "../../amplify/functions/pfInitialPayment";
+import { initialPaymentTotals } from "../../../shared/premiumFinance/initialPayment";
 import { activateSettledElection } from "../../amplify/functions/pfAutomaticActivation";
 
 const mocks = vi.hoisted(() => ({ send: vi.fn(), mail: vi.fn(), feeSync: vi.fn() }));
@@ -122,6 +123,15 @@ describe("automatic customer financing", () => {
 });
 
 describe("initial payment accounting", () => {
+  it.each([
+    { amount: 0.03, version: 3, originationFeeCollected: 0.01, brokerFeeCollectedCents: 1 },
+    { amount: 0.02, version: 2, originationFeeCollected: 0.01, brokerFeeCollectedCents: 0 },
+    { amount: 0.01, version: null, originationFeeCollected: 0, brokerFeeCollectedCents: 0 },
+  ])('preserves the actual receipt for billing version $version', ({ amount, version, ...collected }) => {
+    expect(initialPaymentReceipt({ downPayment: 0.005, originationFee: 0.005, brokerFeeCents: 1 }, amount, version))
+      .toEqual({ initialPaymentAmount: amount, ...collected });
+  });
+
   it("keeps the fee out of premium and financed principal", () => {
     expect(initialPaymentTotals(signed)).toEqual({ premiumCents: 843552, originationFeeCents: 1000, brokerFeeCents: 0, totalCents: 844552 });
     expect(initialPaymentReceipt(signed, 8445.52, 2)).toEqual({ initialPaymentAmount: 8445.52, originationFeeCollected: 10, brokerFeeCollectedCents: 0 });

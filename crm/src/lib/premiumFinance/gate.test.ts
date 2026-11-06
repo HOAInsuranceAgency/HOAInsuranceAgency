@@ -334,7 +334,7 @@ describe("the fee counts toward Rhode Island's ceiling", () => {
 
 describe("broker fees are collected outside lending economics", () => {
   it("leaves financed principal, interest and installments unchanged when the upfront fee varies", async () => {
-    const { initialPaymentTotals } = await import("../../../amplify/functions/pfInitialPayment");
+    const { initialPaymentTotals } = await import("../../../../shared/premiumFinance/initialPayment");
     const quote=buildQuote({premium:10000,downPct:25,months:11,apr:14,effectiveDate:"2026-11-04"});
     const originalSchedule=JSON.stringify(quote.schedule);
     const base=initialPaymentTotals({...quote,brokerFeeCents:0});

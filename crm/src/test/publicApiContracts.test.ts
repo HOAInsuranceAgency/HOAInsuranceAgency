@@ -25,6 +25,21 @@ it('retains compatibility with an offer before the explicit initial-payment fiel
   fetchMock.mockResolvedValue(response('financeElectionTerms', legacy));
   expect((await finance.fetchElectionTerms('token')).initialPaymentAmount).toBe(1600);
 });
+it.each([
+  { downPayment: 0.005, originationFee: 0.005, brokerFee: 0, expected: 0.01 },
+  { downPayment: 1.005, originationFee: 10, brokerFee: 0, expected: 11.004999999999999 },
+  { downPayment: 0.1, originationFee: 0.2, brokerFee: 0, expected: 0.30000000000000004 },
+])('preserves the unrounded legacy offer fallback: %j', async ({ expected, ...amounts }) => {
+  const { initialPaymentAmount: _initial, ...legacy } = offer();
+  fetchMock.mockResolvedValue(response('financeElectionTerms', { ...legacy, ...amounts }));
+  expect((await finance.fetchElectionTerms('token')).initialPaymentAmount).toBe(expected);
+});
+it.each([0, 1.2345])('uses the explicit server initial payment unchanged (%s)', async initialPaymentAmount => {
+  fetchMock.mockResolvedValue(response('financeElectionTerms', {
+    ...offer(), downPayment: 0.005, originationFee: 0.005, brokerFee: 0, initialPaymentAmount,
+  }));
+  expect((await finance.fetchElectionTerms('token')).initialPaymentAmount).toBe(initialPaymentAmount);
+});
 it.each([{ ...offer(), state: 'invented' }, { ...offer(), payment: '860' }, { ...offer(), premium: Number.NaN }, { ...offer(), months: -1 }])('refuses malformed financing data rather than displaying invented figures', async value => {
   expect(isFinanceElectionTerms(value)).toBe(false);
   fetchMock.mockResolvedValue(response('financeElectionTerms', value));

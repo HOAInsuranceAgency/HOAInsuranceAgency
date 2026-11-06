@@ -60,6 +60,17 @@ beforeEach(() => {
 });
 
 describe("billing initiation", () => {
+  it.each([
+    { downPayment: 0.005, originationFee: 0.005, initialPaymentAmount: 0.02 },
+    { downPayment: 1.005, originationFee: 10, initialPaymentAmount: 11 },
+    { downPayment: 0, originationFee: 0, initialPaymentAmount: 0 },
+  ])('serves the canonical component-rounded initial payment without starting collection: %j', async ({ initialPaymentAmount, ...amounts }) => {
+    m.lookup.mockResolvedValue({ data: [{ ...loan, ...amounts, brokerFeeCents: 0 }] });
+    expect(await elect({ arguments: { token: loan.electionToken } })).toMatchObject({ ok: true, initialPaymentAmount });
+    expect(m.checkout).not.toHaveBeenCalled();
+    expect(m.debit).not.toHaveBeenCalled();
+  });
+
   it("includes signing authority in the same agreement and requires that signature before deposit", async () => {
     const terms = await elect({ arguments: { token: loan.electionToken } });
     expect(terms).toMatchObject({ agreementTerms: expect.arrayContaining([SECURITY_INTEREST_AND_AUTHORITY]) });

@@ -17,3 +17,11 @@ calendar inputs and full wall-clock scheduling rules in their domain modules.
 optional-cent presentation. It does not validate amounts, round ledger arithmetic,
 or choose missing-value fallbacks. `usStates.ts` owns the 50-state/DC identities;
 website editorial copy, map geometry, and signed jurisdiction rules stay separate.
+
+`premiumFinance/initialPayment.ts` owns upfront-payment component composition.
+Checkout rounds down payment and origination dollars separately to cents and accepts
+broker fees already in cents. Agreement PDFs retain their combined-dollar rounding;
+legacy public offers missing an explicit server total retain their raw dollar sum.
+These policies intentionally differ for fractional-cent historical inputs. Existing
+cent-valued quotes agree, and an explicit server total (including zero) stays
+authoritative. Billing versions and actual-receipt compatibility remain server-owned.

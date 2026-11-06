@@ -21,7 +21,8 @@ import type { Schema } from "../../data/resource";
 import { listAllPages } from "../../../../shared/pagination";
 import { PF_CONFIG_SHA256 } from "../../../../shared/premiumFinance/jurisdictions";
 import { looksLikeElectionToken } from "../pfElectionToken";
-import { initialPaymentTotals, PF_CHECKOUT_BILLING_VERSION } from "../pfInitialPayment";
+import { initialPaymentTotals } from "../../../../shared/premiumFinance/initialPayment";
+import { PF_CHECKOUT_BILLING_VERSION } from "../pfInitialPayment";
 import { handler as voidInvoice } from "../void-invoice/handler";
 import {
   OWNERSHIP_DISCLOSURE,
