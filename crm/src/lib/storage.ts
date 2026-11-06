@@ -160,6 +160,7 @@ export async function uploadDocument(opts: {
     policyId: opts.policyId,
     quoteId: opts.quoteId,
     name: file.name,
+    uploadedName: file.name,
     s3Key: PENDING_KEY,
     contentType: file.type,
     sizeBytes: file.size,

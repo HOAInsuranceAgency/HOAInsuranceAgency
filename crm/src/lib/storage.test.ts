@@ -282,12 +282,12 @@ describe("uploadDocument", () => {
     { policyId: null, quoteId: "quote-1" },
   ])("records only the allowed link metadata ($policyId, $quoteId)", async links => {
     const input = { ...opts, ...links, sourceCommunicationId: "communication-1",
-      id: "injected-id", name: "injected-name", s3Key: "templates/injected.pdf", ocrStatus: "COMPLETE" };
+      id: "injected-id", name: "injected-name", uploadedName: "injected-original.pdf", s3Key: "templates/injected.pdf", ocrStatus: "COMPLETE" };
     await uploadDocument(input);
 
     expect(Document.create).toHaveBeenCalledWith({
       entityType: "ACCOUNT", entityId: "acc-1", category: "BUDGET", ...links,
-      sourceCommunicationId: "communication-1", name: opts.file.name,
+      sourceCommunicationId: "communication-1", name: opts.file.name, uploadedName: opts.file.name,
       s3Key: PENDING_KEY, contentType: opts.file.type, sizeBytes: opts.file.size, ocrStatus: "PENDING",
     });
     expect(Document.update).toHaveBeenCalledWith({ id: "doc-1", s3Key: "documents/ACCOUNT/acc-1/doc-1/budget.pdf" });

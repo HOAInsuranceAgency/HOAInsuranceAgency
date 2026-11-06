@@ -115,7 +115,7 @@ it.each([
 describe("DocumentsPanel rename", () => {
   it("saves the typed name with the file's extension restored", async () => {
     const user = userEvent.setup();
-    renderPanel();
+    renderPanel({ ...DOC, uploadedName: "scan_0043.pdf" });
 
     // No extension typed — the producer should not have to remember one.
     await typeName(user, "2024 Operating Budget");
@@ -335,7 +335,7 @@ describe("document uploads", () => {
     await waitFor(() => expect(uploadData).toHaveBeenCalledOnce());
     expect(models.Document.create).toHaveBeenCalledWith({
       entityType: "ACCOUNT", entityId: "acct-1", sourceCommunicationId: "communication-1", category: "BUDGET",
-      name: file.name, s3Key: "pending", contentType: file.type, sizeBytes: file.size, ocrStatus: "PENDING",
+      name: file.name, uploadedName: file.name, s3Key: "pending", contentType: file.type, sizeBytes: file.size, ocrStatus: "PENDING",
       policyId, quoteId, lastWriteBy: "u1",
     });
     expect(uploadData).toHaveBeenCalledWith({ path: "documents/ACCOUNT/acct-1/new-doc/policy_schedule.pdf", data: file, options: { contentType: file.type } });
