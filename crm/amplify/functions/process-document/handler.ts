@@ -1,3 +1,4 @@
+import { createDataClientGetter, type LambdaDataClient as DataClient } from "../data-client";
 import { captureHandledFailure } from "../monitoring";
 import type { S3Handler } from "aws-lambda";
 import {
@@ -6,10 +7,6 @@ import {
   GetDocumentAnalysisCommand,
   type Block,
 } from "@aws-sdk/client-textract";
-import { Amplify } from "aws-amplify";
-import { generateClient } from "aws-amplify/data";
-import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtime";
-import type { Schema } from "../../data/resource";
 import { suggestDocumentName } from "./autoName";
 import { withExtension } from "../../../../shared/documentName";
 
@@ -39,21 +36,7 @@ const MAX_TABLES_CHARS = 100_000;
 const POLL_INTERVAL_MS = 5_000;
 const MAX_POLL_MS = 13 * 60 * 1000; // stay under the 15 min Lambda timeout
 
-type DataClient = ReturnType<typeof generateClient<Schema>>;
-
-let dataClient: DataClient | undefined;
-
-async function getDataClient() {
-  if (!dataClient) {
-    // Env vars are injected by `allow.resource(processDocument)` in the schema.
-    const { resourceConfig, libraryOptions } = await getAmplifyDataClientConfig(
-      process.env as never
-    );
-    Amplify.configure(resourceConfig, libraryOptions);
-    dataClient = generateClient<Schema>();
-  }
-  return dataClient;
-}
+const getDataClient = createDataClientGetter();
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 

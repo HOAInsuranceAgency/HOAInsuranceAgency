@@ -1,9 +1,6 @@
+import { createDataClientGetter, type LambdaDataClient as DataClient } from "../data-client";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { Amplify } from "aws-amplify";
-import { generateClient } from "aws-amplify/data";
-import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtime";
-import type { Schema } from "../../data/resource";
 import { documentObjectKey } from "../../../../shared/storageKeys";
 import { operationOf } from "./dispatch";
 import {
@@ -21,18 +18,7 @@ import { reserveUploadSlot } from "../uploadQuota";
  * to a live window, or refuse. Splitting them would duplicate that.
  */
 
-type DataClient = ReturnType<typeof generateClient<Schema>>;
-let dataClient: DataClient | undefined;
-async function getDataClient() {
-  if (!dataClient) {
-    const { resourceConfig, libraryOptions } = await getAmplifyDataClientConfig(
-      process.env as never
-    );
-    Amplify.configure(resourceConfig, libraryOptions);
-    dataClient = generateClient<Schema>();
-  }
-  return dataClient;
-}
+const getDataClient = createDataClientGetter();
 
 const s3 = new S3Client();
 

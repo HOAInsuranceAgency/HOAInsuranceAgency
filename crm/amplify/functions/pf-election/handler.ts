@@ -1,3 +1,4 @@
+import { createDataClientGetter, type LambdaDataClient as DataClient } from "../data-client";
 import { sendCrmWrite } from '../live-write';
 import { captureHandledFailure } from "../monitoring";
 import { zeroFeeQuoteClaimWrites } from "../quote-source-billing";
@@ -5,9 +6,6 @@ import { assertBrokerFeeSigned } from "../broker-fees/bindValidation";
 import { getFee, getModel, modelTable, table as brokerFeeTable, versionCheck, type Write } from "../broker-fees/store";
 import { brokerFeeCents, feeAllocations } from "../../../../shared/brokerFees";
 import { randomUUID } from "node:crypto";
-import { Amplify } from "aws-amplify";
-import { generateClient } from "aws-amplify/data";
-import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtime";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import {
   DynamoDBDocumentClient,
@@ -65,18 +63,7 @@ import {
  * payment path.
  */
 
-type DataClient = ReturnType<typeof generateClient<Schema>>;
-let dataClient: DataClient | undefined;
-async function getDataClient() {
-  if (!dataClient) {
-    const { resourceConfig, libraryOptions } = await getAmplifyDataClientConfig(
-      process.env as never
-    );
-    Amplify.configure(resourceConfig, libraryOptions);
-    dataClient = generateClient<Schema>();
-  }
-  return dataClient;
-}
+const getDataClient = createDataClientGetter();
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient());
 
