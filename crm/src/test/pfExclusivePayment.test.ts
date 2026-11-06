@@ -51,14 +51,10 @@ describe("full payment supersedes quoted loans", () => {
 
   it("the webhook carries its loan-table grant", () => {
     // The env var without the grant is the original stripe-webhook failure
-    // class: it deploys, then dies at runtime. Both tables, both wired.
+    // class: it deploys, then dies at runtime. financeBindings.test.ts pins
+    // both rendered grants and environment values; this pins the caller wiring.
     const BACKEND = read("amplify/backend.ts");
-    expect(BACKEND).toMatch(
-      /"PF_LOAN_TABLE",\s*backend\.data\.resources\.tables\.PfLoan\.tableName\s*\);\s*backend\.data\.resources\.tables\.PfLoan\.grantReadWriteData\(\s*backend\.stripeWebhook/
-    );
-    expect(BACKEND).toMatch(
-      /"PF_COMPLIANCE_LOG_TABLE",\s*backend\.data\.resources\.tables\.PfComplianceLog\.tableName\s*\);\s*backend\.data\.resources\.tables\.PfComplianceLog\.grantWriteData\(\s*backend\.stripeWebhook/
-    );
+    expect(BACKEND).toContain("bindPremiumFinanceTables(backend, 'webhookSettlement')");
   });
 });
 
