@@ -1,3 +1,4 @@
+import { Field } from "../ui/Field";
 import { Input } from "../ui/Input";
 import { Select } from "../ui/Select";
 import { Textarea } from "../ui/Textarea";
@@ -18,6 +19,7 @@ import {
 } from "../../../../shared/enums";
 import ChildRowsCard from "../ChildRowsCard";
 import { IntegerInput, MoneyInput, PercentInput, YearInput, YesNoRadio } from "../inputs";
+import "./BuildingsCard.css";
 
 /**
  * Buildings — the ACORD 140's unit of description, and now editable.
@@ -341,39 +343,35 @@ function AddFields({
     : undefined;
   return (
     <>
-      <div className="field">
-        <label>Label</label>
-        <Input
+      <Field label="Label">
+        {control => <Input {...control}
           placeholder={labelPlaceholder}
           value={form.form.label}
           onChange={(e) => form.setF("label", e.target.value)}
-        />
-      </div>
-      <div className="field">
-        <label>Street address</label>
-        <Input
+        />}
+      </Field>
+      <Field label="Street address">
+        {control => <Input {...control}
           placeholder="2 John Hancock Dr"
           value={form.form.streetAddress}
           onChange={(e) => form.setF("streetAddress", e.target.value)}
-        />
-      </div>
-      <div className="field">
-        <label>Sq ft</label>
-        <IntegerInput
+        />}
+      </Field>
+      <Field label="Sq ft">
+        {control => <IntegerInput {...control}
           value={form.form.sqft}
           onChange={(v) => form.setF("sqft", v)}
           onKeyDown={enter}
-        />
-      </div>
-      <div className="field" style={{ flex: "1 1 260px" }}>
-        <label>Description (prints on ACORD 125)</label>
-        <Input
+        />}
+      </Field>
+      <Field label="Description (prints on ACORD 125)" className="building-description-field">
+        {control => <Input {...control}
           placeholder="2, 4, 10, 12 John Hancock. Two-story wood frame…"
           value={form.form.description}
           onChange={(e) => form.setF("description", e.target.value)}
           onKeyDown={enter}
-        />
-      </div>
+        />}
+      </Field>
     </>
   );
 }
@@ -390,55 +388,49 @@ function EditFields({
   const set = form.setF;
 
   const text = (key: keyof BuildingForm, label: string, placeholder?: string) => (
-    <div className="field" key={key}>
-      <label>{label}</label>
-      <Input
+    <Field label={label} key={key}>
+      {control => <Input {...control}
         placeholder={placeholder}
         value={f[key]}
         onChange={(e) => set(key, e.target.value)}
-      />
-    </div>
+      />}
+    </Field>
   );
   const year = (key: keyof BuildingForm, label: string) => (
-    <div className="field" key={key}>
-      <label>{label}</label>
-      <YearInput value={f[key]} onChange={(v) => set(key, v)} />
-    </div>
+    <Field label={label} key={key}>
+      {control => <YearInput {...control} value={f[key]} onChange={(v) => set(key, v)} />}
+    </Field>
   );
   const count = (key: keyof BuildingForm, label: string) => (
-    <div className="field" key={key}>
-      <label>{label}</label>
-      <IntegerInput value={f[key]} onChange={(v) => set(key, v)} />
-    </div>
+    <Field label={label} key={key}>
+      {control => <IntegerInput {...control} value={f[key]} onChange={(v) => set(key, v)} />}
+    </Field>
   );
   const money = (key: keyof BuildingForm, label: string) => (
-    <div className="field" key={key}>
-      <label>{label}</label>
-      <MoneyInput value={f[key]} onChange={(v) => set(key, v)} />
-    </div>
+    <Field label={label} key={key}>
+      {control => <MoneyInput {...control} value={f[key]} onChange={(v) => set(key, v)} />}
+    </Field>
   );
   const pct = (key: keyof BuildingForm, label: string) => (
-    <div className="field" key={key}>
-      <label>{label}</label>
-      <PercentInput value={f[key]} onChange={(v) => set(key, v)} />
-    </div>
+    <Field label={label} key={key}>
+      {control => <PercentInput {...control} value={f[key]} onChange={(v) => set(key, v)} />}
+    </Field>
   );
   const choice = (
     key: keyof BuildingForm,
     label: string,
     options: readonly { value: string; label: string }[]
   ) => (
-    <div className="field" key={key}>
-      <label>{label}</label>
-      <Select value={f[key]} onChange={(e) => set(key, e.target.value)}>
+    <Field label={label} key={key}>
+      {control => <Select {...control} value={f[key]} onChange={(e) => set(key, e.target.value)}>
         <option value="">—</option>
         {options.map((o) => (
           <option key={o.value} value={o.value}>
             {o.label}
           </option>
         ))}
-      </Select>
-    </div>
+      </Select>}
+    </Field>
   );
   const yesNo = (key: keyof BuildingForm, label: string) => (
     <div className="field" key={key}>
@@ -452,13 +444,12 @@ function EditFields({
       <h3 className="field full">Identity</h3>
       {text("label", "Label", "Building A")}
       {text("streetAddress", "Street address", "2 John Hancock Dr")}
-      <div className="field full">
-        <label>Description (prints on ACORD 125)</label>
-        <Input
+      <Field label="Description (prints on ACORD 125)" className="full">
+        {control => <Input {...control}
           value={f.description}
           onChange={(e) => set("description", e.target.value)}
-        />
-      </div>
+        />}
+      </Field>
 
       <h3 className="field full">Construction</h3>
       {year("yearBuilt", "Year built")}
@@ -474,18 +465,17 @@ function EditFields({
 
       <h3 className="field full">Protection</h3>
       {count("distanceToHydrantFt", "Distance to hydrant (ft)")}
-      <div className="field">
-        <label>Distance to fire station (mi)</label>
+      <Field label="Distance to fire station (mi)">
         {/* Fractional miles, like `milesToCoast` — none of the formatted
             inputs is a fractional non-money quantity. */}
-        <Input
+        {control => <Input {...control}
           type="number"
           min={0}
           step="0.1"
           value={f.distanceToFireStationMi}
           onChange={(e) => set("distanceToFireStationMi", e.target.value)}
-        />
-      </div>
+        />}
+      </Field>
       {text("fireProtectionType", "Fire protection", "Wet sprinkler, central station")}
       {pct("sprinklerPct", "Sprinklered")}
 
@@ -495,22 +485,23 @@ function EditFields({
       {pct("coinsurancePct", "Coinsurance")}
       {choice("deductibleType", "Deductible applies", BUILDING_DEDUCTIBLE_TYPE_OPTIONS)}
       {money("deductibleAmount", "Deductible ($)")}
-      <div className="field">
-        <label>Blanket #</label>
-        {/* Free text with suggestions, not a foreign key: the form prints the
-            number an underwriter wrote, and a number with no Blanket row is
-            legal. */}
-        <Input
-          list="account-blanket-numbers"
-          value={f.blanketNumber}
-          onChange={(e) => set("blanketNumber", e.target.value)}
-        />
-        <datalist id="account-blanket-numbers">
-          {blanketNumbers.map((n) => (
-            <option key={n} value={n} />
-          ))}
-        </datalist>
-      </div>
+      <Field label="Blanket #">
+        {control => <>
+          {/* Free text with suggestions, not a foreign key: the form prints the
+              number an underwriter wrote, and a number with no Blanket row is
+              legal. */}
+          <Input {...control}
+            list="account-blanket-numbers"
+            value={f.blanketNumber}
+            onChange={(e) => set("blanketNumber", e.target.value)}
+          />
+          <datalist id="account-blanket-numbers">
+            {blanketNumbers.map((n) => (
+              <option key={n} value={n} />
+            ))}
+          </datalist>
+        </>}
+      </Field>
       {choice("causeOfLoss", "Cause of loss", CAUSE_OF_LOSS_OPTIONS)}
       {text("formsConditions", "Forms & conditions")}
 
@@ -519,14 +510,13 @@ function EditFields({
       {yesNo("historicalLandmark", "Historical landmark?")}
       {yesNo("sinkholeCoverageAccepted", "Sinkhole coverage accepted?")}
       {yesNo("mineSubsidenceCoverage", "Mine subsidence coverage?")}
-      <div className="field full">
-        <label>Remarks (ACORD 101 overflow)</label>
-        <Textarea
+      <Field label="Remarks (ACORD 101 overflow)" className="full">
+        {control => <Textarea {...control}
           rows={2}
           value={f.remarks}
           onChange={(e) => set("remarks", e.target.value)}
-        />
-      </div>
+        />}
+      </Field>
     </>
   );
 }

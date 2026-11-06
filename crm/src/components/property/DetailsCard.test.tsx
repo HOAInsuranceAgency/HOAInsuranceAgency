@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 const AccountModel = vi.hoisted(() => ({ update: vi.fn() }));
 vi.mock("aws-amplify/data", () => ({ generateClient: () => ({ models: { Account: AccountModel } }) }));
-vi.mock("../../lib/googlePlaces", () => ({ AddressAutocomplete: ({ value, onChange }: { value: string; onChange: (value: string) => void }) => <input value={value} onChange={e => onChange(e.target.value)} /> }));
+vi.mock("../../lib/googlePlaces", () => ({ AddressAutocomplete: ({ value, onChange, id }: { value: string; onChange: (value: string) => void; id?: string }) => <input id={id} value={value} onChange={e => onChange(e.target.value)} /> }));
 import DetailsCard from "./DetailsCard";
 import type { Account } from "../../lib/client";
 
@@ -59,6 +59,10 @@ describe("editable property reporting group", () => {
 
   it("labels the property fields and preserves unanswered incorporation on save", async () => {
     render(<DetailsCard account={account} onChange={vi.fn()} />);
+    for (const label of ["Street address", "City", "County", "State", "ZIP", "Fire district", "Property type", "Incorporated association", "Unit count", "Rented units (%)", "Other updates"]) {
+      expect(screen.getByLabelText(label)).toHaveAccessibleName(label);
+    }
+    expect(screen.getByLabelText("Property type")).toHaveAttribute("id", "account-property-type");
     fireEvent.change(screen.getByRole("textbox", { name: "Street address" }), { target: { value: "100 Example St" } });
     fireEvent.change(screen.getByRole("textbox", { name: "City" }), { target: { value: "Boston" } });
     expect(screen.getByRole("combobox", { name: "Incorporated association" })).toHaveValue("");

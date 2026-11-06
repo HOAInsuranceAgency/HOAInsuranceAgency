@@ -34,7 +34,7 @@
   gap: 6px;
 }
 
-.property-details .field > span {
+.property-details .field > label {
   color: var(--muted);
   font-size: 12px;
   font-weight: 600;
