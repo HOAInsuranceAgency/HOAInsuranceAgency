@@ -267,11 +267,30 @@ describe("uploadDocument", () => {
   });
 
   it("keeps a hostile filename inside the record's own folder", async () => {
-    await uploadDocument({ ...opts, file: file("../../../templates/acord-25.pdf") });
+    const original = file("../../../templates/acord-25.pdf");
+    await uploadDocument({ ...opts, file: original });
 
     expect(s3.uploadData.mock.calls[0][0].path).toBe(
       "documents/ACCOUNT/acc-1/doc-1/templates_acord-25.pdf"
     );
+    expect(Document.create).toHaveBeenCalledWith(expect.objectContaining({ name: original.name }));
+    expect(s3.uploadData.mock.calls[0][0].data).toBe(original);
+  });
+
+  it.each([
+    { policyId: "policy-1", quoteId: null },
+    { policyId: null, quoteId: "quote-1" },
+  ])("records only the allowed link metadata ($policyId, $quoteId)", async links => {
+    const input = { ...opts, ...links, sourceCommunicationId: "communication-1",
+      id: "injected-id", name: "injected-name", s3Key: "templates/injected.pdf", ocrStatus: "COMPLETE" };
+    await uploadDocument(input);
+
+    expect(Document.create).toHaveBeenCalledWith({
+      entityType: "ACCOUNT", entityId: "acc-1", category: "BUDGET", ...links,
+      sourceCommunicationId: "communication-1", name: opts.file.name,
+      s3Key: PENDING_KEY, contentType: opts.file.type, sizeBytes: opts.file.size, ocrStatus: "PENDING",
+    });
+    expect(Document.update).toHaveBeenCalledWith({ id: "doc-1", s3Key: "documents/ACCOUNT/acc-1/doc-1/budget.pdf" });
   });
 
   it("deletes the ghost record when the upload fails, and rethrows", async () => {
@@ -297,12 +316,22 @@ describe("uploadDocument", () => {
     expect(Document.delete).not.toHaveBeenCalled();
   });
 
+  it("cleans up a created row returned with GraphQL errors before linking or uploading", async () => {
+    Document.create.mockResolvedValue({ data: { id: "partial-doc" }, errors: [{ message: "Could not return the document" }] });
+
+    await expect(uploadDocument(opts)).rejects.toThrow("Could not return the document");
+    expect(Document.delete).toHaveBeenCalledWith({ id: "partial-doc" });
+    expect(Document.update).not.toHaveBeenCalled();
+    expect(s3.uploadData).not.toHaveBeenCalled();
+  });
+
   it("warns, but still reports the upload error, when the ghost record survives", async () => {
     uploadRejects("upload blew up");
-    Document.delete.mockResolvedValue({ data: null, errors: [{ message: "delete denied" }] });
+    Document.delete.mockResolvedValue({ data: null, errors: [{ message: "delete denied" }, { message: "record still exists" }] });
 
     await expect(uploadDocument(opts)).rejects.toThrow("upload blew up");
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("doc-1"));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("delete denied; record still exists"));
   });
 });
 

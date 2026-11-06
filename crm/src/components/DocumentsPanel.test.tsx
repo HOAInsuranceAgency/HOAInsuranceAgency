@@ -1,5 +1,5 @@
 import { invalidateLiveUpdates } from "../test/liveUpdates";
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -312,6 +312,81 @@ describe("document recovery", () => {
     view.rerender(<DocumentsPanel entityType="ACCOUNT" entityId="acct-2" />);
     expect(screen.queryByRole("textbox", { name: "Document name" })).toBeNull();
     expect(screen.queryByText("scan_0043.pdf")).toBeNull();
+  });
+});
+
+describe("document uploads", () => {
+  it.each([
+    { initialLink: "policy:policy-1", policyId: "policy-1", quoteId: null },
+    { initialLink: "quote:quote-1", policyId: null, quoteId: "quote-1" },
+  ])("preserves the selected $initialLink and source communication on a safely keyed upload", async ({ initialLink, policyId, quoteId }) => {
+    const user = userEvent.setup();
+    models.Document.listDocumentByEntityId.mockResolvedValue({ data: [] });
+    models.Policy.list.mockResolvedValue({ data: [{ id: "policy-1", policyNumber: "POL-1" }] });
+    models.Quote.list.mockResolvedValue({ data: [{ id: "quote-1", lines: ["Property"] }] });
+    models.Document.create.mockResolvedValue({ data: { id: "new-doc" } });
+    vi.mocked(uploadData).mockReturnValue({ result: Promise.resolve({ path: "uploaded" }) });
+    const view = render(<DocumentsPanel entityType="ACCOUNT" entityId="acct-1" linkAccountId="acct-1" initialLink={initialLink} sourceCommunicationId="communication-1" />);
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Linked to" })).toBeEnabled());
+    await user.selectOptions(screen.getByRole("combobox", { name: "Upload category" }), "BUDGET");
+    const file = new File(["pdf"], "policy/schedule.pdf", { type: "application/pdf" });
+    await user.upload(view.container.querySelector('input[type="file"]')!, file);
+
+    await waitFor(() => expect(uploadData).toHaveBeenCalledOnce());
+    expect(models.Document.create).toHaveBeenCalledWith({
+      entityType: "ACCOUNT", entityId: "acct-1", sourceCommunicationId: "communication-1", category: "BUDGET",
+      name: file.name, s3Key: "pending", contentType: file.type, sizeBytes: file.size, ocrStatus: "PENDING",
+      policyId, quoteId, lastWriteBy: "u1",
+    });
+    expect(uploadData).toHaveBeenCalledWith({ path: "documents/ACCOUNT/acct-1/new-doc/policy_schedule.pdf", data: file, options: { contentType: file.type } });
+    expect(models.Document.delete).not.toHaveBeenCalled();
+  });
+
+  it("reports the failed file, cleans its record, and continues the remaining upload batch", async () => {
+    const user = userEvent.setup();
+    models.Document.listDocumentByEntityId.mockResolvedValue({ data: [] });
+    models.Document.create.mockResolvedValueOnce({ data: { id: "failed-doc" } }).mockResolvedValueOnce({ data: { id: "saved-doc" } });
+    models.Document.delete.mockResolvedValue({ data: null });
+    vi.mocked(uploadData).mockImplementationOnce(() => ({ result: Promise.reject(new Error("Object upload failed")) }))
+      .mockReturnValueOnce({ result: Promise.resolve({ path: "uploaded" }) });
+    const view = render(<DocumentsPanel entityType="ACCOUNT" entityId="acct-1" />);
+    await screen.findByText("No documents attached.");
+    await user.upload(view.container.querySelector('input[type="file"]')!, [
+      new File(["failed"], "budget.pdf", { type: "application/pdf" }),
+      new File(["saved"], "bylaws.pdf", { type: "application/pdf" }),
+    ]);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent('"budget.pdf" failed to upload — Object upload failed');
+    await waitFor(() => expect(screen.getByLabelText("Choose files…")).toBeEnabled());
+    expect(models.Document.create).toHaveBeenCalledTimes(2);
+    expect(uploadData).toHaveBeenCalledTimes(2);
+    expect(models.Document.delete).toHaveBeenCalledExactlyOnceWith({ id: "failed-doc" });
+    expect(models.Document.listDocumentByEntityId).toHaveBeenCalledTimes(2);
+  });
+
+  it("blocks another batch and live refresh until the upload finishes, then reloads the saved document", async () => {
+    const user = userEvent.setup();
+    models.Document.listDocumentByEntityId.mockResolvedValue({ data: [] });
+    models.Document.create.mockResolvedValue({ data: { id: "saved-doc" } });
+    let finish!: (value: { path: string }) => void;
+    vi.mocked(uploadData).mockReturnValue({ result: new Promise<{ path: string }>(resolve => { finish = resolve; }) });
+    const view = render(<DocumentsPanel entityType="ACCOUNT" entityId="acct-1" />);
+    await screen.findByText("No documents attached.");
+    const picker = view.container.querySelector<HTMLInputElement>('input[type="file"]')!;
+    const file = new File(["pdf"], "budget.pdf", { type: "application/pdf" });
+    await user.upload(picker, file);
+    expect(picker).toBeDisabled();
+    fireEvent.change(picker, { target: { files: [file] } });
+    await invalidateLiveUpdates();
+    expect(models.Document.create).toHaveBeenCalledOnce();
+    expect(models.Document.listDocumentByEntityId).toHaveBeenCalledOnce();
+    models.Document.listDocumentByEntityId.mockResolvedValue({ data: [{ ...DOC, id: "saved-doc", name: "budget.pdf" }] });
+    await act(async () => finish({ path: "uploaded" }));
+
+    expect(await screen.findByText("budget.pdf")).toBeVisible();
+    expect(picker).toBeEnabled();
+    expect(models.Document.create).toHaveBeenCalledOnce();
+    expect(models.Document.delete).not.toHaveBeenCalled();
   });
 });
 
