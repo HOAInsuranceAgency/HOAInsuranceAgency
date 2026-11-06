@@ -1,10 +1,7 @@
+import { createDataClientGetter } from "../data-client";
 import { captureHandledFailure } from "../monitoring";
-import { Amplify } from "aws-amplify";
-import { generateClient } from "aws-amplify/data";
-import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtime";
 import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
 import Anthropic from "@anthropic-ai/sdk";
-import type { Schema } from "../../data/resource";
 import { CLAUDE_MODEL } from "../model";
 import { listAllPages } from "../../../../shared/pagination";
 import {
@@ -27,17 +24,7 @@ import {
 
 const lambda = new LambdaClient();
 
-let dataClient: ReturnType<typeof generateClient<Schema>> | undefined;
-async function getDataClient() {
-  if (!dataClient) {
-    const { resourceConfig, libraryOptions } = await getAmplifyDataClientConfig(
-      process.env as never
-    );
-    Amplify.configure(resourceConfig, libraryOptions);
-    dataClient = generateClient<Schema>();
-  }
-  return dataClient;
-}
+const getDataClient = createDataClientGetter();
 
 // ── Extraction schema (structured outputs — additionalProperties:false,
 //    every property required, nullable via type arrays) ─────────────────

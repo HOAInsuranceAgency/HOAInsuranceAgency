@@ -1,3 +1,4 @@
+import { createDataClientGetter, type LambdaDataClient as DataClient } from "../data-client";
 import { captureHandledFailure } from "../monitoring";
 import { initialQuotePublicationWrites } from "../quote-source-billing";
 import { reserveFeeInvoice, reserveFeeLoan, publishFeeInvoiceLink, completeFeeInvoiceSend } from "../broker-fees/payments";
@@ -18,10 +19,6 @@ import { randomUUID } from "node:crypto";
 import { SendEmailCommand } from "@aws-sdk/client-sesv2";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, GetCommand, PutCommand, UpdateCommand, TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
-import { Amplify } from "aws-amplify";
-import { generateClient } from "aws-amplify/data";
-import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtime";
-import type { Schema } from "../../data/resource";
 import { listAllPages } from "../../../../shared/pagination";
 import { isOpenQuoteStatus } from "../../../../shared/quoteStatus";
 import { AGENCY, AGENCY_FMT } from "../../../../shared/agency";
@@ -49,18 +46,7 @@ import { beginInvoiceSend, completeInvoiceSend, InvoiceSendBlocked } from "./sen
  * is read here.
  */
 
-type DataClient = ReturnType<typeof generateClient<Schema>>;
-let dataClient: DataClient | undefined;
-async function getDataClient() {
-  if (!dataClient) {
-    const { resourceConfig, libraryOptions } = await getAmplifyDataClientConfig(
-      process.env as never
-    );
-    Amplify.configure(resourceConfig, libraryOptions);
-    dataClient = generateClient<Schema>();
-  }
-  return dataClient;
-}
+const getDataClient = createDataClientGetter();
 
 const ses = new TransactionalMailClient("invoice");
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient());

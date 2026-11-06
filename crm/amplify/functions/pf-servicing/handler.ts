@@ -1,12 +1,9 @@
+import { createDataClientGetter } from "../data-client";
 import { sendCrmWrite } from '../live-write';
 import { captureHandledFailure } from "../monitoring";
 import { randomUUID } from "node:crypto";
-import { Amplify } from "aws-amplify";
-import { generateClient } from "aws-amplify/data";
-import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtime";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, PutCommand, TransactWriteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
-import type { Schema } from "../../data/resource";
 import {
   addDaysIso,
   canRecordCert,
@@ -39,18 +36,7 @@ import { postInstallment } from "../pfPosting";
  * clicked. The click times are ours, and nothing accepts them as input.
  */
 
-type DataClient = ReturnType<typeof generateClient<Schema>>;
-let dataClient: DataClient | undefined;
-async function getDataClient() {
-  if (!dataClient) {
-    const { resourceConfig, libraryOptions } = await getAmplifyDataClientConfig(
-      process.env as never
-    );
-    Amplify.configure(resourceConfig, libraryOptions);
-    dataClient = generateClient<Schema>();
-  }
-  return dataClient;
-}
+const getDataClient = createDataClientGetter();
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient());
 

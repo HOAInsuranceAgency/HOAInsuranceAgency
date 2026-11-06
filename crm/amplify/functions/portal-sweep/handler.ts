@@ -1,11 +1,8 @@
+import { createDataClientGetter } from "../data-client";
 import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
 import { migrationProviderHeld, migrationPendingHeld } from "../migration-pending";
 import { HeadObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { enqueueOperation } from "../communications/operations";
-import { Amplify } from "aws-amplify";
-import { generateClient } from "aws-amplify/data";
-import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtime";
-import type { Schema } from "../../data/resource";
 import { listAllPages } from "../../../../shared/pagination";
 import { extractedAt, parseStoredJson } from "../../../../shared/aiExtraction";
 import { isExtractableCategory } from "../../../../shared/enums";
@@ -20,18 +17,7 @@ import { arrivedSections, renderNotification } from "./email";
  * kick extraction off, or leave it for the next tick.
  */
 
-type DataClient = ReturnType<typeof generateClient<Schema>>;
-let dataClient: DataClient | undefined;
-async function getDataClient() {
-  if (!dataClient) {
-    const { resourceConfig, libraryOptions } = await getAmplifyDataClientConfig(
-      process.env as never
-    );
-    Amplify.configure(resourceConfig, libraryOptions);
-    dataClient = generateClient<Schema>();
-  }
-  return dataClient;
-}
+const getDataClient = createDataClientGetter();
 
 const lambda = new LambdaClient();
 const s3 = new S3Client();

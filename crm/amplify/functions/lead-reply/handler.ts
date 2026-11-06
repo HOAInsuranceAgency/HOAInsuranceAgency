@@ -1,3 +1,4 @@
+import { createDataClientGetter, type LambdaDataClient as DataClient } from "../data-client";
 import { sendCrmWrite } from '../live-write';
 import { migrationPendingCutoff, migrationPendingHeld } from "../migration-pending";
 import { currentContacts } from "../../../../shared/contacts";
@@ -10,9 +11,6 @@ import { db, get, issue } from "../communications/store";
 import { openQueueCursor, saveQueueCursor } from "../communications/queueCursor";
 import { assignedEmailProducer, enqueueOperation, type Operation } from "../communications/operations";
 import type { LeadWorkflow } from "../../../../shared/leadWorkflow";
-import { Amplify } from "aws-amplify";
-import { generateClient } from "aws-amplify/data";
-import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtime";
 import type { Schema } from "../../data/resource";
 import { listAllPages } from "../../../../shared/pagination";
 import { CLAUDE_MODEL } from "../model";
@@ -40,18 +38,7 @@ import {
  * kick extraction off, or leave it for the next tick.
  */
 
-type DataClient = ReturnType<typeof generateClient<Schema>>;
-let dataClient: DataClient | undefined;
-async function getDataClient() {
-  if (!dataClient) {
-    const { resourceConfig, libraryOptions } = await getAmplifyDataClientConfig(
-      process.env as never
-    );
-    Amplify.configure(resourceConfig, libraryOptions);
-    dataClient = generateClient<Schema>();
-  }
-  return dataClient;
-}
+const getDataClient = createDataClientGetter();
 
 const lambda = new LambdaClient();
 

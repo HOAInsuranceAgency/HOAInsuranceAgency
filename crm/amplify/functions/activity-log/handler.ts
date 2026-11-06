@@ -1,9 +1,6 @@
-import { Amplify } from "aws-amplify";
-import { generateClient } from "aws-amplify/data";
-import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtime";
+import { createDataClientGetter, type LambdaDataClient as DataClient } from "../data-client";
 import { unmarshall } from "@aws-sdk/util-dynamodb";
 import type { AttributeValue, DynamoDBStreamEvent } from "aws-lambda";
-import type { Schema } from "../../data/resource";
 import { holdMigrationStream } from "../migration-stream-hold";
 import { publishCrmChange } from "../live-changes";
 import {
@@ -19,19 +16,7 @@ import {
  * and ./diff.ts for the parts worth testing.
  */
 
-type DataClient = ReturnType<typeof generateClient<Schema>>;
-
-let dataClient: DataClient | undefined;
-async function getDataClient() {
-  if (!dataClient) {
-    const { resourceConfig, libraryOptions } = await getAmplifyDataClientConfig(
-      process.env as never
-    );
-    Amplify.configure(resourceConfig, libraryOptions);
-    dataClient = generateClient<Schema>();
-  }
-  return dataClient;
-}
+const getDataClient = createDataClientGetter();
 
 /**
  * Cognito sub → display name, cached for the life of the container.
