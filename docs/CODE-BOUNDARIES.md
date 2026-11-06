@@ -17,7 +17,16 @@ credentials or permission to invoke a deployment. Live retained-resource checks
 in the Amplify release pipeline remain separate from this offline verification.
 For a clean checkout, verification temporarily creates the minimal generated
 Amplify outputs module needed by mocked tests and the offline browser build.
-It preserves existing outputs and removes only its unchanged fixture on completion.
+It preserves existing outputs by file identity and removes only its unchanged
+fixture on completion. CRM dist is restored after success, failure or cancellation;
+validation bundles are discarded. A checkout lock prevents overlapping verification.
+If a cancelled descendant cannot be confirmed stopped, the lock and backup remain
+for inspection. The `crm` offline alias runs the same root command plan, including
+preview checks and both complete retained-contract synth environments.
+The cancellation-safe verifier targets macOS and Linux.
+Node 22 and 24 run the identical verifier in CI. Bounded fork workers preserve
+per-process timezone semantics, and TypeScript validation scripts use Node's tsx loader without
+opening a local IPC listener.
 
 Architecture rules enforced by `scripts/check-module-boundaries.mjs`:
 
