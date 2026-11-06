@@ -46,26 +46,7 @@ const renderCard = () => render(<BuildingsCard accountId="a1" />);
 /** The add form and the edit form hold the same four fields, so every query
  *  has to say which one it means. */
 const toolbar = () => within(document.querySelector(".toolbar") as HTMLElement);
-/**
- * The edit modal, plus a by-label lookup for it.
- *
- * Labels in this app sit beside their inputs rather than being
- * `for`-associated, so `getByLabelText` cannot find them. `getByLabelText2`
- * walks from the label text to the input in the same `.field` wrapper, which
- * is the structure every form here uses.
- */
-const editor = () => {
-  const dialog = screen.getByRole("dialog");
-  const scope = within(dialog);
-  return Object.assign(scope, {
-    getByLabelText2(text: string) {
-      const label = scope.getByText(text, { selector: "label" });
-      const input = label.parentElement?.querySelector("input, select, textarea");
-      if (!input) throw new Error(`no control beside the label "${text}"`);
-      return input as HTMLElement;
-    },
-  });
-};
+const editor = () => within(screen.getByRole("dialog"));
 
 beforeEach(() => {
   Blanket.list.mockReset();
@@ -196,6 +177,30 @@ describe("add", () => {
 describe("edit", () => {
   beforeEach(() => {
     Building.list.mockResolvedValue({ data: rows(), nextToken: null });
+  });
+
+  it("keeps add and edit labels unique and attached while preserving the active editor", async () => {
+    const user = userEvent.setup();
+    renderCard();
+    await screen.findByText("Clubhouse");
+    const addLabel = toolbar().getByLabelText("Label");
+    await user.click(screen.getAllByText("Edit")[0]);
+    const editLabel = editor().getByLabelText("Label");
+    expect(editLabel.id).not.toBe(addLabel.id);
+    await user.click(editor().getByText("Label", { selector: "label" }));
+    expect(editLabel).toHaveFocus();
+    await user.clear(editLabel);
+    await user.type(editLabel, "Annex");
+    expect(editor().getByLabelText("Label")).toBe(editLabel);
+    expect(editLabel).toHaveValue("Annex");
+    expect(addLabel).toHaveValue("");
+    for (const label of ["Street address", "Sq ft", "Description (prints on ACORD 125)", "Year built", "Construction type", "Coinsurance", "Blanket #", "Remarks (ACORD 101 overflow)"]) {
+      expect(editor().getByLabelText(label)).toHaveAccessibleName(label);
+    }
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(Building.update).not.toHaveBeenCalled();
+    expect(toolbar().getByLabelText("Label")).toBe(addLabel);
   });
 
   it("seeds the form from the row, saves it, and patches the table", async () => {
@@ -385,8 +390,8 @@ describe("the full underwriting field set", () => {
     await user.click(screen.getAllByText("Edit")[0]);
 
     const dialog = editor();
-    await user.type(dialog.getByLabelText2("Year built"), "1978");
-    await user.type(dialog.getByLabelText2("Roof updated"), "2019");
+    await user.type(dialog.getByLabelText("Year built"), "1978");
+    await user.type(dialog.getByLabelText("Roof updated"), "2019");
     await user.click(screen.getByText("Save"));
 
     expect(Building.update).toHaveBeenCalledWith(
@@ -404,8 +409,8 @@ describe("the full underwriting field set", () => {
     const dialog = editor();
     // Construction can be scheduled ahead; work already *done* cannot be.
     // The two bounds are the ones client.ts:270 documents, now per building.
-    await user.type(dialog.getByLabelText2("Year built"), ahead(3));
-    await user.type(dialog.getByLabelText2("Roof updated"), ahead(3));
+    await user.type(dialog.getByLabelText("Year built"), ahead(3));
+    await user.type(dialog.getByLabelText("Roof updated"), ahead(3));
     await user.click(screen.getByText("Save"));
 
     expect(await screen.findByText(/Roof year should be between/)).toBeInTheDocument();
