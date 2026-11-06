@@ -6,6 +6,7 @@ import { operationRow } from "./outbox";
 import { dataClient } from "./data";
 import type { Operation } from "./operations";
 import { isInitialAiCommunication } from "./initialAi";
+import { readCompleteModels } from './completeReads';
 
 async function purpose(c: Communication): Promise<Communication> {
   const link = c.conversationId ? await get<{ purpose?: "PROSPECT" | "CARRIER"; context?: Communication["context"]; policyId?: string; quoteId?: string }>(`front-link:${c.conversationId}`) : undefined;
@@ -16,13 +17,8 @@ async function purpose(c: Communication): Promise<Communication> {
 export async function accountContactPairs(accountId: string): Promise<ContactPair[]> {
   const account = await (await dataClient()).models.Account.get({ id: accountId });
   if (account.errors?.length || !account.data) throw new Error("The lead's contacts could not be loaded");
-  const contacts: ContactPair[] = []; let nextToken: string | undefined;
-  do {
-    const page = await account.data.contacts({ limit: 100, nextToken });
-    if (page.errors?.length) throw new Error("The lead's contacts could not be loaded");
-    contacts.push(...page.data); nextToken = page.nextToken ?? undefined;
-  } while (nextToken);
-  return contacts;
+  return readCompleteModels(nextToken => account.data!.contacts({ limit: 100, nextToken }),
+    'relations', "The lead's contacts could not be loaded");
 }
 
 /** Serialize inbound/waiting transitions without changing the editable lead-team version. */

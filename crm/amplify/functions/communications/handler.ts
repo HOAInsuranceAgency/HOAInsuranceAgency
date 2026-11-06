@@ -33,6 +33,7 @@ import { activeRole, isActiveAdmin, type RoleRequest } from "../crm-access/activ
 import { readLeadSnooze, saveLeadSnooze } from "./snooze";
 import { currentTeamRoles } from "./teamAvailability";
 import { activeTeamUserCheck } from "../crm-access/user-status";
+import { readCompleteModels } from './completeReads';
 
 type Input = Record<string, unknown>;
 function object(value: unknown): Input {
@@ -45,8 +46,8 @@ const text = (input: Input, key: string, max = 500) => typeof input[key] === "st
 function version(input: Input) { if (!Number.isInteger(input.version)) throw new Error("Refresh this record before saving"); return Number(input.version); }
 async function roster() {
   const client = await dataClient(), eligibility = await team();
-  const profiles = []; let nextToken: string | null | undefined;
-  do { const p = await client.models.UserProfile.list({ nextToken, limit: 100 }); if (p.errors?.length) throw new Error("Could not load teammates"); profiles.push(...p.data); nextToken = p.nextToken; } while (nextToken);
+  const profiles = await readCompleteModels(nextToken => client.models.UserProfile.list({ nextToken, limit: 100 }),
+    'team', 'Could not load teammates');
   const { available, producers } = await currentTeamRoles(profiles.map(p => p.userId));
   return profiles.map(p => {
     const saved = eligibility.find(t => t.userId === p.userId), producer = producers.has(p.userId);
