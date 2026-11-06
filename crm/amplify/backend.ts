@@ -810,8 +810,9 @@ backend.storage.resources.bucket.grantPut(
 
 // Invoice-link publication and loan origination use conditional writes and
 // append-only compliance decisions; the feature map retains each permission.
-bindPremiumFinanceTables(backend, 'invoiceSend');
+bindPremiumFinanceTables(backend, 'invoicePublication');
 backend.sendInvoice.addEnvironment("SITE_URL", siteBaseUrl);
+bindPremiumFinanceTables(backend, 'invoiceOrigination');
 
 /**
  * Reporting the split to corporate finance, when Stripe confirms a payment.
@@ -841,8 +842,9 @@ bindPremiumFinanceTables(backend, 'webhookSettlement');
  * (PF_LOAN_TABLE, conditional), and the compliance row. SITE_URL is where
  * Checkout returns the customer — the public website's finance page.
  */
-bindPremiumFinanceTables(backend, 'election');
+bindPremiumFinanceTables(backend, 'electionCheckout');
 backend.pfElection.addEnvironment("SITE_URL", siteBaseUrl);
+bindPremiumFinanceTables(backend, 'electionFlag');
 
 /**
  * W7: the autopay cron scans the loan table itself (no data client — its

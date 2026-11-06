@@ -23,13 +23,16 @@ const bindings = {
   // Servicing posts deterministic payment/notice rows with conditional loan changes.
   servicing: { target: 'pfServicing', tables: [['PfComplianceLog', 'readWrite'], ['PfLoan', 'readWrite'], ['PfLoanPayment', 'readWrite'], ['PfNotice', 'readWrite']] },
   defaultSweep: { target: 'pfDefaultSweep', tables: [['PfComplianceLog', 'readWrite'], ['PfLoan', 'readWrite']] },
+  // URL configuration remains between these groups to retain template bytes.
+  invoicePublication: { target: 'sendInvoice', tables: [['Invoice', 'readWrite'], ['PfLoan', 'readWrite']] },
   // Send only appends compliance decisions; it does not read or delete that log.
-  invoiceSend: { target: 'sendInvoice', tables: [['Invoice', 'readWrite'], ['PfLoan', 'readWrite'], ['PfComplianceLog', 'write'], ['AgencySettings', 'read']] },
+  invoiceOrigination: { target: 'sendInvoice', tables: [['PfComplianceLog', 'write'], ['AgencySettings', 'read']] },
   // Kept separate to retain the existing SES statement's placement between grants.
   webhookReporting: { target: 'stripeWebhook', tables: [['Account', 'read'], ['Policy', 'read'], ['Carrier', 'read']] },
   webhookSettlement: { target: 'stripeWebhook', tables: [['PfLoan', 'readWrite'], ['PfComplianceLog', 'write'], ['AgencySettings', 'read'], ['PfLoanPayment', 'readWrite']] },
+  electionCheckout: { target: 'pfElection', tables: [['Invoice', 'readWrite'], ['PfLoan', 'readWrite'], ['PfComplianceLog', 'write']] },
   // Election conditions the checkout stamp on the flag; read includes ConditionCheckItem.
-  election: { target: 'pfElection', tables: [['Invoice', 'readWrite'], ['PfLoan', 'readWrite'], ['PfComplianceLog', 'write'], ['AgencySettings', 'read']] },
+  electionFlag: { target: 'pfElection', tables: [['AgencySettings', 'read']] },
   // Recovery can adopt a succeeded debit and post it through the existing ledger core.
   autopay: { target: 'pfAutopay', tables: [['PfLoan', 'readWrite'], ['PfComplianceLog', 'write'], ['PfLoanPayment', 'readWrite']] },
 } as const satisfies Record<string, Binding>;

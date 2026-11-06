@@ -4,6 +4,7 @@ import { Template } from 'aws-cdk-lib/assertions';
 import { AttributeType, Table } from 'aws-cdk-lib/aws-dynamodb';
 import { PolicyStatement } from 'aws-cdk-lib/aws-iam';
 import { Code, Function as Lambda, Runtime } from 'aws-cdk-lib/aws-lambda';
+import { readFileSync } from 'node:fs';
 import { expect, expectTypeOf, it } from 'vitest';
 import { bindPremiumFinanceTables, type FinanceBindingGroup } from '../../amplify/finance-bindings';
 
@@ -21,7 +22,7 @@ const expected = {
 } as const;
 type Target = keyof typeof expected;
 const targets = Object.keys(expected) as Target[];
-const groups: FinanceBindingGroup[] = ['administration', 'origination', 'servicing', 'defaultSweep', 'invoiceSend', 'webhookReporting', 'webhookSettlement', 'election', 'autopay'];
+const groups: FinanceBindingGroup[] = ['administration', 'origination', 'servicing', 'defaultSweep', 'invoicePublication', 'invoiceOrigination', 'webhookReporting', 'webhookSettlement', 'electionCheckout', 'electionFlag', 'autopay'];
 
 function fixture() {
   const app = new App(), root = new Stack(app, 'FinanceFixture', { env: { account: '111111111111', region: 'us-east-1' } });
@@ -53,11 +54,18 @@ function legacyBindings(value: ReturnType<typeof fixture>) {
     if (access === 'read') table.grantReadData(fn.resources.lambda);
     else if (access === 'write') table.grantWriteData(fn.resources.lambda);
     else table.grantReadWriteData(fn.resources.lambda);
+    if ((name === 'sendInvoice' && key === 'PF_LOAN_TABLE') || (name === 'pfElection' && key === 'PF_COMPLIANCE_LOG_TABLE')) {
+      fn.addEnvironment('SITE_URL', 'https://example.invalid');
+    }
   }
 }
 
 function currentBindings(value: ReturnType<typeof fixture>) {
-  for (const group of groups) bindPremiumFinanceTables(value.backend as unknown as Parameters<typeof bindPremiumFinanceTables>[0], group);
+  for (const group of groups) {
+    bindPremiumFinanceTables(value.backend as unknown as Parameters<typeof bindPremiumFinanceTables>[0], group);
+    if (group === 'invoicePublication') value.functions.sendInvoice.addEnvironment('SITE_URL', 'https://example.invalid');
+    if (group === 'electionCheckout') value.functions.pfElection.addEnvironment('SITE_URL', 'https://example.invalid');
+  }
 }
 
 it('renders identical environments, IAM statements, stack placement and resource IDs for all 29 bindings', () => {
@@ -65,6 +73,15 @@ it('renders identical environments, IAM statements, stack placement and resource
   legacyBindings(before); currentBindings(after);
   expect(after.render()).toEqual(before.render());
   expect(targets.reduce((count, name) => count + expected[name].length, 0)).toBe(29);
+});
+
+it('preserves serialized template bytes around the independent legacy SITE_URL insertion points', () => {
+  const before = fixture(), after = fixture();
+  legacyBindings(before); currentBindings(after);
+  expect(JSON.stringify(after.render())).toBe(JSON.stringify(before.render()));
+  const backend = readFileSync(new URL('../../amplify/backend.ts', import.meta.url), 'utf8');
+  expect(backend).toContain(`bindPremiumFinanceTables(backend, 'invoicePublication');\nbackend.sendInvoice.addEnvironment("SITE_URL", siteBaseUrl);\nbindPremiumFinanceTables(backend, 'invoiceOrigination');`);
+  expect(backend).toContain(`bindPremiumFinanceTables(backend, 'electionCheckout');\nbackend.pfElection.addEnvironment("SITE_URL", siteBaseUrl);\nbindPremiumFinanceTables(backend, 'electionFlag');`);
 });
 
 it('keeps eight existing inline policies and never adds a policy, role, table or managed policy in another stack', () => {
@@ -104,7 +121,7 @@ it('retains ConditionCheckItem for flag reads without broadening append-only log
 });
 
 it('closes the accepted binding groups at compile time', () => {
-  expectTypeOf<FinanceBindingGroup>().toEqualTypeOf<'administration' | 'origination' | 'servicing' | 'defaultSweep' | 'invoiceSend' | 'webhookReporting' | 'webhookSettlement' | 'election' | 'autopay'>();
+  expectTypeOf<FinanceBindingGroup>().toEqualTypeOf<'administration' | 'origination' | 'servicing' | 'defaultSweep' | 'invoicePublication' | 'invoiceOrigination' | 'webhookReporting' | 'webhookSettlement' | 'electionCheckout' | 'electionFlag' | 'autopay'>();
   const invalidGroup = (backend: Parameters<typeof bindPremiumFinanceTables>[0]) => {
     // @ts-expect-error A caller cannot select an arbitrary provider, table or group.
     bindPremiumFinanceTables(backend, 'allTables');
