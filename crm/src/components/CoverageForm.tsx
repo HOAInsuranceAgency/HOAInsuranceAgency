@@ -1,6 +1,7 @@
 import { str, inputValue } from "../lib/formCodec";
 import { assertGraphqlErrors } from '../lib/apiResponse';
 import { Select } from "./ui/Select";
+import { Field } from "./ui/Field";
 import { Input } from "./ui/Input";
 import { Button } from "./ui/Button";
 import { Textarea } from "./ui/Textarea";
@@ -247,50 +248,45 @@ export default function CoverageForm({
       </h3>
       <fieldset disabled={saving} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
       <div className="form-grid">
-        <div className="field">
-          <label>Carrier</label>
-          <Select value={form.carrierId} onChange={(e) => pickCarrier(e.target.value)}>
+        <Field label="Carrier">
+          {control => <Select {...control} value={form.carrierId} onChange={(e) => pickCarrier(e.target.value)}>
             <option value="">—</option>
             {carriers.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}
               </option>
             ))}
-          </Select>
-        </div>
+          </Select>}
+        </Field>
         {isPolicy && (
-          <div className="field">
-            <label htmlFor="coverage-policy-number">Policy number</label>
-            <Input
-              id="coverage-policy-number"
+          <Field label="Policy number" id="coverage-policy-number"
+            help={asPolicy?.commissionSnapshotId && <>The Owner can update this number in <a href="/commissions">Commissions</a> to keep policy and payroll records consistent.</>}>
+            {control => <Input {...control}
               disabled={!!asPolicy?.commissionSnapshotId}
               value={form.policyNumber}
               onChange={(e) => setF("policyNumber", e.target.value)}
-            />
-            {asPolicy?.commissionSnapshotId && <p className="small muted">The Owner can update this number in <a href="/commissions">Commissions</a> to keep policy and payroll records consistent.</p>}
-          </div>
+            />}
+          </Field>
         )}
         {/* The financing-eligibility facts, on quotes and policies alike:
             W8 bills — and offers financing on — a quote before bind, so the
             screens must be answerable where the offer is made. */}
         {(
           <>
-            <div className="field">
-              <label>Minimum earned premium % (from the {isPolicy ? "policy" : "quote"})</label>
-              <PercentInput
+            <Field label={<>Minimum earned premium % (from the {isPolicy ? "policy" : "quote"})</>}>
+              {control => <PercentInput {...control}
                 value={form.mepPct}
                 onChange={(v) => setF("mepPct", v)}
-              />
-            </div>
+              />}
+            </Field>
           </>
         )}
         {/* Fee-bearing quotes need this existing billing answer before the
             client payment request; fee-free quotes still answer it at bind. */}
         {(isPolicy || Number(form.brokerFee) > 0) && (
-          <div className="field">
-            <label htmlFor="coverage-bill-type">Bill type</label>
-            <Select
-              id="coverage-bill-type"
+          <Field label="Bill type" id="coverage-bill-type"
+            help={!isPolicy && (Number(form.brokerFee) > 0 ? "HOA broker fees require agency billing." : "Choose who collects the premium so the client’s payment request includes only the amount the agency collects.")}>
+            {control => <Select {...control}
               disabled={!isPolicy && existing?.status === "BOUND"}
               value={form.billType}
               onChange={(e) => setF("billType", e.target.value)}
@@ -301,15 +297,17 @@ export default function CoverageForm({
                   {o.label}
                 </option>
               ))}
-            </Select>
-            {!isPolicy && <p className="small muted">{Number(form.brokerFee) > 0 ? "HOA broker fees require agency billing." : "Choose who collects the premium so the client’s payment request includes only the amount the agency collects."}</p>}
-          </div>
+            </Select>}
+          </Field>
         )}
-        {!isPolicy && policies.data.length > 0 && <label className="field">Renewal of<Select value={form.renewalPolicyId} onChange={e => { const p = policies.data.find(p => p.id === e.target.value); setF("renewalPolicyId", e.target.value); if (p?.expirationDate && !form.effectiveDate) setF("effectiveDate", p.expirationDate); }}><option value="">New business</option>{policies.data.map(p => <option value={p.id} key={p.id}>{p.policyNumber || "Policy"} · {p.lines?.join(", ")} · expires {p.expirationDate}</option>)}</Select></label>}
-        {!isPolicy && <label className="field">Offer valid through (if specified by carrier)<DateInput value={form.offerExpiresAt} onChange={v => setF("offerExpiresAt", v)} /></label>}
-        <div className="field">
-          <label>Status</label>
-          <Select
+        {!isPolicy && policies.data.length > 0 && <Field label="Renewal of">
+          {control => <Select {...control} value={form.renewalPolicyId} onChange={e => { const p = policies.data.find(p => p.id === e.target.value); setF("renewalPolicyId", e.target.value); if (p?.expirationDate && !form.effectiveDate) setF("effectiveDate", p.expirationDate); }}><option value="">New business</option>{policies.data.map(p => <option value={p.id} key={p.id}>{p.policyNumber || "Policy"} · {p.lines?.join(", ")} · expires {p.expirationDate}</option>)}</Select>}
+        </Field>}
+        {!isPolicy && <Field label="Offer valid through (if specified by carrier)">
+          {control => <DateInput {...control} value={form.offerExpiresAt} onChange={v => setF("offerExpiresAt", v)} />}
+        </Field>}
+        <Field label="Status">
+          {control => <Select {...control}
             value={form.status}
             onChange={(e) => setF("status", e.target.value)}
             disabled={statusOptions.length === 1}
@@ -317,102 +315,96 @@ export default function CoverageForm({
             {[...statusOptions].sort((a, b) => a.localeCompare(b)).map((s) => (
               <option key={s}>{s}</option>
             ))}
-          </Select>
-        </div>
-        <div className="field">
-          <label htmlFor="coverage-premium">Premium ($)</label>
-          <MoneyInput
-            id="coverage-premium"
+          </Select>}
+        </Field>
+        <Field label="Premium ($)" id="coverage-premium" help={<> Client premium before fees and taxes. Actual carrier or wholesaler remittance is recorded separately on the invoice. </>}>
+          {control => <MoneyInput {...control}
             value={form.premium}
             onChange={(v) => setF("premium", v)}
-          />
-          <p className="small muted">Client premium before fees and taxes. Actual carrier or wholesaler remittance is recorded separately on the invoice.</p>
-        </div>
-        <div className="field">
-          <label>Commission % (baked into premium)</label>
-          <PercentInput
+          />}
+        </Field>
+        <Field label="Commission % (baked into premium)">
+          {control => <PercentInput {...control}
             value={form.commissionPct}
             onChange={(v) => {
               setCommissionTouched(true);
               setF("commissionPct", v);
             }}
-          />
-        </div>
-        <div className="field">
-          <label htmlFor="coverage-broker-fee">HOA broker fee ($)</label>
-          <MoneyInput id="coverage-broker-fee" value={form.brokerFee} disabled={isPolicy || existing?.status === "BOUND"} onChange={v => patch({ brokerFee: v, ...(Number(v) > 0 ? { billType: "AGENCY" } : {}) })} />
-          <p className="small muted">Optional agency fee, separate from premium. Disclosed before purchase; the producer’s usual share applies.{(isPolicy || existing?.status === "BOUND") ? " The bound fee is preserved with its signed agreement." : " New and renewal quotes start at $0."}</p>
-        </div>
+          />}
+        </Field>
+        <Field label="HOA broker fee ($)" id="coverage-broker-fee" help={<> Optional agency fee, separate from premium. Disclosed before purchase; the producer’s usual share applies.{(isPolicy || existing?.status === "BOUND") ? " The bound fee is preserved with its signed agreement." : " New and renewal quotes start at $0."} </>}>
+          {control => <MoneyInput {...control} value={form.brokerFee} disabled={isPolicy || existing?.status === "BOUND"} onChange={v => patch({ brokerFee: v, ...(Number(v) > 0 ? { billType: "AGENCY" } : {}) })} />}
+        </Field>
         <div className="field full">
           <h4 style={{ margin: "6px 0" }}>Supplier charges and taxes</h4>
           <p className="small muted">Itemize charges from the carrier or wholesaler. These pass through at cost and do not increase agency revenue.</p>
           {form.passThroughCharges.map((charge, index) => <fieldset key={charge.id} disabled={isPolicy || existing?.status === "BOUND"} style={{ border: 0, padding: "8px 0", margin: 0 }}>
             <legend className="small">Charge {index + 1}</legend>
             <div className="form-grid">
-              <label className="field">Charge type<Select aria-label={`Charge ${index + 1} type`} value={charge.kind} onChange={e => setF("passThroughCharges", rows => rows.map(row => row.id === charge.id ? { ...row, kind: e.target.value as PassThroughCharge["kind"] } : row))}>{CHARGE_KINDS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</Select></label>
-              <label className="field">Description<Input aria-label={`Charge ${index + 1} description`} maxLength={160} value={charge.description} onChange={e => setF("passThroughCharges", rows => rows.map(row => row.id === charge.id ? { ...row, description: e.target.value } : row))} /></label>
-              <label className="field" htmlFor={`charge-amount-${charge.id}`}>Charge {index + 1} amount<MoneyInput id={`charge-amount-${charge.id}`} value={charge.amount} onChange={amount => setF("passThroughCharges", rows => rows.map(row => row.id === charge.id ? { ...row, amount } : row))} /></label>
+              <Field label="Charge type">
+                {control => <Select {...control} aria-label={`Charge ${index + 1} type`} value={charge.kind} onChange={e => setF("passThroughCharges", rows => rows.map(row => row.id === charge.id ? { ...row, kind: e.target.value as PassThroughCharge["kind"] } : row))}>{CHARGE_KINDS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</Select>}
+              </Field>
+              <Field label="Description">
+                {control => <Input {...control} aria-label={`Charge ${index + 1} description`} maxLength={160} value={charge.description} onChange={e => setF("passThroughCharges", rows => rows.map(row => row.id === charge.id ? { ...row, description: e.target.value } : row))} />}
+              </Field>
+              <Field label={<>Charge {index + 1} amount</>} id={`charge-amount-${charge.id}`}>
+                {control => <MoneyInput {...control} value={charge.amount} onChange={amount => setF("passThroughCharges", rows => rows.map(row => row.id === charge.id ? { ...row, amount } : row))} />}
+              </Field>
             </div>
             <Button variant="danger" type="button"  onClick={() => setF("passThroughCharges", rows => rows.filter(row => row.id !== charge.id))}>Remove charge {index + 1}</Button>
           </fieldset>)}
           {!isPolicy && existing?.status !== "BOUND" && <Button variant="secondary" type="button"  disabled={form.passThroughCharges.length >= 30} onClick={() => setF("passThroughCharges", rows => [...rows, { id: `charge-${crypto.randomUUID()}`, kind: "WHOLESALER_FEE", description: "", amountCents: 0, amount: "" }])}>Add supplier charge or tax</Button>}
           <p className="small"><strong>Client policy total: {clientTotal}</strong> · Premium + supplier charges and taxes + HOA broker fee</p>
-          <label className="field">Client conditions<Textarea aria-label="Client conditions" maxLength={6000} rows={3} disabled={isPolicy || existing?.status === "BOUND"} value={form.clientConditions} onChange={e => setF("clientConditions", e.target.value)} /></label>
-          <p className="small muted">Reviewed wording shown to the client with the quote, such as minimum earned premium, cancellation terms or coverage conditions. Keep internal notes below.</p>
+          <Field label="Client conditions" help="Reviewed wording shown to the client with the quote, such as minimum earned premium, cancellation terms or coverage conditions. Keep internal notes below.">
+            {control => <Textarea {...control} aria-label="Client conditions" maxLength={6000} rows={3} disabled={isPolicy || existing?.status === "BOUND"} value={form.clientConditions} onChange={e => setF("clientConditions", e.target.value)} />}
+          </Field>
         </div>
-        <div className="field">
-          <label>Effective date</label>
-          <DateInput
+        <Field label="Effective date">
+          {control => <DateInput {...control}
             value={form.effectiveDate}
             onChange={(v) => setF("effectiveDate", v)}
-          />
-        </div>
-        <div className="field">
-          <label>Expiration date</label>
-          <DateInput
+          />}
+        </Field>
+        <Field label="Expiration date">
+          {control => <DateInput {...control}
             value={form.expirationDate}
             onChange={(v) => setF("expirationDate", v)}
-          />
-        </div>
-        <div className="field">
-          <label>Per-occurrence deductible ($)</label>
-          <MoneyInput
+          />}
+        </Field>
+        <Field label="Per-occurrence deductible ($)">
+          {control => <MoneyInput {...control}
             value={form.perOccDed}
             onChange={(v) => setF("perOccDed", v)}
-          />
-        </div>
-        <div className="field">
-          <label>Per-unit deductible ($)</label>
-          <MoneyInput
+          />}
+        </Field>
+        <Field label="Per-unit deductible ($)">
+          {control => <MoneyInput {...control}
             value={form.perUnitDed}
             onChange={(v) => setF("perUnitDed", v)}
-          />
-        </div>
-        <div className="field">
-          <label>Blanket limit ($)</label>
-          <MoneyInput
+          />}
+        </Field>
+        <Field label="Blanket limit ($)">
+          {control => <MoneyInput {...control}
             value={form.blanketLimit}
             onChange={(v) => setF("blanketLimit", v)}
-          />
-        </div>
-        <div className="field">
-          <label>Coinsurance %</label>
-          <PercentInput
+          />}
+        </Field>
+        <Field label="Coinsurance %">
+          {control => <PercentInput {...control}
             value={form.coinsurance}
             onChange={(v) => setF("coinsurance", v)}
-          />
-        </div>
-        <div className="field">
-          <label>Replacement cost</label>
-          <Select value={form.rcType} onChange={(e) => setF("rcType", e.target.value)}>
+          />}
+        </Field>
+        <Field label="Replacement cost">
+          {control => <Select {...control} value={form.rcType} onChange={(e) => setF("rcType", e.target.value)}>
             <option value="">—</option>
             {REPLACEMENT_COST_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>
                 {o.label}
               </option>
             ))}
-          </Select>
-        </div>
+          </Select>}
+        </Field>
         <div className="field full">
           <h4 style={{ margin: "6px 0 0" }}>General liability limits</h4>
           <p className="muted small" style={{ margin: "2px 0 0" }}>
@@ -420,40 +412,33 @@ export default function CoverageForm({
             is of no use to the holder.
           </p>
         </div>
-        <div className="field">
-          <label>Each occurrence ($)</label>
-          <MoneyInput value={form.glEachOcc} onChange={(v) => setF("glEachOcc", v)} />
-        </div>
-        <div className="field">
-          <label>Damage to rented premises ($)</label>
-          <MoneyInput value={form.glRented} onChange={(v) => setF("glRented", v)} />
-        </div>
-        <div className="field">
-          <label>Medical expense, any one person ($)</label>
-          <MoneyInput value={form.glMed} onChange={(v) => setF("glMed", v)} />
-        </div>
-        <div className="field">
-          <label>Personal &amp; advertising injury ($)</label>
-          <MoneyInput value={form.glPersAdv} onChange={(v) => setF("glPersAdv", v)} />
-        </div>
-        <div className="field">
-          <label>General aggregate ($)</label>
-          <MoneyInput value={form.glGenAgg} onChange={(v) => setF("glGenAgg", v)} />
-        </div>
-        <div className="field">
-          <label>Products &amp; completed ops aggregate ($)</label>
-          <MoneyInput value={form.glProdAgg} onChange={(v) => setF("glProdAgg", v)} />
-        </div>
-        <div className="field">
-          <label>Aggregate applies per</label>
-          <Select value={form.glAggApplies} onChange={(e) => setF("glAggApplies", e.target.value as typeof form.glAggApplies)}>
+        <Field label="Each occurrence ($)">
+          {control => <MoneyInput {...control} value={form.glEachOcc} onChange={(v) => setF("glEachOcc", v)} />}
+        </Field>
+        <Field label="Damage to rented premises ($)">
+          {control => <MoneyInput {...control} value={form.glRented} onChange={(v) => setF("glRented", v)} />}
+        </Field>
+        <Field label="Medical expense, any one person ($)">
+          {control => <MoneyInput {...control} value={form.glMed} onChange={(v) => setF("glMed", v)} />}
+        </Field>
+        <Field label="Personal &amp; advertising injury ($)">
+          {control => <MoneyInput {...control} value={form.glPersAdv} onChange={(v) => setF("glPersAdv", v)} />}
+        </Field>
+        <Field label="General aggregate ($)">
+          {control => <MoneyInput {...control} value={form.glGenAgg} onChange={(v) => setF("glGenAgg", v)} />}
+        </Field>
+        <Field label="Products &amp; completed ops aggregate ($)">
+          {control => <MoneyInput {...control} value={form.glProdAgg} onChange={(v) => setF("glProdAgg", v)} />}
+        </Field>
+        <Field label="Aggregate applies per">
+          {control => <Select {...control} value={form.glAggApplies} onChange={(e) => setF("glAggApplies", e.target.value as typeof form.glAggApplies)}>
             {AGGREGATE_APPLIES_TO_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>
                 {o.label}
               </option>
             ))}
-          </Select>
-        </div>
+          </Select>}
+        </Field>
         <div className="field">
           <label>Coverage form</label>
           <label className="small" style={{ display: "flex", gap: 6, alignItems: "center", height: 38 }}>
@@ -488,10 +473,9 @@ export default function CoverageForm({
             ))}
           </div>
         </div>
-        <div className="field full">
-          <label>Notes</label>
-          <Textarea rows={2} value={form.notes} onChange={(e) => setF("notes", e.target.value)} />
-        </div>
+        <Field label="Notes" className="full">
+          {control => <Textarea {...control} rows={2} value={form.notes} onChange={(e) => setF("notes", e.target.value)} />}
+        </Field>
       </div>
       <div className="form-actions">
         <Button variant="primary"  disabled={saving} onClick={save}>

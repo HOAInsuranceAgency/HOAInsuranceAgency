@@ -1,9 +1,45 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
-const h = vi.hoisted(() => ({ create: vi.fn(), update: vi.fn() }));
-vi.mock("aws-amplify/data", () => ({ generateClient: () => ({ models: { Policy: { update: h.update, list: async () => ({ data: [] }) }, Quote: { create: h.create, update: h.update } } }) }));
+const h = vi.hoisted(() => ({ create: vi.fn(), update: vi.fn(), policies: vi.fn() }));
+vi.mock("aws-amplify/data", () => ({ generateClient: () => ({ models: { Policy: { update: h.update, list: h.policies }, Quote: { create: h.create, update: h.update } } }) }));
 import CoverageForm from "./CoverageForm";
-beforeEach(() => { h.create.mockReset(); h.update.mockReset(); });
+beforeEach(() => { h.create.mockReset(); h.update.mockReset(); h.policies.mockReset().mockResolvedValue({ data: [] }); });
+
+it('associates quote controls and their explanatory text with the visible field labels', () => {
+  const view = render(<CoverageForm kind="quote" accountId="a" carriers={[]} existing={null} onSaved={() => {}} onCancel={() => {}} />);
+  for (const name of ['Carrier', 'Status', 'Commission % (baked into premium)', 'Effective date', 'Expiration date', 'Notes']) {
+    expect(screen.getByLabelText(name)).toBeInTheDocument();
+  }
+  expect(screen.getByLabelText('Premium ($)')).toHaveAccessibleDescription('Client premium before fees and taxes. Actual carrier or wholesaler remittance is recorded separately on the invoice.');
+  expect(screen.getByLabelText('HOA broker fee ($)')).toHaveAccessibleDescription(/Optional agency fee, separate from premium/);
+  for (const label of view.container.querySelectorAll<HTMLLabelElement>('label[for]')) expect(label.control).not.toBeNull();
+});
+
+it('keeps the renewal date shortcut and existing manual dates through labeled controls', async () => {
+  h.policies.mockResolvedValue({ data: [{ id: 'prior', policyNumber: 'PREVIOUS', expirationDate: '2027-02-01' }] });
+  render(<CoverageForm kind="quote" accountId="a" carriers={[]} existing={null} onSaved={() => {}} onCancel={() => {}} />);
+  const renewal = await screen.findByLabelText('Renewal of');
+  fireEvent.change(renewal, { target: { value: 'prior' } });
+  const effective = screen.getByLabelText('Effective date');
+  expect(effective).toHaveValue('2027-02-01');
+  fireEvent.change(effective, { target: { value: '2027-03-01' } });
+  fireEvent.change(renewal, { target: { value: '' } });
+  fireEvent.change(renewal, { target: { value: 'prior' } });
+  expect(effective).toHaveValue('2027-03-01');
+});
+
+it('keeps a surviving charge input and its explicit ID when another row is removed', () => {
+  render(<CoverageForm kind="quote" accountId="a" carriers={[]} existing={null} onSaved={() => {}} onCancel={() => {}} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Add supplier charge or tax' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Add supplier charge or tax' }));
+  const amount = screen.getByLabelText('Charge 2 amount');
+  const id = amount.id;
+  fireEvent.change(amount, { target: { value: '12.50' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Remove charge 1' }));
+  expect(screen.getByLabelText('Charge 1 amount')).toBe(amount);
+  expect(amount.id).toBe(id);
+  expect(amount).toHaveValue('12.50');
+});
 
 it('starts new quotes at zero broker fee and validates cents before saving', async () => {
   h.create.mockResolvedValue({ data: {} });
@@ -64,6 +100,7 @@ it('routes tracked policy number corrections to the synchronized commission work
     existing={{ id: 'p', policyNumber: 'OLD-1', commissionSnapshotId: 'p' } as import('../lib/client').Policy}
     onSaved={saved} onCancel={() => {}} />);
   expect(screen.getByLabelText('Policy number')).toBeDisabled();
+  expect(screen.getByLabelText('Policy number')).toHaveAccessibleDescription('The Owner can update this number in Commissions to keep policy and payroll records consistent.');
   expect(screen.getByRole('link', { name: 'Commissions' })).toHaveAttribute('href', '/commissions');
   await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Save changes' })));
   expect(h.update).toHaveBeenCalled();

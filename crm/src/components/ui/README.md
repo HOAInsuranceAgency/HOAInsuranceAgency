@@ -6,9 +6,12 @@ Import controls from this directory rather than rendering native `button`, `inpu
 ```tsx
 import { Button } from './ui/Button';
 import { Input } from './ui/Input';
+import { Field } from './ui/Field';
 import { Table } from './ui/Table';
 
-<Input type="date" required value={date} onChange={event => setDate(event.target.value)} />
+<Field label="Effective date" help="Use the policy's effective date.">
+  {control => <Input {...control} type="date" required value={date} onChange={event => setDate(event.target.value)} />}
+</Field>
 <Button type="submit" variant="primary">Save</Button>
 ```
 
@@ -24,6 +27,13 @@ import { Table } from './ui/Table';
   other compact surfaces; do not recreate the recipe in descendant CSS.
 - `Tabs` switches between panels; pair it with `TabPanel`. `SegmentedControl`
   filters a view, and `SegmentedRadioControl` retains native radio form values.
+- `Field` composes one labeled control, optional help and an error. Spread its
+  render-prop attributes onto the actual control, including formatted inputs;
+  it does not inspect or clone children. IDs are unique and stable by default.
+  Pass `id` to preserve an existing control ID and `describedBy` for external
+  descriptions. Help and errors are connected through `aria-describedby`, and
+  errors set `aria-invalid`. Keep validation and save behavior in the form.
+  Checkbox collections retain their individual native labels and group semantics.
 - `SuggestionList` and `SuggestionOption` style app-owned combobox suggestions.
   The owner keeps keyboard navigation, focus and `aria-activedescendant`;
   options receive `aria-selected`. Google Places and browser datalist popups
