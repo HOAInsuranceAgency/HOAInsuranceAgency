@@ -1,4 +1,4 @@
-import { acquisitionLabel, cleanAttribution, isLeadSource } from "./leadSource";
+import { acquisitionLabel, isLeadSource, websiteLeadSource } from "./leadSource";
 import { accountPropertyType, propertyTypeLabel, webLeadPropertyType } from "./propertyType";
 
 /** A read-only snapshot. Workers unwrap communication-store rows before calling. */
@@ -98,12 +98,9 @@ function humanContact(c: ReportRecord, cutoff: number): { row: ReportRecord; at:
 }
 
 function attribution(account: ReportRecord): string[] {
-  const source = text(account, "leadSource"), legacy = text(account, "source"), a = cleanAttribution(account.leadAttribution);
-  const paid = /^(cpc|ppc|paid|paid[_ -]?social|paid[_ -]?search|display|cpm)$/i.test(a.utm_medium ?? "");
-  const google = !!(a.gclid || a.gbraid || a.wbraid) || paid && /^(google|googleads|google_ads|adwords)$/i.test(a.utm_source ?? "");
-  const meta = paid && /^(meta|facebook|instagram|fb|ig)$/i.test(a.utm_source ?? "");
-  if (google) return [acquisitionLabel(source, legacy), "Website", "Paid Search", "Y", "High"];
-  if (meta) return [acquisitionLabel(source, legacy), "Website", "Paid Social", "Y", "High"];
+  const source = text(account, "leadSource"), legacy = text(account, "source"), attributedSource = websiteLeadSource(account.leadAttribution);
+  if (attributedSource === "GOOGLE_AD_WEBSITE") return [acquisitionLabel(source, legacy), "Website", "Paid Search", "Y", "High"];
+  if (attributedSource === "META_AD") return [acquisitionLabel(source, legacy), "Website", "Paid Social", "Y", "High"];
   if (source === "GOOGLE_AD_WEBSITE" || source === "META_AD") return [acquisitionLabel(source, legacy), "Website", source === "META_AD" ? "Paid Social" : "Paid Search", "Y", "Medium"];
   // ORGANIC_WEBSITE is also the intake default when attribution is absent. It does not prove organic search.
   if (source === "ORGANIC_WEBSITE" || legacy.toLowerCase().startsWith("website")) return ["Website - attribution unverified", "Website", missing, missing, "Low"];
