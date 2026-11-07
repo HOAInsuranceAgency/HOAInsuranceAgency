@@ -96,8 +96,10 @@ export async function ingestFrontMessage(message: FrontMessage, conversationId?:
   }
 }
 async function frontEvent(event: Json, type: string) {
-  if (migrationProviderHeld(event.emitted_at, "seconds")) return { migrationHeld: true };
+  // Control receipts without a business handler need no provider provenance.
+  // Actionable types still fail closed before any provider or customer access.
   if (!/inbound|outbound|message|delivery_failed|bounce/.test(type) && !["assignee_changed", "assign"].includes(type)) return;
+  if (migrationProviderHeld(event.emitted_at, "seconds")) return { migrationHeld: true };
   const conv = object(event.conversation), target = object(event.target);
   const cnv = str(conv.id) || str(object(event.payload).conversation_id);
   if (!/^cnv_[a-z0-9]+$/.test(cnv)) return;
