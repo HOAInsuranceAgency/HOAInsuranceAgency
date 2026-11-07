@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { accountListExtension, verifyAccountListExtension } from "./steady-state-account-list.mjs";
+import { stagingScheduleExtension, verifyStagingCommissionSchedule } from "./steady-state-staging-schedules.mjs";
 
 /** Fresh read-only checks of the retained backend before every deployment. */
 export function verifySteadyState(namespace, contract, aws, options = {}) {
@@ -39,7 +40,9 @@ export function verifySteadyState(namespace, contract, aws, options = {}) {
     }
   };
   collect(contract.backendRoot);
-  const { legacy, extension } = accountListExtension(inventory, contract);
+  const stagingSchedules = stagingScheduleExtension(inventory, contract);
+  const { legacy, extension } = accountListExtension(stagingSchedules.inventory, contract);
+  need(!stagingSchedules.commission || extension, "retained staging account-list extension is required");
   // Preserve the original cutover inventory byte for byte. The broker-fee
   // feature may add exactly one separately protected, deterministically named
   // ledger; that exception never permits replacing an original resource.
@@ -101,6 +104,7 @@ export function verifySteadyState(namespace, contract, aws, options = {}) {
       && JSON.stringify(actual.FlexibleTimeWindow) === JSON.stringify(expected.flexibleTimeWindow), "schedule timing/target/eligibility changed");
   }
   verifyAccountListExtension(extension, legacy, contract, aws);
+  verifyStagingCommissionSchedule(stagingSchedules.commission, aws);
   return {
     schema: 1, verifiedAt: new Date().toISOString(), backendRoot: contract.backendRoot,
     observedRootStatus: root[0].StackStatus, stagingRollbackRecovery: recovery,
@@ -109,5 +113,7 @@ export function verifySteadyState(namespace, contract, aws, options = {}) {
     originalStatefulCount: stateful.length, originalStatefulInventorySha256: contract.statefulInventorySha256,
     originalCursorCount: mappings.length, originalScheduleCount: schedules.length,
     accountListExtensionPresent: Boolean(extension), brokerFeeLedgerPresent: ledgers.length === 1,
+    observedScheduleCount: inventory.filter(r => r.ResourceType === "AWS::Scheduler::Schedule").length,
+    stagingCommissionSchedulePresent: Boolean(stagingSchedules.commission),
   };
 }
