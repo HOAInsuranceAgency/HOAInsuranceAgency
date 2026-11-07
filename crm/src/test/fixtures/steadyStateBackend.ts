@@ -47,7 +47,7 @@ export function fixture(failure = '', staging = false, withLedger = false) {
     row(e.schedule, 'AWS::Scheduler::Schedule', scheduleName),
     ...Object.entries(e.mappings as Record<string, string>).map(([model, logical]) => row(logical, 'AWS::Lambda::EventSourceMapping', `new-${model}-cursor`)),
   ];
-  const commissionPayroll = 'stagingScheduleExtension' in c ? c.stagingScheduleExtension.commissionPayroll : undefined;
+  const commissionPayroll = staging ? (c as typeof stagingContract).stagingScheduleExtension.commissionPayroll : undefined;
   const commissionResources = commissionPayroll ? [row(commissionPayroll.logical, 'AWS::Scheduler::Schedule', commissionPayroll.name)] : [];
   const commissionSchedule = commissionPayroll ? {
     Name: commissionPayroll.name, State: commissionPayroll.state, Target: structuredClone(commissionPayroll.target),
