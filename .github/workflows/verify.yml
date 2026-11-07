@@ -34,9 +34,13 @@ jobs:
           cache-dependency-path: |
             crm/package-lock.json
             web/package-lock.json
+            .github/blog/package-lock.json
       - name: Install locked dependencies
         run: |
           npm ci --prefix crm --no-audit --no-fund
           npm ci --prefix web --no-audit --no-fund
+          npm ci --prefix .github/blog --no-audit --no-fund
+      - name: Verify blog automation
+        run: npm test --prefix .github/blog
       - name: Verify repository
         run: npm run verify

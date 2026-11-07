@@ -1,0 +1,121 @@
+name: Blog publishing
+
+# The site is static, so an approved article appears only after a rebuild.
+# These runs fire a few minutes after each category's slot (Eastern) and ask
+# Amplify to rebuild when an article's publish time has just passed.
+# A weekday-morning run also emails one reminder about drafts waiting two days.
+on:
+  schedule:
+    - cron: '5 8,10 * * 2'      # Tue: Master Policies 8 AM, Laws & Compliance 10 AM
+      timezone: America/New_York
+    - cron: '5 8,10,12 * * 3'   # Wed: Market & Renewals, Property & Catastrophe, D&O and Crime
+      timezone: America/New_York
+    - cron: '5 10,12,18 * * 4'  # Thu: Liability & Umbrella, Claims & Risk, Unit Owners (HO-6)
+      timezone: America/New_York
+    - cron: '0 9 * * 1-5'       # Reminders
+      timezone: America/New_York
+  workflow_dispatch:
+    inputs:
+      task:
+        description: 'What to run'
+        type: choice
+        options: [rebuild-if-due, rebuild-now, reminders]
+        default: rebuild-if-due
+
+permissions:
+  contents: read
+
+concurrency:
+  group: blog-publishing-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  rebuild:
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      ((github.event_name == 'schedule' && github.event.schedule != '0 9 * * 1-5') ||
+      (github.event_name == 'workflow_dispatch' && inputs.task != 'reminders'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out main
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - name: Install blog dependencies
+        run: npm ci --prefix .github/blog --no-audit --no-fund
+      - name: Find articles going live
+        id: due
+        env:
+          FORCE: ${{ inputs.task == 'rebuild-now' }}
+        run: |
+          result=$(node .github/blog/due.mjs)
+          echo "$result"
+          if [ "$FORCE" = true ] || [[ "$result" == due* ]]; then echo "rebuild=true" >> "$GITHUB_OUTPUT"; fi
+      - name: Ask Amplify to rebuild the website
+        if: steps.due.outputs.rebuild == 'true'
+        env:
+          WEBHOOK: ${{ secrets.AMPLIFY_WEBHOOK_URL }}
+        run: |
+          if [ -z "$WEBHOOK" ]; then
+            echo "The Amplify rebuild webhook is not configured; nothing was rebuilt." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          curl --fail --silent --show-error -X POST -H 'Content-Type: application/json' -d '{}' "$WEBHOOK" > /dev/null
+          echo "Website rebuild requested." >> "$GITHUB_STEP_SUMMARY"
+
+  reminders:
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      ((github.event_name == 'schedule' && github.event.schedule == '0 9 * * 1-5') ||
+      (github.event_name == 'workflow_dispatch' && inputs.task == 'reminders'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+    steps:
+      - name: Check out main
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - name: Install blog dependencies
+        run: npm ci --prefix .github/blog --no-audit --no-fund
+      - name: Find drafts waiting for review
+        id: email
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BLOG_EMAIL_FROM: ${{ vars.BLOG_EMAIL_FROM }}
+          REVIEWER_EMAIL: ${{ vars.REVIEWER_EMAIL }}
+        run: |
+          gh pr list --state open --limit 100 --json number,title,url,createdAt,headRefName,comments \
+            --jq '[.[] | select(.headRefName | startswith("blog/draft-"))]' > open-drafts.json
+          result=$(node .github/blog/notify.mjs reminder --input open-drafts.json --out email.json --marked marked.txt)
+          echo "$result"
+          echo "send=$([ "$result" = ready ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+      - name: Sign in to AWS for email
+        if: steps.email.outputs.send == 'true'
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        with:
+          role-to-assume: ${{ secrets.AWS_SES_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_SES_REGION }}
+      - name: Send the reminder and note it on each draft
+        if: steps.email.outputs.send == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          aws sesv2 send-email --cli-input-json file://email.json
+          while read -r number; do
+            [ -n "$number" ] && gh pr comment "$number" --repo "$GITHUB_REPOSITORY" --body "<!-- blog-reminder -->Reminder emailed to the reviewer."
+          done < marked.txt

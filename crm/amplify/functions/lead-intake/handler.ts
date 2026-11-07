@@ -88,7 +88,8 @@ export const handler: Schema["submitWebLead"]["functionHandler"] = async event =
   }
   const carrierName = clean(args.currentCarrier, 200);
   if (carrierName) writes.push(modelPut("PriorCarrier", randomUUID(), { accountId: id, carrierName, expirationDate: expiration ?? undefined, lastWriteBy: "lead-intake", extractionSourceKey: priorCarrierKey({ carrierName, policyNumber: null, lineOfBusiness: null }) }));
-  if (validEmail && token) writes.push(modelPut("LeadReply", `reply:${submissionId}`, { accountId: id, submissionId, contactEmail: validEmail, contactName, status: "WAITING", uploadToken: token,
+  // A briefing signup keeps its CRM capture without requesting sales documents.
+  if (validEmail && token && account.source !== "website-blog-briefing") writes.push(modelPut("LeadReply", `reply:${submissionId}`, { accountId: id, submissionId, contactEmail: validEmail, contactName, status: "WAITING", uploadToken: token,
     submittedAt: at, dueAt: new Date(Date.now() + NO_UPLOAD_WINDOW_MINUTES * 60_000).toISOString(), uploadCount: 0 }));
   if (!validEmail) writes.push(put(row("ISSUE", `issue:intake:${id}`, { message: "Correct the prospect email before sending", at }, { accountId: id })));
   for (let attempt = 0; attempt < 5; attempt++) {

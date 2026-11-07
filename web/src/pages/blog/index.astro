@@ -2,50 +2,168 @@
 import { getCollection } from "astro:content";
 import Layout from "../../layouts/Layout.astro";
 import Hero from "../../components/Hero.astro";
-import { publishedArticles, articlePath, articleDate } from "../../lib/articles";
+import { BlogLeadForm } from "../../components/BlogLeadForm";
+import { publishedArticles, articlePath, articleDate, articleWordCount } from "../../lib/articles";
 import { breadcrumbSchema, canonicalUrl } from "../../lib/seo";
+import { orderTopics } from "../../data/blog";
+import { PHONE, PHONE_HREF, QUOTE_URL } from "../../constants";
 import { AGENCY } from "../../../../shared/agency";
 import "./articles.css";
 
 const articles = publishedArticles(await getCollection("articles"));
 const title = "Association Insurance Articles | ProtectMyHOA";
 const description = "Articles and resources for HOA and condominium association boards from HOA Insurance Agency, the agency behind ProtectMyHOA.";
+
+const [featured, ...rest] = articles;
+const topics = orderTopics(articles.map((article) => article.data.topic));
+const minutes = (body?: string) => Math.max(1, Math.ceil(articleWordCount(body ?? "") / 220));
+// What search matches against, lower-cased once at build time.
+const searchText = (article: (typeof articles)[number]) =>
+  [article.data.title, article.data.description, article.data.topic, ...article.data.tags].join(" ").toLowerCase();
 ---
 
 <Layout title={title} description={description} canonicalPath="/blog/" jsonLd={[
   breadcrumbSchema([{ name: "Home", path: "/" }, { name: "Articles", path: "/blog/" }]),
   { "@type": "Blog", "@id": `${canonicalUrl("/blog/")}#blog`, name: "ProtectMyHOA Articles", url: canonicalUrl("/blog/"), blogPost: articles.map((article) => ({ "@id": `${canonicalUrl(articlePath(article.data.slug))}#article` })) },
 ]}>
-  <Hero eyebrow="For association boards" title="Clarity for your community." subtitle="Articles and resources for the people who care for shared-ownership communities." backgroundImage="/images/board-meeting.jpg" compact short />
+  <div class="journal-hero">
+    <Hero eyebrow="The ProtectMyHOA journal" title="Insurance guidance for HOA and condo association boards" subtitle="Researched and sourced articles on community association Insurance: master policies, board liability, renewals and the laws behind them." backgroundImage="/images/board-meeting.jpg" compact short>
+      {articles.length > 0 && (
+        <form class="journal-search" role="search" slot="action" data-journal-search>
+          <label class="sr-only" for="journal-q">Search all articles</label>
+          <div class="journal-search__group">
+            <input id="journal-q" class="journal-search__input" type="search" placeholder="Search articles, e.g. “D&O”, “flood”, “deductible”" autocomplete="off" />
+            <button class="journal-search__btn" type="submit">Search</button>
+          </div>
+          <p class="journal-search__note" aria-live="polite" data-journal-count>{articles.length} {articles.length === 1 ? "article" : "articles"} · New guidance every week</p>
+        </form>
+      )}
+    </Hero>
+  </div>
+
   <section class="section articles-section">
     <div class="container">
-      <div class="articles-section__heading">
-        <div><p class="articles-eyebrow">The ProtectMyHOA journal</p><h2>Association insights</h2></div>
-        <p>From {AGENCY.name}, the agency behind ProtectMyHOA.</p>
-      </div>
       {articles.length > 0 ? (
-        <div class="articles-grid">
-          {articles.map((article) => (
-            <article class="article-card">
-              <a href={articlePath(article.data.slug)} class="article-card__image" tabindex="-1" aria-hidden="true"><img src={article.data.image.src} alt="" width={article.data.image.width} height={article.data.image.height} loading="lazy" /></a>
-              <div class="article-card__body">
-                <p class="articles-eyebrow">{article.data.topic}</p>
-                <time datetime={article.data.publishedAt}>{articleDate(article.data.publishedAt)}</time>
-                <h3><a href={articlePath(article.data.slug)}>{article.data.title}</a></h3>
-                <p>{article.data.description}</p>
-                <a class="article-card__link" href={articlePath(article.data.slug)}>Read article <span aria-hidden="true">→</span><span class="sr-only">: {article.data.title}</span></a>
+        <>
+          <div class="journal-cats" role="group" aria-label="Filter by category">
+            <button type="button" class="journal-chip" aria-pressed="true" data-topic="">All<span>{articles.length}</span></button>
+            {topics.map((topic) => (
+              <button type="button" class="journal-chip" aria-pressed="false" data-topic={topic}>{topic}<span>{articles.filter((a) => a.data.topic === topic).length}</span></button>
+            ))}
+          </div>
+
+          <article class="journal-feature" data-journal-item data-topic={featured.data.topic} data-search={searchText(featured)}>
+            <a href={articlePath(featured.data.slug)} class="journal-feature__image" tabindex="-1" aria-hidden="true"><img src={featured.data.image.src} alt="" width={featured.data.image.width} height={featured.data.image.height} loading="eager" /></a>
+            <div class="journal-feature__body">
+              <p class="articles-eyebrow">Latest · {featured.data.topic}</p>
+              <h2><a href={articlePath(featured.data.slug)}>{featured.data.title}</a></h2>
+              <p>{featured.data.description}</p>
+              <p class="journal-meta"><time datetime={featured.data.publishedAt}>{articleDate(featured.data.publishedAt)}</time><span aria-hidden="true">·</span>{minutes(featured.body)} min read</p>
+              <a class="btn btn-primary" href={articlePath(featured.data.slug)}>Read the article <span aria-hidden="true">→</span><span class="sr-only">: {featured.data.title}</span></a>
+            </div>
+          </article>
+
+          <div class="journal-layout">
+            <div class="journal-main">
+              <div class="articles-grid journal-grid">
+                {rest.map((article) => (
+                  <article class="article-card" data-journal-item data-topic={article.data.topic} data-search={searchText(article)}>
+                    <a href={articlePath(article.data.slug)} class="article-card__image" tabindex="-1" aria-hidden="true"><img src={article.data.image.src} alt="" width={article.data.image.width} height={article.data.image.height} loading="lazy" /></a>
+                    <div class="article-card__body">
+                      <p class="articles-eyebrow">{article.data.topic}</p>
+                      <h3><a href={articlePath(article.data.slug)}>{article.data.title}</a></h3>
+                      <p>{article.data.description}</p>
+                      <p class="journal-meta"><time datetime={article.data.publishedAt}>{articleDate(article.data.publishedAt)}</time><span aria-hidden="true">·</span>{minutes(article.body)} min read</p>
+                      <a class="article-card__link" href={articlePath(article.data.slug)}>Read article <span aria-hidden="true">→</span><span class="sr-only">: {article.data.title}</span></a>
+                    </div>
+                  </article>
+                ))}
               </div>
-            </article>
-          ))}
-        </div>
+              <div class="journal-noresults" data-journal-empty hidden>
+                <strong>No articles match your search.</strong>
+                <p>Try a broader term like “deductible” or “board”, or <a href="/contact/" class="articles-text-link">ask our team directly</a>.</p>
+              </div>
+            </div>
+            <aside class="journal-rail" aria-label="Get help from our team">
+              <div class="journal-panel journal-panel--navy">
+                <p class="articles-eyebrow">Free for boards</p>
+                <h2>Renewal coming up in the next 120 days?</h2>
+                <p>Send us your current declarations page. Our team will review limits, deductibles and gaps, then compare carriers for you.</p>
+                <a class="btn btn-gold" href={QUOTE_URL}>Request Insurance Review</a>
+              </div>
+              <div class="journal-panel">
+                <h2>Board briefing, once a month</h2>
+                <p>The month’s most important association Insurance updates in one short email.</p>
+                <BlogLeadForm variant="briefing" client:visible />
+              </div>
+              <div class="journal-panel">
+                <h2>Explore coverage</h2>
+                <ul class="journal-links">
+                  <li><a href="/what-we-do/">HOA Insurance <span aria-hidden="true">→</span></a></li>
+                  <li><a href="/condo-insurance/">Condo association Insurance <span aria-hidden="true">→</span></a></li>
+                  <li><a href="/why-choose-us/">Why boards choose us <span aria-hidden="true">→</span></a></li>
+                </ul>
+              </div>
+            </aside>
+          </div>
+        </>
       ) : (
-        <div class="articles-empty">
-          <span class="articles-empty__icon" aria-hidden="true"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h6a3 3 0 0 1 3 3v14a4 4 0 0 0-4-2H4z"/><path d="M13 7a3 3 0 0 1 3-3h5v15h-4a4 4 0 0 0-4 2"/></svg></span>
-          <h3>A resource for your next board conversation.</h3>
-          <p>New articles will appear here as they’re published. In the meantime, explore how we work with associations or get in touch with our team.</p>
-          <div class="articles-empty__links"><a href="/what-we-do/" class="btn btn-primary">Explore association coverage</a><a href="/contact/" class="articles-text-link">Contact our team <span aria-hidden="true">→</span></a></div>
-        </div>
+        <>
+          <div class="articles-section__heading">
+            <div><p class="articles-eyebrow">The ProtectMyHOA journal</p><h2>Association insights</h2></div>
+            <p>From {AGENCY.name}, the agency behind ProtectMyHOA.</p>
+          </div>
+          <div class="articles-empty">
+            <span class="articles-empty__icon" aria-hidden="true"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h6a3 3 0 0 1 3 3v14a4 4 0 0 0-4-2H4z"/><path d="M13 7a3 3 0 0 1 3-3h5v15h-4a4 4 0 0 0-4 2"/></svg></span>
+            <h3>A resource for your next board conversation.</h3>
+            <p>New articles will appear here as they’re published. In the meantime, explore how we work with associations or get in touch with our team.</p>
+            <div class="articles-empty__links"><a href="/what-we-do/" class="btn btn-primary">Explore association coverage</a><a href="/contact/" class="articles-text-link">Contact our team <span aria-hidden="true">→</span></a></div>
+          </div>
+        </>
       )}
     </div>
   </section>
+
+  <section class="journal-band">
+    <div class="container journal-band__inner">
+      <div>
+        <h2>Have a question an article didn’t answer?</h2>
+        <p>Talk with a team that works only with community associations. Any broker fee disclosed before purchase.</p>
+      </div>
+      <div class="journal-band__actions"><a class="btn btn-gold" href={QUOTE_URL}>Request Insurance Review</a><a class="btn journal-band__call" href={PHONE_HREF}>Call {PHONE}</a></div>
+    </div>
+  </section>
 </Layout>
+
+<script>
+  // Search and category chips filter the cards already on the page.
+  const form = document.querySelector<HTMLFormElement>("[data-journal-search]");
+  const input = document.querySelector<HTMLInputElement>("#journal-q");
+  const chips = Array.from(document.querySelectorAll<HTMLButtonElement>(".journal-chip"));
+  const items = Array.from(document.querySelectorAll<HTMLElement>("[data-journal-item]"));
+  const empty = document.querySelector<HTMLElement>("[data-journal-empty]");
+  const count = document.querySelector<HTMLElement>("[data-journal-count]");
+  let topic = "";
+
+  function apply() {
+    const terms = (input?.value ?? "").trim().toLowerCase().split(/\s+/).filter(Boolean);
+    let shown = 0;
+    for (const item of items) {
+      const match = (!topic || item.dataset.topic === topic) && terms.every((t) => item.dataset.search?.includes(t));
+      item.hidden = !match;
+      if (match) shown++;
+    }
+    if (empty) empty.hidden = shown > 0;
+    if (count) count.textContent = terms.length || topic
+      ? `${shown} matching ${shown === 1 ? "article" : "articles"}`
+      : `${items.length} ${items.length === 1 ? "article" : "articles"} · New guidance every week`;
+  }
+
+  chips.forEach((chip) => chip.addEventListener("click", () => {
+    topic = chip.dataset.topic ?? "";
+    chips.forEach((c) => c.setAttribute("aria-pressed", String(c === chip)));
+    apply();
+  }));
+  input?.addEventListener("input", apply);
+  form?.addEventListener("submit", (event) => { event.preventDefault(); apply(); });
+</script>

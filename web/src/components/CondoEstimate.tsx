@@ -128,12 +128,13 @@ function CondoFlow() {
       .then(() => {
         if (cancelled || !placesRef.current) return;
         detach = attachAddressAutocomplete(placesRef.current, (place) => {
+          // A new selection replaces the whole location, including missing parts.
           setData((d) => ({
             ...d,
             propertyAddress: place.address || place.formatted,
-            ...(place.city && !d.city ? { city: place.city } : {}),
-            ...(place.state && !d.state ? { state: place.state } : {}),
-            ...(place.zip && !d.zip ? { zip: place.zip } : {}),
+            city: place.city,
+            state: place.state,
+            zip: place.zip,
           }));
           setErrors({});
         });

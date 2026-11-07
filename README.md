@@ -82,8 +82,14 @@ local file existence are checked. Research, professional review and permission
 checks remain editorial responsibilities; schema validation cannot verify claims.
 
 Draft and future-dated entries have no generated route, listing link or sitemap
-entry. A future timestamp does not schedule a release: publication needs a new
-reviewed build when due. This change adds no calendar or publishing service.
+entry. Publication needs a new build when due. The production-only blog workflows
+draft articles in pull requests targeting `main`, support reviewer title/photo
+commands, and request a marketing-site rebuild at the scheduled publication time.
+This article-content workflow is an exception to the staging-first application
+change process above; application changes still go through staging. See the
+[editorial guide](docs/BLOG-EDITORIAL-GUIDE.md) for review, configuration and
+publishing steps. Draft creation still requires a human review and merge; the
+automation does not merge pull requests.
 A production build fails on malformed content. During local development,
 Markdown and article-image changes enter one serialized validation queue. A
 failed reload clears the article store and logs the error; fixing an image
