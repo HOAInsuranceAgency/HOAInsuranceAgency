@@ -109,4 +109,3 @@ export function fixture(failure = '', staging = false, withLedger = false) {
   return { c, aws, calls, root, worker, resources: root, ledger, ledgerResource, commissionResources, commissionSchedule,
     namespace: { branchName: c.backendBranch, enableAutoBuild: false, enablePullRequestPreview: false, backend: { stackArn: c.backendRoot } } };
 }
-
