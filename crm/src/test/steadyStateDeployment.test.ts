@@ -4,6 +4,9 @@ import { readFileSync } from "node:fs";
 import { assertSteadyState } from "../../amplify/steady-state.mjs";
 import contract from "../../amplify/steady-state-main.json";
 import stagingContract from "../../amplify/steady-state-staging.json";
+import { fixture as accountListFixture } from './fixtures/steadyStateBackend';
+// @ts-expect-error JavaScript deployment-only allowlist
+import { ACCOUNT_LIST_STAGING_EXTENSION } from '../../scripts/steady-state-account-list.mjs';
 // CI preflight is JavaScript so it can run before npm ci on Amplify.
 // @ts-expect-error the deployment-only reader is exercised directly with a fake AWS boundary
 import { verifySteadyState } from "../../scripts/verify-steady-state.mjs";
@@ -46,6 +49,31 @@ describe("completed HOA main deployment", () => {
 });
 
 function liveFixture(failure = "", source = contract, withLedger = false, stackStatus = "UPDATE_COMPLETE") {
+  if (source.backendBranch === 'staging') {
+    // Current staging requires the already deployed account-list and payroll
+    // schedule additions. Exercise its full inventory, not a legacy-only mock.
+    const f = accountListFixture('', true, withLedger);
+    if (failure === 'identity') f.resources[0].PhysicalResourceId = 'replacement';
+    if (failure === 'extra') f.resources.push({ ...f.resources[57], PhysicalResourceId: 'old-cursor' });
+    const read = (...args: string[]) => {
+      const result = f.aws(...args) as Record<string, any>;
+      if (args[1] === 'describe-stacks') return { Stacks: result.Stacks.map((stack: object) => ({ ...stack,
+        StackStatus: failure === 'updating' ? 'UPDATE_IN_PROGRESS' : stackStatus, EnableTerminationProtection: failure !== 'unprotected' })) };
+      if (args[1] === 'get-event-source-mapping') {
+        if (failure === 'stream') result.EventSourceArn = 'different';
+        if (failure === 'disabled') result.State = 'Disabled';
+        if (failure === 'replay') result.StartingPosition = 'TRIM_HORIZON';
+        if (failure === 'errors') result.LastProcessingResult = 'PROBLEM: failure';
+        if (failure === 'filter') result.FilterCriteria = { Filters: [{ Pattern: '{}' }] };
+      }
+      if (args[1] === 'get-schedule') {
+        if (failure === 'schedule') result.State = result.State === 'ENABLED' ? 'DISABLED' : 'ENABLED';
+        if (failure === 'target-input') result.Target = { ...result.Target, Input: '{"unexpected":true}' };
+      }
+      return result;
+    };
+    return { ...f, aws: read, namespace: { ...f.namespace, backend: { stackArn: failure === 'root' ? 'wrong' : f.c.backendRoot } } };
+  }
   const c = structuredClone(source);
   const stateful = Array.from({ length: 57 }, (_, i) => [c.backendRoot, `State${String(i).padStart(2,"0")}`, c.statefulTypes[0], `existing-${i}`]);
   c.statefulInventorySha256 = createHash("sha256").update(JSON.stringify(stateful)).digest("hex");
@@ -87,18 +115,21 @@ describe("read-only existing backend admission", () => {
     const f = liveFixture('', stagingContract, false, 'UPDATE_ROLLBACK_COMPLETE');
     const options = { recoverStagingRollback: true };
     const childArn = `arn:aws:cloudformation:${f.c.region}:${f.c.account}:stack/retained-child/retained-id`;
-    const childResources = f.resources.slice(0, 57);
+    const originalStateful = f.resources.slice(0, 57);
+    const derivedTable = f.resources.find(r => r.LogicalResourceId === ACCOUNT_LIST_STAGING_EXTENSION.table)!;
+    // The derived table must stay with its original Communication source.
+    const childResources = [...originalStateful, derivedTable];
     const child = { LogicalResourceId: 'RetainedChild', ResourceType: 'AWS::CloudFormation::Stack', PhysicalResourceId: childArn, ResourceStatus: 'UPDATE_ROLLBACK_COMPLETE' };
-    const rootResources = [...f.resources.slice(57), child];
-    const inventory = childResources.map(r => [childArn, r.LogicalResourceId, r.ResourceType, r.PhysicalResourceId]);
+    const rootResources = [...f.resources.slice(57).filter(r => r !== derivedTable), child];
+    const inventory = originalStateful.map(r => [childArn, r.LogicalResourceId, r.ResourceType, r.PhysicalResourceId]);
+    inventory.sort((a, b) => { for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return a[i] < b[i] ? -1 : 1; return 0; });
     f.c.statefulInventorySha256 = createHash('sha256').update(JSON.stringify(inventory)).digest('hex');
-    const aws = (...args: string[]) => args[1] === 'list-stack-resources'
-      ? { StackResourceSummaries: args[3] === childArn ? childResources : rootResources }
-      : f.aws(...args);
+    const aws = (...args: string[]) => args[1] === 'list-stack-resources' && [childArn, f.c.backendRoot].includes(args[3])
+      ? { StackResourceSummaries: args[3] === childArn ? childResources : rootResources } : f.aws(...args);
     expect(() => verifySteadyState(f.namespace, f.c, aws)).toThrow('backend is unstable or unprotected');
     expect(() => verifySteadyState(f.namespace, f.c, aws, options)).not.toThrow();
-    expect(f.calls.filter(a => a[1] === 'get-event-source-mapping')).toHaveLength(22);
-    expect(f.calls.filter(a => a[1] === 'get-schedule')).toHaveLength(8);
+    expect(f.calls.filter(a => a[1] === 'get-event-source-mapping')).toHaveLength(28);
+    expect(f.calls.filter(a => a[1] === 'get-schedule')).toHaveLength(10);
     for (const status of ['UPDATE_ROLLBACK_IN_PROGRESS', 'UPDATE_ROLLBACK_FAILED', 'UPDATE_FAILED']) {
       child.ResourceStatus = status;
       expect(() => verifySteadyState(f.namespace, f.c, aws, options)).toThrow('resource update is not complete');
@@ -144,7 +175,9 @@ describe('scoped broker fee ledger addition', () => {
     const f = liveFixture('', source, true), originalHash = f.c.statefulInventorySha256;
     expect(() => verifySteadyState(f.namespace, f.c, f.aws)).not.toThrow();
     expect(f.c.statefulCount).toBe(57); expect(f.c.statefulInventorySha256).toBe(originalHash);
-    expect(f.calls.filter(call => call[0] === 'dynamodb')).toEqual([['dynamodb', 'describe-table', '--table-name', f.ledger.TableName]]);
+    expect(f.calls.filter(call => call[0] === 'dynamodb' && call[3] === f.ledger.TableName))
+      .toEqual([['dynamodb', 'describe-table', '--table-name', f.ledger.TableName]]);
+    expect(f.calls.filter(call => call[0] === 'dynamodb')).toHaveLength(source === stagingContract ? 8 : 1);
   });
   it.each(['renamed ledger', 'unexpected logical ID', 'unexpected table', 'two ledgers', 'baseline replaced', 'baseline missing'])('rejects %s without changing the cutover baseline', failure => {
     const f = liveFixture('', contract, true);
@@ -183,7 +216,7 @@ describe("completed HOA staging deployment", () => {
     expect(stagingContract.schedules.filter(s => s.state === "ENABLED")).toHaveLength(7);
     expect(stagingContract.schedules.filter(s => s.state === "DISABLED").map(s => s.logical)).toEqual(["WeeklyMarketingReportSchedule6899ACFF"]);
     const f = liveFixture("", stagingContract); verifySteadyState(f.namespace, f.c, f.aws);
-    expect(f.calls.every(a => ["describe-stacks", "list-stack-resources", "get-event-source-mapping", "get-schedule"].includes(a[1]))).toBe(true);
+    expect(f.calls.every(a => ["describe-stacks", "list-stack-resources", "get-event-source-mapping", "get-schedule", "describe-table"].includes(a[1]))).toBe(true);
   });
   it("requires staging website analytics to stay disabled with its retained staging API binding", () => {
     const web = { ...stageEnv, AWS_APP_ID: stagingContract.webApp, PUBLIC_HOA_MIGRATION_PREVIEW: "false",
@@ -224,5 +257,13 @@ describe("completed HOA staging deployment", () => {
   it("does not weaken main's requirement that all eight schedules remain enabled", () => {
     const f = liveFixture(); f.c.schedules[0].state = "DISABLED";
     expect(() => verifySteadyState(f.namespace, f.c, f.aws)).toThrow();
+  });
+  it('does not admit a ninth main schedule or a staging-only addition contract in main', () => {
+    const f = liveFixture();
+    const payroll = stagingContract.stagingScheduleExtension.commissionPayroll;
+    f.resources.push({ LogicalResourceId: payroll.logical, ResourceType: 'AWS::Scheduler::Schedule', PhysicalResourceId: payroll.name, ResourceStatus: 'CREATE_COMPLETE' });
+    expect(() => verifySteadyState(f.namespace, f.c, f.aws)).toThrow('exact eight schedules');
+    expect(() => verifySteadyState(f.namespace, { ...f.c, stagingScheduleExtension: stagingContract.stagingScheduleExtension }, f.aws))
+      .toThrow('addition contract is staging-only');
   });
 });

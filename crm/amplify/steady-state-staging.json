@@ -315,5 +315,33 @@
         "RoleArn": "arn:aws:iam::917680434255:role/amplify-d1nuh9rw1hcuxo-st-SchedulerRoleForTargetaa5-iVNMXj7fDN3S"
       }
     }
-  ]
+  ],
+  "stagingScheduleExtension": {
+    "version": 1,
+    "requireAccountList": true,
+    "commissionPayroll": {
+      "logical": "CommissionPayrollScheduleFB5DD3E9",
+      "name": "commission-payroll-ifyd1nuh9rw1hcuxostagingbranch3787a09124",
+      "state": "DISABLED",
+      "functionArn": "arn:aws:lambda:us-east-1:917680434255:function:amplify-d1nuh9rw1hcuxo-st-commissionpayrollworkerl-KdTZcFKkPQu4",
+      "scheduleExpression": "cron(0 8-17 * * ? *)",
+      "scheduleExpressionTimezone": "America/New_York",
+      "flexibleTimeWindow": {
+        "Mode": "OFF"
+      },
+      "target": {
+        "Arn": "arn:aws:lambda:us-east-1:917680434255:function:amplify-d1nuh9rw1hcuxo-st-commissionpayrollworkerl-KdTZcFKkPQu4",
+        "DeadLetterConfig": {
+          "Arn": "arn:aws:sqs:us-east-1:917680434255:amplify-d1nuh9rw1hcuxo-staging-bran-PayrollScheduleFailures5C1240BA-eFtfkimL08Ci"
+        },
+        "Input": "{\"trigger\":\"scheduled\",\"scheduleArn\":\"<aws.scheduler.schedule-arn>\",\"scheduledAt\":\"<aws.scheduler.scheduled-time>\"}",
+        "RetryPolicy": {
+          "MaximumEventAgeInSeconds": 3600,
+          "MaximumRetryAttempts": 2
+        },
+        "RoleArn": "arn:aws:iam::917680434255:role/amplify-d1nuh9rw1hcuxo-st-SchedulerRoleForTarget884-AT128hO60Ni9"
+      },
+      "stackArn": "arn:aws:cloudformation:us-east-1:917680434255:stack/amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124-commissionpayrollC11FCD08-1OK4SX4GYZVW1/ffc2fc10-da30-11f1-a0f3-0e73b11ab369"
+    }
+  }
 }

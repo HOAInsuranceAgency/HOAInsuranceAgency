@@ -2887,6 +2887,44 @@ describe('destination inherited communications remain review-only', () => {
   });
   afterEach(() => vi.unstubAllEnvs());
   function inherited<T extends {id:string}>(r:T) { const old={...r,createdAt:cutoff,updatedAt:NOW};h.records.set('comms:'+r.id,structuredClone(old));return old; }
+  it('drains a new unsupported Front receipt without provider access and recovers worker health on the next tick', async () => {
+    h.c.paused = true;
+    const payload = { type: 'conversation_merged', payload: {} };
+    const event = await save(row('EVENT', 'event:front-control', { provider: 'front' as const, payload, attempts: 0 }, { dueAt: NOW }));
+    vi.setSystemTime(Date.parse(NOW) + 600_000);
+    const { handler } = await import('../../amplify/functions/communications/worker');
+    expect(await handler()).toMatchObject({ handled: 1, failed: 0 });
+    expect(record(event.id)).toMatchObject({ createdAt: event.createdAt, data: { payload, processedAt: new Date().toISOString(), attempts: 0 } });
+    for (const field of ['dueAt', 'dueGroup', 'workKind', 'workAt']) expect(record(event.id)[field]).toBeUndefined();
+    // This run saw the overdue receipt; the following run verifies recovery.
+    expect(record('health:worker').data.lagging).toBe(true);
+    await handler();
+    expect(record('health:worker').data.lagging).toBe(false);
+    expect(h.front).not.toHaveBeenCalled(); expect(h.dialpad).not.toHaveBeenCalled();
+    expect(permittedConversation).not.toHaveBeenCalled(); expect(entries('COMMUNICATION')).toHaveLength(0);
+  });
+  it.each(['inbound_received', 'outbound_sent', 'assign'])('keeps a new supported %s receipt without provider provenance held and unhealthy', async type => {
+    h.c.paused = true;
+    const event = await save(row('EVENT', `event:front-held-${type}`, { provider: 'front' as const,
+      payload: { type, payload: { conversation: { id: 'cnv_a' }, target: { data: { id: 'msg_a' } } } }, attempts: 0 }, { dueAt: NOW }));
+    const before = structuredClone(event);
+    vi.setSystemTime(Date.parse(NOW) + 600_000);
+    const { handler } = await import('../../amplify/functions/communications/worker');
+    await handler();
+    expect(record(event.id)).toEqual(before);
+    expect(record('health:worker').data.lagging).toBe(true);
+    expect(h.front).not.toHaveBeenCalled(); expect(h.dialpad).not.toHaveBeenCalled();
+    expect(permittedConversation).not.toHaveBeenCalled(); expect(entries('COMMUNICATION')).toHaveLength(0);
+  });
+  it('keeps inherited unsupported Front control receipts unchanged', async () => {
+    const event = inherited(await save(row('EVENT', 'event:front-inherited-control', {
+      provider: 'front' as const, payload: { type: 'conversation_merged', payload: {} }, attempts: 0 }, { dueAt: NOW })));
+    h.transactions.length = 0;
+    await processEvent(event);
+    expect(record(event.id)).toEqual(event); expect(h.transactions).toHaveLength(0);
+    expect(h.front).not.toHaveBeenCalled(); expect(h.dialpad).not.toHaveBeenCalled();
+    expect(permittedConversation).not.toHaveBeenCalled(); expect(entries('COMMUNICATION')).toHaveLength(0);
+  });
   it('resumes beyond held pages after the time budget without changing any held record', async () => {
     h.c.paused = true;
     const held = Array.from({length:120}, (_,i) => inherited(row('TRIAGE', `held:${String(i).padStart(3,'0')}`, { preserved: i }, {dueAt:NOW})));
