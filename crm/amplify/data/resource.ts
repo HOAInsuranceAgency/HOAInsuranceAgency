@@ -1256,6 +1256,7 @@ const schema = a
         months: a.integer().required(),
         apr: a.float().required(),
         effectiveDate: a.date().required(),
+        coverageEffectiveDate: a.date(),
         downPayment: a.float().required(),
         amountFinanced: a.float().required(),
         payment: a.float().required(),

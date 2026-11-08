@@ -38,6 +38,9 @@ interface YamlRow {
   name: string;
   status: "open" | "conditional" | "closed";
   max_apr: number | null;
+  max_add_on_apr?: number;
+  max_apr_periods?: { from: string; through: string; apr: number }[];
+  uncapped_above_principal?: number;
   /** Boolean on open/conditional rows; null on closed rows — enforced below. */
   max_apr_verified: boolean | null;
   min_principal: number | null;
@@ -94,6 +97,17 @@ for (const j of doc.jurisdictions) {
   if (j.max_apr !== null && typeof j.max_apr !== "number") {
     throw new Error(`${j.name}: max_apr must be number|null`);
   }
+  if (j.max_apr !== null && (!Number.isFinite(j.max_apr) || j.max_apr <= 0)) throw new Error(`${j.name}: max_apr must be positive and finite`);
+  if (j.max_add_on_apr !== undefined && (j.max_apr !== null || !Number.isFinite(j.max_add_on_apr) || j.max_add_on_apr <= 0)) throw new Error(`${j.name}: invalid add-on ceiling`);
+  if (j.uncapped_above_principal !== undefined && (!Number.isFinite(j.uncapped_above_principal) || j.uncapped_above_principal <= 0)) throw new Error(`${j.name}: invalid principal threshold`);
+  if (j.max_apr_periods !== undefined) {
+    if (!Array.isArray(j.max_apr_periods) || j.max_apr_periods.length === 0 || j.max_apr === null) throw new Error(`${j.name}: invalid rate periods`);
+    let previous = "";
+    for (const period of j.max_apr_periods) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(period.from) || !/^\d{4}-\d{2}-\d{2}$/.test(period.through) || period.from > period.through || period.from <= previous || !Number.isFinite(period.apr) || period.apr <= 0) throw new Error(`${j.name}: invalid or overlapping rate period`);
+      previous = period.through;
+    }
+  }
   if (j.min_principal !== null && typeof j.min_principal !== "number") {
     throw new Error(`${j.name}: min_principal must be number|null`);
   }
@@ -125,6 +139,9 @@ const rows = doc.jurisdictions.map((j) => ({
   code: USPS[j.name],
   status: j.status,
   maxApr: j.max_apr,
+  maxAddOnApr: j.max_add_on_apr ?? null,
+  maxAprPeriods: j.max_apr_periods ?? null,
+  uncappedAbovePrincipal: j.uncapped_above_principal ?? null,
   maxAprVerified: j.max_apr_verified,
   minPrincipal: j.min_principal,
   requiresIncorporatedBorrower: j.requires_incorporated_borrower ?? null,
@@ -152,6 +169,12 @@ export interface PfJurisdiction {
   status: PfStatus;
   /** Percent, e.g. 18.0. Null = no statutory cap. */
   maxApr: number | null;
+  /** Annual add-on charge ceiling; the separately permitted $10 fee is unchanged. */
+  maxAddOnApr: number | null;
+  /** Monthly published ceilings apply only to agreements made in the period. */
+  maxAprPeriods: readonly { from: string; through: string; apr: number }[] | null;
+  /** Strict threshold: a principal equal to this amount remains capped. */
+  uncappedAbovePrincipal: number | null;
   /**
    * False = the ceiling is unresolved; the jurisdiction behaves as CLOSED.
    * Null = closed row, not applicable — and deliberately so: a closed→open

@@ -46,9 +46,10 @@ jurisdictions:
     note: "Exemption requires charging no interest"
   - name: Arkansas
     status: open
-    max_apr: null
-    max_apr_verified: false
+    max_apr: 17.0
+    max_apr_verified: true
     min_principal: null
+    fee_counts_toward_cap: true
     note: "No PF act, but Amendment 89 ceiling for non-consumer loans unresolved"
   - name: California
     status: closed
@@ -58,9 +59,10 @@ jurisdictions:
     note: "Requires a purpose-formed CA corporation"
   - name: Colorado
     status: open
-    max_apr: null
+    max_apr: 45.0
     max_apr_verified: true
     min_principal: null
+    fee_counts_toward_cap: true
     note: "UCCC reaches consumer credit only"
   - name: Connecticut
     status: closed
@@ -70,7 +72,8 @@ jurisdictions:
     note: "Unlicensed financing is a class A misdemeanor"
   - name: Delaware
     status: open
-    max_apr: 15.9
+    max_apr: null
+    max_add_on_apr: 9.0
     max_apr_verified: true
     min_principal: null
     note: "$9/$100 add-on; rate binds even when exempt from licensing"
@@ -79,12 +82,14 @@ jurisdictions:
     max_apr: 24.0
     max_apr_verified: true
     min_principal: null
+    fee_counts_toward_cap: true
     note: "§ 31-1101(4) rate safe harbor; nonprofit borrower ceiling"
   - name: Florida
     status: open
     max_apr: 18.0
     max_apr_verified: true
     min_principal: null
+    fee_counts_toward_cap: true
     note: "§ 627.901 agent safe harbor — 18% simple or $36/yr"
   - name: Georgia
     status: closed
@@ -118,13 +123,18 @@ jurisdictions:
     note: "No PF license type at IDOI or DFI"
   - name: Iowa
     status: open
-    max_apr: null
+    max_apr: 7.0
+    max_apr_periods:
+      - { from: "2026-11-01", through: "2026-11-30", apr: 7.0 }
+      - { from: "2026-12-01", through: "2026-12-31", apr: 7.25 }
     max_apr_verified: true
     min_principal: null
+    fee_counts_toward_cap: true
     note: "No premium finance chapter"
   - name: Kansas
     status: open
-    max_apr: 21.1
+    max_apr: null
+    max_add_on_apr: 12.0
     max_apr_verified: true
     min_principal: null
     note: "$12/$100/yr add-on ≈ 21.1% APR on 9 pays"
@@ -154,15 +164,17 @@ jurisdictions:
     note: "§ 23-201(b) expressly names producers"
   - name: Massachusetts
     status: open
-    max_apr: null
+    max_apr: 20.0
     max_apr_verified: true
     min_principal: null
+    fee_counts_toward_cap: true
     note: "c. 255C § 2 — commercial only, own customers only"
   - name: Michigan
     status: open
-    max_apr: 21.1
+    max_apr: 7.0
     max_apr_verified: true
     min_principal: null
+    fee_counts_toward_cap: true
     note: "$12/$100/yr + $18"
   - name: Minnesota
     status: open
@@ -171,14 +183,14 @@ jurisdictions:
     min_principal: null
     note: "Commercial-purpose exclusion"
   - name: Mississippi
-    status: open
-    max_apr: 24.0
-    max_apr_verified: true
+    status: closed
+    max_apr: null
+    max_apr_verified: null
     min_principal: null
-    note: "24% at or below $10k balance; uncapped above"
+    note: "Unavailable for the current financing terms."
   - name: Missouri
     status: open
-    max_apr: 26.2
+    max_apr: null
     max_apr_verified: true
     min_principal: null
     note: "$15/$100 add-on + $10"
@@ -190,14 +202,15 @@ jurisdictions:
     note: "Exemption runs to resident producers only"
   - name: Nebraska
     status: open
-    max_apr: null
+    max_apr: 16.0
     max_apr_verified: true
     min_principal: null
+    fee_counts_toward_cap: true
     note: "No premium finance statute"
   - name: Nevada
     status: open
     max_apr: null
-    max_apr_verified: true
+    max_apr_verified: false
     min_principal: null
     note: "Rate schedule must be filed; set in config before use"
   - name: New Hampshire
@@ -232,27 +245,35 @@ jurisdictions:
     note: "Agent exemption is a late-charge permission only"
   - name: North Dakota
     status: open
-    max_apr: null
+    max_apr: 9.393
+    max_apr_periods:
+      - { from: "2026-11-01", through: "2026-11-30", apr: 9.393 }
+    uncapped_above_principal: 35000
     max_apr_verified: true
     min_principal: null
+    fee_counts_toward_cap: true
     note: "Chapter does not apply to insurance producers"
   - name: Ohio
     status: conditional
-    max_apr: null
+    max_apr: 8.0
+    uncapped_above_principal: 100000
     max_apr_verified: true
     min_principal: 100000
+    fee_counts_toward_cap: true
     note: "Available only above $100,000 amount financed"
   - name: Oklahoma
     status: open
-    max_apr: null
+    max_apr: 45.0
     max_apr_verified: true
     min_principal: null
+    fee_counts_toward_cap: true
     note: "No PF regime; UCCC is consumer-only"
   - name: Oregon
     status: open
     max_apr: 18.0
     max_apr_verified: true
     min_principal: null
+    fee_counts_toward_cap: true
     note: "ORS 746.425(4) producer exemption — 1.5%/month"
   - name: Pennsylvania
     status: closed
@@ -273,11 +294,11 @@ jurisdictions:
       cancellation rules apply. Incorporated associations only
       (§ 19-14.1-10(b)(1)).
   - name: South Carolina
-    status: open
-    max_apr: 18.0
-    max_apr_verified: true
+    status: closed
+    max_apr: null
+    max_apr_verified: null
     min_principal: null
-    note: "§ 38-39-10(d) producer of record — 1.5%/month"
+    note: "Unavailable for the current financing terms."
   - name: South Dakota
     status: closed
     max_apr: null
@@ -289,6 +310,7 @@ jurisdictions:
     max_apr: 24.0
     max_apr_verified: true
     min_principal: null
+    fee_counts_toward_cap: true
     note: "24% maximum effective rate"
   - name: Texas
     status: closed
@@ -310,9 +332,10 @@ jurisdictions:
     note: "§ 7002(d); commercial uncapped"
   - name: Virginia
     status: conditional
-    max_apr: null
+    max_apr: 18.0
     max_apr_verified: true
     min_principal: null
+    fee_counts_toward_cap: true
     note: "§ 38.2-1806 credit; permitted charge needs counsel"
   - name: Washington
     status: closed
@@ -322,9 +345,10 @@ jurisdictions:
     note: "No agent and no commercial exemption"
   - name: West Virginia
     status: open
-    max_apr: null
+    max_apr: 18.0
     max_apr_verified: true
     min_principal: null
+    fee_counts_toward_cap: true
     note: "No PF act; lending licensure is consumer-only"
   - name: Wisconsin
     status: open

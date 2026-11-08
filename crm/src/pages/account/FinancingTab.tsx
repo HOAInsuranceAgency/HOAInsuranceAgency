@@ -425,7 +425,7 @@ function AccountFinancing({ account }: { account: Account }) {
           <h2>Financing</h2>
           <p className="muted small">
             No financing on this association. Offers originate automatically
-            when an invoice is sent — at 25% down, 14% APR, 11 monthly
+            when an invoice is sent — at 25% down, 11 monthly
             installments — and appear here once one exists. See the Invoices
             tab.
           </p>
