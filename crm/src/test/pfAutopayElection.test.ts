@@ -388,7 +388,7 @@ describe("the send offers financing honestly", () => {
     // nothing: the condition fails, the send offers nothing, and the
     // customer's money never lands on a CANCELLED loan.
     expect(SEND).toContain(
-      '"#s = :q AND premium = :seen AND attribute_not_exists(downPaymentIntentId) AND (attribute_not_exists(electionCheckoutUrl) OR electionCheckoutExpiresAt < :now)"'
+      '"#s = :q AND premium = :seen AND attribute_not_exists(agreementSignedAt) AND attribute_not_exists(electedAt) AND attribute_not_exists(downPaymentIntentId) AND (attribute_not_exists(electionCheckoutUrl) OR electionCheckoutExpiresAt < :now)"'
     );
     expect(SEND).toContain('"superseded-by-repricing"');
     // And the read-time half: a committed loan at a mismatched premium is
@@ -403,14 +403,16 @@ describe("the send offers financing honestly", () => {
     expect(SEND).toContain('"#s = :quoted AND attribute_not_exists(electionToken)"');
   });
 
-  it("originates at the product's fixed terms and nothing else (W8)", () => {
-    // Down 25 / APR 14 / months 11 come from quote.ts constants — the send
-    // passes them by name, so nobody can quietly hand-tune a term here.
+  it("sends fixed down/month terms and delegates state pricing to the core", () => {
     expect(SEND).toContain("downPct: PF_DEFAULT_DOWN_PCT");
-    expect(SEND).toContain("apr: PF_DEFAULT_APR");
+    expect(SEND).not.toContain("PF_DEFAULT_APR");
     expect(SEND).toContain("months: PF_DEFAULT_MONTHS");
     expect(SEND).toContain("premium: retailTotal");
     expect(SEND).not.toMatch(/downPct: \d/);
+    // A standing offer uses its frozen price. A rate-rule change alone is
+    // not grounds for cancelling an offer the customer may already hold.
+    expect(SEND).toContain("apr: loan.apr");
+    expect(SEND).not.toMatch(/loan\.apr\s*!==/);
   });
 
   it("refuses an anchorless invoice and a second live invoice per anchor (W8)", () => {
@@ -440,7 +442,9 @@ describe("the origination mutation holds the product's fixed terms", () => {
   it("refuses caller-chosen terms — the API is not a back door", () => {
     const ORIGINATE = read("amplify/functions/pf-originate/handler.ts");
     expect(ORIGINATE).toContain("a.downPct !== PF_DEFAULT_DOWN_PCT");
-    expect(ORIGINATE).toContain("a.apr !== PF_DEFAULT_APR");
+    expect(ORIGINATE).toContain("apr: a.apr");
+    expect(ORIGINATE).not.toContain("PF_DEFAULT_APR");
+    expect(read("amplify/functions/pfOrigination.ts")).toContain("req.apr !== undefined && req.apr !== apr");
     expect(ORIGINATE).toContain("a.months !== PF_DEFAULT_MONTHS");
   });
 

@@ -17,7 +17,8 @@ import {
 import Stripe from "stripe";
 import type { Schema } from "../../data/resource";
 import { listAllPages } from "../../../../shared/pagination";
-import { PF_CONFIG_SHA256 } from "../../../../shared/premiumFinance/jurisdictions";
+import { PF_CONFIG_SHA256, PF_JURISDICTIONS } from "../../../../shared/premiumFinance/jurisdictions";
+import { financePricing, financeRateDates } from "../../../../shared/premiumFinance/pricing";
 import { looksLikeElectionToken } from "../pfElectionToken";
 import { initialPaymentTotals } from "../../../../shared/premiumFinance/initialPayment";
 import { PF_CHECKOUT_BILLING_VERSION } from "../pfInitialPayment";
@@ -386,6 +387,22 @@ async function handleAccept(
   // wins: a revived link keeps the original signer, and no stamp exists
   // that a committed disable post-dates.
   const signing = !loan.agreementSignedAt;
+  const committed = loan.electedAt || (loan.electionCheckoutUrl &&
+    loan.electionCheckoutExpiresAt && loan.electionCheckoutExpiresAt > now);
+  if (signing && !committed) {
+    // A quote is not yet an agreement. Monthly ceilings may have changed
+    // since the offer was issued; check again before its first signature.
+    // Signed agreements and existing payment commitments keep their terms.
+    const jurisdiction = PF_JURISDICTIONS.find(state => state.code === loan.state);
+    const pricing = jurisdiction && financePricing(jurisdiction, {
+      premium: loan.premium,
+      downPct: loan.downPct,
+      months: loan.months,
+      effectiveDate: loan.effectiveDate,
+      coverageEffectiveDate: loan.coverageEffectiveDate,
+    }, financeRateDates(jurisdiction, new Date(now)));
+    if (!pricing || !Number.isFinite(loan.apr) || loan.apr <= 0 || loan.apr > pricing.apr) return CLOSED;
+  }
   try {
     /**
      * The stamp rides a ConditionCheck on the kill switch — pf-originate's

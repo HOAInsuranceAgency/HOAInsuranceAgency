@@ -29,6 +29,10 @@ const doc = load(raw) as {
     name: string;
     status: string;
     max_apr: number | null;
+    max_add_on_apr?: number;
+    max_apr_periods?: { from: string; through: string; apr: number }[];
+    uncapped_above_principal?: number;
+    fee_counts_toward_cap?: boolean;
     max_apr_verified: boolean;
     min_principal: number | null;
     note: string;
@@ -44,6 +48,10 @@ describe("the generated module matches the signed YAML", () => {
       expect(g.name, y.name).toBe(y.name);
       expect(g.status, y.name).toBe(y.status);
       expect(g.maxApr, y.name).toBe(y.max_apr);
+      expect(g.maxAddOnApr, y.name).toBe(y.max_add_on_apr ?? null);
+      expect(g.maxAprPeriods, y.name).toEqual(y.max_apr_periods ?? null);
+      expect(g.uncappedAbovePrincipal, y.name).toBe(y.uncapped_above_principal ?? null);
+      expect(g.feeCountsTowardCap, y.name).toBe(y.fee_counts_toward_cap ?? null);
       expect(g.maxAprVerified, y.name).toBe(y.max_apr_verified);
       expect(g.minPrincipal, y.name).toBe(y.min_principal);
       expect(g.note, y.name).toBe(y.note);
@@ -75,24 +83,23 @@ describe("the generated module matches the signed YAML", () => {
 });
 
 describe("the signed counts", () => {
-  // From the brief, asserted as written: 32 open, 3 conditional, 16 closed;
-  // two open rows unverified and therefore closed in behavior; 30 usable.
+  // MS/SC are held; NV has no filed rate; AR's 17% ceiling is now verified.
   const byStatus = (s: string) => PF_JURISDICTIONS.filter((j) => j.status === s);
 
-  it("32 open, 3 conditional, 16 closed — 51 in all", () => {
-    expect(byStatus("open").length).toBe(32);
+  it("30 open, 3 conditional, 18 closed — 51 in all", () => {
+    expect(byStatus("open").length).toBe(30);
     expect(byStatus("conditional").length).toBe(3);
-    expect(byStatus("closed").length).toBe(16);
+    expect(byStatus("closed").length).toBe(18);
     expect(PF_JURISDICTIONS.length).toBe(51);
   });
 
-  it("exactly Arkansas is unverified", () => {
+  it("Nevada has no filed rate", () => {
     // Explicitly false — closed rows carry null, which is "not applicable",
     // not "unverified". The distinction is the amended decision 1.
     // Rhode Island left this list 2026-08-24: Jake verified § 6-26-2 (21%
     // governs, fee counts toward the ceiling, incorporated borrowers only).
     const unverified = PF_JURISDICTIONS.filter((j) => j.maxAprVerified === false);
-    expect(unverified.map((j) => j.name).sort()).toEqual(["Arkansas"]);
+    expect(unverified.map((j) => j.name).sort()).toEqual(["Nevada"]);
     // Still status:open — which is what makes the verified flag load-bearing.
     for (const j of unverified) expect(j.status).toBe("open");
   });
@@ -104,12 +111,8 @@ describe("the signed counts", () => {
     expect(ri.maxAprVerified).toBe(true);
     expect(ri.requiresIncorporatedBorrower).toBe(true);
     expect(ri.feeCountsTowardCap).toBe(true);
-    // And nobody else does — the fields exist for RI's statute, and a row
-    // acquiring them is a signing event, not a default.
-    const withEither = PF_JURISDICTIONS.filter(
-      (j) => j.requiresIncorporatedBorrower !== null || j.feeCountsTowardCap !== null
-    );
-    expect(withEither.map((j) => j.name)).toEqual(["Rhode Island"]);
+    const withIncorporation = PF_JURISDICTIONS.filter(j => j.requiresIncorporatedBorrower === true);
+    expect(withIncorporation.map(j => j.name)).toEqual(["Rhode Island"]);
   });
 
   it("verified is stated on every row that could lend, and on no closed row", () => {
@@ -125,9 +128,9 @@ describe("the signed counts", () => {
     }
   });
 
-  it("31 usable — RI joined 2026-08-24", () => {
+  it("29 usable — Nevada requires a filed rate and MS/SC are held", () => {
     const usable = byStatus("open").filter((j) => j.maxAprVerified === true);
-    expect(usable.length).toBe(31);
+    expect(usable.length).toBe(29);
   });
 
   it("Ohio is the only jurisdiction with a minimum principal", () => {

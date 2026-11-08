@@ -81,13 +81,13 @@ describe("the schedule adds up to itself", () => {
 });
 
 describe("defaults and the fee", () => {
-  it("25% down as payment 1 of 12, 11 financed months, 14.0% APR", () => {
+  it("25% down as payment 1 of 12, 11 financed months, 18% where rates are agreed", () => {
     // The signed terms of 2026-08-23: the down payment is payment 1,
     // collected at inception; the remainder finances over the other 11
-    // months of the policy year. Never a jurisdiction cap as a default.
+    // months of the policy year. The agency's agreed-rate price is 18%.
     expect(PF_DEFAULT_DOWN_PCT).toBe(25);
     expect(PF_DEFAULT_MONTHS).toBe(11);
-    expect(PF_DEFAULT_APR).toBe(14.0);
+    expect(PF_DEFAULT_APR).toBe(18.0);
   });
 
   it("refuses a down payment under the 25% floor", async () => {
@@ -164,6 +164,7 @@ describe("what the module must never contain", () => {
       "gate.ts",
       "initialPayment.ts",
       "noticeSequence.ts",
+      "pricing.ts",
       "quote.ts",
     ]);
   });

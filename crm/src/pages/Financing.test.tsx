@@ -58,9 +58,10 @@ describe("Financing state finder", () => {
     expect(list().getAllByRole("listitem")).toHaveLength(51);
     expect(state("Alaska", "Available")).toBeInTheDocument();
     expect(state("California", "Unavailable")).toBeInTheDocument();
-    // Arkansas is marked open in the source file, but its unverified rate
-    // ceiling must still prevent the producer from treating it as available.
-    expect(state("Arkansas", "Unavailable")).toBeInTheDocument();
+    expect(state("Arkansas", "Available")).toBeInTheDocument();
+    expect(state("Nevada", "Unavailable")).toBeInTheDocument();
+    expect(state("Mississippi", "Unavailable")).toBeInTheDocument();
+    expect(state("South Carolina", "Unavailable")).toBeInTheDocument();
     expect(state("Rhode Island", "Available")).toHaveTextContent("Incorporated associations");
     expect(screen.queryByText("Administration")).not.toBeInTheDocument();
     expect(screen.queryByRole("table")).not.toBeInTheDocument();

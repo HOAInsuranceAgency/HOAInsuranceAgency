@@ -180,12 +180,11 @@ describe("the origination core", () => {
   });
 
   it("rejects an APR above the cap at the API, not just in the UI", () => {
-    // The quote rides along since RI joined: a fee-in-cap jurisdiction
-    // tests the effective rate, which only the schedule can answer — so the
-    // quote must be built before the cap decision, and passed into it.
-    expect(HANDLER).toContain("aprCapViolation(req.apr, gate.jurisdiction, quote)");
-    expect(HANDLER.indexOf("const quote = buildQuote(")).toBeLessThan(
-      HANDLER.indexOf("aprCapViolation(req.apr, gate.jurisdiction, quote)")
+    // Automatic pricing supplies the same frozen quote that is checked
+    // against the limit, including fees where the jurisdiction requires it.
+    expect(HANDLER).toContain("aprCapViolation(apr, gate.jurisdiction, quote, rateDates, anchor.coverageEffectiveDate)");
+    expect(HANDLER.indexOf("const pricing = moduleOn && gate.open")).toBeLessThan(
+      HANDLER.indexOf("aprCapViolation(apr, gate.jurisdiction, quote, rateDates, anchor.coverageEffectiveDate)")
     );
     expect(HANDLER).toMatch(/rule: "apr-cap"/);
   });

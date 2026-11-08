@@ -114,11 +114,13 @@ export function InvoiceDelivery({ editor }: { editor: InvoiceDeliveryState }) {
                   kind: "policy",
                   id: policy.id,
                   lines: policy.lines ?? [],
+                  coverageEffectiveDate: policy.effectiveDate,
                 }
                 : {
                   kind: "quote",
                   id: quote!.id,
                   lines: quote!.lines ?? [],
+                  coverageEffectiveDate: quote!.effectiveDate,
                 }
             }
             retailTotal={financeableInvoiceTotal(lines)}

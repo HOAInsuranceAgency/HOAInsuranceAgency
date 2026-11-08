@@ -10,7 +10,8 @@ import {
   originationGate,
 } from "../../../shared/premiumFinance/gate";
 import { evaluateEligibility } from "../../../shared/premiumFinance/eligibility";
-import { buildQuote, downPctViolation } from "../../../shared/premiumFinance/quote";
+import { downPctViolation } from "../../../shared/premiumFinance/quote";
+import { financePricing, financeRateDates } from "../../../shared/premiumFinance/pricing";
 import { PF_CONFIG_SHA256 } from "../../../shared/premiumFinance/jurisdictions";
 
 /**
@@ -53,6 +54,7 @@ export interface OriginationAnchor {
   kind: "policy" | "quote";
   id: string;
   lines: readonly (string | null | undefined)[];
+  coverageEffectiveDate?: string | null;
 }
 
 export interface OriginationAccount {
@@ -80,7 +82,8 @@ export interface OriginationRequest {
   brokerFeeAllocations?: BrokerFeeAllocation[];
   downPct: number;
   months: number;
-  apr: number;
+  /** Optional API assertion. The server always derives and stores the rate. */
+  apr?: number;
   /** The schedule anchor — under W8, the invoice send date. */
   effectiveDate: string;
   actor: string;
@@ -154,6 +157,8 @@ export async function originateLoan(
   req: OriginationRequest
 ): Promise<OriginationResult> {
   const { account, anchor } = req;
+  const now = new Date();
+  const originationDay = now.toISOString().slice(0, 10);
 
   /**
    * Conditional jurisdictions open only on a counsel opinion that is
@@ -164,11 +169,22 @@ export async function originateLoan(
   let opinionCurrent = false;
   if (preGate.jurisdiction?.status === "conditional") {
     const opinions = await reads.listOpinions(preGate.jurisdiction.code);
-    opinionCurrent = hasCurrentOpinion(opinions, new Date().toISOString().slice(0, 10));
+    opinionCurrent = hasCurrentOpinion(opinions, originationDay);
   }
   const gate = originationGate(account.state, {
     hasCurrentCounselOpinion: opinionCurrent,
   });
+  const rateDates = gate.open ? financeRateDates(gate.jurisdiction, now) : [];
+  // Pricing is server-owned and evaluated only for an open jurisdiction.
+  const pricing = moduleOn && gate.open
+    ? financePricing(gate.jurisdiction, {
+        premium: req.premium,
+        downPct: req.downPct,
+        months: req.months,
+        effectiveDate: req.effectiveDate,
+        coverageEffectiveDate: anchor.coverageEffectiveDate,
+      }, rateDates)
+    : null;
   const ctx = {
     accountId: account.id,
     jurisdiction:
@@ -182,8 +198,11 @@ export async function originateLoan(
     premium: req.premium,
     downPct: req.downPct,
     months: req.months,
-    apr: req.apr,
+    apr: pricing?.apr ?? null,
+    rateDate: rateDates,
+    ...(req.apr === undefined ? {} : { requestedApr: req.apr }),
     effectiveDate: req.effectiveDate,
+    coverageEffectiveDate: anchor.coverageEffectiveDate ?? null,
   };
 
   /**
@@ -217,17 +236,22 @@ export async function originateLoan(
         inputs: terms,
       });
 
-      // The quote is built BEFORE the cap decision since RI joined: a
-      // fee-in-cap jurisdiction tests the effective rate, which only the
-      // schedule can answer. buildQuote is pure; the order costs nothing.
-      const quote = buildQuote({
-        premium: req.premium,
-        downPct: req.downPct,
-        months: req.months,
-        apr: req.apr,
-        effectiveDate: req.effectiveDate,
-      });
-      const aprProblem = aprCapViolation(req.apr, gate.jurisdiction, quote);
+      if (!pricing) {
+        decisions.push({
+          rule: "apr-cap",
+          outcome: "BLOCK",
+          reason: "A financing rate could not be determined within the configured state limit.",
+          inputs: terms,
+        });
+        await writeDecisions(ddb, ctx, decisions);
+        return { ok: true, loanId: null, blocks: blocked(decisions) };
+      }
+      const { apr, quote } = pricing;
+      const aprProblem =
+        aprCapViolation(apr, gate.jurisdiction, quote, rateDates, anchor.coverageEffectiveDate) ??
+        (req.apr !== undefined && req.apr !== apr
+          ? `APR is set automatically to ${apr}% for ${gate.jurisdiction.name}.`
+          : null);
       decisions.push({
         rule: "apr-cap",
         outcome: aprProblem ? "BLOCK" : "PASS",
@@ -325,8 +349,9 @@ export async function originateLoan(
                       brokerFeeAllocations: JSON.stringify(feeAllocations(req.brokerFeeAllocations)),
                       downPct: req.downPct,
                       months: req.months,
-                      apr: req.apr,
+                      apr,
                       effectiveDate: req.effectiveDate,
+                      coverageEffectiveDate: anchor.coverageEffectiveDate ?? null,
                       downPayment: quote.downPayment,
                       amountFinanced: quote.amountFinanced,
                       payment: quote.payment,
@@ -388,7 +413,7 @@ export async function originateLoan(
           throw err;
         }
         console.log(
-          `[pfOrigination] quoted ${loanId} (${gate.jurisdiction.code}, $${quote.amountFinanced} @ ${req.apr}%, ${anchor.kind} ${anchor.id}) by ${req.actorName}`
+          `[pfOrigination] quoted ${loanId} (${gate.jurisdiction.code}, $${quote.amountFinanced} @ ${apr}%, ${anchor.kind} ${anchor.id}) by ${req.actorName}`
         );
         return { ok: true, loanId, blocks: [] };
       }

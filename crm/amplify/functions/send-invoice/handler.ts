@@ -21,17 +21,18 @@ import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, GetCommand, PutCommand, UpdateCommand, TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
 import { listAllPages } from "../../../../shared/pagination";
 import { isOpenQuoteStatus } from "../../../../shared/quoteStatus";
+import { usStateCode } from "../../../../shared/usStates";
 import { AGENCY, AGENCY_FMT } from "../../../../shared/agency";
 import Stripe from "stripe";
 import { invoiceTotals, remittanceSplit, financeableInvoiceTotal, type RemittanceSplit } from "../../../../shared/invoiceTotals";
 import { electionExpiry, mintElectionToken } from "../pfElectionToken";
 import { originateLoan } from "../pfOrigination";
 import {
-  PF_DEFAULT_APR,
   PF_DEFAULT_DOWN_PCT,
   PF_DEFAULT_MONTHS,
 } from "../../../../shared/premiumFinance/quote";
-import { PF_CONFIG_SHA256 } from "../../../../shared/premiumFinance/jurisdictions";
+import { PF_CONFIG_SHA256, PF_JURISDICTIONS } from "../../../../shared/premiumFinance/jurisdictions";
+import { financePricing, financeRateDates } from "../../../../shared/premiumFinance/pricing";
 import { renderInvoice } from "./invoice";
 import { createPaymentLink, InactivePaymentLink, toCents } from "./stripeLink";
 import { buildMimeMessage } from "./mime";
@@ -65,12 +66,13 @@ interface FinanceAnchor {
   kind: "policy" | "quote";
   id: string;
   lines: readonly (string | null | undefined)[];
+  coverageEffectiveDate?: string | null;
 }
 
 /**
  * W8: the financing side of the fork, or null — and since origination moved
  * into the send, this is where loans are BORN. Fixed terms (25% down as
- * payment 1 of 12, 14% APR, 11 installments), financed amount = the
+ * payment 1 of 12, 11 installments), automatic state pricing, financed amount = the
  * invoiced total, schedule anchored at the send date. The core runs every
  * gate and logs every rule; a block means a plain bill, never a stopped
  * send. Null on any failure for the same reason ensurePaymentLink is: a
@@ -82,7 +84,7 @@ interface FinanceAnchor {
  * association has already committed to — ACCEPTED onward — suppresses any
  * new origination and any offer: the choice was made.
  */
-async function financeOffer(
+export async function financeOffer(
   client: DataClient,
   account: {
     id: string;
@@ -98,6 +100,10 @@ async function financeOffer(
   if (!anchor || retailTotal <= 0) return null;
   const brokerFeeTotalCents = allocations.reduce((sum, allocation) => sum + allocation.amountCents, 0);
   const sameFee = (loan: { brokerFeeCents?: number | null; brokerFeeAllocations?: unknown }) => (loan.brokerFeeCents ?? 0) === brokerFeeTotalCents && JSON.stringify(feeAllocations(loan.brokerFeeAllocations)) === JSON.stringify(allocations);
+  const sameState = (loan: { state?: string | null }) => usStateCode(loan.state) === usStateCode(account.state);
+  // Legacy offers have no frozen coverage date. Its absence alone is not
+  // evidence that the policy changed after the offer was issued.
+  const sameCoverageDate = (loan: { coverageEffectiveDate?: string | null }) => !loan.coverageEffectiveDate || loan.coverageEffectiveDate === (anchor.coverageEffectiveDate ?? null);
   const loanTable = process.env.PF_LOAN_TABLE;
   const siteUrl = process.env.SITE_URL;
   if (!loanTable || !siteUrl) return null;
@@ -140,20 +146,34 @@ async function financeOffer(
     const nowIso = new Date().toISOString();
     const committed =
       loan &&
-      (loan.downPaymentIntentId ||
+      (loan.agreementSignedAt || loan.electedAt || loan.downPaymentIntentId ||
         (loan.electionCheckoutUrl &&
           loan.electionCheckoutExpiresAt &&
           loan.electionCheckoutExpiresAt > nowIso));
-    if (loan && committed && (loan.premium !== retailTotal || !sameFee(loan))) {
+    if (loan && committed && (loan.premium !== retailTotal || !sameFee(loan) || !sameState(loan) || !sameCoverageDate(loan))) {
       console.error(
         `[send-invoice] invoice re-priced to ${retailTotal} over committed election on loan ${loan.id} (quoted ${loan.premium}) — offering nothing; resolve by hand`
       );
       return null;
     }
+    let rateExceedsCurrentLimit = false;
+    if (loan && !committed) {
+      const jurisdiction = PF_JURISDICTIONS.find(row => row.code === usStateCode(account.state));
+      if (!jurisdiction || jurisdiction.status === "closed" || jurisdiction.maxAprVerified !== true) return null;
+      const currentPrice = financePricing(jurisdiction, {
+        premium: loan.premium,
+        downPct: loan.downPct,
+        months: loan.months,
+        effectiveDate: loan.effectiveDate,
+        coverageEffectiveDate: anchor.coverageEffectiveDate,
+      }, financeRateDates(jurisdiction, new Date()));
+      if (!currentPrice) return null;
+      rateExceedsCurrentLimit = loan.apr > currentPrice.apr;
+    }
 
     const today = new Date().toISOString().slice(0, 10);
     const stale = loan && (loan.effectiveDate ?? today) < today;
-    if (loan && !committed && ((loan.premium !== retailTotal || !sameFee(loan)) || stale)) {
+    if (loan && !committed && ((loan.premium !== retailTotal || !sameFee(loan) || !sameState(loan) || !sameCoverageDate(loan) || rateExceedsCurrentLimit) || stale)) {
       /**
        * The bill changed under the offer, or the offer aged past its send
        * day (the spec anchors the schedule at the send date — a resend
@@ -170,7 +190,7 @@ async function financeOffer(
             Key: { id: loan.id },
             UpdateExpression: "SET #s = :c, closedAt = :now, updatedAt = :now",
             ConditionExpression:
-              "#s = :q AND premium = :seen AND attribute_not_exists(downPaymentIntentId) AND (attribute_not_exists(electionCheckoutUrl) OR electionCheckoutExpiresAt < :now)",
+              "#s = :q AND premium = :seen AND attribute_not_exists(agreementSignedAt) AND attribute_not_exists(electedAt) AND attribute_not_exists(downPaymentIntentId) AND (attribute_not_exists(electionCheckoutUrl) OR electionCheckoutExpiresAt < :now)",
             ExpressionAttributeNames: { "#s": "status" },
             ExpressionAttributeValues: {
               ":c": "CANCELLED",
@@ -180,7 +200,7 @@ async function financeOffer(
             },
           })
         );
-        await logSupersession(loan, retailTotal, account.id);
+        await logSupersession(loan, retailTotal, account.id, account.state);
       } catch (err) {
         if ((err as { name?: string }).name !== "ConditionalCheckFailedException") throw err;
         // The loan moved mid-send — a payment landed, or an election
@@ -217,7 +237,6 @@ async function financeOffer(
           brokerFeeAllocations: allocations,
           downPct: PF_DEFAULT_DOWN_PCT,
           months: PF_DEFAULT_MONTHS,
-          apr: PF_DEFAULT_APR,
           effectiveDate: today,
           actor: "send-invoice",
           actorName: "send-invoice (auto-origination)",
@@ -302,7 +321,8 @@ async function financeOffer(
 async function logSupersession(
   loan: { id: string; premium: number; state?: string | null },
   retailTotal: number,
-  accountId: string
+  accountId: string,
+  state: string | null | undefined
 ) {
   const table = process.env.PF_COMPLIANCE_LOG_TABLE;
   if (!table) return;
@@ -320,8 +340,10 @@ async function logSupersession(
           jurisdiction: loan.state ?? "UNKNOWN",
           rule: "superseded-by-repricing",
           outcome: "BLOCK",
-          reason: `Quote for $${loan.premium.toLocaleString("en-US")} superseded: the invoice now bills $${retailTotal.toLocaleString("en-US")}.`,
-          inputs: JSON.stringify({ loanId: loan.id, was: loan.premium, now: retailTotal }),
+          reason: usStateCode(loan.state) !== usStateCode(state)
+            ? `Quote superseded: the account state changed from ${loan.state ?? "UNKNOWN"} to ${state ?? "UNKNOWN"}.`
+            : `Quote for $${loan.premium.toLocaleString("en-US")} superseded: the invoice now bills $${retailTotal.toLocaleString("en-US")}.`,
+          inputs: JSON.stringify({ loanId: loan.id, was: loan.premium, now: retailTotal, wasState: loan.state ?? null, nowState: state ?? null }),
           configSha256: PF_CONFIG_SHA256,
           actor: "send-invoice",
           actorName: "send-invoice (auto-origination)",
@@ -826,11 +848,13 @@ export const handler = async (event: {
           kind: "policy",
           id: headerPolicyId,
           lines: policy?.lines ?? [],
+          coverageEffectiveDate: policy?.effectiveDate,
         }
       : {
           kind: "quote",
           id: invoice.quoteId!,
           lines: quoteAnchor!.lines ?? [],
+          coverageEffectiveDate: quoteAnchor!.effectiveDate,
         };
 
     /**

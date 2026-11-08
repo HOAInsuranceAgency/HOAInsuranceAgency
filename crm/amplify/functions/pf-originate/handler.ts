@@ -5,7 +5,6 @@ import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import { isRealIsoDay } from "../../../../shared/premiumFinance/noticeSequence";
 import { listAllPages } from "../../../../shared/pagination";
 import {
-  PF_DEFAULT_APR,
   PF_DEFAULT_DOWN_PCT,
   PF_DEFAULT_MONTHS,
 } from "../../../../shared/premiumFinance/quote";
@@ -60,18 +59,17 @@ export const handler = async (event: {
     return { ok: false, error: "Quote terms out of range." };
   }
   /**
-   * W8: the terms are the product's, not the caller's. The send originates
-   * at these constants; this mutation staying open to arbitrary terms would
-   * be an API back door around "not able to be edited".
+   * The down payment and installment count are fixed product terms. The
+   * shared core derives APR from the account's state and rejects a caller
+   * assertion that differs from that price.
    */
   if (
     a.downPct !== PF_DEFAULT_DOWN_PCT ||
-    a.apr !== PF_DEFAULT_APR ||
     a.months !== PF_DEFAULT_MONTHS
   ) {
     return {
       ok: false,
-      error: `Terms are fixed: ${PF_DEFAULT_DOWN_PCT}% down, ${PF_DEFAULT_APR}% APR, ${PF_DEFAULT_MONTHS} monthly installments. The invoice send is the origination path.`,
+      error: `Terms are fixed: ${PF_DEFAULT_DOWN_PCT}% down, ${PF_DEFAULT_MONTHS} monthly installments. The invoice send is the origination path.`,
     };
   }
 
@@ -116,6 +114,7 @@ export const handler = async (event: {
           kind: "policy",
           id: a.policyId,
           lines: policy.lines ?? [],
+          coverageEffectiveDate: policy.effectiveDate,
         },
         premium: a.premium,
         downPct: a.downPct,

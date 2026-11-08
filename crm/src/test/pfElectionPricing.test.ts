@@ -1,0 +1,163 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
+import { PF_JURISDICTIONS } from "../../../shared/premiumFinance/jurisdictions";
+import { financePricing } from "../../../shared/premiumFinance/pricing";
+import { buildQuote } from "../../../shared/premiumFinance/quote";
+
+const m = vi.hoisted(() => ({ lookup: vi.fn(), list: vi.fn(), invoices: vi.fn(), send: vi.fn(), checkout: vi.fn(), void: vi.fn() }));
+vi.mock("../../amplify/functions/data-client", () => ({
+  createDataClientGetter: () => async () => ({ models: {
+    PfLoan: { listPfLoanByElectionToken: m.lookup, list: m.list },
+    AgencySettings: { get: async () => ({ data: { premiumFinanceEnabled: true } }) },
+    Account: { get: async () => ({ data: { name: "Test Association" } }) },
+    Invoice: { list: m.invoices },
+  } }),
+}));
+vi.mock("../../amplify/functions/live-write", () => ({ sendCrmWrite: <T>(write: Promise<T>) => write }));
+vi.mock("@aws-sdk/lib-dynamodb", async original => ({
+  ...await original<typeof import("@aws-sdk/lib-dynamodb")>(),
+  DynamoDBDocumentClient: { from: () => ({ send: m.send }) },
+}));
+vi.mock("stripe", () => ({ default: class { checkout = { sessions: { create: m.checkout } }; } }));
+vi.mock("../../amplify/functions/void-invoice/handler", () => ({ handler: m.void }));
+vi.mock("../../amplify/functions/quote-source-billing", () => ({ zeroFeeQuoteClaimWrites: async () => [] }));
+vi.mock("../../amplify/functions/broker-fees/bindValidation", () => ({ assertBrokerFeeSigned: vi.fn() }));
+import { handler as elect } from "../../amplify/functions/pf-election/handler";
+
+const inputs = { premium: 10000, downPct: 25, months: 11, effectiveDate: "2026-12-15" };
+const decemberApr = financePricing(PF_JURISDICTIONS.find(state => state.code === "IA")!, inputs, "2026-12-15")!.apr;
+const offer = (extra: Record<string, unknown> = {}) => ({
+  id: "loan-1", accountId: "account-1", policyId: "policy-1", state: "IA", status: "QUOTED",
+  ...inputs, ...buildQuote({ ...inputs, apr: decemberApr }), apr: decemberApr,
+  coverageEffectiveDate: inputs.effectiveDate,
+  electionToken: "a".repeat(43), electionTokenExpiresAt: "2027-03-01T00:00:00Z",
+  brokerFeeCents: 0,
+  ...extra,
+});
+const accept = () => elect({ arguments: {
+  accept: true, token: "a".repeat(43), signerName: "Alex Signer", signerRole: "Treasurer",
+} });
+const signature = () => m.send.mock.calls.map(([command]) => command)
+  .filter((command): command is TransactWriteCommand => command instanceof TransactWriteCommand)
+  .flatMap(command => command.input.TransactItems ?? [])
+  .find(write => write.Update?.UpdateExpression?.includes("agreementSignedAt ="))?.Update;
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2027-01-15T18:00:00Z"));
+  vi.stubEnv("PF_LOAN_TABLE", "Loans");
+  vi.stubEnv("AGENCY_SETTINGS_TABLE", "Settings");
+  vi.stubEnv("STRIPE_SECRET_KEY", "test-placeholder");
+  vi.stubEnv("SITE_URL", "https://example.test");
+  vi.stubEnv("PF_COMPLIANCE_LOG_TABLE", "");
+  m.lookup.mockResolvedValue({ data: [offer()] });
+  m.list.mockResolvedValue({ data: [] });
+  m.invoices.mockResolvedValue({ data: [] });
+  m.send.mockResolvedValue({ Item: { premiumFinanceEnabled: true } });
+  m.checkout.mockResolvedValue({ id: "cs-1", url: "https://checkout.stripe.test/new", expires_at: 1800000000 });
+});
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.useRealTimers();
+});
+
+describe("financing rate at first signature", () => {
+  it("closes an unsigned December Iowa offer when January's ceiling is unpublished", async () => {
+    expect(await accept()).toMatchObject({ state: "closed", reason: "This financing offer is no longer open. Your agent can issue a fresh one." });
+    expect(signature()).toBeUndefined();
+    expect(m.send).not.toHaveBeenCalled();
+    expect(m.void).not.toHaveBeenCalled();
+    expect(m.checkout).not.toHaveBeenCalled();
+  });
+
+  it("leaves an already signed agreement available without checking a later month's ceiling", async () => {
+    m.lookup.mockResolvedValue({ data: [offer({ electedAt: "2026-12-15T18:00:00Z", agreementSignedAt: "2026-12-15T18:00:00Z" })] });
+    expect(await accept()).toMatchObject({ state: "checkout", url: "https://checkout.stripe.test/new" });
+    expect(signature()).toBeUndefined();
+    expect(m.checkout).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves a legacy election with an existing live Checkout session", async () => {
+    m.lookup.mockResolvedValue({ data: [offer({
+      electionCheckoutUrl: "https://checkout.stripe.test/existing",
+      electionCheckoutExpiresAt: "2027-01-15T19:00:00Z", electionCheckoutBillingVersion: 3,
+    })] });
+    expect(await accept()).toMatchObject({ state: "checkout", url: "https://checkout.stripe.test/existing" });
+    expect(m.checkout).not.toHaveBeenCalled();
+  });
+
+  it("preserves a legacy recorded election after its published rate period", async () => {
+    m.lookup.mockResolvedValue({ data: [offer({ electedAt: "2026-12-15T18:00:00Z" })] });
+    expect(await accept()).toMatchObject({ state: "checkout" });
+    expect(m.checkout).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves the existing clearing-payment path without a new rate decision", async () => {
+    m.lookup.mockResolvedValue({ data: [offer({ downPaymentIntentId: "pi-clearing" })] });
+    expect(await accept()).toMatchObject({ state: "closed", reason: expect.stringContaining("already clearing") });
+    expect(m.send).not.toHaveBeenCalled();
+    expect(m.checkout).not.toHaveBeenCalled();
+  });
+
+  it("allows a lower stored rate within the current ceiling without repricing its terms", async () => {
+    vi.setSystemTime(new Date("2026-11-15T18:00:00Z"));
+    m.lookup.mockResolvedValue({ data: [offer({
+      ...buildQuote({ ...inputs, apr: 6 }), apr: 6,
+    })] });
+    expect(await accept()).toMatchObject({ state: "checkout" });
+    expect(signature()).toBeDefined();
+    for (const [command] of m.send.mock.calls) {
+      const updates = command.input.TransactItems?.flatMap((write: { Update?: { UpdateExpression?: string } }) => write.Update?.UpdateExpression ?? []) ?? [];
+      if (command.input.UpdateExpression) updates.push(command.input.UpdateExpression);
+      expect(updates.every((expression: string) => !/\b(apr|schedule|payment)\s*=/.test(expression))).toBe(true);
+    }
+    expect(m.checkout).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses an unsigned stored rate above the current ceiling", async () => {
+    vi.setSystemTime(new Date("2026-11-15T18:00:00Z"));
+    expect(await accept()).toMatchObject({ state: "closed" });
+    expect(signature()).toBeUndefined();
+    expect(m.checkout).not.toHaveBeenCalled();
+  });
+
+  it("uses Iowa's calendar month when UTC has already reached December", async () => {
+    vi.setSystemTime(new Date("2026-12-01T00:30:00Z"));
+    expect(await accept()).toMatchObject({ state: "closed" });
+    expect(signature()).toBeUndefined();
+    expect(m.checkout).not.toHaveBeenCalled();
+  });
+
+  it("rechecks the month immediately before signing after asynchronous reads", async () => {
+    vi.setSystemTime(new Date("2026-12-31T23:59:00-06:00"));
+    m.invoices.mockImplementationOnce(async () => {
+      vi.setSystemTime(new Date("2027-01-01T00:01:00-06:00"));
+      return { data: [] };
+    });
+    expect(await accept()).toMatchObject({ state: "closed" });
+    expect(signature()).toBeUndefined();
+    expect(m.checkout).not.toHaveBeenCalled();
+  });
+
+  it.each(["DE", "KS"])("closes an unsigned %s offer whose coverage inception was not stored", async state => {
+    m.lookup.mockResolvedValue({ data: [offer({ state, apr: 6, coverageEffectiveDate: null })] });
+    expect(await accept()).toMatchObject({ state: "closed" });
+    expect(signature()).toBeUndefined();
+    expect(m.checkout).not.toHaveBeenCalled();
+  });
+
+  it.each(["DE", "KS"])("checks an unsigned %s offer using its stored coverage inception", async state => {
+    m.lookup.mockResolvedValue({ data: [offer({ state, apr: 6 })] });
+    expect(await accept()).toMatchObject({ state: "checkout" });
+    expect(signature()).toBeDefined();
+    expect(m.checkout).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["DE", "KS"])("preserves an already signed %s agreement without a stored coverage inception", async state => {
+    m.lookup.mockResolvedValue({ data: [offer({ state, coverageEffectiveDate: null, electedAt: "2026-12-15T18:00:00Z", agreementSignedAt: "2026-12-15T18:00:00Z" })] });
+    expect(await accept()).toMatchObject({ state: "checkout" });
+    expect(signature()).toBeUndefined();
+    expect(m.checkout).toHaveBeenCalledTimes(1);
+  });
+});

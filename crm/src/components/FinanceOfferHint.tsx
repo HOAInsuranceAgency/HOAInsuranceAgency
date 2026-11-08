@@ -5,7 +5,6 @@ import { listAllPages } from "../../../shared/pagination";
 import type { Schema } from "../../amplify/data/resource";
 import { useAsyncResource } from "../lib/useAsyncResource";
 import {
-  aprCapViolation,
   hasCurrentOpinion,
   jurisdictionFor,
   minPrincipalViolation,
@@ -13,12 +12,12 @@ import {
 } from "../../../shared/premiumFinance/gate";
 import { evaluateEligibility } from "../../../shared/premiumFinance/eligibility";
 import {
-  buildQuote,
-  PF_DEFAULT_APR,
   PF_DEFAULT_DOWN_PCT,
   PF_DEFAULT_MONTHS,
 } from "../../../shared/premiumFinance/quote";
+import { financePricing, financeRateDates } from "../../../shared/premiumFinance/pricing";
 import { formatMoney } from "../../../shared/invoiceTotals";
+import { usStateCode } from "../../../shared/usStates";
 
 type PfLoan = Schema["PfLoan"]["type"];
 
@@ -41,6 +40,7 @@ export interface HintAnchor {
   kind: "policy" | "quote";
   id: string;
   lines: readonly (string | null | undefined)[];
+  coverageEffectiveDate?: string | null;
 }
 
 export function FinanceOfferHint({
@@ -99,8 +99,21 @@ export function FinanceOfferHint({
     );
   }
 
+  const standing = [...loans]
+    .filter((l) => l.status === "QUOTED")
+    .sort((a, b) => (b.quotedAt ?? "").localeCompare(a.quotedAt ?? ""))[0];
+  const now = new Date();
+  const today = now.toISOString().slice(0, 10);
+  const committed = !!standing && !!(standing.agreementSignedAt || standing.electedAt || standing.downPaymentIntentId ||
+    (standing.electionCheckoutUrl && standing.electionCheckoutExpiresAt && standing.electionCheckoutExpiresAt > now.toISOString()));
+  const coverageChanged = standing?.coverageEffectiveDate && standing.coverageEffectiveDate !== anchor.coverageEffectiveDate;
+  const matching = standing && standing.premium === retailTotal &&
+    usStateCode(standing.state) === usStateCode(account.state) &&
+    (standing.brokerFeeCents ?? 0) === Math.round(brokerFee * 100) && !coverageChanged;
+  const committedOffer = committed && matching ? standing : null;
+
   const gate = originationGate(account.state, { hasCurrentCounselOpinion: hasOpinion === true });
-  if (!gate.open) {
+  if (!committedOffer && !gate.open) {
     return (
       <div className="offer-banner blocked">
         <strong>Financing won't be offered with this email</strong> — the bill
@@ -112,13 +125,13 @@ export function FinanceOfferHint({
     );
   }
 
-  const checks = evaluateEligibility({
+  const checks = !committedOffer && gate.open ? evaluateEligibility({
     lines: anchor.lines,
     accountType: account.type,
     requiresIncorporatedBorrower: gate.jurisdiction.requiresIncorporatedBorrower ?? false,
     incorporated: account.incorporated,
     jurisdictionName: gate.jurisdiction.name,
-  });
+  }) : [];
   const failed = checks.filter((c) => !c.ok);
 
   if (failed.length > 0) {
@@ -145,24 +158,37 @@ export function FinanceOfferHint({
     );
   }
 
-  // The standing QUOTED offer, or the terms the send will originate at. Both
-  // are the same fixed product; the distinction is whether a re-price will
-  // supersede an existing quote.
-  const standing = [...loans]
-    .filter((l) => l.status === "QUOTED")
-    .sort((a, b) => (b.quotedAt ?? "").localeCompare(a.quotedAt ?? ""))[0];
-  const preview = buildQuote({
+  // Signed terms stay frozen. An unsigned offer must still fit today's
+  // ceiling before it can be reused or replaced by the send.
+  const rateDates = gate.open ? financeRateDates(gate.jurisdiction, now) : [];
+  const standingPricing = standing && !committed && gate.open ? financePricing(gate.jurisdiction, {
+    premium: standing.premium,
+    downPct: standing.downPct,
+    months: standing.months,
+    effectiveDate: standing.effectiveDate,
+    coverageEffectiveDate: anchor.coverageEffectiveDate,
+  }, rateDates) : null;
+  const preserved = committedOffer ?? (standing && matching && (standing.effectiveDate ?? today) >= today &&
+    standingPricing && standing.apr <= standingPricing.apr ? standing : null);
+  const pricing = preserved || committed || (standing && !standingPricing) || !gate.open ? null : financePricing(gate.jurisdiction, {
     premium: retailTotal,
     downPct: PF_DEFAULT_DOWN_PCT,
     months: PF_DEFAULT_MONTHS,
-    apr: PF_DEFAULT_APR,
-    effectiveDate: new Date().toISOString().slice(0, 10),
-  });
-  // The two term gates the eligibility screens don't cover — the same
-  // helpers the server runs, on the same built quote.
-  const termProblem =
-    aprCapViolation(PF_DEFAULT_APR, gate.jurisdiction, preview) ??
-    minPrincipalViolation(preview.amountFinanced, gate.jurisdiction);
+    effectiveDate: today,
+    coverageEffectiveDate: anchor.coverageEffectiveDate,
+  }, rateDates);
+  const preview = preserved ?? pricing?.quote;
+  const apr = preserved?.apr ?? pricing?.apr;
+  const months = preserved?.months ?? PF_DEFAULT_MONTHS;
+  if (!preview || apr === undefined) {
+    return (
+      <div className="offer-banner blocked">
+        <strong>Financing won't be offered with this email</strong> — the bill
+        still sends.
+      </div>
+    );
+  }
+  const termProblem = !committedOffer && gate.open ? minPrincipalViolation(preview.amountFinanced, gate.jurisdiction) : null;
   if (termProblem) {
     return (
       <div className="offer-banner blocked">
@@ -177,9 +203,9 @@ export function FinanceOfferHint({
   return (
     <div className="offer-banner">
       <strong>Financing will be offered</strong> beside pay-in-full:{" "}
-      {formatMoney(preview.downPayment)} down (payment 1 of {PF_DEFAULT_MONTHS + 1}){brokerFee > 0 ? ` plus the ${formatMoney(brokerFee)} broker fee paid in full upfront` : ""},
-      then {PF_DEFAULT_MONTHS} monthly payments of {formatMoney(preview.payment)} at{" "}
-      {PF_DEFAULT_APR}% APR.
+      {formatMoney(preview.downPayment)} down (payment 1 of {months + 1}){brokerFee > 0 ? ` plus the ${formatMoney(brokerFee)} broker fee paid in full upfront` : ""},
+      then {months} monthly payments of {formatMoney(preview.payment)} at{" "}
+      {apr}% APR.
       {standing && standing.premium !== retailTotal
         ? " The standing offer was quoted at a different total and will be re-issued at this one when sent."
         : ""}
