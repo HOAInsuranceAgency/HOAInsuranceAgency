@@ -183,13 +183,43 @@ it.each(["DE", "KS"])("reprices an uncommitted %s quote after its known coverage
   expect(banner).toHaveTextContent(`11 monthly payments of ${formatMoney(pricing.quote.payment)} at ${pricing.apr}% APR`);
 });
 
-it.each(["DE", "KS"])("keeps an existing %s quote when its legacy coverage date is absent", async state => {
+it.each(["DE", "KS"])("previews a replacement for a same-day unsigned %s quote without a frozen coverage date", async state => {
   const standing = { ...legacyOffer(), state };
+  api.models.PfLoan.list.mockResolvedValue({ data: [standing] });
+  const pricing = financePricing(jurisdictionFor(state)!, {
+    premium: props.retailTotal, downPct: 25, months: 11, effectiveDate: today, coverageEffectiveDate: "2026-12-01",
+  })!;
+  render(<FinanceOfferHint {...props} account={{ ...props.account, state } as Account}
+    anchor={{ ...props.anchor, coverageEffectiveDate: "2026-12-01" }} />);
+  const banner = (await screen.findByText("Financing will be offered")).closest(".offer-banner");
+  expect(banner).toHaveTextContent(`11 monthly payments of ${formatMoney(pricing.quote.payment)} at ${pricing.apr}% APR`);
+  expect(banner).not.toHaveTextContent("14% APR");
+});
+
+it.each(["DE", "KS"])("keeps signed %s terms when their legacy coverage date is absent", async state => {
+  const standing = { ...legacyOffer(), state, agreementSignedAt: `${today}T13:00:00Z` };
   api.models.PfLoan.list.mockResolvedValue({ data: [standing] });
   render(<FinanceOfferHint {...props} account={{ ...props.account, state } as Account}
     anchor={{ ...props.anchor, coverageEffectiveDate: "2026-12-01" }} />);
   const banner = (await screen.findByText("Financing will be offered")).closest(".offer-banner");
   expect(banner).toHaveTextContent(`9 monthly payments of ${formatMoney(standing.payment)} at 14% APR`);
+});
+
+it.each(["DE", "KS"])("previews a fresh %s schedule when corrected coverage begins after the old final payment", async state => {
+  const jurisdiction = jurisdictionFor(state)!;
+  const coverageEffectiveDate = "2027-01-01";
+  const oldInputs = { premium: props.retailTotal, downPct: 25, months: 1, effectiveDate: today };
+  const oldQuote = buildQuote({ ...oldInputs, apr: 14 });
+  api.models.PfLoan.list.mockResolvedValue({ data: [{ ...legacyOffer(), ...oldInputs, state,
+    payment: oldQuote.payment, coverageEffectiveDate: today,
+  }] });
+  expect(financePricing(jurisdiction, { ...oldInputs, coverageEffectiveDate })).toBeNull();
+  const pricing = financePricing(jurisdiction, { ...oldInputs, months: 11, coverageEffectiveDate })!;
+  expect(pricing).not.toBeNull();
+  render(<FinanceOfferHint {...props} account={{ ...props.account, state } as Account}
+    anchor={{ ...props.anchor, coverageEffectiveDate }} />);
+  const banner = (await screen.findByText("Financing will be offered")).closest(".offer-banner");
+  expect(banner).toHaveTextContent(`11 monthly payments of ${formatMoney(pricing.quote.payment)} at ${pricing.apr}% APR`);
 });
 
 it("previews Florida pricing after an account state correction instead of retaining Massachusetts terms", async () => {

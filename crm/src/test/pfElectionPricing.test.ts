@@ -4,12 +4,14 @@ import { PF_JURISDICTIONS } from "../../../shared/premiumFinance/jurisdictions";
 import { financePricing } from "../../../shared/premiumFinance/pricing";
 import { buildQuote } from "../../../shared/premiumFinance/quote";
 
-const m = vi.hoisted(() => ({ lookup: vi.fn(), list: vi.fn(), invoices: vi.fn(), send: vi.fn(), checkout: vi.fn(), void: vi.fn() }));
+const m = vi.hoisted(() => ({ lookup: vi.fn(), list: vi.fn(), invoices: vi.fn(), account: vi.fn(), policy: vi.fn(), quote: vi.fn(), send: vi.fn(), checkout: vi.fn(), void: vi.fn() }));
 vi.mock("../../amplify/functions/data-client", () => ({
   createDataClientGetter: () => async () => ({ models: {
     PfLoan: { listPfLoanByElectionToken: m.lookup, list: m.list },
     AgencySettings: { get: async () => ({ data: { premiumFinanceEnabled: true } }) },
-    Account: { get: async () => ({ data: { name: "Test Association" } }) },
+    Account: { get: m.account },
+    Policy: { get: m.policy },
+    Quote: { get: m.quote },
     Invoice: { list: m.invoices },
   } }),
 }));
@@ -54,12 +56,79 @@ beforeEach(() => {
   m.lookup.mockResolvedValue({ data: [offer()] });
   m.list.mockResolvedValue({ data: [] });
   m.invoices.mockResolvedValue({ data: [] });
+  m.account.mockResolvedValue({ data: { name: "Test Association", state: "IA" } });
+  m.policy.mockResolvedValue({ data: { accountId: "account-1", effectiveDate: inputs.effectiveDate } });
+  m.quote.mockResolvedValue({ data: { accountId: "account-1", effectiveDate: inputs.effectiveDate } });
   m.send.mockResolvedValue({ Item: { premiumFinanceEnabled: true } });
   m.checkout.mockResolvedValue({ id: "cs-1", url: "https://checkout.stripe.test/new", expires_at: 1800000000 });
 });
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.useRealTimers();
+});
+
+describe.each([
+  { state: "DE", source: "policy" as const, anchor: { policyId: "policy-1", quoteId: null }, id: "policy-1" },
+  { state: "KS", source: "quote" as const, anchor: { policyId: null, quoteId: "quote-1" }, id: "quote-1" },
+])("$state coverage inception at first signature", ({ state, source, anchor, id }) => {
+  beforeEach(() => {
+    m.account.mockResolvedValue({ data: { name: "Test Association", state } });
+    m.lookup.mockResolvedValue({ data: [offer({ state, apr: 6, ...anchor })] });
+  });
+
+  it("closes an unsigned offer after its current coverage inception changes", async () => {
+    m[source].mockResolvedValue({ data: { accountId: "account-1", effectiveDate: "2026-11-15" } });
+    expect(await accept()).toMatchObject({ state: "closed", reason: "This financing offer is no longer open. Your agent can issue a fresh one." });
+    expect(m.send).not.toHaveBeenCalled();
+    expect(m.void).not.toHaveBeenCalled();
+    expect(m.checkout).not.toHaveBeenCalled();
+  });
+
+  it("accepts the offer when its current coverage inception still matches", async () => {
+    expect(await accept()).toMatchObject({ state: "checkout" });
+    expect(m[source]).toHaveBeenCalledExactlyOnceWith({ id });
+    expect(signature()).toBeDefined();
+    expect(m.checkout).toHaveBeenCalledTimes(1);
+  });
+
+  it("refreshes the signature time after verifying current coverage", async () => {
+    m[source].mockImplementationOnce(async () => {
+      vi.setSystemTime(new Date("2027-01-16T18:00:00Z"));
+      return { data: { accountId: "account-1", effectiveDate: inputs.effectiveDate } };
+    });
+    expect(await accept()).toMatchObject({ state: "checkout" });
+    expect(signature()?.ExpressionAttributeValues?.[":now"]).toBe("2027-01-16T18:00:00.000Z");
+  });
+
+  it.each([
+    { data: null },
+    { data: { accountId: "account-1", effectiveDate: null } },
+    { data: { accountId: "other-account", effectiveDate: inputs.effectiveDate } },
+    { data: { accountId: "account-1", effectiveDate: inputs.effectiveDate }, errors: [{ message: "Coverage could not be verified" }] },
+  ])("closes an unsigned offer when current coverage cannot be verified: %j", async response => {
+    m[source].mockResolvedValue(response);
+    expect(await accept()).toMatchObject({ state: "closed", reason: "This financing offer is no longer open. Your agent can issue a fresh one." });
+    expect(m.send).not.toHaveBeenCalled();
+    expect(m.void).not.toHaveBeenCalled();
+    expect(m.checkout).not.toHaveBeenCalled();
+  });
+
+  it("closes an unsigned offer when the coverage read rejects", async () => {
+    m[source].mockRejectedValueOnce(new Error("Coverage service unavailable"));
+    expect(await accept()).toMatchObject({ state: "closed", reason: "This financing offer is no longer open. Your agent can issue a fresh one." });
+    expect(m.send).not.toHaveBeenCalled();
+    expect(m.void).not.toHaveBeenCalled();
+    expect(m.checkout).not.toHaveBeenCalled();
+  });
+
+  it("preserves a signed agreement after the current coverage inception changes", async () => {
+    m.lookup.mockResolvedValue({ data: [offer({ state, ...anchor, electedAt: "2026-12-15T18:00:00Z", agreementSignedAt: "2026-12-15T18:00:00Z" })] });
+    m[source].mockResolvedValue({ data: { accountId: "account-1", effectiveDate: "2026-11-15" } });
+    expect(await accept()).toMatchObject({ state: "checkout" });
+    expect(m[source]).not.toHaveBeenCalled();
+    expect(signature()).toBeUndefined();
+    expect(m.checkout).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("financing rate at first signature", () => {
@@ -140,7 +209,19 @@ describe("financing rate at first signature", () => {
     expect(m.checkout).not.toHaveBeenCalled();
   });
 
+  it("rechecks the month after reading the current account state", async () => {
+    vi.setSystemTime(new Date("2026-12-31T23:59:00-06:00"));
+    m.account.mockImplementationOnce(async () => {
+      vi.setSystemTime(new Date("2027-01-01T00:01:00-06:00"));
+      return { data: { name: "Test Association", state: "IA" } };
+    });
+    expect(await accept()).toMatchObject({ state: "closed" });
+    expect(signature()).toBeUndefined();
+    expect(m.checkout).not.toHaveBeenCalled();
+  });
+
   it.each(["DE", "KS"])("closes an unsigned %s offer whose coverage inception was not stored", async state => {
+    m.account.mockResolvedValue({ data: { name: "Test Association", state } });
     m.lookup.mockResolvedValue({ data: [offer({ state, apr: 6, coverageEffectiveDate: null })] });
     expect(await accept()).toMatchObject({ state: "closed" });
     expect(signature()).toBeUndefined();
@@ -148,6 +229,7 @@ describe("financing rate at first signature", () => {
   });
 
   it.each(["DE", "KS"])("checks an unsigned %s offer using its stored coverage inception", async state => {
+    m.account.mockResolvedValue({ data: { name: "Test Association", state } });
     m.lookup.mockResolvedValue({ data: [offer({ state, apr: 6 })] });
     expect(await accept()).toMatchObject({ state: "checkout" });
     expect(signature()).toBeDefined();
@@ -159,5 +241,71 @@ describe("financing rate at first signature", () => {
     expect(await accept()).toMatchObject({ state: "checkout" });
     expect(signature()).toBeUndefined();
     expect(m.checkout).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("financing jurisdiction at first signature", () => {
+  beforeEach(() => {
+    vi.setSystemTime(new Date("2026-11-15T18:00:00Z"));
+    const maApr = financePricing(PF_JURISDICTIONS.find(state => state.code === "MA")!, inputs, "2026-11-15")!.apr;
+    m.lookup.mockResolvedValue({ data: [offer({ state: "MA", ...buildQuote({ ...inputs, apr: maApr }), apr: maApr })] });
+    m.account.mockResolvedValue({ data: { name: "Test Association", state: "MA" } });
+  });
+
+  it("closes an unsigned Massachusetts offer after the account's physical state is corrected to Florida", async () => {
+    m.account.mockResolvedValue({ data: { name: "Test Association", state: "FL" } });
+    expect(await accept()).toMatchObject({ state: "closed", reason: "This financing offer is no longer open. Your agent can issue a fresh one." });
+    expect(m.send).not.toHaveBeenCalled();
+    expect(m.void).not.toHaveBeenCalled();
+    expect(m.checkout).not.toHaveBeenCalled();
+  });
+
+  it("accepts a matching state alias and reuses that account read for Checkout", async () => {
+    m.account.mockResolvedValue({ data: { name: "Test Association", state: " massachusetts " } });
+    expect(await accept()).toMatchObject({ state: "checkout" });
+    expect(signature()).toBeDefined();
+    expect(m.account).toHaveBeenCalledExactlyOnceWith({ id: "account-1" });
+    expect(m.checkout).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    { data: null },
+    { data: { name: "Test Association" } },
+    { data: { name: "Test Association", state: "" } },
+    { data: { name: "Test Association", state: "Unknown" } },
+    { data: { name: "Test Association", state: "MA" }, errors: [{ message: "Account could not be verified" }] },
+  ])("closes an unsigned offer when the current account state is unavailable: %j", async response => {
+    m.account.mockResolvedValue(response);
+    expect(await accept()).toMatchObject({ state: "closed", reason: "This financing offer is no longer open. Your agent can issue a fresh one." });
+    expect(m.send).not.toHaveBeenCalled();
+    expect(m.void).not.toHaveBeenCalled();
+    expect(m.checkout).not.toHaveBeenCalled();
+  });
+
+  it("closes an unsigned offer when the account read rejects", async () => {
+    m.account.mockRejectedValueOnce(new Error("Account service unavailable"));
+    expect(await accept()).toMatchObject({ state: "closed", reason: "This financing offer is no longer open. Your agent can issue a fresh one." });
+    expect(m.send).not.toHaveBeenCalled();
+    expect(m.void).not.toHaveBeenCalled();
+    expect(m.checkout).not.toHaveBeenCalled();
+  });
+
+  it("preserves a signed agreement after an account state correction", async () => {
+    m.lookup.mockResolvedValue({ data: [offer({ state: "MA", electedAt: "2026-11-14T18:00:00Z", agreementSignedAt: "2026-11-14T18:00:00Z" })] });
+    m.account.mockResolvedValue({ data: { name: "Test Association", state: "FL" } });
+    expect(await accept()).toMatchObject({ state: "checkout" });
+    expect(signature()).toBeUndefined();
+    expect(m.checkout).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves an existing live Checkout commitment after an account state correction", async () => {
+    m.lookup.mockResolvedValue({ data: [offer({ state: "MA",
+      electionCheckoutUrl: "https://checkout.stripe.test/existing",
+      electionCheckoutExpiresAt: "2026-11-15T19:00:00Z", electionCheckoutBillingVersion: 3,
+    })] });
+    m.account.mockResolvedValue({ data: { name: "Test Association", state: "FL" } });
+    expect(await accept()).toMatchObject({ state: "checkout", url: "https://checkout.stripe.test/existing" });
+    expect(m.account).not.toHaveBeenCalled();
+    expect(m.checkout).not.toHaveBeenCalled();
   });
 });

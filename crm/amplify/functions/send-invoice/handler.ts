@@ -156,24 +156,29 @@ export async function financeOffer(
       );
       return null;
     }
-    let rateExceedsCurrentLimit = false;
+    const today = new Date().toISOString().slice(0, 10);
+    const stale = loan && (loan.effectiveDate ?? today) < today;
+    let needsReplacement = !!loan && (loan.premium !== retailTotal || !sameFee(loan) || !sameState(loan) || !sameCoverageDate(loan) || !!stale);
     if (loan && !committed) {
       const jurisdiction = PF_JURISDICTIONS.find(row => row.code === usStateCode(account.state));
       if (!jurisdiction || jurisdiction.status === "closed" || jurisdiction.maxAprVerified !== true) return null;
-      const currentPrice = financePricing(jurisdiction, {
-        premium: loan.premium,
-        downPct: loan.downPct,
-        months: loan.months,
-        effectiveDate: loan.effectiveDate,
-        coverageEffectiveDate: anchor.coverageEffectiveDate,
-      }, financeRateDates(jurisdiction, new Date()));
-      if (!currentPrice) return null;
-      rateExceedsCurrentLimit = loan.apr > currentPrice.apr;
+      if (jurisdiction.maxAddOnApr !== null && !loan.coverageEffectiveDate) needsReplacement = true;
+      // A changed or stale offer is priced afresh by the origination core.
+      // Its old schedule need not support the replacement's coverage period.
+      if (!needsReplacement) {
+        const currentPrice = financePricing(jurisdiction, {
+          premium: loan.premium,
+          downPct: loan.downPct,
+          months: loan.months,
+          effectiveDate: loan.effectiveDate,
+          coverageEffectiveDate: anchor.coverageEffectiveDate,
+        }, financeRateDates(jurisdiction, new Date()));
+        if (!currentPrice) return null;
+        needsReplacement = loan.apr > currentPrice.apr;
+      }
     }
 
-    const today = new Date().toISOString().slice(0, 10);
-    const stale = loan && (loan.effectiveDate ?? today) < today;
-    if (loan && !committed && ((loan.premium !== retailTotal || !sameFee(loan) || !sameState(loan) || !sameCoverageDate(loan) || rateExceedsCurrentLimit) || stale)) {
+    if (loan && !committed && needsReplacement) {
       /**
        * The bill changed under the offer, or the offer aged past its send
        * day (the spec anchors the schedule at the send date — a resend

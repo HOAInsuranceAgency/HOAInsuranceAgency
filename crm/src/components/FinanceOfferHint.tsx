@@ -161,16 +161,18 @@ export function FinanceOfferHint({
   // Signed terms stay frozen. An unsigned offer must still fit today's
   // ceiling before it can be reused or replaced by the send.
   const rateDates = gate.open ? financeRateDates(gate.jurisdiction, now) : [];
-  const standingPricing = standing && !committed && gate.open ? financePricing(gate.jurisdiction, {
+  const needsReplacement = !!standing && !committed && (!matching || (standing.effectiveDate ?? today) < today ||
+    (gate.open && gate.jurisdiction.maxAddOnApr !== null && !standing.coverageEffectiveDate));
+  const standingPricing = standing && !committed && !needsReplacement && gate.open ? financePricing(gate.jurisdiction, {
     premium: standing.premium,
     downPct: standing.downPct,
     months: standing.months,
     effectiveDate: standing.effectiveDate,
     coverageEffectiveDate: anchor.coverageEffectiveDate,
   }, rateDates) : null;
-  const preserved = committedOffer ?? (standing && matching && (standing.effectiveDate ?? today) >= today &&
+  const preserved = committedOffer ?? (standing && !needsReplacement &&
     standingPricing && standing.apr <= standingPricing.apr ? standing : null);
-  const pricing = preserved || committed || (standing && !standingPricing) || !gate.open ? null : financePricing(gate.jurisdiction, {
+  const pricing = preserved || committed || (standing && !needsReplacement && !standingPricing) || !gate.open ? null : financePricing(gate.jurisdiction, {
     premium: retailTotal,
     downPct: PF_DEFAULT_DOWN_PCT,
     months: PF_DEFAULT_MONTHS,

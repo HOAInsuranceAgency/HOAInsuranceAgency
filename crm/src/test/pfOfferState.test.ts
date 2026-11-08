@@ -8,6 +8,8 @@ vi.mock("@aws-sdk/lib-dynamodb", async load => ({
   DynamoDBDocumentClient: { from: () => ({ send: h.send }) },
 }));
 import { financeOffer } from "../../amplify/functions/send-invoice/handler";
+import { financePricing } from "../../../shared/premiumFinance/pricing";
+import { jurisdictionFor } from "../../../shared/premiumFinance/gate";
 
 const currentLoan = () => ({
   id: "old-loan", status: "QUOTED", state: "MA", premium: 10_000, effectiveDate: "2026-11-07",
@@ -84,6 +86,37 @@ describe("state changes on standing finance offers", () => {
     await financeOffer(client as never, account("DE"), changed, 10_000, "board@example.test");
     expect(h.originate).toHaveBeenCalledWith(expect.anything(), expect.anything(), true, expect.objectContaining({ anchor: changed }));
     expect(h.send.mock.calls.some(([command]) => command.constructor.name === "UpdateCommand")).toBe(true);
+  });
+
+  it("replaces an old add-on schedule even when its new coverage period cannot be priced", async () => {
+    const old = { ...currentLoan(), state: "DE", effectiveDate: "2025-11-07", coverageEffectiveDate: "2025-11-01" };
+    h.loans.mockResolvedValue({ data: [old] });
+    const state = jurisdictionFor("DE")!;
+    const inputs = { premium: old.premium, downPct: old.downPct, months: old.months, effectiveDate: old.effectiveDate, coverageEffectiveDate: anchor.coverageEffectiveDate };
+    // The corrected coverage begins after the old final installment. A new
+    // schedule starting today is valid and must reach the authoritative core.
+    expect(financePricing(state, inputs, "2026-11-07")).toBeNull();
+    expect(financePricing(state, { ...inputs, effectiveDate: "2026-11-07" }, "2026-11-07")).not.toBeNull();
+    expect(await financeOffer(client as never, account("DE"), anchor, 10_000, "board@example.test")).not.toBeNull();
+    expect(h.originate).toHaveBeenCalledWith(expect.anything(), expect.anything(), true, expect.objectContaining({
+      effectiveDate: "2026-11-07", anchor,
+    }));
+    const cancellation = h.send.mock.calls.map(([command]) => command).find(command => command.constructor.name === "UpdateCommand");
+    expect(cancellation.input.ConditionExpression).toContain("attribute_not_exists(agreementSignedAt)");
+  });
+
+  it.each(["DE", "KS"])("replaces a same-day unsigned %s offer missing its frozen coverage date", async state => {
+    h.loans.mockResolvedValue({ data: [{ ...currentLoan(), state }] });
+    expect(await financeOffer(client as never, account(state), anchor, 10_000, "board@example.test")).not.toBeNull();
+    expect(h.originate).toHaveBeenCalledWith(expect.anything(), expect.anything(), true, expect.objectContaining({ anchor }));
+    expect(h.send.mock.calls.some(([command]) => command.constructor.name === "UpdateCommand")).toBe(true);
+  });
+
+  it.each(["DE", "KS"])("preserves signed legacy %s terms when the frozen coverage date is missing", async state => {
+    h.loans.mockResolvedValue({ data: [{ ...currentLoan(), state, agreementSignedAt: "2026-11-07T11:00:00Z" }] });
+    expect(await financeOffer(client as never, account(state), anchor, 10_000, "board@example.test")).toMatchObject({ apr: 14 });
+    expect(h.originate).not.toHaveBeenCalled();
+    expect(h.send).not.toHaveBeenCalled();
   });
 
   it("suppresses changed coverage dates once the quote is signed", async () => {

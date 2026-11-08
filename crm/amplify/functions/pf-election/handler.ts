@@ -19,6 +19,7 @@ import type { Schema } from "../../data/resource";
 import { listAllPages } from "../../../../shared/pagination";
 import { PF_CONFIG_SHA256, PF_JURISDICTIONS } from "../../../../shared/premiumFinance/jurisdictions";
 import { financePricing, financeRateDates } from "../../../../shared/premiumFinance/pricing";
+import { usStateCode } from "../../../../shared/usStates";
 import { looksLikeElectionToken } from "../pfElectionToken";
 import { initialPaymentTotals } from "../../../../shared/premiumFinance/initialPayment";
 import { PF_CHECKOUT_BILLING_VERSION } from "../pfInitialPayment";
@@ -378,7 +379,7 @@ async function handleAccept(
   const loanTable = process.env.PF_LOAN_TABLE;
   const settingsTable = process.env.AGENCY_SETTINGS_TABLE;
   if (!loanTable || !settingsTable) throw new Error("PF_LOAN_TABLE or AGENCY_SETTINGS_TABLE unset");
-  const now = new Date().toISOString();
+  let now = new Date().toISOString();
   // From the read the token resolved — a concurrent first accept can double
   // the audit row in a hair's-width race, which is bounded and harmless;
   // the stamp itself stays if_not_exists.
@@ -389,11 +390,27 @@ async function handleAccept(
   const signing = !loan.agreementSignedAt;
   const committed = loan.electedAt || (loan.electionCheckoutUrl &&
     loan.electionCheckoutExpiresAt && loan.electionCheckoutExpiresAt > now);
+  let checkoutAccount: Pick<Schema["Account"]["type"], "name" | "state"> | undefined;
   if (signing && !committed) {
+    const jurisdiction = PF_JURISDICTIONS.find(state => state.code === loan.state);
+    try {
+      const account = await client.models.Account.get({ id: loan.accountId });
+      if (account.errors?.length || !account.data || usStateCode(account.data.state) !== loan.state) return CLOSED;
+      checkoutAccount = account.data;
+      if (jurisdiction?.maxAddOnApr != null) {
+        const source = loan.policyId
+          ? await client.models.Policy.get({ id: loan.policyId })
+          : loan.quoteId ? await client.models.Quote.get({ id: loan.quoteId }) : null;
+        if (!loan.coverageEffectiveDate || source?.errors?.length || !source?.data ||
+          source.data.accountId !== loan.accountId || source.data.effectiveDate !== loan.coverageEffectiveDate) return CLOSED;
+      }
+    } catch {
+      return CLOSED;
+    }
+    now = new Date().toISOString();
     // A quote is not yet an agreement. Monthly ceilings may have changed
     // since the offer was issued; check again before its first signature.
     // Signed agreements and existing payment commitments keep their terms.
-    const jurisdiction = PF_JURISDICTIONS.find(state => state.code === loan.state);
     const pricing = jurisdiction && financePricing(jurisdiction, {
       premium: loan.premium,
       downPct: loan.downPct,
@@ -709,8 +726,8 @@ async function handleAccept(
   }
 
   const siteUrl = process.env.SITE_URL || "";
-  const account = await client.models.Account.get({ id: loan.accountId });
-  const name = account.data?.name ?? "Association";
+  const account = checkoutAccount ?? (await client.models.Account.get({ id: loan.accountId })).data;
+  const name = account?.name ?? "Association";
   const totalPayments = loan.months + 1;
 
   /**
