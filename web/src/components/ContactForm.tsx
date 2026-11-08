@@ -148,6 +148,7 @@ export function ContactForm({
                 <input
                   type="text"
                   placeholder="First Name"
+                  aria-label="First Name"
                   value={firstName}
                   onChange={(e) => setFirstName(e.target.value)}
                   required
@@ -156,6 +157,7 @@ export function ContactForm({
                 <input
                   type="text"
                   placeholder="Last Name"
+                  aria-label="Last Name"
                   value={lastName}
                   onChange={(e) => setLastName(e.target.value)}
                   required
@@ -165,6 +167,7 @@ export function ContactForm({
               <input
                 type="email"
                 placeholder="Email address"
+                aria-label="Email address"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
@@ -172,6 +175,7 @@ export function ContactForm({
               />
               <textarea
                 placeholder="How can we help?"
+                aria-label="How can we help?"
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
                 required
