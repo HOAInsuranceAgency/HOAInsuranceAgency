@@ -1,6 +1,7 @@
 import { Button } from "../../components/ui/Button";
+import { SaveStatus } from "../../components/SaveStatus";
 import { GroupedFinancePreview } from './GroupedFinancePreview';
-import { InvoiceDelivery } from './InvoiceDelivery';
+import { InvoiceDelivery, InvoiceSentDetails } from './InvoiceDelivery';
 import { InvoiceDetails } from './InvoiceDetails';
 import { InvoiceHeader } from './InvoiceHeader';
 import { InvoiceLinesTable } from './InvoiceLinesTable';
@@ -22,8 +23,16 @@ function InvoiceEditorContent(props: InvoiceEditorProps) {
 
       <InvoiceDetails editor={editor} />
 
-      {editor.grouped ? <GroupedFinancePreview invoice={editor.invoice} account={editor.account}
-        policies={editor.groupedPolicies} lines={editor.lines} /> : <InvoiceDelivery editor={editor} />}
+      {editor.grouped ? (
+        editor.invoice.status === "DRAFT" && !editor.invoice.sentAt
+          ? <GroupedFinancePreview invoice={editor.invoice} account={editor.account} policies={editor.groupedPolicies} lines={editor.lines}>
+              {editor.canSendGroup && <InvoiceDelivery editor={editor} financeOnly />}
+            </GroupedFinancePreview>
+          : <>
+              <InvoiceSentDetails invoice={editor.invoice} />
+              <SaveStatus {...editor.sendStatus.status} />
+            </>
+      ) : <InvoiceDelivery editor={editor} />}
     </div>
   );
 }

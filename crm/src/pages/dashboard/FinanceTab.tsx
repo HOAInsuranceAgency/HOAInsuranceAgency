@@ -21,7 +21,7 @@ import type { CommercialData } from "../../lib/commercial";
 import type { ReportAccount } from "../../lib/dashboardAssignments";
 import { loadFinanceDashboard, type FinancePaymentReceipt, type FinancePolicyAnchor, type FinanceLineAnchor } from "../../lib/dashboardFinanceLoad";
 import { salespersonKey, salespersonSeries } from "../../lib/dashboardPeople";
-import { interestIncomeBySalesperson, hasFinancingReceivable, nonBilledReceivables, outstandingPrincipal } from "../../lib/dashboardFinance";
+import { interestIncomeBySalesperson, hasFinancingReceivable, invoiceReceivableCents, isFinancingInvoice, openInvoiceReceivables, nonBilledReceivables, outstandingPrincipal } from "../../lib/dashboardFinance";
 import { StackedBars } from "../../components/StackedBars";
 import type { Schema } from "../../../amplify/data/resource";
 import { brokerFeeBalances, type ReportBrokerFeePolicy } from "../../lib/brokerFeeReporting";
@@ -63,11 +63,11 @@ export default function FinanceTab() {
     [accounts]
   );
   const open = useMemo(
-    () => invoices.filter((i) => i.status === "SENT" || i.status === "PROCESSING"),
-    [invoices]
+    () => openInvoiceReceivables(invoices, pfLoans).map(invoice => isFinancingInvoice(invoice) ? { ...invoice, dueAt: null } : invoice),
+    [invoices, pfLoans]
   );
   const nonBilled = useMemo(() => nonBilledReceivables(pfLoans, invoices, policies, invoiceLines), [pfLoans, invoices, policies, invoiceLines]);
-  const aging = useMemo(() => invoiceAging(open, daysUntil), [open]);
+  const aging = useMemo(() => invoiceAging(open, daysUntil, invoiceReceivableCents), [open]);
   const billed = aging.current.total + aging.d1to30.total + aging.d31to60.total + aging.d60plus.total;
   const series = useMemo(() => salespersonSeries(commercial), [commercial]);
   const interest = useMemo(() => interestIncomeBySalesperson(payments, commercial.entries, series, asOf), [payments, commercial, series, asOf]);
@@ -78,7 +78,7 @@ export default function FinanceTab() {
   const nonBilledIncomplete = nonBilled.unknown > 0 || nonBilled.overlaps.length > 0;
   const overlapPrincipal = pfLoans.filter(loan => overlapLoans.has(loan.id)).reduce((sum, loan) => sum + (outstandingPrincipal(loan) ?? 0), 0);
   const overlapUnknown = pfLoans.filter(loan => overlapLoans.has(loan.id) && outstandingPrincipal(loan) == null).length;
-  const nonBilledNote = "Remaining financed principal with no open invoice, including cancelled coverage awaiting refund reconciliation. Installments are collected directly on the loan schedule. Future interest is excluded.";
+  const nonBilledNote = "Remaining financed principal with no separate bill, including cancelled coverage awaiting refund reconciliation. Installments are collected directly on the loan schedule. Future interest is excluded.";
   const gapNote = nonBilledIncomplete
     ? `Non-billed total is incomplete: ${nonBilled.overlaps.length} financing records (${fmtMoney(overlapPrincipal)} in known principal${overlapUnknown ? `; ${overlapUnknown} without a known balance` : ""}) share open billing and are excluded until reconciled; ${nonBilled.unknown} other financing records have no reliable balance.`
     : "";
@@ -86,19 +86,20 @@ export default function FinanceTab() {
   // Open invoices, most overdue first.
   const openRows = useMemo(
     () =>
-      open.map((i) => ({
-        id: i.id,
-        accountId: i.accountId,
-        number: i.number ?? null,
-        account: accountName.get(i.accountId) ?? "—",
-        amount:
-          typeof i.stripeLinkAmountCents === "number"
-            ? i.stripeLinkAmountCents / 100
-            : null,
-        dueAt: i.dueAt ?? null,
-        days: i.dueAt ? daysUntil(i.dueAt) : null,
-        status: i.status,
-      })),
+      open.map((i) => {
+        const cents = invoiceReceivableCents(i);
+        return {
+          id: i.id,
+          accountId: i.accountId,
+          number: i.number ?? null,
+          account: accountName.get(i.accountId) ?? "—",
+          amount: cents == null ? null : cents / 100,
+          dueAt: i.dueAt ?? null,
+          days: i.dueAt ? daysUntil(i.dueAt) : null,
+          status: i.status,
+          awaitingFinancing: isFinancingInvoice(i),
+        };
+      }),
     [open, accountName]
   );
   const { sorted, sortKey, dir, toggle } = useSort(
@@ -144,7 +145,7 @@ export default function FinanceTab() {
           <h2>A/R aging</h2>
           <ReportDownload report={{ title: "A/R aging", filters: `Open invoices only · sorted by ${sortKey} (${dir}) · ${aging.unpriced} without stored amounts`, sections: [
             { title: "Aging totals", columns: ["Age", "Amount (USD)", "Invoice count"], rows: [["Total billed and uncollected", billed, open.length], ["Current", aging.current.total, aging.current.count], ["1–30 days", aging.d1to30.total, aging.d1to30.count], ["31–60 days", aging.d31to60.total, aging.d31to60.count], ["Over 60 days", aging.d60plus.total, aging.d60plus.count]] },
-            { title: "Open invoices", columns: ["Invoice", "Account", "Amount (USD)", "Due", "Days until due", "Status"], rows: sorted.map(row => [row.number, row.account, row.amount, row.dueAt, row.days, row.status]) }
+            { title: "Open invoices", columns: ["Invoice", "Account", "Amount (USD)", "Due", "Days until due", "Status"], rows: sorted.map(row => [row.number, row.account, row.amount, row.dueAt, row.days, row.awaitingFinancing ? "Awaiting financing" : row.status]) }
           ] }} />
           <span className="muted small">{aging.unpriced ? "Known billed" : "Total billed"}: {fmtMoney(billed)} · outstanding invoices by due date</span>
         </div>
@@ -200,7 +201,7 @@ export default function FinanceTab() {
                           ))}
                       </td>
                       <td>
-                        <Badge {...statusBadge(INVOICE_STATUS_BADGE, row.status)} />
+                        <Badge {...(row.awaitingFinancing ? { cls: "blue", label: "Awaiting financing" } : statusBadge(INVOICE_STATUS_BADGE, row.status))} />
                       </td>
                     </tr>
                   ))}

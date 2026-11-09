@@ -1,6 +1,7 @@
 import type { ChartRow, ChartSeries } from '../components/StackedBars';
 import type { CommercialEntry } from './commercial';
 import { isInLast30Days, salespersonKey } from './dashboardPeople';
+import { isGroupedInvoice } from '../../../shared/groupedInvoiceGuard';
 
 export const LIVE_FINANCE_STATUSES: readonly string[] = ['ACCEPTED', 'ACTIVE', 'DEFAULTED'];
 interface Anchor { accountId: string; policyId?: string | null; quoteId?: string | null }
@@ -14,8 +15,21 @@ export interface FinanceLoan extends Anchor {
   downPaidAt?: string | null;
   cancellationEffectiveAt?: string | null;
   expectedCarrierRefundAt?: string | null;
+  groupedInvoiceId?: string | null;
+  groupedPolicyIds?: readonly (string | null)[] | null;
 }
-interface FinanceInvoice extends Anchor { id: string; status?: string | null }
+interface FinanceInvoice extends Anchor {
+  id: string;
+  status?: string | null;
+  sourcePricingVersion?: number | null;
+  groupedPolicyIds?: unknown;
+  groupedFinanceLoanId?: string | null;
+  stripePaymentLinkId?: string | null;
+  stripeLinkAmountCents?: number | null;
+  paymentUrl?: string | null;
+  remittanceCarrierCents?: number | null;
+  remittanceCommissionCents?: number | null;
+}
 interface FinancePolicy { id: string; accountId: string; quoteId?: string | null }
 interface FinanceInvoiceLine { invoiceId: string; policyId?: string | null }
 
@@ -31,6 +45,33 @@ export function hasFinancingReceivable(loan: FinanceLoan): boolean {
 export function outstandingPrincipal(loan: FinanceLoan): number | null {
   const amount = loan.balance ?? ((loan.paidThrough ?? 0) === 0 ? loan.amountFinanced : null);
   return typeof amount === 'number' && Number.isFinite(amount) && amount >= 0 ? amount : null;
+}
+
+export function isFinancingInvoice(invoice: FinanceInvoice): boolean {
+  return isGroupedInvoice(invoice) && Boolean(invoice.groupedFinanceLoanId) &&
+    !invoice.stripePaymentLinkId && !invoice.paymentUrl;
+}
+
+/** Keep a sent offer open until the matching plan takes over its balance. */
+export function openInvoiceReceivables<T extends FinanceInvoice>(invoices: readonly T[], loans: readonly FinanceLoan[]): T[] {
+  const financed = new Map(loans.filter(loan => loan.groupedInvoiceId &&
+    (hasFinancingReceivable(loan) || loan.status === 'PAID')).map(loan => [loan.id, loan]));
+  return invoices.filter(invoice => {
+    if (invoice.status === 'PROCESSING') return true;
+    if (invoice.status !== 'SENT') return false;
+    if (!isFinancingInvoice(invoice)) return true;
+    const loan = financed.get(invoice.groupedFinanceLoanId!);
+    return loan?.groupedInvoiceId !== invoice.id || loan.accountId !== invoice.accountId;
+  });
+}
+
+export function invoiceReceivableCents(invoice: FinanceInvoice): number | null {
+  if (!isFinancingInvoice(invoice)) return invoice.stripeLinkAmountCents ?? null;
+  const carrier = invoice.remittanceCarrierCents, commission = invoice.remittanceCommissionCents;
+  if (typeof carrier !== 'number' || typeof commission !== 'number' ||
+      !Number.isSafeInteger(carrier) || !Number.isSafeInteger(commission)) return null;
+  const amount = carrier + commission;
+  return Number.isSafeInteger(amount) && amount > 0 ? amount : null;
 }
 
 /** Financing replaces the pay-in-full bill with a loan; monthly installments
@@ -71,8 +112,7 @@ export function nonBilledReceivables(
     byAnchor: Map<string, Map<string, number>>;
   }
   const billedByAccount = new Map<string, BilledAccount>();
-  invoices.forEach((invoice, position) => {
-    if (invoice.status !== 'SENT' && invoice.status !== 'PROCESSING') return;
+  openInvoiceReceivables(invoices, loans).forEach((invoice, position) => {
     const invoiceId = invoice.id, accountId = invoice.accountId;
     let billed = billedByAccount.get(accountId);
     if (!billed) {
@@ -94,7 +134,7 @@ export function nonBilledReceivables(
     if (!hasFinancingReceivable(loan)) continue;
     const principal = outstandingPrincipal(loan);
     if (principal === 0) continue;
-    const loanAnchors = anchors(loan);
+    const loanAnchors = anchors(loan, loan.groupedPolicyIds?.filter((id): id is string => !!id));
     const billed = billedByAccount.get(loan.accountId);
     const matching = new Map<string, number>();
     if (billed) {

@@ -471,7 +471,7 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
                   const isOpen = inv.id === openId;
                   return (
                     <tr key={inv.id} className={isOpen ? "ui-table-row-selected" : undefined}>
-                      <td>{inv.number ?? "—"}{isGroupedInvoice(inv) && <span className="muted small"> · Combined draft</span>}</td>
+                      <td>{inv.number ?? "—"}{isGroupedInvoice(inv) && <span className="muted small"> · {inv.status === "DRAFT" ? "Combined draft" : "Combined invoice"}</span>}</td>
                       <td>{fmtDate(inv.issuedAt)}</td>
                       <td>{fmtDate(inv.dueAt)}</td>
                       <td>

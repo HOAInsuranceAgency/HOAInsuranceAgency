@@ -13,6 +13,7 @@ import { isActiveOwner, type RoleRequest } from "./active-role";
 import { assertUserSession } from "./user-status";
 import { publishCrmChange } from "../live-changes";
 import { createGroupedDraft, restoreGroupedDraft } from "./grouped-draft";
+import { isGroupedInvoice } from "../../../../shared/groupedInvoiceGuard";
 const s3 = fileClient();
 type Event = { identity?: Identity; request?: RoleRequest; fieldName?: string; info?: { fieldName?: string }; arguments?: RecordData; nativeConditions?: unknown; nativeAuthFilter?: unknown; mode?: "notify" | "quote-financial" | "invoice-line-draft" | "session" | "read" | "write" | "list" | "admin" | "owner" | "custom-pre" | "custom-post"; model?: string; field?: string; operation?: string; previous?: unknown };
 export async function handler(event: Event) {
@@ -41,7 +42,15 @@ export async function handler(event: Event) {
   if (event.mode === "quote-financial") { await assertUserSession(event.identity); return updateFeeQuoteAtomically(access, event); }
   if (event.mode === "invoice-line-draft") { await assertUserSession(event.identity); return writeInvoiceDraftLine(access, event); }
   if (event.mode === "write") { await access.write(id(event.model), id(event.operation), object(args.input)); return event.previous; }
-  if (event.mode === "custom-pre") { await authorizeCustom(access, id(event.field), args); return event.previous; }
+  if (event.mode === "custom-pre") {
+    const field = id(event.field);
+    await authorizeCustom(access, field, args);
+    if (field === "sendInvoice" && !isActiveOwner(event.identity, event.request)) {
+      const invoice = await access.get("Invoice", id(args.invoiceId));
+      if (invoice && isGroupedInvoice(invoice)) throw new AccessDenied();
+    }
+    return event.previous;
+  }
   if (event.mode === "custom-post") return filterCustom(access, id(event.field), args, event.previous);
   // Amplify's generated @function payload places fieldName at the top level.
   const field = id(event.fieldName) || id(event.info?.fieldName);

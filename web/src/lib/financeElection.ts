@@ -42,6 +42,8 @@ export interface ElectionTerms {
   originationFee: number;
   brokerFee: number;
   effectiveDate: string | null;
+  financingOnly?: true;
+  finalPayment?: number;
   /** The agreement paragraphs the customer signs — served, never copied. */
   agreementTerms: string[];
   /** Set when a revived link is already signed; the page then skips the ask. */
@@ -70,6 +72,8 @@ export async function fetchElectionTerms(token: string): Promise<ElectionTerms> 
     originationFee: Number(r.originationFee ?? 0),
     brokerFee: Number(r.brokerFee ?? 0),
     effectiveDate: typeof r.effectiveDate === "string" ? r.effectiveDate : null,
+    ...(r.financingOnly ? { financingOnly: true } : {}),
+    ...(r.finalPayment === undefined ? {} : { finalPayment: r.finalPayment }),
     agreementTerms: Array.isArray(r.agreementTerms)
       ? r.agreementTerms.filter((p): p is string => typeof p === "string")
       : [],

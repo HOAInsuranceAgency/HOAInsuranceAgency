@@ -4,7 +4,7 @@ import { PF_JURISDICTIONS } from "../../../shared/premiumFinance/jurisdictions";
 import { financePricing } from "../../../shared/premiumFinance/pricing";
 import { buildQuote } from "../../../shared/premiumFinance/quote";
 
-const m = vi.hoisted(() => ({ lookup: vi.fn(), list: vi.fn(), invoices: vi.fn(), account: vi.fn(), policy: vi.fn(), quote: vi.fn(), send: vi.fn(), checkout: vi.fn(), void: vi.fn(), storedInvoice: vi.fn() }));
+const m = vi.hoisted(() => ({ lookup: vi.fn(), list: vi.fn(), invoices: vi.fn(), account: vi.fn(), policy: vi.fn(), quote: vi.fn(), send: vi.fn(), checkout: vi.fn(), expire: vi.fn(), void: vi.fn(), storedInvoice: vi.fn(), grouped: vi.fn(), opinions: vi.fn() }));
 vi.mock("../../amplify/functions/data-client", () => ({
   createDataClientGetter: () => async () => ({ models: {
     PfLoan: { listPfLoanByElectionToken: m.lookup, list: m.list },
@@ -13,6 +13,7 @@ vi.mock("../../amplify/functions/data-client", () => ({
     Policy: { get: m.policy },
     Quote: { get: m.quote },
     Invoice: { list: m.invoices },
+    PfCounselOpinion: { list: m.opinions },
   } }),
 }));
 vi.mock("../../amplify/functions/live-write", () => ({ sendCrmWrite: <T>(write: Promise<T>) => write }));
@@ -20,9 +21,10 @@ vi.mock("@aws-sdk/lib-dynamodb", async original => ({
   ...await original<typeof import("@aws-sdk/lib-dynamodb")>(),
   DynamoDBDocumentClient: { from: () => ({ send: m.send }) },
 }));
-vi.mock("stripe", () => ({ default: class { checkout = { sessions: { create: m.checkout } }; } }));
+vi.mock("stripe", () => ({ default: class { checkout = { sessions: { create: m.checkout, expire: m.expire } }; } }));
 vi.mock("../../amplify/functions/void-invoice/handler", () => ({ handler: m.void }));
 vi.mock("../../amplify/functions/quote-source-billing", () => ({ zeroFeeQuoteClaimWrites: async () => [] }));
+vi.mock("../../amplify/functions/grouped-finance", () => ({ loadGroupedFinance: m.grouped }));
 vi.mock("../../amplify/functions/broker-fees/store", async original => ({
   ...await original<typeof import("../../amplify/functions/broker-fees/store")>(),
   getModel: async (model: string, id: string) => {
@@ -341,6 +343,150 @@ describe("financing jurisdiction at first signature", () => {
     m.account.mockResolvedValue({ data: { name: "Test Association", state: "FL" } });
     expect(await accept()).toMatchObject({ state: "checkout", url: "https://checkout.stripe.test/existing" });
     expect(m.account).not.toHaveBeenCalled();
+    expect(m.checkout).not.toHaveBeenCalled();
+  });
+});
+
+describe("published grouped financing election", () => {
+  const policyIds = ["p1", "p2", "p3", "p4"];
+  const agreementLines = ["Harbor | POL-1 | Commercial Property", "Harbor | POL-2 | General Liability", "Harbor | POL-3 | Umbrella", "Travelers | POL-4 | D&O"];
+  const groupLoan = (patch: Record<string, unknown> = {}) => offer({
+    policyId: null, state: "MA", apr: 18, ...buildQuote({ ...inputs, apr: 18 }),
+    groupedInvoiceId: "group-1", groupedPolicyIds: policyIds, groupedPolicyAgreementLines: agreementLines,
+    ...patch,
+  });
+  const group = () => ({
+    invoice: { id: "group-1", accountId: "account-1", status: "SENT", sentAt: "2026-12-15T18:00:00Z", groupedFinanceLoanId: "loan-1" },
+    account: { id: "account-1", name: "Test Association", state: "MA", type: "ASSOCIATION", incorporated: true },
+    premium: inputs.premium,
+    policies: policyIds.map((id, i) => ({ id, effectiveDate: inputs.effectiveDate, lines: [["Commercial Property", "General Liability", "Umbrella", "D&O"][i]] })),
+    agreementLines,
+    guards: policyIds.map(id => ({ ConditionCheck: { TableName: "Policies", Key: { id }, ConditionExpression: "updatedAt = :old" } })),
+    invoiceGuard: { ConditionCheck: { TableName: "Invoices", Key: { id: "group-1" }, ConditionExpression: "updatedAt = :old", ExpressionAttributeValues: { ":old": "version" } } },
+  });
+  const terms = () => elect({ arguments: { token: "a".repeat(43) } });
+
+  beforeEach(() => {
+    m.lookup.mockResolvedValue({ data: [groupLoan()] });
+    m.grouped.mockResolvedValue(group());
+    m.expire.mockResolvedValue({});
+    m.opinions.mockResolvedValue({ data: [] });
+  });
+
+  it("shows every frozen policy and marks the published offer financing-only", async () => {
+    expect(await terms()).toMatchObject({ state: "open", financingOnly: true, finalPayment: groupLoan().schedule.at(-1)?.payment,
+      initialPaymentAmount: 2510, agreementTerms: expect.arrayContaining([
+      ...agreementLines, expect.stringContaining("insurance policies identified above"),
+    ]) });
+    expect(m.grouped).toHaveBeenCalledExactlyOnceWith(expect.anything(), "group-1");
+    expect(m.send).not.toHaveBeenCalled();
+  });
+
+  it("guards signing, checkout claim and URL publication on the same group and never opens a full-pay path", async () => {
+    expect(await accept()).toEqual({ ok: true, state: "checkout", url: "https://checkout.stripe.test/new" });
+    const transactions = m.send.mock.calls.map(([command]) => command)
+      .filter((command): command is TransactWriteCommand => command instanceof TransactWriteCommand);
+    expect(transactions).toHaveLength(3);
+    for (const { input } of transactions) {
+      expect(input.TransactItems).toContainEqual({ ConditionCheck: expect.objectContaining({
+        TableName: "Invoices", Key: { id: "group-1" },
+        ConditionExpression: expect.stringContaining("groupedFinanceLoanId = :groupLoan"),
+        ExpressionAttributeValues: expect.objectContaining({ ":groupLoan": "loan-1", ":groupSent": "SENT" }),
+      }) });
+      for (const id of policyIds) expect(input.TransactItems).toContainEqual({ ConditionCheck: expect.objectContaining({ TableName: "Policies", Key: { id } }) });
+    }
+    expect(signature()).toBeDefined();
+    expect(m.list).not.toHaveBeenCalled();
+    expect(m.invoices).not.toHaveBeenCalled();
+    expect(m.void).not.toHaveBeenCalled();
+    expect(m.checkout).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      payment_method_types: ["us_bank_account"],
+      line_items: [expect.objectContaining({ price_data: expect.objectContaining({ unit_amount: 250000 }) }),
+        expect.objectContaining({ price_data: expect.objectContaining({ unit_amount: 1000 }) })],
+      payment_intent_data: expect.objectContaining({ metadata: expect.objectContaining({ pfLoanId: "loan-1", pfKind: "down" }) }),
+    }));
+    expect(m.checkout.mock.calls[0][0].payment_intent_data.metadata).not.toHaveProperty("invoiceId");
+  });
+
+  it.each([
+    { status: "DRAFT" }, { sentAt: null }, { groupedFinanceLoanId: "different-loan" },
+    { stripePaymentLinkId: "public-link" }, { paymentUrl: "https://example.test/pay" },
+  ])("closes an unverified publication before signature: %j", async patch => {
+    const current = group();
+    m.grouped.mockResolvedValue({ ...current, invoice: { ...current.invoice, ...patch } });
+    expect(await terms()).toMatchObject({ state: "closed" });
+    expect(await accept()).toMatchObject({ state: "closed" });
+    expect(m.send).not.toHaveBeenCalled();
+    expect(m.checkout).not.toHaveBeenCalled();
+    expect(m.void).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { premium: 10001 }, { policies: [{ id: "p1" }, { id: "p2" }, { id: "p3" }, { id: "other" }] },
+    { agreementLines: ["Changed policy", ...agreementLines.slice(1)] },
+  ])("closes when the current group no longer matches frozen terms: %j", async patch => {
+    m.grouped.mockResolvedValue({ ...group(), ...patch });
+    expect(await accept()).toMatchObject({ state: "closed" });
+    expect(m.send).not.toHaveBeenCalled();
+    expect(m.checkout).not.toHaveBeenCalled();
+  });
+
+  it("does not release a newly minted session if the group moved after checkout claim", async () => {
+    m.send.mockImplementation(async command => {
+      if (command instanceof TransactWriteCommand && command.input.TransactItems?.some(write => write.Update?.UpdateExpression?.includes("electionCheckoutUrl = :url"))) {
+        throw Object.assign(new Error("Group changed"), { name: "TransactionCanceledException" });
+      }
+      return { Item: { premiumFinanceEnabled: true } };
+    });
+    expect(await accept()).toMatchObject({ state: "closed" });
+    expect(m.checkout).toHaveBeenCalledTimes(1);
+    expect(m.expire).toHaveBeenCalledExactlyOnceWith("cs-1");
+  });
+
+  it.each([
+    { state: "MA", type: "PERSONAL", incorporated: true },
+    { state: "RI", type: "ASSOCIATION", incorporated: false },
+  ])("refuses the first signature when the current borrower is ineligible: %j", async account => {
+    m.lookup.mockResolvedValue({ data: [groupLoan({ state: account.state })] });
+    const current = group();
+    m.grouped.mockResolvedValue({ ...current, account: { ...current.account, ...account } });
+    expect(await accept()).toMatchObject({ state: "closed" });
+    expect(m.send).not.toHaveBeenCalled();
+    expect(m.checkout).not.toHaveBeenCalled();
+  });
+
+  it("refuses first signature when a member has personal coverage", async () => {
+    const current = group();
+    current.policies[0].lines = ["HO-6"];
+    m.grouped.mockResolvedValue(current);
+    expect(await accept()).toMatchObject({ state: "closed" });
+    expect(m.send).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])("requires a current opinion before the first Utah signature (current: %s)", async current => {
+    m.lookup.mockResolvedValue({ data: [groupLoan({ state: "UT" })] });
+    const live = group();
+    m.grouped.mockResolvedValue({ ...live, account: { ...live.account, state: "UT" } });
+    m.opinions.mockResolvedValue({ data: [{ effectiveAt: "2026-01-01", reviewBy: current ? "2027-12-31" : "2026-12-31" }] });
+    expect(await accept()).toMatchObject({ state: current ? "checkout" : "closed" });
+    expect(m.opinions).toHaveBeenCalledExactlyOnceWith({ filter: { jurisdiction: { eq: "UT" } }, nextToken: undefined });
+    if (!current) expect(m.send).not.toHaveBeenCalled();
+  });
+
+  it("keeps the signed Utah offer when its counsel opinion has expired", async () => {
+    m.lookup.mockResolvedValue({ data: [groupLoan({ state: "UT", agreementSignedAt: "2026-12-15T18:00:00Z", electedAt: "2026-12-15T18:00:00Z" })] });
+    const live = group();
+    m.grouped.mockResolvedValue({ ...live, account: { ...live.account, state: "UT" } });
+    expect(await accept()).toMatchObject({ state: "checkout" });
+    expect(m.opinions).not.toHaveBeenCalled();
+    expect(signature()).toBeUndefined();
+  });
+
+  it("retains a settled election without checking the published group again", async () => {
+    m.lookup.mockResolvedValue({ data: [groupLoan({ status: "ACTIVE" })] });
+    expect(await terms()).toMatchObject({ state: "active" });
+    expect(await accept()).toEqual({ ok: true, state: "done" });
+    expect(m.grouped).not.toHaveBeenCalled();
     expect(m.checkout).not.toHaveBeenCalled();
   });
 });

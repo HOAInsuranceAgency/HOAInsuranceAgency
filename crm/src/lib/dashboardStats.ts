@@ -106,13 +106,14 @@ export interface InvoiceAging {
  * No due date files as current — a bill that never stated a deadline has
  * not blown one.
  */
-export function invoiceAging(
-  invoices: readonly {
+export function invoiceAging<T extends {
     status?: string | null;
     dueAt?: string | null;
     stripeLinkAmountCents?: number | null;
-  }[],
-  daysUntil: (d: string) => number | null
+  }>(
+  invoices: readonly T[],
+  daysUntil: (d: string) => number | null,
+  amountCents: (invoice: T) => number | null | undefined = invoice => invoice.stripeLinkAmountCents
 ): InvoiceAging {
   const empty = () => ({ total: 0, count: 0 });
   const aging: InvoiceAging = {
@@ -136,10 +137,8 @@ export function invoiceAging(
             ? aging.d31to60
             : aging.d60plus;
     bucket.count += 1;
-    const amount =
-      typeof inv.stripeLinkAmountCents === "number"
-        ? inv.stripeLinkAmountCents / 100
-        : null;
+    const cents = amountCents(inv);
+    const amount = typeof cents === "number" ? cents / 100 : null;
     if (amount == null) aging.unpriced += 1;
     else bucket.total += amount;
     if (days != null && days < 0) {

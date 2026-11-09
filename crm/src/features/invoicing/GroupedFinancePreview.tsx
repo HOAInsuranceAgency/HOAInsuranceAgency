@@ -1,4 +1,4 @@
-import { GROUPED_INVOICE_REVIEW_ONLY } from "../../../../shared/groupedInvoiceGuard";
+import type { ReactNode } from "react";
 import { financeableInvoiceTotal, formatMoney } from "../../../../shared/invoiceTotals";
 import { listAllPages } from "../../../../shared/pagination";
 import { evaluateEligibility } from "../../../../shared/premiumFinance/eligibility";
@@ -13,11 +13,12 @@ import { useAsyncResource } from "../../lib/useAsyncResource";
 import { policyTermKey } from "./groupedInvoiceDrafts";
 import { policyLabel } from "./invoiceInputs";
 
-export function GroupedFinancePreview({ invoice, account, policies, lines }: {
+export function GroupedFinancePreview({ invoice, account, policies, lines, children }: {
   invoice: Invoice;
   account: Account | null;
   policies: readonly Policy[];
   lines: readonly InvoiceLine[];
+  children?: ReactNode;
 }) {
   const ids = invoice.groupedPolicyIds ?? [];
   const term = policies[0] && policyTermKey(policies[0]);
@@ -33,19 +34,20 @@ export function GroupedFinancePreview({ invoice, account, policies, lines }: {
   const ready = completeMembership && commonTerm && completePremiums && memberLines && account && coverageEffectiveDate;
   return <div className="card inset">
     <h3>Combined financing preview</h3>
-    <p className="muted small">{GROUPED_INVOICE_REVIEW_ONLY}</p>
-    {invoice.status === "DRAFT" && (ready
+    <p className="muted small">Financing-only invoice</p>
+    {ready
       ? <GroupedFinanceTerms account={account} policies={policies} coverageEffectiveDate={coverageEffectiveDate}
-        premium={financeableInvoiceTotal(lines)} />
-      : <p className="warn-inline">The account, policy term and premium lines are needed to calculate the payment schedule.</p>)}
+        premium={financeableInvoiceTotal(lines)}>{children}</GroupedFinanceTerms>
+      : <p className="warn-inline">The account, policy term and premium lines are needed to calculate the payment schedule.</p>}
   </div>;
 }
 
-function GroupedFinanceTerms({ account, policies, coverageEffectiveDate, premium }: {
+function GroupedFinanceTerms({ account, policies, coverageEffectiveDate, premium, children }: {
   account: Account;
   policies: readonly Policy[];
   coverageEffectiveDate: string;
   premium: number;
+  children?: ReactNode;
 }) {
   const now = new Date();
   const today = now.toISOString().slice(0, 10);
@@ -58,7 +60,8 @@ function GroupedFinanceTerms({ account, policies, coverageEffectiveDate, premium
     return hasCurrentOpinion(opinions.map(row => ({ effectiveAt: row.effectiveAt, reviewBy: row.reviewBy })), today);
   }, [jurisdiction?.code, today], { initialData: null, errorMessage: "Couldn't check financing.", live: true });
 
-  if (opinion.error) return <p className="error-text">{opinion.error} <Button type="button" disabled={opinion.loading}
+  const opinionError = opinion.error || opinion.refreshError;
+  if (opinionError) return <p className="error-text">{opinionError} <Button type="button" disabled={opinion.loading}
     onClick={() => void opinion.refetch()}>Retry financing check</Button></p>;
   if (!opinion.loaded) return <p className="muted small">Checking financing…</p>;
   const gate = originationGate(account.state, { hasCurrentCounselOpinion: opinion.data === true });
@@ -104,5 +107,6 @@ function GroupedFinanceTerms({ account, policies, coverageEffectiveDate, premium
         </tbody>
       </Table>
     </details>
+    {children}
   </>;
 }

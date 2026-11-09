@@ -25,6 +25,11 @@ it('retains compatibility with an offer before the explicit initial-payment fiel
   fetchMock.mockResolvedValue(response('financeElectionTerms', legacy));
   expect((await finance.fetchElectionTerms('token')).initialPaymentAmount).toBe(1600);
 });
+it('preserves the financing-only flag and exact final payment in grouped terms', async () => {
+  fetchMock.mockResolvedValue(response('financeElectionTerms', { ...offer(), financingOnly: true, brokerFee: 0, finalPayment: 859.99 }));
+  expect(await finance.fetchElectionTerms('token')).toMatchObject({ state: 'open', financingOnly: true, finalPayment: 859.99 });
+  expect(isFinanceElectionTerms({ ...offer(), financingOnly: true })).toBe(false);
+});
 it.each([
   { downPayment: 0.005, originationFee: 0.005, brokerFee: 0, expected: 0.01 },
   { downPayment: 1.005, originationFee: 10, brokerFee: 0, expected: 11.004999999999999 },

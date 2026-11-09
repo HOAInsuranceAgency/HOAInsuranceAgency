@@ -5,6 +5,9 @@ import { zeroFeeQuoteClaimWrites } from "../quote-source-billing";
 import { assertBrokerFeeSigned } from "../broker-fees/bindValidation";
 import { getFee, getModel, modelTable, table as brokerFeeTable, versionCheck, type Write } from "../broker-fees/store";
 import { assertStandalonePolicyBilling, standalonePolicyBillingGuard } from "../grouped-draft-billing";
+import { loadGroupedFinance } from "../grouped-finance";
+import { reconcileAcceptedGroupedSend } from "../send-invoice/groupedDelivery";
+import { canUseGroupedOffer } from "../pfOrigination";
 import { brokerFeeCents, feeAllocations } from "../../../../shared/brokerFees";
 import { randomUUID } from "node:crypto";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
@@ -20,6 +23,7 @@ import type { Schema } from "../../data/resource";
 import { listAllPages } from "../../../../shared/pagination";
 import { PF_CONFIG_SHA256, PF_JURISDICTIONS } from "../../../../shared/premiumFinance/jurisdictions";
 import { financePricing, financeRateDates } from "../../../../shared/premiumFinance/pricing";
+import { parseScheduleJson } from "../../../../shared/premiumFinance/quote";
 import { usStateCode } from "../../../../shared/usStates";
 import { looksLikeElectionToken } from "../pfElectionToken";
 import { initialPaymentTotals } from "../../../../shared/premiumFinance/initialPayment";
@@ -31,6 +35,9 @@ import {
   PREPAYMENT_TERMS,
   CANCELLATION_PROCEDURE,
   SECURITY_INTEREST_AND_AUTHORITY,
+  groupedAgreementClauses,
+  groupedAgreementLines,
+  hasGroupedAgreement,
 } from "../pf-agreement/agreementTerms";
 
 /**
@@ -112,8 +119,55 @@ function anchorFilter(loan: PfLoan): Record<string, unknown> | null {
   return legs.length === 1 ? legs[0] : { or: legs };
 }
 
+const GROUP_PAYMENT_FIELDS = [
+  'paymentUrl', 'stripePaymentLinkId', 'stripePaymentIntentId', 'stripeLinkAmountCents',
+  'paidAt', 'brokerFeeAllocations', 'brokerFeeFinanceUrl',
+] as const;
+
+/** Only the published financing-only invoice's reserved offer can collect. */
+async function publishedGroup(client: DataClient, loan: PfLoan, requestedToken?: unknown) {
+  const frozen = groupedAgreementLines(loan);
+  if (!frozen || !loan.groupedInvoiceId || (loan.brokerFeeCents ?? 0) !== 0 || feeAllocations(loan.brokerFeeAllocations).length) return null;
+  const schedule = parseScheduleJson(loan.schedule);
+  const last = schedule.at(-1);
+  if (schedule.length !== loan.months || last?.n !== loan.months || !Number.isFinite(last.payment) || last.payment < 0) return null;
+  try {
+    let group = await loadGroupedFinance(client, loan.groupedInvoiceId);
+    if (group.invoice.status === 'DRAFT' && group.invoice.groupedFinanceLoanId === loan.id &&
+        loan.electionToken && requestedToken === loan.electionToken) {
+      const reconciled = await reconcileAcceptedGroupedSend(group.invoice.id, { loanId: loan.id, token: loan.electionToken }, ddb);
+      if (reconciled) group = await loadGroupedFinance(client, loan.groupedInvoiceId);
+    }
+    const { invoice } = group;
+    if (invoice.id !== loan.groupedInvoiceId || invoice.status !== 'SENT' || !invoice.sentAt ||
+        !Number.isFinite(Date.parse(invoice.sentAt)) || invoice.groupedFinanceLoanId !== loan.id ||
+        invoice.accountId !== loan.accountId || group.account.id !== loan.accountId || group.premium !== loan.premium ||
+        GROUP_PAYMENT_FIELDS.some(field => invoice[field] != null) ||
+        JSON.stringify([...(loan.groupedPolicyIds ?? [])].sort()) !== JSON.stringify(group.policies.map(policy => policy.id).sort()) ||
+        JSON.stringify(frozen) !== JSON.stringify(group.agreementLines)) return null;
+    const version = group.invoiceGuard.ConditionCheck;
+    if (!version) return null;
+    // A retry can replace the reserved loan without changing the invoice's
+    // version. Fence the pointer and publication fields explicitly.
+    const paymentConditions = GROUP_PAYMENT_FIELDS.map(field => invoice[field] === null
+      ? `(${field} = :groupNull OR attribute_not_exists(${field}))`
+      : `attribute_not_exists(${field})`);
+    const guards: Write[] = [...group.guards, { ConditionCheck: {
+      ...version,
+      ConditionExpression: `${version.ConditionExpression} AND #groupStatus = :groupSent AND sentAt = :groupSentAt AND groupedFinanceLoanId = :groupLoan AND ${paymentConditions.join(' AND ')}`,
+      ExpressionAttributeNames: { ...version.ExpressionAttributeNames, '#groupStatus': 'status' },
+      ExpressionAttributeValues: { ...version.ExpressionAttributeValues, ':groupSent': 'SENT', ':groupSentAt': invoice.sentAt,
+        ':groupLoan': loan.id, ...(GROUP_PAYMENT_FIELDS.some(field => invoice[field] === null) ? { ':groupNull': null } : {}) },
+    } }];
+    return { ...group, guards, finalPayment: last.payment };
+  } catch {
+    return null;
+  }
+}
+
 /** The offer's own figures, and nothing else the page can't work without. */
-function termsShape(loan: PfLoan, associationName: string, state: "open" | "done" | "active"): import('../../../../shared/financeElection').FinanceElectionOffer {
+function termsShape(loan: PfLoan, associationName: string, state: "open" | "done" | "active", finalPayment?: number): import('../../../../shared/financeElection').FinanceElectionOffer {
+  const group = groupedAgreementLines(loan);
   return {
     ok: true,
     state,
@@ -136,7 +190,13 @@ function termsShape(loan: PfLoan, associationName: string, state: "open" | "done
      * debit) doesn't ask a second time; settled pages get neither — the
      * token is possession, and a settled page has no reason to name anyone.
      */
-    agreementTerms: [
+    ...(group ? { financingOnly: true as const } : {}),
+    ...(finalPayment === undefined ? {} : { finalPayment }),
+    agreementTerms: group ? (state === 'open' ? [
+      "This agreement covers the following policies.",
+      ...group,
+      ...groupedAgreementClauses(),
+    ] : []) : [
       OWNERSHIP_DISCLOSURE,
       POWER_OF_ATTORNEY,
       PREPAYMENT_TERMS,
@@ -170,8 +230,13 @@ async function handleTerms(client: DataClient, args: Record<string, unknown>) {
   // An anchorless loan cannot be accepted (the accept refuses it), so the
   // terms say closed now instead of rendering an offer that dies at the
   // click.
-  if (!anchorFilter(loan)) return CLOSED;
+  const grouped = hasGroupedAgreement(loan);
+  if (!grouped && !anchorFilter(loan)) return CLOSED;
   if (!(await moduleEnabled(client))) return CLOSED;
+  if (grouped) {
+    const group = await publishedGroup(client, loan, args.token);
+    return group ? termsShape(loan, group.account.name ?? name, 'open', group.finalPayment) : CLOSED;
+  }
   return termsShape(loan, name, "open");
 }
 
@@ -224,6 +289,7 @@ async function handleAccept(
     // Pressed twice, or a stale tab: the money already moved. Idempotent.
     return { ok: true, state: "done" };
   }
+  if (hasGroupedAgreement(loan) && (loan.status === "ACTIVE" || loan.status === "PAID")) return { ok: true, state: "done" };
   if (loan.status !== "QUOTED" || tokenExpired(loan)) return CLOSED;
   if (!(await moduleEnabled(client))) return CLOSED;
 
@@ -266,11 +332,14 @@ async function handleAccept(
    * outright, and an older quote loses to a newer one — the offer staff
    * most recently stood behind is the only one a customer can accept.
    */
+  const grouped = hasGroupedAgreement(loan);
+  const group = grouped ? await publishedGroup(client, loan, args.token) : null;
+  if (grouped && !group) return CLOSED;
   const loanFilter = anchorFilter(loan);
-  if (!loanFilter) return CLOSED;
-  const siblings = await listAllPages((nextToken) =>
+  if (!group && !loanFilter) return CLOSED;
+  const siblings = group ? [] : await listAllPages((nextToken) =>
     client.models.PfLoan.list({
-      filter: loanFilter,
+      filter: loanFilter!,
       nextToken,
     })
   );
@@ -302,9 +371,9 @@ async function handleAccept(
    * open link for any other figure is other billing, and a human resolves
    * that before financing does anything.
    */
-  const invoices = await listAllPages((nextToken) =>
+  const invoices = group ? [] : await listAllPages((nextToken) =>
     client.models.Invoice.list({
-      filter: loanFilter,
+      filter: loanFilter!,
       nextToken,
     })
   );
@@ -391,15 +460,26 @@ async function handleAccept(
   const signing = !loan.agreementSignedAt;
   const committed = loan.electedAt || (loan.electionCheckoutUrl &&
     loan.electionCheckoutExpiresAt && loan.electionCheckoutExpiresAt > now);
-  let checkoutAccount: Pick<Schema["Account"]["type"], "name" | "state"> | undefined;
+  let checkoutAccount: Pick<Schema["Account"]["type"], "name" | "state"> | undefined = group?.account;
   let policyGuard: Write | undefined;
   if (signing && !committed) {
     const jurisdiction = PF_JURISDICTIONS.find(state => state.code === loan.state);
     try {
-      const account = await client.models.Account.get({ id: loan.accountId });
+      const account = group ? { data: group.account, errors: undefined } : await client.models.Account.get({ id: loan.accountId });
       if (account.errors?.length || !account.data || usStateCode(account.data.state) !== loan.state) return CLOSED;
       checkoutAccount = account.data;
-      if (loan.policyId) {
+      if (group) {
+        const { id, state, type, incorporated } = group.account;
+        const eligibilityDay = new Date().toISOString().slice(0, 10);
+        const eligible = await canUseGroupedOffer({ id, state, type, incorporated }, group.policies, loan.amountFinanced, {
+          listOpinions: async code => listAllPages(nextToken => client.models.PfCounselOpinion.list({
+            filter: { jurisdiction: { eq: code } }, nextToken,
+          })),
+        }, eligibilityDay);
+        if (!eligible || new Date().toISOString().slice(0, 10) !== eligibilityDay) return CLOSED;
+        if (jurisdiction?.maxAddOnApr != null && (!loan.coverageEffectiveDate ||
+            group.policies.some(policy => policy.effectiveDate !== loan.coverageEffectiveDate))) return CLOSED;
+      } else if (loan.policyId) {
         const policy = await getModel<Schema["Policy"]["type"]>("Policy", loan.policyId);
         if (!policy || policy.accountId !== loan.accountId) return CLOSED;
         if (jurisdiction?.maxAddOnApr != null && (!loan.coverageEffectiveDate || policy.effectiveDate !== loan.coverageEffectiveDate)) return CLOSED;
@@ -487,6 +567,7 @@ async function handleAccept(
             },
           },
           ...(policyGuard ? [policyGuard] : []),
+          ...(group?.guards ?? []),
         ],
       })
     ));
@@ -575,6 +656,7 @@ async function handleAccept(
       reason: "Association elected financing from the invoice email and signed the agreement.",
       inputs: {
         loanId: loan.id,
+        ...(group ? { groupedInvoiceId: group.invoice.id, groupedPolicyIds: loan.groupedPolicyIds } : {}),
         voidedInvoices: voided,
         signerName: signedRow?.agreementSignedName ?? (signing ? signerName : loan.agreementSignedName),
         signerRole: signedRow?.agreementSignedRole ?? (signing ? signerRole : loan.agreementSignedRole),
@@ -623,7 +705,7 @@ async function handleAccept(
 
   // The source pointer and monotonic version serialize a fee-free pre-bind
   // claim with financial Quote edits, even if the loan GSI has not caught up.
-  feeClaimGuards.push(...await zeroFeeQuoteClaimWrites(loan));
+  feeClaimGuards.push(...(group ? group.guards : await zeroFeeQuoteClaimWrites(loan)));
   if (policyGuard) feeClaimGuards.push(policyGuard);
   const sessionClaim = `claim-${randomUUID()}`;
   const claimExpiry = new Date(Date.now() + 36 * 60 * 1000).toISOString();
@@ -660,13 +742,15 @@ async function handleAccept(
               // read and this claim must refuse the second session, not
               // race it — Stripe can sit on the completed event for hours).
               ConditionExpression:
-                "#s = :quoted AND electionTokenExpiresAt > :now AND attribute_not_exists(downPaymentIntentId) AND (attribute_not_exists(electionCheckoutUrl) OR electionCheckoutExpiresAt < :now)",
+                "#s = :quoted AND electionTokenExpiresAt > :now AND attribute_not_exists(downPaymentIntentId) AND (attribute_not_exists(electionCheckoutUrl) OR electionCheckoutExpiresAt < :now)" +
+                (group ? " AND electionToken = :tok AND groupedInvoiceId = :groupInvoice" : ""),
               ExpressionAttributeNames: { "#s": "status" },
               ExpressionAttributeValues: {
                 ":claim": sessionClaim,
                 ":exp": claimExpiry,
                 ":quoted": "QUOTED",
                 ":now": now,
+                ...(group ? { ":tok": loan.electionToken, ":groupInvoice": group.invoice.id } : {}),
               },
             },
           },
@@ -694,6 +778,8 @@ async function handleAccept(
   } catch (err) {
     if ((err as { name?: string }).name !== "TransactionCanceledException") throw err;
     const reasons = (err as { CancellationReasons?: { Code?: string }[] }).CancellationReasons;
+    if (group && (!reasons || reasons[0]?.Code !== "ConditionalCheckFailed" ||
+      reasons.slice(1).some(reason => reason?.Code === "ConditionalCheckFailed"))) return CLOSED;
     if (
       reasons?.[1]?.Code === "ConditionalCheckFailed" &&
       reasons?.[0]?.Code !== "ConditionalCheckFailed"
@@ -723,7 +809,10 @@ async function handleAccept(
       await new Promise((r) => setTimeout(r, 750));
       const fresh = await loanForToken(client, args.token);
       const url = liveStoredSession(fresh?.electionCheckoutUrl, fresh?.electionCheckoutExpiresAt);
-      if (url && fresh?.electionCheckoutBillingVersion === PF_CHECKOUT_BILLING_VERSION) return { ok: true, state: "checkout", url };
+      if (url && fresh?.electionCheckoutBillingVersion === PF_CHECKOUT_BILLING_VERSION) {
+        if (group && !(await publishedGroup(client, fresh))) return CLOSED;
+        return { ok: true, state: "checkout", url };
+      }
       if (fresh?.status === "ACCEPTED" || fresh?.status === "ACTIVE") return { ok: true, state: "done" };
     }
     return {
@@ -839,24 +928,46 @@ async function handleAccept(
    * Stripe expires in 35 minutes; the money still can't double-collect,
    * because only one URL is ever handed out per slot.
    */
+  const publishCheckout = {
+    TableName: loanTable,
+    Key: { id: loan.id },
+    UpdateExpression:
+      "SET electionCheckoutUrl = :url, electionCheckoutExpiresAt = :exp, electionCheckoutBillingVersion = :version, updatedAt = :now",
+    ConditionExpression: "electionCheckoutUrl = :claim",
+    ExpressionAttributeValues: {
+      ":url": session.url,
+      ":version": PF_CHECKOUT_BILLING_VERSION,
+      ":exp": new Date((session.expires_at ?? 0) * 1000).toISOString(),
+      ":claim": sessionClaim,
+      ":now": new Date().toISOString(),
+    },
+  };
   try {
-    await sendCrmWrite(ddb.send(
-      new UpdateCommand({
-        TableName: loanTable,
-        Key: { id: loan.id },
-        UpdateExpression:
-          "SET electionCheckoutUrl = :url, electionCheckoutExpiresAt = :exp, electionCheckoutBillingVersion = :version, updatedAt = :now",
-        ConditionExpression: "electionCheckoutUrl = :claim",
-        ExpressionAttributeValues: {
-          ":url": session.url,
-          ":version": PF_CHECKOUT_BILLING_VERSION,
-          ":exp": new Date((session.expires_at ?? 0) * 1000).toISOString(),
-          ":claim": sessionClaim,
-          ":now": new Date().toISOString(),
-        },
-      })
-    ));
+    if (group) {
+      // Stripe cannot transact with the invoice. Check the same published
+      // group again before storing or returning the new payable URL.
+      await sendCrmWrite(ddb.send(new TransactWriteCommand({ TransactItems: [
+        { Update: { ...publishCheckout,
+          ConditionExpression: `${publishCheckout.ConditionExpression} AND #s = :quoted AND electionToken = :tok AND attribute_not_exists(downPaymentIntentId)`,
+          ExpressionAttributeNames: { "#s": "status" },
+          ExpressionAttributeValues: { ...publishCheckout.ExpressionAttributeValues, ":quoted": "QUOTED", ":tok": loan.electionToken },
+        } },
+        { ConditionCheck: {
+          TableName: settingsTable, Key: { id: "AGENCY" }, ConditionExpression: "premiumFinanceEnabled = :on",
+          ExpressionAttributeValues: { ":on": true },
+        } },
+        ...group.guards,
+      ] })));
+    } else {
+      await sendCrmWrite(ddb.send(new UpdateCommand(publishCheckout)));
+    }
   } catch (err) {
+    if (group) {
+      try { await stripe.checkout.sessions.expire(session.id); }
+      catch (expireError) { console.error(`[pf-election] could not expire ${session.id}`, expireError); }
+      await releaseSessionClaim(loanTable, loan.id, sessionClaim);
+      return CLOSED;
+    }
     if ((err as { name?: string }).name !== "ConditionalCheckFailedException") {
       console.error("[pf-election] could not store the checkout session", err);
     } else {

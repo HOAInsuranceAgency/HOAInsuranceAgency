@@ -109,9 +109,9 @@ beforeEach(() => {
 afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 const send = () => handler({ arguments: { invoiceId: 'i', toEmail: 'board@example.test' } });
 
-it.each([{ sourcePricingVersion: 3 }, { groupedPolicyIds: ['p1', 'p2'] }])('keeps grouped review drafts off the send and payment paths', async grouped => {
+it.each([{ sourcePricingVersion: 3 }, { groupedPolicyIds: ['p1', 'p2'] }])('blocks incomplete grouped invoices before delivery or payment setup', async grouped => {
   Object.assign(h.invoice, grouped);
-  await expect(send()).resolves.toEqual({ ok: false, error: 'This grouped invoice is for review only.' });
+  await expect(send()).resolves.toEqual({ ok: false, error: 'The combined invoice no longer matches its reviewed policies and amounts. Review the draft before billing.' });
   expect(h.begin).not.toHaveBeenCalled();
   expect(h.reserve).not.toHaveBeenCalled();
   expect(h.link).not.toHaveBeenCalled();

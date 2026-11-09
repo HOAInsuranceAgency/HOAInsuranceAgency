@@ -29,7 +29,7 @@ const MAX_LINES = 38;
 const MAX_MEMBERS = 8;
 const retry = 'The source records changed while combining them. Refresh and review the drafts.';
 const hasDelivery = (row: Row) => ['sentAt', 'paidAt', 'paymentUrl', 'stripePaymentLinkId', 'stripePaymentIntentId',
-  'stripeLinkAmountCents', 'invoiceSendOperation', 'brokerFeeAllocations', 'brokerFeeFinanceUrl']
+  'stripeLinkAmountCents', 'invoiceSendOperation', 'brokerFeeAllocations', 'brokerFeeFinanceUrl', 'groupedFinanceLoanId']
   .some(key => row[key] != null && row[key] !== '');
 const isAdvance = (row: Row) => row.carrierBillType === 'DIRECT';
 const reviewDay = (value: unknown): value is string => typeof value === 'string' && isRealIsoDay(value);
@@ -217,6 +217,7 @@ export async function createGroupedDraft(access: AccountAccess, args: Row) {
     { Put: { TableName: modelTable('Invoice'), ConditionExpression: 'attribute_not_exists(id)', Item: {
       ...base, id: invoiceId, __typename: 'Invoice', number, sourcePricingVersion: 3, groupedPolicyIds: policyIds,
       groupedSourceInvoiceIds: [...sources.values()].map(({ invoice }) => usableId(invoice.id)),
+      groupedLineCount: lines.length,
       groupedReviewedTotals: reviewedTotals,
       status: 'DRAFT', issuedAt: today, dueAt, createdAt: now,
     } } }];
@@ -279,7 +280,7 @@ export async function restoreGroupedDraft(access: AccountAccess, args: Row) {
   const now = new Date().toISOString();
   const guard = versionCondition(invoice);
   const writes: Write[] = [activeTeamUserCheck(access.actor), { Update: { TableName: modelTable('Invoice'), ...guard,
-    ConditionExpression: `${guard.ConditionExpression} AND #status = :draft`,
+    ConditionExpression: `${guard.ConditionExpression} AND #status = :draft AND attribute_not_exists(invoiceSendOperation) AND attribute_not_exists(groupedFinanceLoanId)`,
     UpdateExpression: 'SET #status = :void, groupedRestoredAt = :now, updatedAt = :now, lastWriteBy = :actor',
     ExpressionAttributeNames: { '#status': 'status' },
     ExpressionAttributeValues: { ...guard.ExpressionAttributeValues, ':draft': 'DRAFT', ':void': 'VOID', ':now': now, ':actor': access.actor },

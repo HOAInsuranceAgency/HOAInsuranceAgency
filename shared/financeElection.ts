@@ -7,6 +7,8 @@ export interface FinanceElectionOffer {
   initialPaymentAmount?: number; amountFinanced: number; payment: number;
   totalInterest: number; originationFee: number; brokerFee?: number;
   effectiveDate: string | null; agreementTerms: string[];
+  financingOnly?: true;
+  finalPayment?: number;
   agreementSignedName: string | null; agreementSignedRole: string | null;
 }
 export interface FinanceElectionClosed { ok: true; state: 'closed'; reason?: string }
@@ -23,6 +25,8 @@ export function isFinanceElectionTerms(value: ApiRecord): value is ApiRecord & F
     && typeof value.months === 'number' && Number.isSafeInteger(value.months) && value.months > 0
     && (value.brokerFee === undefined || finiteAmount(value.brokerFee))
     && (value.initialPaymentAmount === undefined || finiteAmount(value.initialPaymentAmount))
+    && (value.financingOnly === undefined || value.financingOnly === true)
+    && (value.finalPayment === undefined ? value.financingOnly !== true || value.state !== 'open' : finiteAmount(value.finalPayment))
     && optionalText(value.effectiveDate) && optionalText(value.agreementSignedName) && optionalText(value.agreementSignedRole)
     && Array.isArray(value.agreementTerms) && (value.state !== 'open' || value.agreementTerms.length > 0) && value.agreementTerms.every(term => typeof term === 'string');
 }
