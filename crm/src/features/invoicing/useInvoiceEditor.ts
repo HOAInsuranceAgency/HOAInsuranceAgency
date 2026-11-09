@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { feeAllocations } from "../../../../shared/brokerFees";
 import { billingContact, currentContacts } from "../../../../shared/contacts";
 import { validateAdjustmentLines } from "../../../../shared/invoiceAdjustments";
+import { isGroupedInvoice } from "../../../../shared/groupedInvoiceGuard";
 import {
   directBillWarning,
   invoiceTotals,
@@ -67,10 +68,12 @@ export function useInvoiceEditor({
 
   const totals = invoiceTotals(lines);
   const warnings = marginWarnings(lines);
-  const locked = invoice.status === "VOID";
+  const grouped = isGroupedInvoice(invoice);
+  const groupedPolicies = grouped ? policies.filter(policy => invoice.groupedPolicyIds?.includes(policy.id)) : [];
+  const locked = grouped || invoice.status === "VOID";
   const issuedFee = feeAllocations(invoice.brokerFeeAllocations).length > 0;
   const adjustment = invoice.sourcePricingVersion === 2;
-  const sourcePricing = invoice.sourcePricingVersion === 1 || adjustment;
+  const sourcePricing = grouped || invoice.sourcePricingVersion === 1 || adjustment;
   const issuedPricing = sourcePricing && (invoice.status === "SENT" || !!invoice.stripePaymentLinkId);
   const linesLocked = locked || ["PAID", "PROCESSING"].includes(invoice.status) || issuedFee || issuedPricing;
   /**
@@ -84,8 +87,8 @@ export function useInvoiceEditor({
   ];
   const anchorPolicyId =
     invoice.policyId ?? (linePolicyIds.length === 1 ? linePolicyIds[0] : null);
-  const policy = policies.find((p) => p.id === anchorPolicyId) ?? null;
-  const quote = !policy
+  const policy = grouped ? null : policies.find((p) => p.id === anchorPolicyId) ?? null;
+  const quote = !grouped && !policy
     ? (quotes.find((q) => q.id === invoice.quoteId) ?? null)
     : null;
   /**
@@ -412,6 +415,8 @@ export function useInvoiceEditor({
     pending,
     saveEdits,
     locked,
+    grouped,
+    groupedPolicies,
     actionBusy,
     voidThis,
     lines,

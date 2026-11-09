@@ -91,6 +91,14 @@ beforeEach(() => {
 });
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 
+it.each([{ sourcePricingVersion: 3 }, { groupedPolicyIds: ['p1', 'p2'] }])('blocks recording a receipt against a grouped review draft', async grouped => {
+  Object.assign(h.models.get('Invoice:i')!, grouped);
+  await expect(confirmInvoicePayment(actor, { invoiceId: 'i' })).rejects.toThrow('This grouped invoice is for review only.');
+  expect(h.deactivate).not.toHaveBeenCalled();
+  expect(h.transact).not.toHaveBeenCalled();
+  expect(paymentRows()).toHaveLength(0);
+});
+
 describe('outside invoice payment after an unsuccessful online checkout', () => {
   it.each(['requires_payment_method', 'canceled'])('allows Mark paid after a completed unpaid checkout whose intent is definitively %s', async status => {
     h.intentStatus = status; h.sessions = [{ id: 'cs-failed', status: 'complete', payment_status: 'unpaid', payment_intent: status === 'canceled' ? { id: 'pi-failed' } : 'pi-failed' }];

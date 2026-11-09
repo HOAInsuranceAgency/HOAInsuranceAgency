@@ -19,9 +19,9 @@ function commissionResponse<T>(response: {
 }
 export const readCommissions = async () =>
   commissionResponse<CommissionOverview>(await client.queries.commissionOverview().catch(privateApiError));
-export const readCarrierPaymentPreview = async (quoteId: string, billType: string) =>
+export const readCarrierPaymentPreview = async (quoteId: string, billType: string, issuedRenewal = false) =>
   commissionResponse<CarrierPaymentPreview>(
-    await client.queries.carrierPaymentPreview({ quoteId, billType }).catch(privateApiError),
+    await client.queries.carrierPaymentPreview({ quoteId, billType, ...(issuedRenewal ? { issuedRenewal } : {}) }).catch(privateApiError),
   );
 export function commissionAction(operation: 'file', input: CommissionFileUpload): Promise<{ key: string; url: string }>;
 export function commissionAction(operation: 'file', input: CommissionFileRead): Promise<{ url: string }>;

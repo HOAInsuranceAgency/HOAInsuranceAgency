@@ -1,6 +1,7 @@
 import { assertGraphqlErrors } from '../../lib/apiResponse';
-import { reserveInvoiceNumber } from '../../lib/billingApi';
+import { createGroupedInvoice, reserveInvoiceNumber } from '../../lib/billingApi';
 import { Button } from "../../components/ui/Button";
+import { Input } from "../../components/ui/Input";
 import { Select } from "../../components/ui/Select";
 import { Table } from "../../components/ui/Table";
 import { useRef, useState } from "react";
@@ -11,7 +12,10 @@ import { allWithAuthorizationPriority } from "../../lib/allWithAuthorizationPrio
 import { useAsyncResource } from "../../lib/useAsyncResource";
 import { SaveStatus, useSaveStatus } from "../../components/SaveStatus";
 import { InvoiceEditor } from "../../components/InvoiceEditor";
-import { invoiceTotals, premiumLineFromPolicy } from "../../../../shared/invoiceTotals";
+import { groupedInvoiceCandidates } from "../../features/invoicing/groupedInvoiceDrafts";
+import { policyLabel } from "../../features/invoicing/invoiceInputs";
+import { useIsOwner } from "../../lib/auth";
+import { formatMoney, invoiceTotals, premiumLineFromPolicy } from "../../../../shared/invoiceTotals";
 import {
   brokerFeeLineFromSource,
   findAdjustmentOriginal,
@@ -24,6 +28,7 @@ import {
   unbilledAgencyPolicies,
 } from "../../lib/invoiceSeed";
 import { isOpenQuoteStatus } from "../../../../shared/quoteStatus";
+import { isGroupedInvoice } from "../../../../shared/groupedInvoiceGuard";
 import { Badge, INVOICE_STATUS_BADGE, statusBadge } from "../../lib/badges";
 
 /**
@@ -63,6 +68,7 @@ export function InvoicesTab({ accountId }: { accountId: string }) {
 }
 
 function InvoicesTabContent({ accountId }: { accountId: string }) {
+  const isOwner = useIsOwner();
   const res = useAsyncResource(
     async () => {
       /**
@@ -133,6 +139,9 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
   const [editorBusy, setEditorBusy] = useState(false);
   /** "policy:<id>" | "quote:<id>" — the anchor the next invoice bills. */
   const [anchorKey, setAnchorKey] = useState("");
+  const [combineOpen, setCombineOpen] = useState(false);
+  const [selectedPolicyIds, setSelectedPolicyIds] = useState<string[]>([]);
+  const [createdGroupId, setCreatedGroupId] = useState<string | null>(null);
 
   /**
    * W8: every invoice bills exactly one policy or quote, chosen HERE, and an
@@ -142,7 +151,7 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
    */
   async function newInvoice() {
     const loaded = res.data;
-    if (!loaded || !anchorKey || creating.current) return;
+    if (!loaded || !anchorAvailable || combineOpen || waitingForGroup || creating.current) return;
     creating.current = true;
     const [kind, anchorId] = anchorKey.split(":", 2);
     await createStatus.run(
@@ -267,6 +276,7 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
   if (!res.data) return readError || null;
 
   const { invoices, lines, policies, quotes, contacts, account } = res.data;
+  const waitingForGroup = !!createdGroupId && !invoices.some(invoice => invoice.id === createdGroupId);
   // Newest first: the one someone came here for is almost always the last made.
   const ordered = [...invoices].sort((a, b) =>
     (b.createdAt ?? "").localeCompare(a.createdAt ?? "")
@@ -276,16 +286,47 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
   // PAID and VOID free the slot — voiding a bill is how a policy gets
   // billed again. The rule itself is the pure module's, with its tests.
   const busyAnchors = liveAnchorIds(invoices, lines);
+  for (const policy of policies) {
+    if (policy.groupedDraftInvoiceId) busyAnchors.add(policy.id);
+    if (policy.quoteId && (policy.groupedDraftInvoiceId || policy.carrierBillType === "DIRECT")) busyAnchors.add(policy.quoteId);
+  }
   const adjustmentOriginals = new Map(policies.map(policy => [policy.id, findAdjustmentOriginal(policy, invoices, lines)]));
   const initialPolicyIds = new Set(unbilledAgencyPolicies(policies, busyAnchors).map(policy => policy.id));
-  const openPolicies = policies.filter(policy => policy.billType !== "DIRECT" && !busyAnchors.has(policy.id)
+  const openPolicies = policies.filter(policy => policy.billType !== "DIRECT" && policy.carrierBillType !== "DIRECT" && !busyAnchors.has(policy.id)
     && (!policy.quoteId || !busyAnchors.has(policy.quoteId))
     && (initialPolicyIds.has(policy.id) || adjustmentOriginals.get(policy.id)));
   const openQuotes = invoiceableQuotes(quotes, busyAnchors, isOpenQuoteStatus);
+  const anchorAvailable = openPolicies.some(policy => anchorKey === `policy:${policy.id}`) ||
+    openQuotes.some(quote => anchorKey === `quote:${quote.id}`);
+  const candidates = isOwner ? groupedInvoiceCandidates(policies, invoices, lines) : [];
+  const canOpenCombine = candidates.some(candidate => candidates.filter(other => other.term === candidate.term).length >= 2);
+  const selected = candidates.filter(candidate => selectedPolicyIds.includes(candidate.policy.id));
+  const selectedTerm = selected[0]?.term;
+  const canCombine = selected.length >= 2 && selected.length <= 8 && selected.length === selectedPolicyIds.length &&
+    selected.every(candidate => candidate.term === selectedTerm);
+
+  async function combinePolicies() {
+    if (!isOwner || !canCombine || creating.current || res.loading || res.error || open || waitingForGroup) return;
+    creating.current = true;
+    await createStatus.run(async isCurrent => {
+      const invoiceId = await createGroupedInvoice({ accountId, policyIds: selectedPolicyIds });
+      if (!isCurrent()) return;
+      setCreatedGroupId(invoiceId);
+      setOpenId(invoiceId);
+      setCombineOpen(false);
+      setSelectedPolicyIds([]);
+      setAnchorKey("");
+      await res.refetch();
+    }, { savedMessage: "Combined draft created.", errorMessage: "Couldn't combine the selected policies." });
+    creating.current = false;
+  }
 
   return (
     <>
       {readError}
+      {waitingForGroup && !res.loading && !readError && <p className="muted small">
+        Refresh invoices to open the combined draft. <Button type="button" onClick={() => void res.refetch()}>Refresh invoices</Button>
+      </p>}
       <div className="card">
         <div className="card-head">
           <h2>Invoices</h2>
@@ -294,7 +335,7 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
             <Select
               aria-label="Bill which policy or quote"
               value={anchorKey}
-              disabled={createStatus.busy}
+              disabled={createStatus.busy || combineOpen || waitingForGroup}
               onChange={(e) => setAnchorKey(e.target.value)}
             >
               <option value="">Bill which policy or quote…</option>
@@ -319,14 +360,48 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
             <Button variant="primary"
               type="button"
 
-              disabled={createStatus.busy || editorBusy || !anchorKey}
+              disabled={createStatus.busy || editorBusy || combineOpen || waitingForGroup || !anchorAvailable}
               onClick={() => void newInvoice()}
             >
               New invoice
             </Button>
+            {canOpenCombine && !combineOpen && <Button type="button" variant="secondary"
+              disabled={createStatus.busy || editorBusy || !!open || waitingForGroup || res.loading || !!res.error}
+              onClick={() => { createStatus.markDirty(); setCombineOpen(true); }}>
+              Combine policies
+            </Button>}
           </div>
         </div>
-        {openPolicies.length === 0 && openQuotes.length === 0 && (
+        {combineOpen && <div className="card inset">
+          <h3>Combine policies</h3>
+          <p className="muted small">Choose policies on the same term. The combined draft replaces the selected unsent invoices.</p>
+          <ul className="check-list">
+            {candidates.map(({ policy, term, draft, amount }) => {
+              const checked = selectedPolicyIds.includes(policy.id);
+              return <li key={policy.id}><label>
+                <Input type="checkbox" checked={checked}
+                  disabled={createStatus.busy || (!checked && ((!!selectedTerm && term !== selectedTerm) || selectedPolicyIds.length >= 8))}
+                  onChange={event => {
+                    createStatus.markDirty();
+                    setSelectedPolicyIds(ids => event.target.checked ? [...ids, policy.id] : ids.filter(id => id !== policy.id));
+                  }} />
+                <span>{policyLabel(policy)}
+                  <span className="muted small"> · {draft ? `Draft ${draft.number ?? "invoice"}` : "HOA carrier advance"} · {formatMoney(amount)}</span>
+                </span>
+              </label></li>;
+            })}
+          </ul>
+          <div className="inline-actions">
+            <Button type="button" variant="primary" disabled={!canCombine || createStatus.busy || res.loading || !!res.error}
+              onClick={() => void combinePolicies()}>Create combined draft</Button>
+            <Button type="button" variant="secondary" disabled={createStatus.busy} onClick={() => {
+              createStatus.markDirty();
+              setCombineOpen(false);
+              setSelectedPolicyIds([]);
+            }}>Cancel</Button>
+          </div>
+        </div>}
+        {!combineOpen && !canOpenCombine && openPolicies.length === 0 && openQuotes.length === 0 && (
           <p className="muted small">
             Every policy and open quote either has a live invoice already or
             isn't agency-billed. One live invoice per policy or quote — void
@@ -358,7 +433,7 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
                   const isOpen = inv.id === openId;
                   return (
                     <tr key={inv.id} className={isOpen ? "ui-table-row-selected" : undefined}>
-                      <td>{inv.number ?? "—"}</td>
+                      <td>{inv.number ?? "—"}{isGroupedInvoice(inv) && <span className="muted small"> · Combined draft</span>}</td>
                       <td>{fmtDate(inv.issuedAt)}</td>
                       <td>{fmtDate(inv.dueAt)}</td>
                       <td>
@@ -372,7 +447,7 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
                           type="button"
 
                           aria-expanded={isOpen}
-                          disabled={createStatus.busy || editorBusy}
+                          disabled={createStatus.busy || editorBusy || combineOpen || waitingForGroup}
                           onClick={() => setOpenId(isOpen ? null : inv.id)}
                         >
                           {isOpen ? "Close" : "Open"}

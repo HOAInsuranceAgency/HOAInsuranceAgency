@@ -13,6 +13,8 @@ import { invoiceBrokerFeeAllocations } from '../send-invoice/brokerFeeInvoice';
 import { validateInvoiceSourceCharges } from '../send-invoice/passThroughInvoice';
 import { assertAdjustmentInvoiceProof, assertInitialInvoiceAvailable } from '../send-invoice/adjustmentInvoice';
 import { invoiceTotals } from '../../../../shared/invoiceTotals';
+import { GROUPED_INVOICE_REVIEW_ONLY, isGroupedInvoice } from '../../../../shared/groupedInvoiceGuard';
+import { assertStandalonePolicyBilling, standalonePolicyBillingGuard } from '../grouped-draft-billing';
 import { db, getFee, getModel, modelTable, versionCheck, type Write } from './store';
 import { assertBrokerFeeSigned } from './bindValidation';
 import { assertNoFeeLoanCheckout, syncBrokerFeePayment } from './payments';
@@ -23,9 +25,11 @@ export async function confirmInvoicePayment(event:{identity?:Identity;request?:R
   await assertUserSession(event.identity);
   const access=new AccountAccess(event.identity,undefined,event.request);
   const invoice=await access.requireRecord('Invoice',id(input.invoiceId));
+  if(isGroupedInvoice(invoice))throw new Error(GROUPED_INVOICE_REVIEW_ONLY);
   if(['VOID','PROCESSING'].includes(String(invoice.status)))throw new Error('A void invoice or payment still clearing cannot be marked paid.');
   if(invoice.status==='PAID' && invoice.lastWriteBy!=='broker-fee-manual-payment')return {ok:true,invoice};
   const policy=invoice.policyId?await access.requireRecord('Policy',id(invoice.policyId)):undefined;
+  if(policy)await assertStandalonePolicyBilling(policy as {id:string});
   const quoteId=id(policy?.quoteId)||id(invoice.quoteId);
   const quote=quoteId?await access.requireRecord('Quote',quoteId):undefined;
   let source=policy??quote;
@@ -61,7 +65,7 @@ export async function confirmInvoicePayment(event:{identity?:Identity;request?:R
   }
   const loanGuards=fee&&allocations.length?await assertNoFeeLoanCheckout(fee):[];
   const workflow=await access.get('Communication',`workflow:${invoice.accountId}`);
-  const guards:Write[]=[activeTeamUserCheck(access.actor),...invoiceGuards,...loanGuards,...lines.map(line=>versionCheck(modelTable('InvoiceLine'),line as {id:string;updatedAt:string})),...(source?[versionCheck(modelTable(policy?'Policy':'Quote'),source as {id:string;updatedAt:string})]:[])];
+  const guards:Write[]=[activeTeamUserCheck(access.actor),...invoiceGuards,...loanGuards,...lines.map(line=>versionCheck(modelTable('InvoiceLine'),line as {id:string;updatedAt:string})),...(source?[policy?standalonePolicyBillingGuard(source as {id:string;updatedAt:string},true):versionCheck(modelTable('Quote'),source as {id:string;updatedAt:string})]:[])];
   if(!access.admin){
     if(!workflow)throw new Error('The account assignment could not be verified.');
     guards.push({ConditionCheck:{TableName:modelTable('Communication'),Key:{id:`workflow:${invoice.accountId}`},ConditionExpression:'#data = :data',ExpressionAttributeNames:{'#data':'data'},ExpressionAttributeValues:{':data':workflow.data}}});

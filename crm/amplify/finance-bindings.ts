@@ -19,7 +19,7 @@ const bindings = {
   // The kill switch and its audit row must be changed by the same writer.
   administration: { target: 'pfAdmin', tables: [['AgencySettings', 'readWrite'], ['PfComplianceLog', 'readWrite']] },
   // Loan creation checks the flag and writes its decision log atomically.
-  origination: { target: 'pfOriginate', tables: [['PfComplianceLog', 'readWrite'], ['AgencySettings', 'read'], ['PfLoan', 'readWrite']] },
+  origination: { target: 'pfOriginate', tables: [['PfComplianceLog', 'readWrite'], ['AgencySettings', 'read'], ['PfLoan', 'readWrite'], ['Policy', 'read'], ['Invoice', 'read']] },
   // Servicing posts deterministic payment/notice rows with conditional loan changes.
   servicing: { target: 'pfServicing', tables: [['PfComplianceLog', 'readWrite'], ['PfLoan', 'readWrite'], ['PfLoanPayment', 'readWrite'], ['PfNotice', 'readWrite']] },
   defaultSweep: { target: 'pfDefaultSweep', tables: [['PfComplianceLog', 'readWrite'], ['PfLoan', 'readWrite']] },

@@ -92,6 +92,22 @@ describe("server-owned premium finance pricing", () => {
     expect(loan()?.apr).toBe(15);
   });
 
+  it("never creates a standalone loan when a grouped policy claim wins the origination transaction", async () => {
+    vi.stubEnv("POLICY_TABLE", "policy-table");
+    const { standalonePolicyBillingGuard } = await import("../../amplify/functions/grouped-draft-billing");
+    const guard = standalonePolicyBillingGuard({ id: "policy-1" });
+    send.mockImplementation(async (command) => {
+      if (command instanceof TransactWriteCommand) {
+        expect(command.input.TransactItems).toContainEqual(guard);
+        expect(guard.ConditionCheck?.ConditionExpression).toContain("attribute_not_exists(groupedDraftInvoiceId)");
+        throw Object.assign(new Error("Group won"), { name: "TransactionCanceledException", CancellationReasons: [{ Code: "None" }, { Code: "None" }, { Code: "ConditionalCheckFailed" }] });
+      }
+      return {};
+    });
+    await expect(originateLoan(db, reads, true, request("AK", { policyGuard: guard }))).resolves.toMatchObject({ ok: false });
+    expect(decisions().filter(row => row.rule === "module-flag").every(row => row.outcome !== "BLOCK")).toBe(true);
+  });
+
   it("blocks pricing when the dated state ceiling has no value for the agreement date", async () => {
     vi.setSystemTime(new Date("2027-01-07T12:00:00Z"));
     const result = await originateLoan(db, reads, true, request("ND"));

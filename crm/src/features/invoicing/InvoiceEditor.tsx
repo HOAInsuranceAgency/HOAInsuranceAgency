@@ -1,4 +1,5 @@
 import { Button } from "../../components/ui/Button";
+import { GroupedFinancePreview } from './GroupedFinancePreview';
 import { InvoiceDelivery } from './InvoiceDelivery';
 import { InvoiceDetails } from './InvoiceDetails';
 import { InvoiceHeader } from './InvoiceHeader';
@@ -21,7 +22,8 @@ function InvoiceEditorContent(props: InvoiceEditorProps) {
 
       <InvoiceDetails editor={editor} />
 
-      <InvoiceDelivery editor={editor} />
+      {editor.grouped ? <GroupedFinancePreview invoice={editor.invoice} account={editor.account}
+        policies={editor.groupedPolicies} lines={editor.lines} /> : <InvoiceDelivery editor={editor} />}
     </div>
   );
 }

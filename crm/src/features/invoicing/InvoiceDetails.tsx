@@ -7,6 +7,8 @@ type InvoiceDetailsState = Pick<
   InvoiceEditorController,
   | 'policy'
   | 'quote'
+  | 'grouped'
+  | 'groupedPolicies'
   | 'billWarning'
   | 'inputId'
   | 'invoiceDraft'
@@ -21,6 +23,8 @@ export function InvoiceDetails({ editor }: { editor: InvoiceDetailsState }) {
   const {
     policy,
     quote,
+    grouped,
+    groupedPolicies,
     billWarning,
     inputId,
     invoiceDraft,
@@ -39,13 +43,17 @@ export function InvoiceDetails({ editor }: { editor: InvoiceDetailsState }) {
         {/* W8: fixed at creation. Wrong anchor? Delete the draft and make
               a new one — re-pointing a bill is how two invoices land on one
               premium. */}
-        <p style={{ margin: "4px 0 0" }}>
+        {grouped ? <ul>
+          {groupedPolicies.map(member => <li key={member.id}>{policyLabel(member)}
+            <span className="muted small"> · {member.carrierBillType === "DIRECT" ? "Carrier direct bill · HOA collection" : "Agency bill"}</span>
+          </li>)}
+        </ul> : <p style={{ margin: "4px 0 0" }}>
           {policy
             ? policyLabel(policy)
             : quote
               ? `Quote — ${(quote.lines ?? []).filter(Boolean).join(", ") || "coverage"}${quote.effectiveDate ? ` (${quote.effectiveDate})` : ""}`
               : "Nothing — this invoice predates anchored billing, and its lines bill more than one policy. Remove lines until one policy's remain (the invoice then bills that policy), or void this and bill each policy on its own invoice."}
-        </p>
+        </p>}
         {/* Three states, deliberately. The warning is the loud one and only
               fires when premium is actually billed; the quiet notes state the
               arrangement so it is known *before* a line is added rather than

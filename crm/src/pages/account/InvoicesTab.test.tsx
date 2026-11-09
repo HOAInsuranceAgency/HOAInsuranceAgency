@@ -1,16 +1,17 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const api = vi.hoisted(() => ({
   models: {
     Invoice: { list: vi.fn(), create: vi.fn() }, InvoiceLine: { list: vi.fn(), create: vi.fn() },
     Policy: { list: vi.fn() }, Quote: { list: vi.fn() }, Contact: { list: vi.fn() }, Account: { get: vi.fn() },
   },
-  mutations: { reserveInvoiceNumber: vi.fn() },
+  mutations: { reserveInvoiceNumber: vi.fn(), createGroupedInvoice: vi.fn() },
 }));
 vi.mock("aws-amplify/data", () => ({ generateClient: () => api }));
 vi.mock("../../components/InvoiceEditor", () => ({ InvoiceEditor: ({ invoice }: { invoice: { id: string } }) => <div>Editing {invoice.id}</div> }));
 import { addDays, DEFAULT_TERM_DAYS, InvoicesTab } from "./InvoicesTab";
+import { OwnerContext } from "../../lib/auth";
 const policy = { id: "p1", accountId: "a1", policyNumber: "POL-1", billType: "AGENCY", premium: 100, status: "ACTIVE" };
 beforeEach(() => {
   vi.resetAllMocks();
@@ -28,6 +29,89 @@ async function selectPolicy() {
   render(<InvoicesTab accountId="a1" />);
   await userEvent.selectOptions(await screen.findByRole("combobox"), "policy:p1");
 }
+
+describe("combined invoice drafts", () => {
+  const term = { effectiveDate: "2026-11-01", expirationDate: "2027-11-01" };
+  const preparedPolicy = (id: string) => ({ ...policy, ...term, id, policyNumber: `POL-${id}`, lines: ["Commercial Property"] });
+  const preparedDraft = (id: string) => ({ id: `draft-${id}`, accountId: "a1", policyId: id,
+    status: "DRAFT", sourcePricingVersion: 1, number: `INV-${id}` });
+  const preparedLine = (id: string) => ({ id: `premium-${id}`, invoiceId: `draft-${id}`, accountId: "a1",
+    policyId: id, kind: "PREMIUM", retailAmount: 100, costAmount: 80 });
+  const travelers = { ...preparedPolicy("travelers"), policyNumber: "TRAVELERS", carrierBillType: "DIRECT", premium: 200 };
+  const renderOwner = () => render(<OwnerContext.Provider value={true}><InvoicesTab accountId="a1" /></OwnerContext.Provider>);
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-09T15:00:00Z"));
+  });
+  afterEach(() => { vi.useRealTimers(); });
+
+  it("combines three reviewed drafts and the carrier advance through one mutation", async () => {
+    const ids = ["p1", "p2", "p3"];
+    const drafts = ids.map(preparedDraft);
+    const members = [...ids.map(preparedPolicy), travelers];
+    api.models.Policy.list.mockResolvedValue({ data: members });
+    api.models.InvoiceLine.list.mockResolvedValue({ data: ids.map(preparedLine) });
+    api.models.Invoice.list.mockResolvedValueOnce({ data: drafts }).mockResolvedValue({ data: [
+      ...drafts.map(draft => ({ ...draft, status: "VOID" })),
+      { id: "grouped", accountId: "a1", status: "DRAFT", number: "INV-GROUP", sourcePricingVersion: 3, groupedPolicyIds: members.map(member => member.id) },
+    ] });
+    api.mutations.createGroupedInvoice.mockResolvedValue({ data: JSON.stringify({ ok: true, invoiceId: "grouped" }) });
+
+    renderOwner();
+    const combine = await screen.findByRole("button", { name: "Combine policies" });
+    expect(screen.queryByRole("option", { name: /TRAVELERS/ })).not.toBeInTheDocument();
+    await userEvent.click(combine);
+    const create = screen.getByRole("button", { name: "Create combined draft" });
+    expect(create).toBeDisabled();
+    expect(screen.getByRole("checkbox", { name: /POL-p1.*Draft INV-p1.*\$100\.00/ })).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: /TRAVELERS.*HOA carrier advance.*\$200\.00/ })).toBeInTheDocument();
+    const checkboxes = screen.getAllByRole("checkbox");
+    expect(checkboxes).toHaveLength(4);
+    for (const box of checkboxes) await userEvent.click(box);
+    await userEvent.click(create);
+
+    expect(await screen.findByText("Editing grouped")).toBeInTheDocument();
+    expect(api.mutations.createGroupedInvoice).toHaveBeenCalledExactlyOnceWith({ accountId: "a1", policyIds: [...ids, "travelers"] });
+    expect(api.mutations.reserveInvoiceNumber).not.toHaveBeenCalled();
+    expect(api.models.Invoice.create).not.toHaveBeenCalled();
+    expect(api.models.InvoiceLine.create).not.toHaveBeenCalled();
+    expect(screen.queryByRole("option", { name: /POL-p[123]/ })).not.toBeInTheDocument();
+  });
+
+  it("offers only prepared, unissued and ungrouped policy drafts to the owner", async () => {
+    const ids = ["ready", "sent", "paid", "adjustment", "unreviewed", "grouped", "missing-draft", "different-term"];
+    api.models.Policy.list.mockResolvedValue({ data: [travelers, ...ids.map(id => ({ ...preparedPolicy(id),
+      ...(id === "different-term" ? { effectiveDate: "2026-10-01" } : {}),
+    }))] });
+    api.models.Invoice.list.mockResolvedValue({ data: [
+      preparedDraft("ready"), { ...preparedDraft("sent"), status: "SENT" }, { ...preparedDraft("paid"), status: "PAID" },
+      { ...preparedDraft("adjustment"), sourcePricingVersion: 2 }, preparedDraft("unreviewed"),
+      { ...preparedDraft("grouped"), id: "bundle", policyId: null, sourcePricingVersion: 3, groupedPolicyIds: ["grouped", "another"] },
+      preparedDraft("different-term"),
+    ] });
+    api.models.InvoiceLine.list.mockResolvedValue({ data: ids.filter(id => id !== "grouped").map(id => ({ ...preparedLine(id),
+      ...(id === "unreviewed" ? { costAmount: null } : {}),
+    })) });
+    renderOwner();
+    await userEvent.click(await screen.findByRole("button", { name: "Combine policies" }));
+    for (const id of ["sent", "paid", "adjustment", "unreviewed", "grouped", "missing-draft"]) {
+      expect(screen.queryByRole("checkbox", { name: new RegExp(`POL-${id}`) })).not.toBeInTheDocument();
+    }
+    expect(screen.queryByRole("option", { name: /POL-grouped/ })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("checkbox", { name: /POL-ready/ }));
+    expect(screen.getByRole("checkbox", { name: /POL-different-term/ })).toBeDisabled();
+    expect(screen.getByRole("checkbox", { name: /TRAVELERS/ })).toBeEnabled();
+  });
+
+  it("leaves the combine action to the owner", async () => {
+    api.models.Policy.list.mockResolvedValue({ data: [preparedPolicy("ready"), travelers] });
+    api.models.Invoice.list.mockResolvedValue({ data: [preparedDraft("ready")] });
+    api.models.InvoiceLine.list.mockResolvedValue({ data: [preparedLine("ready")] });
+    render(<InvoicesTab accountId="a1" />);
+    await screen.findByRole("combobox");
+    expect(screen.queryByRole("button", { name: "Combine policies" })).not.toBeInTheDocument();
+  });
+});
 describe("invoice creation reliability", () => {
   it("does not create an unnumbered invoice when reservation fails", async () => {
     api.mutations.reserveInvoiceNumber.mockResolvedValue({ data: null, errors: [{ message: "Reservation failed" }] });

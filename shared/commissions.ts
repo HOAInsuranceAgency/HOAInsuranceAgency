@@ -121,7 +121,9 @@ export interface CommissionPolicy {
   carrierName: string;
   producerId: string;
   producerName: string;
-  boundAt: string;
+  /** An already-issued renewal can be recorded without an original bind timestamp. */
+  boundAt?: string;
+  issuedRenewalEvidence?: string;
   effectiveDate: string;
   expirationDate: string;
   transaction: 'NEW' | 'RENEWAL';
@@ -737,7 +739,10 @@ function automaticReceiptItems(policy: CommissionPolicy, total: number): Commiss
     return null;
   const evidence = payment.evidence;
   if (payment.basis === 'WRITTEN') {
-    const trigger = payment.trigger === 'BIND' ? bindCalendarDate(policy.boundAt) : day(policy.effectiveDate);
+    const trigger = payment.trigger === 'BIND'
+      ? policy.boundAt ? bindCalendarDate(policy.boundAt) : null
+      : day(policy.effectiveDate);
+    if (!trigger) return null;
     return { items: [{ dueOn: remittanceDue(trigger, payment), agencyCents: total }], evidence, confirmed: true, complete: true };
   }
   const start = day(policy.effectiveDate), end = day(policy.expirationDate);

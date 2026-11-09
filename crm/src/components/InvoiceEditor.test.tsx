@@ -2,7 +2,7 @@ import { useState } from "react";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
-import type { Contact, Invoice, InvoiceLine } from "../lib/client";
+import type { Account, Contact, Invoice, InvoiceLine, Policy } from "../lib/client";
 const h = vi.hoisted(() => ({ list: vi.fn(), update: vi.fn(), lineUpdate: vi.fn(), lineCreate: vi.fn(), lineDelete: vi.fn(), sourceGet: vi.fn(), get: vi.fn(), send: vi.fn(), voidInvoice: vi.fn(), change: vi.fn(), linesChange: vi.fn(), feeAction: vi.fn(), financeHint: vi.fn() }));
 vi.mock("../lib/client", () => ({
   client: { models: {
@@ -11,6 +11,7 @@ vi.mock("../lib/client", () => ({
     Policy: { get: h.sourceGet }, Quote: { get: h.sourceGet },
   }, mutations: { sendInvoice: h.send, voidInvoice: h.voidInvoice, brokerFeeAction: h.feeAction } },
   friendlyError: (e: unknown, fallback: string) => e instanceof Error ? e.message || fallback : fallback,
+  fmtDate: (date: string) => date,
 }));
 vi.mock("./FinanceOfferHint", () => ({ FinanceOfferHint: h.financeHint }));
 import InvoiceEditor from "./InvoiceEditor";
@@ -34,6 +35,59 @@ beforeEach(() => {
   h.send.mockResolvedValue({ data: { ok: true, sentTo: "primary@example.com" } });
   h.voidInvoice.mockResolvedValue({ data: { ok: true } });
   h.feeAction.mockImplementation(async () => { stored = {...stored,status:"PAID"}; return {data:{ok:true}}; });
+});
+
+const groupedTerm = { effectiveDate: "2026-11-01", expirationDate: "2027-11-01" };
+const groupedPolicies = [
+  { id: "p1", policyNumber: "PRIMARY" },
+  { id: "p2", policyNumber: "EXCESS" },
+  { id: "p3", policyNumber: "LIABILITY" },
+  { id: "p4", policyNumber: "TRAVELERS", carrierBillType: "DIRECT" },
+].map(policy => ({ ...policy, ...groupedTerm, status: "ACTIVE", billType: "AGENCY", lines: ["Commercial Property"] })) as Policy[];
+const groupedInvoice = { ...initial, sourcePricingVersion: 3, groupedPolicyIds: groupedPolicies.map(policy => policy.id) } as Invoice;
+const groupAccount = { id: "a1", type: "ASSOCIATION", state: "MA" } as Account;
+const groupedLines: InvoiceLine[] = ([
+  ["p1", "PREMIUM", 42000], ["p1", "WHOLESALER_FEE", 250], ["p1", "SURPLUS_LINES", 1320.25],
+  ["p2", "PREMIUM", 32000], ["p2", "WHOLESALER_FEE", 250], ["p2", "CARRIER_FEE", 50], ["p2", "SURPLUS_LINES", 1024],
+  ["p3", "PREMIUM", 3000], ["p3", "WHOLESALER_FEE", 120], ["p3", "CARRIER_FEE", 40], ["p3", "SURPLUS_LINES", 100],
+  ["p4", "PREMIUM", 1590.08],
+] as const).map(([policyId, kind, retailAmount], sortOrder) => ({
+  ...line, id: `grouped-line-${sortOrder}`, policyId, kind, retailAmount, costAmount: retailAmount, sortOrder,
+}));
+
+it("shows one aggregate financing schedule on a read-only combined draft", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-11-09T15:00:00Z"));
+  try {
+    h.list.mockResolvedValue({ data: groupedLines });
+    render(<InvoiceEditor invoice={groupedInvoice} policies={groupedPolicies} quotes={[]} account={groupAccount}
+      contacts={contacts} onChange={h.change} onLinesChange={h.linesChange} onDeleted={vi.fn()} />);
+    expect(await screen.findByText("$20,446.08 initial payment")).toBeInTheDocument();
+    expect(screen.getByText(/\$20,436.08 down plus \$10.00 origination fee/)).toBeInTheDocument();
+    expect(screen.getByText(/11 monthly payments/)).toHaveTextContent("11 monthly payments at 19.96% APR. The first 10 are $6,145.00 each and the final payment is $6,144.95.");
+    expect(screen.getByText("Carrier direct bill · HOA collection", { exact: false })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Send invoice|Void|Mark paid|Add line/ })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Memo")).toBeDisabled();
+    for (const input of screen.getAllByLabelText("Costs the agency")) expect(input).toBeDisabled();
+    expect(h.financeHint).not.toHaveBeenCalled();
+    expect(h.sourceGet).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByText("Payment schedule"));
+    const paymentTable = screen.getByRole("table", { name: "Combined payment schedule" });
+    const rows = within(paymentTable).getAllByRole("row");
+    expect(rows).toHaveLength(13);
+    for (const row of rows.slice(2, -1)) expect(within(row).getByText("$6,145.00")).toBeInTheDocument();
+    expect(within(rows.at(-1)!).getByText("$6,144.95")).toBeInTheDocument();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("blocks combined pricing when one constituent has no coverage classification", async () => {
+  h.list.mockResolvedValue({ data: groupedLines });
+  render(<InvoiceEditor invoice={groupedInvoice} policies={groupedPolicies.map(policy => policy.id === "p4" ? { ...policy, lines: [] } : policy)}
+    quotes={[]} account={groupAccount} contacts={contacts} onChange={h.change} onLinesChange={h.linesChange} onDeleted={vi.fn()} />);
+  expect(await screen.findByText(/TRAVELERS.*lists no coverage lines/)).toBeInTheDocument();
+  expect(screen.queryByText("Payment schedule")).not.toBeInTheDocument();
 });
 it("serializes independent blur saves and preserves a newer edit while the first request is pending", async () => {
   const first = deferred();

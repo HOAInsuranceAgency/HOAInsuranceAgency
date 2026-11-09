@@ -11,6 +11,7 @@ import { listAssigned } from "./listing";
 import { isActiveOwner, type RoleRequest } from "./active-role";
 import { assertUserSession } from "./user-status";
 import { publishCrmChange } from "../live-changes";
+import { createGroupedDraft } from "./grouped-draft";
 const s3 = fileClient();
 type Event = { identity?: Identity; request?: RoleRequest; fieldName?: string; info?: { fieldName?: string }; arguments?: RecordData; nativeConditions?: unknown; nativeAuthFilter?: unknown; mode?: "notify" | "quote-financial" | "session" | "read" | "write" | "list" | "admin" | "owner" | "custom-pre" | "custom-post"; model?: string; field?: string; operation?: string; previous?: unknown };
 export async function handler(event: Event) {
@@ -43,6 +44,10 @@ export async function handler(event: Event) {
   // Amplify's generated @function payload places fieldName at the top level.
   const field = id(event.fieldName) || id(event.info?.fieldName);
   if (field === "crmAccess") return { actorId: access.actor, admin: access.admin, salespersonIds: [...await access.salespeople()] };
+  if (field === "createGroupedInvoice") {
+    if (!isActiveOwner(event.identity, event.request)) throw new AccessDenied();
+    return createGroupedDraft(access, args);
+  }
   if (field !== "crmFile") throw new AccessDenied();
   const path = typeof args.path === "string" ? args.path : "", operation = id(args.operation);
   const Bucket = process.env.STORAGE_BUCKET; if (!Bucket) throw new Error("File access is not configured");

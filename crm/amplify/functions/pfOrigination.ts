@@ -13,6 +13,7 @@ import { evaluateEligibility } from "../../../shared/premiumFinance/eligibility"
 import { downPctViolation } from "../../../shared/premiumFinance/quote";
 import { financePricing, financeRateDates } from "../../../shared/premiumFinance/pricing";
 import { PF_CONFIG_SHA256 } from "../../../shared/premiumFinance/jurisdictions";
+import type { Write } from "./broker-fees/store";
 
 /**
  * The one way a loan originates.
@@ -76,6 +77,7 @@ export interface OriginationReads {
 export interface OriginationRequest {
   account: OriginationAccount;
   anchor: OriginationAnchor;
+  policyGuard?: Write;
   /** The amount being financed — under W8, the invoiced total. */
   premium: number;
   brokerFeeCents?: number;
@@ -367,6 +369,7 @@ export async function originateLoan(
                     },
                   },
                 },
+                ...(req.policyGuard ? [req.policyGuard] : []),
               ],
             })
           ));

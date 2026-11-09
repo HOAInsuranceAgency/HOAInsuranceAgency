@@ -41,7 +41,7 @@ const BASES: Record<string, number> = (() => {
   }
 })();
 
-export const handler = async (): Promise<{
+export const reserveNextInvoiceNumber = async (): Promise<{
   invoiceNumber: string;
   year: string;
   seq: number;
@@ -68,3 +68,5 @@ export const handler = async (): Promise<{
     seq,
   };
 };
+
+export const handler = reserveNextInvoiceNumber;

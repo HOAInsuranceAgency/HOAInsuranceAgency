@@ -12,7 +12,7 @@ import { bindPremiumFinanceTables, type FinanceBindingGroup } from '../../amplif
 // expected environments or grants from the feature's implementation registry.
 const expected = {
   pfAdmin: [['AGENCY_SETTINGS_TABLE', 'AgencySettings', 'readWrite'], ['PF_COMPLIANCE_LOG_TABLE', 'PfComplianceLog', 'readWrite']],
-  pfOriginate: [['PF_COMPLIANCE_LOG_TABLE', 'PfComplianceLog', 'readWrite'], ['AGENCY_SETTINGS_TABLE', 'AgencySettings', 'read'], ['PF_LOAN_TABLE', 'PfLoan', 'readWrite']],
+  pfOriginate: [['PF_COMPLIANCE_LOG_TABLE', 'PfComplianceLog', 'readWrite'], ['AGENCY_SETTINGS_TABLE', 'AgencySettings', 'read'], ['PF_LOAN_TABLE', 'PfLoan', 'readWrite'], ['POLICY_TABLE', 'Policy', 'read'], ['INVOICE_TABLE', 'Invoice', 'read']],
   pfServicing: [['PF_COMPLIANCE_LOG_TABLE', 'PfComplianceLog', 'readWrite'], ['PF_LOAN_TABLE', 'PfLoan', 'readWrite'], ['PF_LOAN_PAYMENT_TABLE', 'PfLoanPayment', 'readWrite'], ['PF_NOTICE_TABLE', 'PfNotice', 'readWrite']],
   pfDefaultSweep: [['PF_COMPLIANCE_LOG_TABLE', 'PfComplianceLog', 'readWrite'], ['PF_LOAN_TABLE', 'PfLoan', 'readWrite']],
   sendInvoice: [['INVOICE_TABLE', 'Invoice', 'readWrite'], ['PF_LOAN_TABLE', 'PfLoan', 'readWrite'], ['PF_COMPLIANCE_LOG_TABLE', 'PfComplianceLog', 'write'], ['AGENCY_SETTINGS_TABLE', 'AgencySettings', 'read']],
@@ -68,11 +68,11 @@ function currentBindings(value: ReturnType<typeof fixture>) {
   }
 }
 
-it('renders identical environments, IAM statements, stack placement and resource IDs for all 29 bindings', () => {
+it('renders identical environments, IAM statements, stack placement and resource IDs for all 31 bindings', () => {
   const before = fixture(), after = fixture();
   legacyBindings(before); currentBindings(after);
   expect(after.render()).toEqual(before.render());
-  expect(targets.reduce((count, name) => count + expected[name].length, 0)).toBe(29);
+  expect(targets.reduce((count, name) => count + expected[name].length, 0)).toBe(31);
 });
 
 it('preserves serialized template bytes around the independent legacy SITE_URL insertion points', () => {

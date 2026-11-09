@@ -12,6 +12,12 @@ export async function reserveInvoiceNumber(): Promise<string> {
     { requireOk: false, fallback: "Couldn't reserve an invoice number. Nothing was created; try again." });
   return value.invoiceNumber;
 }
+export async function createGroupedInvoice(input: { accountId: string; policyIds: string[] }): Promise<string> {
+  const result = await privateApiCall(client.mutations.createGroupedInvoice(input),
+    (value): value is ApiRecord & { ok: true; invoiceId: string } => value.ok === true && typeof value.invoiceId === 'string' && !!value.invoiceId,
+    { fallback: "Couldn't combine the selected policies." });
+  return result.invoiceId;
+}
 export async function reserveCertificateNumber(): Promise<string> {
   const value = await privateApiCall(client.mutations.reserveCertificateNumber(),
     (value): value is ApiRecord & { certificateNumber: string } => typeof value.certificateNumber === 'string' && !!value.certificateNumber,

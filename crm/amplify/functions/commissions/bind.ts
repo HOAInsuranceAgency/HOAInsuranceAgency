@@ -9,6 +9,7 @@ import { createHash } from 'node:crypto';
 import { QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { collectCompletePages } from '../storage/pages';
 import { AccountAccess, tableName } from '../crm-access/access';
+import { isActiveOwner } from '../crm-access/active-role';
 import { activeTeamUserCheck } from '../crm-access/user-status';
 import { object } from '../api-input';
 import {
@@ -36,6 +37,12 @@ import type { Event } from './handler';
 /** Financial snapshot, policy, quote status and client conversion share one
  * transaction. Retrying the same quote returns its original policy. */
 export async function bindPolicy(event: Event, input: Data) {
+  const issuedRenewal = Object.hasOwn(input, 'issuedRenewalEvidence') || Object.hasOwn(input, 'carrierBillType');
+  if (issuedRenewal && !isActiveOwner(event.identity, event.request))
+    throw new Error('Only the active Owner can record an already-issued renewal.');
+  const issuedRenewalEvidence = issuedRenewal
+    ? required(input.issuedRenewalEvidence, 'the issued renewal evidence', 2000)
+    : undefined;
   const access = new AccountAccess(event.identity, undefined, event.request),
     quoteId = required(input.quoteId, 'a quote');
   const quote = await access.requireRecord('Quote', quoteId),
@@ -58,8 +65,20 @@ export async function bindPolicy(event: Event, input: Data) {
     throw new Error('The quote changed. Refresh and confirm its exact terms.');
   if (quote.bindAuthorizedAt && quote.bindAuthorizedTerms !== authorizedQuoteTerms(quote))
     throw new Error('Renew client authorization for the changed policy terms before binding.');
-  if (!['AGENCY', 'DIRECT'].includes(String(input.billType)))
+  const billType = input.billType;
+  if (billType !== 'AGENCY' && billType !== 'DIRECT')
     throw new Error('Choose a bill type.');
+  const carrierBillType = issuedRenewal ? input.carrierBillType : billType;
+  if (carrierBillType !== 'AGENCY' && carrierBillType !== 'DIRECT')
+    throw new Error('Choose the carrier bill type.');
+  if (issuedRenewal && quote.billType != null && quote.billType !== carrierBillType)
+    throw new Error('The carrier’s billing type must match the recorded quote.');
+  const fillQuoteBillType = issuedRenewal && quote.billType == null;
+  if (carrierBillType !== billType && !(carrierBillType === 'DIRECT' && billType === 'AGENCY'))
+    throw new Error('HOA collection can only be selected for a carrier direct-bill renewal.');
+  const policyNumber = issuedRenewal
+    ? required(input.policyNumber, 'the issued policy number', 128)
+    : typeof input.policyNumber === 'string' ? input.policyNumber.trim() : '';
   const premiumCents = integer(
     decimal(required(input.premium, 'the exact premium')),
     1,
@@ -94,7 +113,8 @@ export async function bindPolicy(event: Event, input: Data) {
     commercial = await access.get('Communication', `commercial:${accountId}`);
   const producerId = required(object(workflow?.data).salespersonId, 'an assigned producer');
   const commercialPlan = commercial?.data as CommercialPlan | undefined;
-  if (commercialPlan?.selectedOptionId && !quote.renewalPolicyId) {
+  const transaction = issuedRenewal || quote.renewalPolicyId ? 'RENEWAL' : 'NEW';
+  if (commercialPlan?.selectedOptionId && transaction === 'NEW') {
     const selected = commercialPlan.options.find((o) => o.id === commercialPlan.selectedOptionId);
     if (
       !selected?.quoteIds.includes(quoteId) ||
@@ -112,11 +132,10 @@ export async function bindPolicy(event: Event, input: Data) {
     );
   const at = new Date().toISOString(),
     today = agencyDay(at);
-  const transaction = quote.renewalPolicyId ? 'RENEWAL' : 'NEW';
   const selectedCarrierTerms = selectCarrierPaymentTerms(carrierTerms, {
     effectiveDate,
     lines: quote.lines.filter((line): line is string => typeof line === 'string'),
-    billType: input.billType as 'AGENCY' | 'DIRECT',
+    billType: carrierBillType,
     transaction,
   });
   if (
@@ -135,6 +154,8 @@ export async function bindPolicy(event: Event, input: Data) {
   }
   const rateDate = transaction === 'RENEWAL' ? effectiveDate : today;
   const commissionAccount = await get<CommissionAccount>('ACCOUNT', accountId);
+  if (issuedRenewal && commissionAccount?.neverBound)
+    throw new Error('Correct the account’s original first-bind history before recording an issued renewal.');
 
   // Catch pre-feature policies whose quote status was never updated. Follow all
   // pages; do not turn a filtered empty first page into permission to rebind.
@@ -155,6 +176,9 @@ export async function bindPolicy(event: Event, input: Data) {
         'This quote already has a policy. Review the existing policy instead of binding again.',
       );
     for (const priorPolicy of found.Items ?? []) {
+      if (issuedRenewal && priorPolicy.carrierId === carrierId && priorPolicy.effectiveDate === effectiveDate &&
+          String(priorPolicy.policyNumber ?? '').trim().toUpperCase() === policyNumber.toUpperCase())
+        throw new Error('This carrier policy and term already exist. Review the existing policy.');
       hasPolicies = true;
       const bound = bindDay(priorPolicy.datePolicyBound);
       if (bound && (!earliestKnown || bound < earliestKnown)) earliestKnown = bound;
@@ -204,10 +228,11 @@ export async function bindPolicy(event: Event, input: Data) {
     __typename: 'Policy',
     accountId,
     quoteId,
-    policyNumber: typeof input.policyNumber === 'string' ? input.policyNumber.trim() : '',
+    policyNumber,
     status: 'ACTIVE',
-    datePolicyBound: at,
-    billType: input.billType,
+    ...(!issuedRenewal ? { datePolicyBound: at } : {}),
+    billType,
+    ...(carrierBillType !== billType ? { carrierBillType } : {}),
     createdAt: at,
     updatedAt: at,
     lastWriteBy: access.actor,
@@ -223,7 +248,7 @@ export async function bindPolicy(event: Event, input: Data) {
     carrierName: carrierTerms.name,
     producerId,
     producerName: plan.name,
-    boundAt: at,
+    ...(issuedRenewal ? { issuedRenewalEvidence } : { boundAt: at }),
     effectiveDate,
     expirationDate,
     transaction,
@@ -236,7 +261,7 @@ export async function bindPolicy(event: Event, input: Data) {
     entries: [],
   };
   const guards: Transaction = [
-    ...await brokerFeeBindWrites(quote,policyId,String(input.billType),initialFee?.version),
+    ...await brokerFeeBindWrites(quote,policyId,billType,initialFee?.version),
     {
       Put: {
         TableName: tableName('Policy'),
@@ -248,15 +273,18 @@ export async function bindPolicy(event: Event, input: Data) {
       Update: {
         TableName: tableName('Quote'),
         Key: { id: quoteId },
-        UpdateExpression: 'SET #s = :bound, updatedAt = :at, lastWriteBy = :actor',
-        ConditionExpression: 'updatedAt = :old AND #s = :status',
-        ExpressionAttributeNames: { '#s': 'status' },
+        UpdateExpression: 'SET #s = :bound, updatedAt = :at, lastWriteBy = :actor' +
+          (fillQuoteBillType ? ', #bt = :carrierBillType' : ''),
+        ConditionExpression: 'updatedAt = :old AND #s = :status' +
+          (fillQuoteBillType ? ' AND (attribute_not_exists(#bt) OR attribute_type(#bt, :nullType))' : ''),
+        ExpressionAttributeNames: { '#s': 'status', ...(fillQuoteBillType ? { '#bt': 'billType' } : {}) },
         ExpressionAttributeValues: {
           ':bound': 'BOUND',
           ':at': at,
           ':actor': access.actor,
           ':old': quote.updatedAt,
           ':status': quote.status,
+          ...(fillQuoteBillType ? { ':carrierBillType': carrierBillType, ':nullType': 'NULL' } : {}),
         },
       },
     },

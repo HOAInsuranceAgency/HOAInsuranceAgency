@@ -8,10 +8,12 @@ import { invoiceBrokerFeeAllocations, brokerFeeInvoiceRefresh } from "./brokerFe
 import { validateInvoiceSourceCharges } from "./passThroughInvoice";
 import { assertAdjustmentInvoiceProof, assertInitialInvoiceAvailable } from "./adjustmentInvoice";
 import { isNonpayableAdjustmentStatement } from "../../../../shared/invoicePaymentStatus";
+import { GROUPED_INVOICE_REVIEW_ONLY, isGroupedInvoice } from "../../../../shared/groupedInvoiceGuard";
+import { assertStandalonePolicyBilling, GroupedDraftBillingBlocked, standalonePolicyBillingGuard } from "../grouped-draft-billing";
 import { prepareBrokerFeeAgreement } from "../broker-fees/agreements";
 import { authorizedQuoteTerms } from "../../../../shared/quoteAuthorization";
 import { brokerFeeCents, feeAllocations, type BrokerFeeAllocation, type BrokerFeeInvoiceSendClaim } from "../../../../shared/brokerFees";
-import { getFee, getModel, modelTable, versionCheck, type Write } from "../broker-fees/store";
+import { getFee, getModel, type Write } from "../broker-fees/store";
 import { TransactionalMailClient } from "../transactional-mail/client";
 import { MailDeliveryError } from "../transactional-mail/contract";
 import { currentContacts, billingContact } from "../../../../shared/contacts";
@@ -38,6 +40,7 @@ import { createPaymentLink, InactivePaymentLink, toCents } from "./stripeLink";
 import { buildMimeMessage } from "./mime";
 import { pdfFilename, renderInvoicePdf } from "./pdf";
 import { beginInvoiceSend, completeInvoiceSend, InvoiceSendBlocked } from "./sendOperation";
+import type { Schema } from "../../data/resource";
 
 /**
  * Custom mutation handler: sendInvoice. See resource.ts for the why.
@@ -95,7 +98,8 @@ export async function financeOffer(
   anchor: FinanceAnchor | null,
   retailTotal: number,
   recipientEmail: string | null,
-  allocations: BrokerFeeAllocation[] = []
+  allocations: BrokerFeeAllocation[] = [],
+  policyGuard?: Write
 ): Promise<{ url: string; downPayment: number; monthly: number; months: number; apr: number; originationFee: number; brokerFee: number } | null> {
   if (!anchor || retailTotal <= 0) return null;
   const brokerFeeTotalCents = allocations.reduce((sum, allocation) => sum + allocation.amountCents, 0);
@@ -240,6 +244,7 @@ export async function financeOffer(
           premium: retailTotal,
           brokerFeeCents: brokerFeeTotalCents,
           brokerFeeAllocations: allocations,
+          ...(policyGuard ? { policyGuard } : {}),
           downPct: PF_DEFAULT_DOWN_PCT,
           months: PF_DEFAULT_MONTHS,
           effectiveDate: today,
@@ -646,7 +651,7 @@ async function storeLink(
       };
     if (next.allocations.length) {
       if (!next.claim) throw new SendBlocked("The broker fee invoice has no payment setup reservation.");
-      return await publishFeeInvoiceLink(invoiceId, next.allocations, next.claim.token, next.linkId, { Update: update });
+      return await publishFeeInvoiceLink(invoiceId, next.allocations, next.claim.token, next.linkId, { Update: update }, next.proofGuards);
     }
     if(next.proofGuards?.length)await ddb.send(new TransactWriteCommand({TransactItems:[{Update:update},...next.proofGuards]}));
     else await ddb.send(new UpdateCommand(update));
@@ -738,6 +743,7 @@ export const handler = async (event: {
   try {
     const { data: invoice } = await client.models.Invoice.get({ id: invoiceId });
     if (!invoice) return { ok: false, error: "That invoice no longer exists." };
+    if (isGroupedInvoice(invoice)) return { ok: false, error: GROUPED_INVOICE_REVIEW_ONLY };
     if (invoice.status === "VOID") {
       return { ok: false, error: "That invoice has been voided." };
     }
@@ -809,8 +815,10 @@ export const handler = async (event: {
     const headerPolicyId =
       invoice.policyId ?? (linePolicyIds.length === 1 ? linePolicyIds[0] : null);
     const policy = headerPolicyId
-      ? (await client.models.Policy.get({ id: headerPolicyId })).data
+      ? await getModel<Schema["Policy"]["type"]>("Policy", headerPolicyId)
       : null;
+    if (headerPolicyId && (!policy || policy.accountId !== invoice.accountId)) throw new SendBlocked("The invoice policy could not be verified.");
+    if (policy) await assertStandalonePolicyBilling(policy);
 
     /**
      * W8: every invoice bills exactly one anchor — a policy, or a quote
@@ -916,6 +924,7 @@ export const handler = async (event: {
 
     await assertInitialInvoiceAvailable(invoice);
     const adjustmentProof=await assertAdjustmentInvoiceProof(invoice);
+    const policyGuard = policy ? standalonePolicyBillingGuard(policy) : undefined;
     const feeSource = policy ?? quoteAnchor;
     const sourceQuoteId = policy?.quoteId ?? quoteAnchor?.id;
     const expectedFeeCents = brokerFeeCents(feeSource?.brokerFee);
@@ -995,7 +1004,10 @@ export const handler = async (event: {
       split,
       allocations,
       feeSendClaim,
-      adjustmentProof?[...adjustmentProof.guards,versionCheck(modelTable('Policy'),adjustmentProof.policy as {id:string;updatedAt:string})]:invoice.sourcePricingVersion===1&&quoteAnchor&&!allocations.length?await initialQuotePublicationWrites(invoice,quoteAnchor):[]
+      adjustmentProof
+        ? [...adjustmentProof.guards, standalonePolicyBillingGuard(adjustmentProof.policy as { id: string; updatedAt: string }, true)]
+        : policyGuard ? [policyGuard] : invoice.sourcePricingVersion === 1 && quoteAnchor && !allocations.length
+          ? await initialQuotePublicationWrites(invoice, quoteAnchor) : []
     );
 
     // W8: the other side of the fork originates HERE, at fixed terms on
@@ -1012,7 +1024,8 @@ export const handler = async (event: {
       anchor,
       financeableInvoiceTotal(lines),
       to[0] ?? null,
-      allocations
+      allocations,
+      policyGuard
     );
 
     /**
@@ -1174,7 +1187,7 @@ export const handler = async (event: {
     console.log(`send-invoice sent ${invoice.number ?? invoiceId} to ${to.join(", ")}`);
     return result;
   } catch (err) {
-    if (err instanceof SendBlocked || err instanceof InvoiceSendBlocked || err instanceof MailDeliveryError) {
+    if (err instanceof SendBlocked || err instanceof GroupedDraftBillingBlocked || err instanceof InvoiceSendBlocked || err instanceof MailDeliveryError) {
       return { ok: false, error: err.message };
     }
     captureHandledFailure(err);

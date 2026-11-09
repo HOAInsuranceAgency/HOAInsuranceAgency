@@ -27,7 +27,7 @@ import { ArnFormat, CustomResource, Duration, Names, Stack, TimeZone } from "aws
 import { Provider } from "aws-cdk-lib/custom-resources";
 import { Schedule, ScheduleExpression, ScheduleTargetInput, ContextAttribute } from "aws-cdk-lib/aws-scheduler";
 import { LambdaInvoke } from "aws-cdk-lib/aws-scheduler-targets";
-import { Policy, PolicyStatement } from "aws-cdk-lib/aws-iam";
+import { ManagedPolicy, Policy, PolicyStatement } from "aws-cdk-lib/aws-iam";
 import { Secret } from "aws-cdk-lib/aws-secretsmanager";
 import { CfnUserPoolIdentityProvider } from "aws-cdk-lib/aws-cognito";
 import {
@@ -202,6 +202,19 @@ const invoiceSeqTable = new Table(invoiceStack, "InvoiceSequence", {
 invoiceSeqTable.grantReadWriteData(backend.invoiceNumber.resources.lambda);
 backend.invoiceNumber.addEnvironment("SEQ_TABLE", invoiceSeqTable.tableName);
 backend.invoiceNumber.addEnvironment("INVOICE_PREFIX", "INV");
+backend.crmAccess.addEnvironment("SEQ_TABLE", invoiceSeqTable.tableName);
+const draftPermissionStack = backend.createStack("GroupedDraftPermissions");
+const draftModelArn = (model: string) => Stack.of(backend.data.resources.graphqlApi).formatArn({
+  service: "dynamodb", resource: "table", resourceName: `${model}-${backend.data.resources.graphqlApi.apiId}-NONE`,
+});
+new ManagedPolicy(draftPermissionStack, "GroupedDraftWrites", {
+  roles: [backend.crmAccess.resources.lambda.role!],
+  statements: [
+    new PolicyStatement({ actions: ["dynamodb:UpdateItem"], resources: [invoiceSeqTable.tableArn, ...["Invoice", "Policy"].map(draftModelArn)] }),
+    new PolicyStatement({ actions: ["dynamodb:PutItem"], resources: ["Invoice", "InvoiceLine"].map(draftModelArn) }),
+    new PolicyStatement({ actions: ["dynamodb:ConditionCheckItem"], resources: ["Account", "Quote", "InvoiceLine"].map(draftModelArn) }),
+  ],
+});
 
 // ── Activity log: DynamoDB Streams → Activity rows ───────────────────
 //

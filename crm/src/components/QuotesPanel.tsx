@@ -32,6 +32,7 @@ import { brokerFeeCents } from "../../../shared/brokerFees";
 import PolicyCharges from "./PolicyCharges";
 import { readCarrierPaymentPreview } from '../lib/commissions';
 import { COMMISSION_BASES } from '../../../shared/commissions';
+import { useIsOwner } from '../lib/auth';
 
 /** Commission is baked into the premium — the $ figure is the agency's cut,
  * never an addition on top. */
@@ -484,6 +485,7 @@ function BindForm({
   onDone: (updatedAccount: Account | null) => void;
   onError: (msg: string) => void;
 }) {
+  const owner = useIsOwner();
   const [policyNumber, setPolicyNumber] = useState("");
   const [premium, setPremium] = useState(quote.premium == null ? "" : String(quote.premium));
   const [agencyRate, setAgencyRate] = useState(quote.commissionPct == null ? "" : String(quote.commissionPct));
@@ -496,14 +498,21 @@ function BindForm({
    * association directly is an invoice sent for money already paid.
    */
   const [billType, setBillType] = useState<BillType | "">(quote.billType ?? "");
+  const [recordingRenewal, setRecordingRenewal] = useState(false);
+  const [renewalEvidence, setRenewalEvidence] = useState("");
+  const [hoaCollects, setHoaCollects] = useState(false);
+  const issuedRenewal = owner && recordingRenewal;
+  const carrierBillType = issuedRenewal && quote.billType ? quote.billType : billType;
+  const collectionBillType = issuedRenewal && carrierBillType === "DIRECT" && hoaCollects ? "AGENCY" : carrierBillType;
+  const renewalReady = !issuedRenewal || Boolean(renewalEvidence.trim() && policyNumber.trim());
   const hasBrokerFee = (quote.brokerFee ?? 0) > 0;
   const [paymentConfirmation, setPaymentConfirmation] = useState('');
   const paymentPreview = useAsyncResource(
-    () => readCarrierPaymentPreview(quote.id, billType),
-    [quote.id, quote.updatedAt, billType],
-    { manual: !billType || (hasBrokerFee && billType !== "AGENCY"), clearDataOnError: () => true , live: true },
+    () => readCarrierPaymentPreview(quote.id, carrierBillType, issuedRenewal),
+    [quote.id, quote.updatedAt, carrierBillType, issuedRenewal],
+    { manual: !carrierBillType || (hasBrokerFee && carrierBillType !== "AGENCY"), clearDataOnError: () => true , live: true },
   );
-  const paymentKey = JSON.stringify({ billType, preview: paymentPreview.data });
+  const paymentKey = JSON.stringify({ carrierBillType, issuedRenewal, preview: paymentPreview.data });
   const paymentReady = !!paymentPreview.data && !paymentPreview.loading && !paymentPreview.error &&
     (!paymentPreview.data.payment || paymentConfirmation === paymentKey);
   const [saving, setSaving] = useState(false);
@@ -533,14 +542,15 @@ function BindForm({
   async function bind() {
     // Belt and braces: the button is disabled without one, but `bind` is the
     // thing that writes the row and an unset bill type must never reach it.
-    if (!billType || (hasBrokerFee && billType !== "AGENCY") || !confirmed || !paymentReady || bindLock.current) return;
+    if (!carrierBillType || (hasBrokerFee && carrierBillType !== "AGENCY") || !renewalReady || !confirmed || !paymentReady || bindLock.current) return;
     bindLock.current = true;
     let policyCreated = false;
     setSaving(true);
     onError("");
     try {
       const result = await bindCommissionPolicy({
-        quoteId: quote.id, terms: packageTerms(quote), premium, agencyRate, billType, policyNumber,
+        quoteId: quote.id, terms: packageTerms(quote), premium, agencyRate, billType: collectionBillType, policyNumber,
+        ...(issuedRenewal ? { issuedRenewalEvidence: renewalEvidence.trim(), carrierBillType } : {}),
         carrierTermsVersion: paymentPreview.data!.carrierTermsVersion,
         carrierArrangementId: paymentPreview.data!.payment?.id,
       });
@@ -654,16 +664,25 @@ function BindForm({
       ) : (
         <>
           <p className="small muted">Confirm the exact commissionable premium and agency percentage from the accepted quote. To change either amount, edit the quote first. Producer earnings follow receipts and the agreement saved by the Owner. Broker fees use the same producer share, separately from carrier commission.</p>
+          {owner && <label><Input type="checkbox" checked={issuedRenewal} disabled={saving} onChange={e => {
+            setRecordingRenewal(e.target.checked);
+            setHoaCollects(false);
+            setConfirmed(false);
+            setPaymentConfirmation("");
+          }} /> Record an already-issued renewal</label>}
+          {issuedRenewal && <label className="field">Renewal evidence
+            <Input value={renewalEvidence} maxLength={2000} disabled={saving} onChange={e => setRenewalEvidence(e.target.value)} />
+          </label>}
           {(quote.brokerFee ?? 0) > 0 && <div className="small" role="status"><strong>Broker fee: {fmtMoney(quote.brokerFee)}</strong><p>{feeStatus.loading ? "Checking signed disclosure and payment…" : feeStatus.error || (!currentFeeSigned ? "Client signature is needed on the current broker fee disclosure." : feeStatus.data!.collectedCents >= feeStatus.data!.amountCents ? "Disclosure signed · payment received." : feeStatus.data!.submittedCents >= feeStatus.data!.amountCents ? "Disclosure signed · payment submitted and clearing." : "Disclosure signed · fee payment is still needed.")}</p>{feeStatus.error && <Button variant="link" disabled={feeStatus.loading || saving} onClick={() => void feeStatus.refetch()}>Retry fee status</Button>}</div>}
           <div className="form-grid">
             <label className="field">Exact policy premium ($)<Input aria-label="Exact policy premium" inputMode="decimal" value={premium} disabled={saving} onChange={e => { setPremium(e.target.value); setConfirmed(false); }} /></label>
             <label className="field">Agency commission (%)<Input aria-label="Agency commission percentage" inputMode="decimal" value={agencyRate} disabled={saving} onChange={e => { setAgencyRate(e.target.value); setConfirmed(false); }} /></label>
             <div className="field">
-              <label htmlFor="bind-bill-type">Bill type (required)</label>
+              <label htmlFor="bind-bill-type">{issuedRenewal ? "Carrier bill type (required)" : "Bill type (required)"}</label>
               <Select
                 id="bind-bill-type"
-                value={billType}
-                disabled={saving || (quote.brokerFee ?? 0) > 0}
+                value={carrierBillType}
+                disabled={saving || (issuedRenewal && !!quote.billType) || hasBrokerFee}
                 onChange={(e) => setBillType(e.target.value as BillType | "")}
               >
                 <option value="">Choose…</option>
@@ -677,23 +696,25 @@ function BindForm({
             </div>
             <div className="field">
               <label htmlFor="bind-policy-number">
-                Policy number (can be added later)
+                {issuedRenewal ? "Issued policy number (required)" : "Policy number (can be added later)"}
               </label>
               <Input
                 id="bind-policy-number"
                 value={policyNumber}
+                maxLength={issuedRenewal ? 128 : undefined}
                 disabled={saving}
                 onChange={(e) => setPolicyNumber(e.target.value)}
               />
             </div>
           </div>
-          {billType === "DIRECT" && (
+          {issuedRenewal && carrierBillType === "DIRECT" && <label><Input type="checkbox" checked={hoaCollects} disabled={saving} onChange={e => setHoaCollects(e.target.checked)} /> HOA will collect the premium</label>}
+          {carrierBillType === "DIRECT" && !issuedRenewal && (
             <p className="small muted">
               The carrier bills the association and pays us commission
               afterwards.
             </p>
           )}
-          {billType && (
+          {carrierBillType && (
             <div className="card" aria-label="Carrier commission payment arrangement">
               {paymentPreview.loading && <p className="small muted">Loading carrier payment terms…</p>}
               {paymentPreview.error && <p role="alert">{paymentPreview.error}</p>}
@@ -722,10 +743,10 @@ function BindForm({
           <div className="form-actions quote-flow-actions">
             <Button variant="primary"
 
-              disabled={saving || !billType || (hasBrokerFee && billType !== "AGENCY") || !confirmed || !paymentReady || !premium || !agencyRate}
+              disabled={saving || !carrierBillType || (hasBrokerFee && carrierBillType !== "AGENCY") || !renewalReady || !confirmed || !paymentReady || !premium || !agencyRate}
               onClick={bind}
             >
-              {saving ? "Binding…" : "Confirm bind"}
+              {issuedRenewal ? saving ? "Recording…" : "Record renewal" : saving ? "Binding…" : "Confirm bind"}
             </Button>
             <Button variant="secondary"  disabled={saving} onClick={() => onDone(null)}>
               Cancel
