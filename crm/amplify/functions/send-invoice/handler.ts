@@ -16,7 +16,7 @@ import { authorizedQuoteTerms } from "../../../../shared/quoteAuthorization";
 import { brokerFeeCents, feeAllocations, type BrokerFeeAllocation, type BrokerFeeInvoiceSendClaim } from "../../../../shared/brokerFees";
 import { getFee, getModel, type Write } from "../broker-fees/store";
 import { TransactionalMailClient } from "../transactional-mail/client";
-import { MailDeliveryError } from "../transactional-mail/contract";
+import { hash, MailDeliveryError, payload } from "../transactional-mail/contract";
 import { currentContacts, billingContact } from "../../../../shared/contacts";
 import { randomUUID } from "node:crypto";
 import { SendEmailCommand } from "@aws-sdk/client-sesv2";
@@ -43,6 +43,7 @@ import { createPaymentLink, InactivePaymentLink, toCents } from "./stripeLink";
 import { buildMimeMessage } from "./mime";
 import { pdfFilename, renderInvoicePdf } from "./pdf";
 import { beginInvoiceSend, completeInvoiceSend, InvoiceSendBlocked } from "./sendOperation";
+import { prepareGroupedDelivery, reconcileAcceptedGroupedSend } from "./groupedDelivery";
 import type { Schema } from "../../data/resource";
 
 /**
@@ -141,7 +142,7 @@ export async function financeOffer(
   allocations: BrokerFeeAllocation[] = [],
   policy?: BillingPolicy | null,
   grouped?: GroupedSendClaim
-): Promise<(NonNullable<InvoiceView["finance"]> & { groupLoanId?: string }) | null> {
+): Promise<(NonNullable<InvoiceView["finance"]> & { groupDelivery?: { loanId: string; tokenHash: string } }) | null> {
   if (!anchor || retailTotal <= 0) return null;
   if ((anchor.kind === "groupedInvoice") !== !!grouped) return null;
   if (grouped && allocations.length) return null;
@@ -375,6 +376,7 @@ export async function financeOffer(
         { ConditionCheck: groupedInvoiceCondition(grouped, loan.id) },
       ] }));
     }
+    if (!token) return null;
     return {
       url: `${siteUrl}/finance/?t=${token}`,
       downPayment: loan.downPayment,
@@ -384,7 +386,7 @@ export async function financeOffer(
       months: loan.months,
       apr: loan.apr,
       ...(finalPayment !== undefined ? { finalPayment } : {}),
-      ...(grouped ? { groupLoanId: loan.id } : {}),
+      ...(grouped ? { groupDelivery: { loanId: loan.id, tokenHash: hash(token) } } : {}),
     };
   } catch (err) {
     console.warn("[send-invoice] financing offer omitted", err);
@@ -743,8 +745,7 @@ async function recordSend(
   invoiceId: string,
   seenStatus: string | null,
   facts: Record<string, unknown>,
-  flipToSent: boolean,
-  group?: { loanId: string; leaseId: string }
+  flipToSent: boolean
 ): Promise<boolean> {
   const tableName = process.env.INVOICE_TABLE;
   if (!tableName) {
@@ -769,13 +770,12 @@ async function recordSend(
         TableName: tableName,
         Key: { id: invoiceId },
         UpdateExpression: flipToSent ? `${factExpr}, #s = :sent` : factExpr,
-        ConditionExpression: "#s = :seenStatus" + (group ? " AND groupedFinanceLoanId = :loan AND #op.#lease = :lease" : ""),
-        ExpressionAttributeNames: { ...factNames, "#s": "status", ...(group ? { "#op": "invoiceSendOperation", "#lease": "leaseId" } : {}) },
+        ConditionExpression: "#s = :seenStatus",
+        ExpressionAttributeNames: { ...factNames, "#s": "status" },
         ExpressionAttributeValues: {
           ...values,
           ":seenStatus": seenStatus,
           ...(flipToSent ? { ":sent": "SENT" } : {}),
-          ...(group ? { ":loan": group.loanId, ":lease": group.leaseId } : {}),
         },
       })
     );
@@ -785,7 +785,6 @@ async function recordSend(
       throw err;
     }
   }
-  if (group) return false;
   // The row moved. Record the facts, leave the status to whoever won.
   await ddb.send(
     new UpdateCommand({
@@ -799,7 +798,7 @@ async function recordSend(
   return false;
 }
 
-async function deliverInvoice({ invoice, view, to, tracked, split, allocations, feeSendClaim, financeUrl, groupLoanId, onAccepted }: {
+async function deliverInvoice({ invoice, view, to, tracked, split, allocations, feeSendClaim, financeUrl, groupDelivery, onAccepted }: {
   invoice: Schema["Invoice"]["type"];
   view: InvoiceView;
   to: string[];
@@ -808,7 +807,7 @@ async function deliverInvoice({ invoice, view, to, tracked, split, allocations, 
   allocations: BrokerFeeAllocation[];
   feeSendClaim?: BrokerFeeInvoiceSendClaim;
   financeUrl?: string | null;
-  groupLoanId?: string;
+  groupDelivery?: { loanId: string; tokenHash: string };
   onAccepted: () => void;
 }) {
   const invoiceId = invoice.id;
@@ -857,18 +856,27 @@ async function deliverInvoice({ invoice, view, to, tracked, split, allocations, 
     html,
     attachment,
   });
-  const accepted = await ses.send(
-    new SendEmailCommand({
-      FromEmailAddress: FROM,
-      Destination: {
-        ToAddresses: to,
-        ...(selfAddressed ? {} : { BccAddresses: [MAILBOX] }),
-      },
-      Content: { Raw: { Data: Buffer.from(raw, "utf8") } },
-    }),
-    { idempotencyKey: tracked?.operation.key ?? `invoice:${invoiceId}:${invoice.updatedAt ?? invoice.sentAt ?? "initial"}:${to.join(",")}`, subject, text, html, replyTo: MAILBOX, attachments: attachment ? [attachment] : [] }
-  );
+  const command = new SendEmailCommand({
+    FromEmailAddress: FROM,
+    Destination: { ToAddresses: to, ...(selfAddressed ? {} : { BccAddresses: [MAILBOX] }) },
+    Content: { Raw: { Data: Buffer.from(raw, "utf8") } },
+  });
+  const details = { idempotencyKey: tracked?.operation.key ?? `invoice:${invoiceId}:${invoice.updatedAt ?? invoice.sentAt ?? "initial"}:${to.join(",")}`,
+    subject, text, html, replyTo: MAILBOX, attachments: attachment ? [attachment] : [] };
+  if (view.financeOnly) {
+    if (!groupDelivery || !tracked) throw new SendBlocked("The grouped delivery could not be reserved. No email was sent.");
+    await prepareGroupedDelivery(invoiceId, tracked.operation, {
+      ...groupDelivery, payloadHash: hash(JSON.stringify(payload(command.input, details))), sentTo: to.join(", "), subject,
+      carrierCents: split.carrierCents, commissionCents: split.commissionCents,
+    }, ddb);
+  }
+  const accepted = await ses.send(command, details);
   if (tracked) onAccepted();
+  if (groupDelivery) {
+    const reconciled = await reconcileAcceptedGroupedSend(invoiceId, { loanId: groupDelivery.loanId, providerId: accepted.MessageId, to }, ddb);
+    if (!reconciled) throw new SendBlocked("The financing email was accepted, but its send details need review. Do not send a replacement.");
+    return reconciled;
+  }
 
   /**
    * DRAFT becomes SENT; a resend of an already-SENT or PAID invoice leaves
@@ -899,8 +907,7 @@ async function deliverInvoice({ invoice, view, to, tracked, split, allocations, 
     sentTo: to.join(", "),
     ...(invoice.status === "PAID" || invoice.status === "PROCESSING" ? {} : {
       remittanceCarrierCents: split.carrierCents, remittanceCommissionCents: split.commissionCents, remittanceInterestCents: split.interestCents,
-      remittanceBrokerFeeCents: split.brokerFeeCents,
-      ...(!view.financeOnly ? { brokerFeeAllocations: JSON.stringify(allocations), brokerFeeFinanceUrl: financeUrl ?? null } : {}),
+      remittanceBrokerFeeCents: split.brokerFeeCents, brokerFeeAllocations: JSON.stringify(allocations), brokerFeeFinanceUrl: financeUrl ?? null,
     }),
     // Named, because this write does not go through the browser's actor
     // proxy. Without it the activity log would say "System" sent the bill,
@@ -911,11 +918,9 @@ async function deliverInvoice({ invoice, view, to, tracked, split, allocations, 
     invoiceId,
     invoice.status ?? null,
     sentFacts,
-    invoice.status === "DRAFT",
-    groupLoanId && tracked ? { loanId: groupLoanId, leaseId: tracked.operation.leaseId } : undefined
+    invoice.status === "DRAFT"
   );
   if (!recorded) {
-    if (view.financeOnly) throw new SendBlocked("The financing email was accepted, but its send details need review. Do not send a replacement.");
     console.error(
       `send-invoice: ${invoice.number ?? invoiceId} changed mid-send; recorded the send without touching its status`
     );
@@ -1007,9 +1012,11 @@ export const handler = async (event: {
       if (invoice.status === "SENT" && invoice.sentAt && observed === invoice.sentAt) {
         throw new SendBlocked("The combined financing invoice has already been sent.");
       }
-      if (!["resend", "ses"].includes(process.env.HOA_TRANSACTIONAL_MAIL_PROVIDER ?? "")) {
+      if (process.env.HOA_TRANSACTIONAL_MAIL_PROVIDER !== "ses") {
         throw new SendBlocked("Combined invoice delivery is not configured. No email was sent.");
       }
+      const reconciled = await reconcileAcceptedGroupedSend(invoiceId, { to, previousSentAt: observed }, ddb);
+      if (reconciled) return reconciled;
       if (invoice.status === "DRAFT" && (!process.env.STRIPE_SECRET_KEY || !process.env.PF_LOAN_TABLE || !process.env.SITE_URL)) {
         throw new SendBlocked("Financing payments are not configured. No email was sent.");
       }
@@ -1026,7 +1033,7 @@ export const handler = async (event: {
         coverageEffectiveDate: first?.effectiveDate,
         members: group.policies.map((policy, i) => ({ id: policy.id, lines: policy.lines ?? [], agreementLine: group.agreementLines[i] ?? "" })),
       }, group.premium, to[0] ?? null, [], null, { ...group, leaseId: tracked.operation.leaseId });
-      if (!finance?.groupLoanId) {
+      if (!finance?.groupDelivery) {
         await releaseUnfundedGroupedSend(group, tracked.operation);
         throw new SendBlocked("Financing could not be prepared for this combined invoice. No email was sent.");
       }
@@ -1040,7 +1047,7 @@ export const handler = async (event: {
         issuedAt: invoice.issuedAt, financeOnly: true, finance, lines: group.lines,
       };
       return await deliverInvoice({ invoice, view, to, tracked, split: remittanceSplit(group.lines), allocations: [],
-        groupLoanId: finance.groupLoanId, onAccepted: () => { acceptedForReview = true; } });
+        groupDelivery: finance.groupDelivery, onAccepted: () => { acceptedForReview = true; } });
     }
 
     /**

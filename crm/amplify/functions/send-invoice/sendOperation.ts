@@ -12,16 +12,21 @@ const LEASE_MS = 120_000;
 export const INVOICE_SEND_GENERATION = "invoice-send-v1-2026-11-02";
 type Invoice = { id: string; updatedAt?: string | null; sentAt?: string | null; status?: string | null };
 type Result = { ok: true; sentTo: string; subject: string; sentAt: string };
+export type GroupedDeliveryProof = {
+  loanId: string; tokenHash: string; payloadHash: string; sentTo: string; subject: string;
+  carrierCents: number; commissionCents: number;
+};
 export type InvoiceSendOperation = {
   version: 1; key: string; recipients: string; previousSentAt: string | null;
   leaseId: string; leaseUntil: number;
   completed?: { providerId: string; result: Result };
+  groupedDelivery?: GroupedDeliveryProof;
   retired?: { reason: "VOID"; invoiceId: string; retiredAt: string; closedLinkId: string | null };
 };
 type Dependencies = { database: Pick<DynamoDBDocumentClient, "send">; now?: () => number; uuid?: () => string; invoiceTable?: string };
 export class InvoiceSendBlocked extends Error {}
 const blocked = (message: string): never => { throw new InvoiceSendBlocked(message); };
-function environment() {
+export function invoiceSendEnvironment() {
   if (process.env.HOA_MIGRATION_APP_ID !== "d1nuh9rw1hcuxo"
     || process.env.HOA_TRANSACTIONAL_MAIL_TABLE !== "HOA-TransactionalMail"
     || !["codex-hoa-account-migration", "codex-hoa-staging-migration"].includes(process.env.HOA_MIGRATION_BRANCH ?? "")) {
@@ -29,7 +34,7 @@ function environment() {
   }
   return process.env.HOA_MIGRATION_BRANCH === "codex-hoa-account-migration" ? "main" : "staging";
 }
-function valid(value: any): value is InvoiceSendOperation {
+export function validInvoiceSendOperation(value: any): value is InvoiceSendOperation {
   return value?.version === 1 && typeof value.key === "string" && value.key.startsWith("invoice:")
     && /^[a-f0-9]{64}$/.test(value.recipients) && (value.previousSentAt === null || typeof value.previousSentAt === "string")
     && typeof value.leaseId === "string" && Number.isFinite(value.leaseUntil)
@@ -41,7 +46,7 @@ function valid(value: any): value is InvoiceSendOperation {
  * It preserves uncertain delivery history without treating it as a success. */
 export function isRetiredInvoiceSend(invoice: Record<string, unknown>): boolean {
   const operation = invoice.invoiceSendOperation;
-  if (!valid(operation) || !operation.key.startsWith(`invoice:${invoice.id}:`) || invoice.status !== 'VOID') return false;
+  if (!validInvoiceSendOperation(operation) || !operation.key.startsWith(`invoice:${invoice.id}:`) || invoice.status !== 'VOID') return false;
   const retired = operation.retired, at = Date.parse(retired?.retiredAt ?? '');
   return retired?.reason === 'VOID' && retired.invoiceId === invoice.id && Number.isFinite(at)
     && (operation.completed !== undefined || operation.leaseUntil <= at)
@@ -49,7 +54,7 @@ export function isRetiredInvoiceSend(invoice: Record<string, unknown>): boolean 
 }
 export function invoiceSendSettled(invoice: Record<string, unknown>): boolean {
   const operation = invoice.invoiceSendOperation;
-  return operation == null || isRetiredInvoiceSend(invoice) || valid(operation) && !operation.retired && !!operation.completed;
+  return operation == null || isRetiredInvoiceSend(invoice) || validInvoiceSendOperation(operation) && !operation.retired && !!operation.completed;
 }
 /** Void can retire the existing operation only after its worker has drained.
  * This exceeds Send's hard 60-second timeout. A current operator recovery has
@@ -57,13 +62,13 @@ export function invoiceSendSettled(invoice: Record<string, unknown>): boolean {
 export async function prepareInvoiceSendRetirement(invoice: Record<string, unknown>, deps: Dependencies): Promise<{ operation?: InvoiceSendOperation; writes: Write[] }> {
   const previous = invoice.invoiceSendOperation;
   if (previous === undefined) return { writes: [] };
-  if (!valid(previous) || !previous.key.startsWith(`invoice:${invoice.id}:`)) return blocked('The invoice delivery record needs review before it can be retired.');
+  if (!validInvoiceSendOperation(previous) || !previous.key.startsWith(`invoice:${invoice.id}:`)) return blocked('The invoice delivery record needs review before it can be retired.');
   if (isRetiredInvoiceSend(invoice)) return { operation: previous, writes: [] };
   const now = (deps.now ?? Date.now)();
   if (!previous.completed && previous.leaseUntil > now) return blocked('This invoice send is still in progress. Wait two minutes, then retry Void.');
   const retiredAt = new Date(now).toISOString();
   const operation: InvoiceSendOperation = { ...previous, retired: { reason: 'VOID', invoiceId: String(invoice.id), retiredAt, closedLinkId: typeof invoice.stripePaymentLinkId === 'string' && invoice.stripePaymentLinkId ? invoice.stripePaymentLinkId : null } };
-  const env = environment(), TableName = process.env.HOA_TRANSACTIONAL_MAIL_TABLE!;
+  const env = invoiceSendEnvironment(), TableName = process.env.HOA_TRANSACTIONAL_MAIL_TABLE!;
   const key = `OP#hoa/${env}/invoice/${hash(previous.key)}`;
   const ledger = (await deps.database.send(new GetCommand({ TableName, Key: { pk: key }, ConsistentRead: true }))).Item;
   if (ledger?.state === 'SENDING' && (!Number.isFinite(Date.parse(ledger.updatedAt)) || Date.parse(ledger.updatedAt) + LEASE_MS > now)) return blocked('This invoice email is still in progress. Wait two minutes, then retry Void.');
@@ -112,7 +117,7 @@ export function validLegacyAdoptionProof(proof: any, env: string, now: number) {
 
 /** Reserve before any link/finance side effect. updatedAt is never a retry ID. */
 export async function beginInvoiceSend(invoice: Invoice, to: string[], expectedSentAt: string | null | undefined, deps: Dependencies): Promise<{ operation: InvoiceSendOperation; completed?: Result }> {
-  const env = environment();
+  const env = invoiceSendEnvironment();
   const table = process.env.INVOICE_TABLE;
   if (!table) return blocked("The invoice send reservation is unavailable. No email was sent.");
   const db = deps.database; const now = (deps.now ?? Date.now)(); const uuid = deps.uuid ?? randomUUID;
@@ -120,7 +125,7 @@ export async function beginInvoiceSend(invoice: Invoice, to: string[], expectedS
   if (!row || row.updatedAt !== invoice.updatedAt || row.status !== invoice.status || row.status === "VOID") return blocked("The invoice changed. Refresh it before sending.");
   const previous = row[ATTRIBUTE] as InvoiceSendOperation | undefined;
   if (previous?.retired) return blocked("This invoice send was retired when the invoice was voided.");
-  if (previous !== undefined && (!valid(previous) || !previous.key.startsWith(`invoice:${invoice.id}:`))) return blocked("The invoice delivery record needs review. No replacement was sent.");
+  if (previous !== undefined && (!validInvoiceSendOperation(previous) || !previous.key.startsWith(`invoice:${invoice.id}:`))) return blocked("The invoice delivery record needs review. No replacement was sent.");
   const recipients = hash(to.map(address => address.trim().toLowerCase()).sort().join(","));
   const observedSentAt = expectedSentAt === undefined ? undefined : expectedSentAt || null;
   let replacement = false;

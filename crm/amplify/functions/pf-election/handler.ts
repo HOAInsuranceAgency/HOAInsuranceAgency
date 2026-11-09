@@ -6,6 +6,7 @@ import { assertBrokerFeeSigned } from "../broker-fees/bindValidation";
 import { getFee, getModel, modelTable, table as brokerFeeTable, versionCheck, type Write } from "../broker-fees/store";
 import { assertStandalonePolicyBilling, standalonePolicyBillingGuard } from "../grouped-draft-billing";
 import { loadGroupedFinance } from "../grouped-finance";
+import { reconcileAcceptedGroupedSend } from "../send-invoice/groupedDelivery";
 import { canUseGroupedOffer } from "../pfOrigination";
 import { brokerFeeCents, feeAllocations } from "../../../../shared/brokerFees";
 import { randomUUID } from "node:crypto";
@@ -124,14 +125,19 @@ const GROUP_PAYMENT_FIELDS = [
 ] as const;
 
 /** Only the published financing-only invoice's reserved offer can collect. */
-async function publishedGroup(client: DataClient, loan: PfLoan) {
+async function publishedGroup(client: DataClient, loan: PfLoan, requestedToken?: unknown) {
   const frozen = groupedAgreementLines(loan);
   if (!frozen || !loan.groupedInvoiceId || (loan.brokerFeeCents ?? 0) !== 0 || feeAllocations(loan.brokerFeeAllocations).length) return null;
   const schedule = parseScheduleJson(loan.schedule);
   const last = schedule.at(-1);
   if (schedule.length !== loan.months || last?.n !== loan.months || !Number.isFinite(last.payment) || last.payment < 0) return null;
   try {
-    const group = await loadGroupedFinance(client, loan.groupedInvoiceId);
+    let group = await loadGroupedFinance(client, loan.groupedInvoiceId);
+    if (group.invoice.status === 'DRAFT' && group.invoice.groupedFinanceLoanId === loan.id &&
+        loan.electionToken && requestedToken === loan.electionToken) {
+      const reconciled = await reconcileAcceptedGroupedSend(group.invoice.id, { loanId: loan.id, token: loan.electionToken }, ddb);
+      if (reconciled) group = await loadGroupedFinance(client, loan.groupedInvoiceId);
+    }
     const { invoice } = group;
     if (invoice.id !== loan.groupedInvoiceId || invoice.status !== 'SENT' || !invoice.sentAt ||
         !Number.isFinite(Date.parse(invoice.sentAt)) || invoice.groupedFinanceLoanId !== loan.id ||
@@ -228,7 +234,7 @@ async function handleTerms(client: DataClient, args: Record<string, unknown>) {
   if (!grouped && !anchorFilter(loan)) return CLOSED;
   if (!(await moduleEnabled(client))) return CLOSED;
   if (grouped) {
-    const group = await publishedGroup(client, loan);
+    const group = await publishedGroup(client, loan, args.token);
     return group ? termsShape(loan, group.account.name ?? name, 'open', group.finalPayment) : CLOSED;
   }
   return termsShape(loan, name, "open");
@@ -327,7 +333,7 @@ async function handleAccept(
    * most recently stood behind is the only one a customer can accept.
    */
   const grouped = hasGroupedAgreement(loan);
-  const group = grouped ? await publishedGroup(client, loan) : null;
+  const group = grouped ? await publishedGroup(client, loan, args.token) : null;
   if (grouped && !group) return CLOSED;
   const loanFilter = anchorFilter(loan);
   if (!group && !loanFilter) return CLOSED;

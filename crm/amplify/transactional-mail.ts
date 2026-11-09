@@ -59,6 +59,11 @@ export function installTransactionalMail(backend: any, alerts: any) {
   // send mail, edit counters/receipts, or access saved envelopes.
   for(const fn of [backend.voidInvoice,backend.crmAccess,backend.pfElection])fn.addEnvironment('HOA_TRANSACTIONAL_MAIL_TABLE',table);
   if(permissionsStack)new ManagedPolicy(backend.createStack('InvoiceSendRetirementPermissions'),'InvoiceVoidMailRetirement',{roles:[backend.voidInvoice.resources.lambda.role!,backend.crmAccess.resources.lambda.role!,backend.pfElection.resources.lambda.role!],statements:[new PolicyStatement({actions:['dynamodb:GetItem','dynamodb:UpdateItem'],resources:[tableArn],conditions:{'ForAllValues:StringLike':{'dynamodb:LeadingKeys':[`OP#hoa/${businessBranch}/invoice/*`]}}})]});
+  // Publication can attest the exact accepted invoice operation without editing it.
+  if (permissionsStack) for (const fn of [backend.sendInvoice, backend.pfElection]) {
+    fn.resources.lambda.addToRolePolicy(new PolicyStatement({ actions: ['dynamodb:ConditionCheckItem'], resources: [tableArn],
+      conditions: { 'ForAllValues:StringLike': { 'dynamodb:LeadingKeys': [`OP#hoa/${businessBranch}/invoice/*`] } } }));
+  }
   const senderNames = ["magicLinkVerify", "teamAdmin", "sendInvoice", "marketingReportWorker", "stripeWebhook", "mailVerification", "mailRecovery"];
   for (const name of senderNames) {
     const fn = backend[name];
