@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { CommercialEntry } from './commercial';
-import { hasOpenInvoiceReceivable, interestIncomeBySalesperson, nonBilledReceivables, outstandingPrincipal, type FinanceLoan } from './dashboardFinance';
+import { invoiceReceivableCents, interestIncomeBySalesperson, openInvoiceReceivables, nonBilledReceivables, outstandingPrincipal, type FinanceLoan } from './dashboardFinance';
 
 const loan = (fields: Partial<FinanceLoan> = {}): FinanceLoan => ({
   id: 'loan-1', accountId: 'account-1', policyId: 'policy-1', status: 'ACTIVE',
@@ -45,13 +45,27 @@ describe('non-billed financed receivables', () => {
   });
 
   it('counts a grouped loan once while detecting separate billing on any of its policies', () => {
-    const plan = loan({ policyId: null, groupedPolicyIds: ['policy-1', 'policy-2'] });
+    const plan = loan({ policyId: null, groupedInvoiceId: 'combined', groupedPolicyIds: ['policy-1', 'policy-2'] });
     const combined = { id: 'combined', accountId: 'account-1', status: 'SENT', sourcePricingVersion: 3, groupedFinanceLoanId: plan.id };
-    expect(hasOpenInvoiceReceivable(combined)).toBe(false);
+    expect(openInvoiceReceivables([combined], [plan])).toEqual([]);
     const unrelated = { id: 'unrelated', accountId: 'account-1', status: 'SENT', policyId: 'policy-3' };
     expect(nonBilledReceivables([plan], [combined, unrelated])).toEqual({ total: 6000, count: 1, unknown: 0, overlaps: [] });
     const conflicting = { ...unrelated, id: 'conflicting', policyId: 'policy-2' };
     expect(nonBilledReceivables([plan], [combined, conflicting]).overlaps).toEqual([{ loanId: plan.id, invoiceIds: ['conflicting'] }]);
+  });
+
+  it('shows the published premium while financing is pending and keeps the invoice out of open billing after payoff', () => {
+    const combined = { id: 'combined', accountId: 'account-1', status: 'SENT', sourcePricingVersion: 3, groupedFinanceLoanId: 'loan-1',
+      remittanceCarrierCents: 750000, remittanceCommissionCents: 50000 };
+    const quoted = loan({ policyId: null, groupedInvoiceId: 'combined', groupedPolicyIds: ['policy-1', 'policy-2'],
+      status: 'QUOTED', paidThrough: 0 });
+    expect(openInvoiceReceivables([combined], [quoted])).toEqual([combined]);
+    expect(invoiceReceivableCents(combined)).toBe(800000);
+    expect(nonBilledReceivables([quoted], [combined]).total).toBe(0);
+    for (const status of ['ACCEPTED', 'ACTIVE', 'PAID']) {
+      expect(openInvoiceReceivables([combined], [{ ...quoted, status }])).toEqual([]);
+    }
+    expect(openInvoiceReceivables([combined], [{ ...quoted, status: 'CANCELLED' }])).toEqual([combined]);
   });
 
   it('catches quote-to-policy rollover and legacy line-only invoice overlaps', () => {

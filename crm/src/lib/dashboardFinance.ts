@@ -15,6 +15,7 @@ export interface FinanceLoan extends Anchor {
   downPaidAt?: string | null;
   cancellationEffectiveAt?: string | null;
   expectedCarrierRefundAt?: string | null;
+  groupedInvoiceId?: string | null;
   groupedPolicyIds?: readonly (string | null)[] | null;
 }
 interface FinanceInvoice extends Anchor {
@@ -24,7 +25,10 @@ interface FinanceInvoice extends Anchor {
   groupedPolicyIds?: unknown;
   groupedFinanceLoanId?: string | null;
   stripePaymentLinkId?: string | null;
+  stripeLinkAmountCents?: number | null;
   paymentUrl?: string | null;
+  remittanceCarrierCents?: number | null;
+  remittanceCommissionCents?: number | null;
 }
 interface FinancePolicy { id: string; accountId: string; quoteId?: string | null }
 interface FinanceInvoiceLine { invoiceId: string; policyId?: string | null }
@@ -43,11 +47,31 @@ export function outstandingPrincipal(loan: FinanceLoan): number | null {
   return typeof amount === 'number' && Number.isFinite(amount) && amount >= 0 ? amount : null;
 }
 
-/** A sent grouped financing invoice presents the plan; its loan owns collections. */
-export function hasOpenInvoiceReceivable(invoice: FinanceInvoice): boolean {
-  if (invoice.status === 'PROCESSING') return true;
-  return invoice.status === 'SENT' &&
-    !(isGroupedInvoice(invoice) && invoice.groupedFinanceLoanId && !invoice.stripePaymentLinkId && !invoice.paymentUrl);
+export function isFinancingInvoice(invoice: FinanceInvoice): boolean {
+  return isGroupedInvoice(invoice) && Boolean(invoice.groupedFinanceLoanId) &&
+    !invoice.stripePaymentLinkId && !invoice.paymentUrl;
+}
+
+/** Keep a sent offer open until the matching plan takes over its balance. */
+export function openInvoiceReceivables<T extends FinanceInvoice>(invoices: readonly T[], loans: readonly FinanceLoan[]): T[] {
+  const financed = new Map(loans.filter(loan => loan.groupedInvoiceId &&
+    (hasFinancingReceivable(loan) || loan.status === 'PAID')).map(loan => [loan.id, loan]));
+  return invoices.filter(invoice => {
+    if (invoice.status === 'PROCESSING') return true;
+    if (invoice.status !== 'SENT') return false;
+    if (!isFinancingInvoice(invoice)) return true;
+    const loan = financed.get(invoice.groupedFinanceLoanId!);
+    return loan?.groupedInvoiceId !== invoice.id || loan.accountId !== invoice.accountId;
+  });
+}
+
+export function invoiceReceivableCents(invoice: FinanceInvoice): number | null {
+  if (!isFinancingInvoice(invoice)) return invoice.stripeLinkAmountCents ?? null;
+  const carrier = invoice.remittanceCarrierCents, commission = invoice.remittanceCommissionCents;
+  if (typeof carrier !== 'number' || typeof commission !== 'number' ||
+      !Number.isSafeInteger(carrier) || !Number.isSafeInteger(commission)) return null;
+  const amount = carrier + commission;
+  return Number.isSafeInteger(amount) && amount > 0 ? amount : null;
 }
 
 /** Financing replaces the pay-in-full bill with a loan; monthly installments
@@ -88,8 +112,7 @@ export function nonBilledReceivables(
     byAnchor: Map<string, Map<string, number>>;
   }
   const billedByAccount = new Map<string, BilledAccount>();
-  invoices.forEach((invoice, position) => {
-    if (!hasOpenInvoiceReceivable(invoice)) return;
+  openInvoiceReceivables(invoices, loans).forEach((invoice, position) => {
     const invoiceId = invoice.id, accountId = invoice.accountId;
     let billed = billedByAccount.get(accountId);
     if (!billed) {

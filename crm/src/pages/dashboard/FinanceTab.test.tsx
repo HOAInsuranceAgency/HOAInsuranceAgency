@@ -85,6 +85,25 @@ it('keeps funded cancellations in the portfolio and non-billed debt until reconc
   expect(screen.getByText('Stopped')).toBeInTheDocument();
 });
 
+it('shows an unsigned combined invoice at its gross amount, then shows only the funded balance', async () => {
+  h.rows.Invoice = [{
+    id: 'group', accountId: 'a', status: 'SENT', number: 'INV-COMBINED', dueAt: '2000-01-01',
+    sourcePricingVersion: 3, groupedFinanceLoanId: 'plan', remittanceCarrierCents: 95000, remittanceCommissionCents: 5000,
+  }];
+  const plan = { id: 'plan', accountId: 'a', groupedInvoiceId: 'group', groupedPolicyIds: ['p', 'q'], balance: 750 };
+  h.rows.PfLoan = [{ ...plan, status: 'QUOTED' }];
+  render(<MemoryRouter><FinanceTab /></MemoryRouter>);
+  const pending = (await screen.findByText('INV-COMBINED')).closest('tr')!;
+  expect(within(pending).getByText('Awaiting financing')).toBeInTheDocument();
+  expect(within(pending).getByText('$1,000')).toBeInTheDocument();
+  expect(within(pending).queryByText(/overdue/)).toBeNull();
+
+  h.rows.PfLoan = [{ ...plan, status: 'ACTIVE' }];
+  await invalidateLiveUpdates();
+  await waitFor(() => expect(screen.queryByText('INV-COMBINED')).toBeNull());
+  expect(screen.getByText('A/R · Total non-billed').closest('.stat')).toHaveTextContent('$750');
+});
+
 it('retains finance data for transient failures but clears denied data through retry', async () => {
   const initial = h.loadAssignments.getMockImplementation()!;
   render(<MemoryRouter><FinanceTab /></MemoryRouter>);

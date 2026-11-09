@@ -2,7 +2,7 @@ import { client } from "./client";
 import { listAllPages } from "../../../shared/pagination";
 import { communicationRequest } from './communications';
 import { loadAssignments } from './dashboardAssignments';
-import { hasFinancingReceivable, hasOpenInvoiceReceivable, outstandingPrincipal } from './dashboardFinance';
+import { hasFinancingReceivable, openInvoiceReceivables, outstandingPrincipal } from './dashboardFinance';
 import { allWithAuthorizationPriority } from './allWithAuthorizationPriority';
 import type { ReportBrokerFeePolicy } from './brokerFeeReporting';
 import { forEachReportPage, mapReportReads, reportBatches, reportCursorGuard } from './dashboardReads';
@@ -78,13 +78,16 @@ export async function loadFinanceDashboard() {
     listAllPages(nextToken => client.models.Invoice.list({ nextToken,
       filter: { or: [{ status: { eq: 'SENT' } }, { status: { eq: 'PROCESSING' } }] },
     })),
-    listAllPages(nextToken => client.models.PfLoan.list({ nextToken, filter: { status: { ne: 'PAID' } } })),
+    listAllPages(nextToken => client.models.PfLoan.list({ nextToken,
+      // Keep paid grouped loans so their sent invoices do not reappear as unpaid.
+      filter: { or: [{ status: { ne: 'PAID' } }, { groupedInvoiceId: { attributeExists: true } }] },
+    })),
     loadRecentFinanceInterest(asOf),
     loadFinanceBrokerFeePolicies(),
   ]);
   const outstanding = pfLoans.filter(loan => hasFinancingReceivable(loan) && outstandingPrincipal(loan) !== 0);
   const loanAccounts = new Set(outstanding.map(loan => loan.accountId));
-  const overlapInvoices = invoices.filter(invoice => hasOpenInvoiceReceivable(invoice) && loanAccounts.has(invoice.accountId));
+  const overlapInvoices = openInvoiceReceivables(invoices, pfLoans).filter(invoice => loanAccounts.has(invoice.accountId));
   const [invoiceLines, commercial] = await allWithAuthorizationPriority([
     loadFinanceInvoiceAnchors(overlapInvoices.map(invoice => invoice.id)),
     loadAssignments([...new Set([...invoices, ...outstanding, ...payments, ...brokerFeePolicies].map(record => record.accountId))]),
