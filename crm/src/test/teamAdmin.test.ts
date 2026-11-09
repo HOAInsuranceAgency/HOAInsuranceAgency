@@ -115,10 +115,12 @@ describe("team email changes", () => {
       ExpressionAttributeValues: { ":userId": userId, ":email": email },
     });
     const release = dbSend.mock.calls.find(([command]) => command instanceof DeleteCommand)?.[0];
+    const leaseOwner = updates[0].input.ExpressionAttributeValues?.[":owner"];
+    expect(leaseOwner).toEqual(expect.any(String));
     expect(release?.input).toMatchObject({
       Key: updates[0].input.Key,
       ConditionExpression: "leaseOwner = :owner",
-      ExpressionAttributeValues: { ":owner": updates[0].input.ExpressionAttributeValues[":owner"] },
+      ExpressionAttributeValues: { ":owner": leaseOwner },
     });
     expect(sesSend).not.toHaveBeenCalled();
   });
