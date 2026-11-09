@@ -1,5 +1,6 @@
 import { INVOICE_INDEX_KEYS, isIndexedAccountModel, modelIndexFields, modelIndexKey, type ModelIndexMap } from './functions/storage/model-indexes';
 import { installQuoteFinancialStage, QUOTE_FINANCIAL_RESPONSE } from "./quote-financial-pipeline";
+import { installInvoiceLineDraftStage, INVOICE_LINE_DRAFT_RESPONSE } from "./invoice-line-draft-pipeline";
 import { readFileSync } from "node:fs";
 import { Asset } from "aws-cdk-lib/aws-s3-assets";
 import { Stack, CfnResource, AssetStaging } from "aws-cdk-lib";
@@ -88,13 +89,15 @@ export function installAccountAccess(backend: typeof Backend, communicationTable
   const makeGuard = (mode: string, model: string, operation = "") => {
     const key = `${mode}_${model}__${operation}`.replace(/-/g, "_");
     const cached = guards.get(key); if (cached) return cached.attrFunctionId;
+    const atomicResponse = mode === "quote-financial" ? QUOTE_FINANCIAL_RESPONSE
+      : mode === "invoice-line-draft" ? INVOICE_LINE_DRAFT_RESPONSE : undefined;
     const listAdminBypass = '#set($assignmentGroups = $util.defaultIfNull($ctx.identity.groups, $util.defaultIfNull($ctx.identity.claims.get("cognito:groups"), [])))\n'
       + '#set($assignmentRole = "")\n#set($assignmentRoleCount = 0)\n#foreach($header in $ctx.request.headers.entrySet())\n#if($header.key.toLowerCase() == "x-crm-role")\n#set($assignmentRole = $header.value)\n#set($assignmentRoleCount = $assignmentRoleCount + 1)\n#end\n#end\n'
       + '#if(($assignmentRoleCount == 0 && ($assignmentGroups.contains("OWNER") || $assignmentGroups.contains("ADMIN"))) || ($assignmentRoleCount == 1 && (($assignmentRole == "OWNER" && $assignmentGroups.contains("OWNER")) || ($assignmentRole == "ADMIN" && $assignmentGroups.contains("ADMIN")))))\n#return($ctx.prev.result)\n#end\n';
     const fn = new CfnFunctionConfiguration(api, `Access_${key}`, {
       apiId: api.apiId, name: `access_${key}`, dataSourceName: source.name, functionVersion: "2018-05-29",
-      requestMappingTemplate: mode === 'notify' ? LIVE_NOTIFY_REQUEST : `#if($util.authType() == "IAM Authorization")\n#if(!$util.isNull($ctx.identity.cognitoIdentityId))\n$util.unauthorized()\n#end\n#return($ctx.prev.result)\n#end\n${mode === "list" ? listAdminBypass : mode === "read" ? '#if(!$util.isNull($ctx.stash.assignmentList))\n#return($ctx.prev.result)\n#end\n' : ''}{"version":"2018-05-29","operation":"Invoke","payload":{"mode":"${mode}","model":"${model}","field":$util.toJson($ctx.info.fieldName),"operation":"${operation}","identity":$util.toJson($ctx.identity),"request":$util.toJson($ctx.request),"arguments":$util.toJson($ctx.arguments),"previous":$util.toJson($ctx.prev.result)${mode === "quote-financial" ? ',"nativeConditions":$util.toJson($ctx.stash.conditions),"nativeAuthFilter":$util.toJson($ctx.stash.authFilter)' : ''}}}`,
-      responseMappingTemplate: mode === 'notify' ? LIVE_NOTIFY_RESPONSE : `#if($ctx.error)\n$util.error($ctx.error.message, $ctx.error.type)\n#end\n${mode === "list" ? '$util.qr($ctx.stash.put("assignmentList", $ctx.result))\n' : ''}${mode === "quote-financial" ? QUOTE_FINANCIAL_RESPONSE : '$util.toJson($ctx.result)'}`,
+      requestMappingTemplate: mode === 'notify' ? LIVE_NOTIFY_REQUEST : `#if($util.authType() == "IAM Authorization")\n#if(!$util.isNull($ctx.identity.cognitoIdentityId))\n$util.unauthorized()\n#end\n#return($ctx.prev.result)\n#end\n${mode === "list" ? listAdminBypass : mode === "read" ? '#if(!$util.isNull($ctx.stash.assignmentList))\n#return($ctx.prev.result)\n#end\n' : ''}{"version":"2018-05-29","operation":"Invoke","payload":{"mode":"${mode}","model":"${model}","field":$util.toJson($ctx.info.fieldName),"operation":"${operation}","identity":$util.toJson($ctx.identity),"request":$util.toJson($ctx.request),"arguments":$util.toJson($ctx.arguments),"previous":$util.toJson($ctx.prev.result)${atomicResponse ? ',"nativeConditions":$util.toJson($ctx.stash.conditions),"nativeAuthFilter":$util.toJson($ctx.stash.authFilter)' : ''}}}`,
+      responseMappingTemplate: mode === 'notify' ? LIVE_NOTIFY_RESPONSE : `#if($ctx.error)\n$util.error($ctx.error.message, $ctx.error.type)\n#end\n${mode === "list" ? '$util.qr($ctx.stash.put("assignmentList", $ctx.result))\n' : ''}${atomicResponse ?? '$util.toJson($ctx.result)'}`,
     });
     // CDK's diagnostic construct paths duplicate these already descriptive
     // access_* names. Omit only that metadata to keep the staging data template
@@ -161,20 +164,23 @@ export function installAccountAccess(backend: typeof Backend, communicationTable
         const operation = /^(create|update|delete)/.exec(field)?.[1];
         if (!operation) throw new Error(`Unclassified model mutation: ${field}`);
         if (ADMIN_MODEL_OPERATIONS[model]?.includes(operation)) extend(resolver, [makeGuard("admin", "")], []);
-        if (scoped || model === "UserProfile") extend(resolver, [makeGuard("write", model, operation)], []);
-        if (model === "Quote" && operation === "update") {
+        // The shared InvoiceLine stage applies AccountAccess before either
+        // committing a draft edit or allowing the native data operation.
+        if ((scoped && model !== "InvoiceLine") || model === "UserProfile") extend(resolver, [makeGuard("write", model, operation)], []);
+        if ((model === "Quote" && operation === "update") || model === "InvoiceLine") {
           const pipeline = resolver.pipelineConfig as CfnResolver.PipelineConfigProperty;
-          const data = Object.values(resources.cfnFunctionConfigurations).find(fn => pipeline.functions?.includes(fn.attrFunctionId) && fn.name === 'MutationUpdateQuoteDataResolverFn');
-          if (!data) throw new Error('Missing native Quote update data stage');
+          const data = Object.values(resources.cfnFunctionConfigurations).find(fn => pipeline.functions?.includes(fn.attrFunctionId) && fn.name === `Mutation${field[0].toUpperCase()}${field.slice(1)}DataResolverFn`);
+          if (!data) throw new Error(`Missing native ${field} data stage`);
           let template = data.requestMappingTemplate;
           if (data.requestMappingTemplateS3Location) {
             const location = JSON.stringify(Stack.of(data).resolve(data.requestMappingTemplateS3Location));
             const asset = backend.stack.node.root.node.findAll().find((node): node is Asset => node instanceof Asset && JSON.stringify(Stack.of(data).resolve(node.s3ObjectUrl)) === location);
-            if (!asset) throw new Error('Missing native Quote update request template');
+            if (!asset) throw new Error(`Missing native ${field} request template`);
             template = readFileSync((asset.node.findChild('Stage') as AssetStaging).absoluteStagedPath, 'utf8');
           }
-          if (!template) throw new Error('Empty native Quote update request template');
-          installQuoteFinancialStage(resolver, data, template, makeGuard('quote-financial', 'Quote', 'update'));
+          if (!template) throw new Error(`Empty native ${field} request template`);
+          if (model === 'Quote') installQuoteFinancialStage(resolver, data, template, makeGuard('quote-financial', 'Quote', 'update'));
+          else installInvoiceLineDraftStage(resolver, data, template, makeGuard('invoice-line-draft', 'InvoiceLine'));
         }
         // One shared, post-success stage covers unstreamed model writes too.
         // The native result is preserved; notification errors cannot retry a write.

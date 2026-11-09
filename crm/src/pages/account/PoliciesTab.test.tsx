@@ -35,6 +35,12 @@ function deferred<T>() {
 }
 
 describe("policy reliability", () => {
+  it("shows HOA agency collection alongside the carrier's direct billing", async () => {
+    models.Policy.list.mockResolvedValue({ data: [{ ...policy, billType: "AGENCY", carrierBillType: "DIRECT" }] });
+    render(<PoliciesTab accountId="a1" />);
+    expect(await screen.findByText("Agency · carrier direct")).toBeInTheDocument();
+  });
+
   it("loads all carrier pages and retries a failed page before editing", async () => {
     models.Carrier.list.mockResolvedValueOnce({ data: [{ id: "c1", name: "First" }], nextToken: "page-2" })
       .mockResolvedValueOnce({ data: [], errors: [{ message: "Carrier read failed" }] })

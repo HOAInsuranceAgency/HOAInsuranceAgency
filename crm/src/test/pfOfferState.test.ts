@@ -39,6 +39,16 @@ beforeEach(() => {
 afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); });
 
 describe("state changes on standing finance offers", () => {
+  it("reuses a policy-owned quote that the loan list has not discovered yet", async () => {
+    h.loans.mockResolvedValue({ data: [] });
+    h.send.mockResolvedValueOnce({ Item: { ...currentLoan(), accountId: "account-1", policyId: anchor.id } });
+    const policy = { id: anchor.id, accountId: "account-1", sourcePricingLoanId: "old-loan" };
+    const result = await financeOffer(client as never, account("MA"), anchor, 10_000, "board@example.test", [], policy);
+    expect(result).toMatchObject({ apr: 14, url: "https://example.test/finance/?t=existing-token" });
+    expect(h.send.mock.calls[0][0].input).toMatchObject({ TableName: "loans", Key: { id: "old-loan" }, ConsistentRead: true });
+    expect(h.originate).not.toHaveBeenCalled();
+  });
+
   it("keeps a same-state frozen rate when the state changes only spelling", async () => {
     const result = await financeOffer(client as never, account(" Massachusetts "), anchor, 10_000, "board@example.test");
     expect(result).toMatchObject({ apr: 14, url: "https://example.test/finance/?t=existing-token" });

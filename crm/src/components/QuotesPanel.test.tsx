@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { listAllPages } from "../../../shared/pagination";
 import type { Account } from "../lib/client";
+import { OwnerContext } from "../lib/auth";
 
 const h = vi.hoisted(() => ({ preview: vi.fn(), fee: vi.fn(), bind: vi.fn(), quotes: vi.fn(), update: vi.fn(), carriers: vi.fn(), getQuote: vi.fn(), policies: vi.fn(), createPolicy: vi.fn(), accountUpdate: vi.fn(), request: vi.fn(), children: vi.fn() }));
 vi.mock("./QuotePackages", () => ({ default: () => null }));
@@ -133,6 +134,68 @@ async function openBind() {
   await screen.findByText(/Legacy carrier terms: receipt timing is unconfirmed/);
 }
 describe("binding recovery", () => {
+  it.each(['AGENCY', 'DIRECT'])('requires a billing choice before submitting an ordinary %s bind', async billType => {
+    h.quotes.mockResolvedValue({ data: [quote] });
+    render(<QuotesPanel account={account} onAccountChange={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Bind' }));
+    fireEvent.click(screen.getByLabelText('I confirmed the exact premium and agency commission percentage.'));
+    const billing = screen.getByLabelText('Bill type (required)');
+    const submit = screen.getByRole('button', { name: 'Confirm bind' });
+    expect(billing).toHaveValue('');
+    expect(submit).toBeDisabled();
+    fireEvent.click(submit);
+    expect(h.bind).not.toHaveBeenCalled();
+
+    fireEvent.change(billing, { target: { value: billType } });
+    await waitFor(() => expect(submit).toBeEnabled());
+    fireEvent.click(submit);
+    await waitFor(() => expect(h.bind).toHaveBeenCalledTimes(1));
+    expect(JSON.parse(h.bind.mock.calls[0][0].input)).toMatchObject({ billType });
+  });
+
+  it('uses the existing billing choice on an ordinary quote', async () => {
+    h.quotes.mockResolvedValue({ data: [{ ...quote, billType: 'DIRECT' }] });
+    render(<QuotesPanel account={account} onAccountChange={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Bind' }));
+    expect(screen.getByLabelText('Bill type (required)')).toHaveValue('DIRECT');
+    await waitFor(() => expect(h.preview).toHaveBeenCalledWith({ quoteId: quote.id, billType: 'DIRECT' }));
+  });
+
+  it.each(['DIRECT', null])('records an issued renewal when the recorded carrier bill type is %s', async billType => {
+    h.quotes.mockResolvedValue({ data: [{ ...quote, billType }] });
+    h.preview.mockImplementation(async (input: { issuedRenewal?: boolean }) => ({ data: {
+      ok: true, carrierTermsVersion: 8, basis: 'WRITTEN',
+      ...(input.issuedRenewal ? { payment: { id: 'direct-renewal', payor: 'Carrier', trigger: 'EFFECTIVE', cadence: 'ONCE', lagDays: 0 } } : {}),
+    } }));
+    render(<OwnerContext.Provider value={true}><QuotesPanel account={account} onAccountChange={vi.fn()} /></OwnerContext.Provider>);
+    fireEvent.click(await screen.findByRole('button', { name: 'Bind' }));
+    fireEvent.click(screen.getByLabelText('Record an already-issued renewal'));
+    const carrierType = screen.getByLabelText('Carrier bill type (required)');
+    if (billType) {
+      expect(carrierType).toHaveValue('DIRECT');
+      expect(carrierType).toBeDisabled();
+    } else {
+      expect(carrierType).toHaveValue('');
+      fireEvent.change(carrierType, { target: { value: 'DIRECT' } });
+    }
+    fireEvent.click(screen.getByLabelText('HOA will collect the premium'));
+    fireEvent.change(screen.getByLabelText('Issued policy number (required)'), { target: { value: 'POL-123' } });
+    fireEvent.click(screen.getByLabelText('I confirmed the exact premium and agency commission percentage.'));
+    fireEvent.click(await screen.findByLabelText('I reviewed the carrier commission payment arrangement.'));
+    const submit = screen.getByRole('button', { name: 'Record renewal' });
+    expect(submit).toBeDisabled();
+    fireEvent.change(screen.getByLabelText('Renewal evidence'), { target: { value: 'Carrier issued renewal and premium confirmation' } });
+    expect(submit).toBeEnabled();
+    fireEvent.click(submit);
+    await waitFor(() => expect(h.bind).toHaveBeenCalledTimes(1));
+    expect(h.preview).toHaveBeenCalledWith({ quoteId: quote.id, billType: 'DIRECT', issuedRenewal: true });
+    expect(JSON.parse(h.bind.mock.calls[0][0].input)).toMatchObject({
+      billType: 'AGENCY', carrierBillType: 'DIRECT', policyNumber: 'POL-123',
+      issuedRenewalEvidence: 'Carrier issued renewal and premium confirmation',
+      carrierTermsVersion: 8, carrierArrangementId: 'direct-renewal',
+    });
+  });
+
   it('keeps a fee quote agency billed while requiring the current carrier payment arrangement review', async () => {
     const feeQuote = { ...quote, brokerFee: 500, billType: 'AGENCY' as const };
     h.quotes.mockResolvedValue({ data: [feeQuote] });

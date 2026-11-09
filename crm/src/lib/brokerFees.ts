@@ -19,7 +19,7 @@ export async function confirmInvoicePayment(invoiceId: string): Promise<void> {
   await privateApiCall(client.mutations.brokerFeeAction({ input: JSON.stringify({ op: 'confirmInvoicePayment', invoiceId }) }),
     (value): value is ApiRecord & { ok: true } => value.ok === true, { fallback: 'Could not confirm payment.' });
 }
-export async function bindCommissionPolicy(input: { quoteId: string; terms: string; premium: string; agencyRate: string; billType: string; policyNumber: string; carrierTermsVersion: number; carrierArrangementId?: string }): Promise<{ policy: Policy; account: Account }> {
+export async function bindCommissionPolicy(input: { quoteId: string; terms: string; premium: string; agencyRate: string; billType: string; policyNumber: string; carrierTermsVersion: number; carrierArrangementId?: string; issuedRenewalEvidence?: string; carrierBillType?: 'AGENCY' | 'DIRECT' }): Promise<{ policy: Policy; account: Account }> {
   return await privateApiCall(client.mutations.bindCommissionPolicy({ input: JSON.stringify(input) }),
     (value): value is ApiRecord & { policy: Policy; account: Account } => isRecord(value.policy) && typeof value.policy.id === 'string' && isRecord(value.account) && typeof value.account.id === 'string',
     { fallback: 'Could not bind this policy.' });

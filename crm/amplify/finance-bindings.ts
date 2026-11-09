@@ -12,14 +12,14 @@ const environment = {
   Invoice: 'INVOICE_TABLE', Account: 'ACCOUNT_TABLE', Policy: 'POLICY_TABLE', Carrier: 'CARRIER_TABLE',
 } as const satisfies Partial<Record<keyof FinanceBackend['data']['resources']['tables'], string>>;
 type Model = keyof typeof environment;
-type Access = 'read' | 'write' | 'readWrite';
+type Access = 'read' | 'write' | 'readWrite' | 'readUpdate';
 type Binding = { target: FinanceFunction; tables: readonly (readonly [Model, Access])[] };
 
 const bindings = {
   // The kill switch and its audit row must be changed by the same writer.
   administration: { target: 'pfAdmin', tables: [['AgencySettings', 'readWrite'], ['PfComplianceLog', 'readWrite']] },
   // Loan creation checks the flag and writes its decision log atomically.
-  origination: { target: 'pfOriginate', tables: [['PfComplianceLog', 'readWrite'], ['AgencySettings', 'read'], ['PfLoan', 'readWrite']] },
+  origination: { target: 'pfOriginate', tables: [['PfComplianceLog', 'readWrite'], ['AgencySettings', 'read'], ['PfLoan', 'readWrite'], ['Policy', 'readUpdate'], ['Invoice', 'read']] },
   // Servicing posts deterministic payment/notice rows with conditional loan changes.
   servicing: { target: 'pfServicing', tables: [['PfComplianceLog', 'readWrite'], ['PfLoan', 'readWrite'], ['PfLoanPayment', 'readWrite'], ['PfNotice', 'readWrite']] },
   defaultSweep: { target: 'pfDefaultSweep', tables: [['PfComplianceLog', 'readWrite'], ['PfLoan', 'readWrite']] },
@@ -45,8 +45,9 @@ export function bindPremiumFinanceTables(backend: FinanceBackend, group: Finance
   for (const [model, access] of binding.tables) {
     const table = backend.data.resources.tables[model];
     fn.addEnvironment(environment[model], table.tableName);
-    if (access === 'read') table.grantReadData(fn.resources.lambda);
+    if (access === 'read' || access === 'readUpdate') table.grantReadData(fn.resources.lambda);
     else if (access === 'write') table.grantWriteData(fn.resources.lambda);
     else table.grantReadWriteData(fn.resources.lambda);
+    if (access === 'readUpdate') table.grant(fn.resources.lambda, 'dynamodb:UpdateItem');
   }
 }

@@ -4,6 +4,7 @@ import { captureHandledFailure } from "../monitoring";
 import { zeroFeeQuoteClaimWrites } from "../quote-source-billing";
 import { assertBrokerFeeSigned } from "../broker-fees/bindValidation";
 import { getFee, getModel, modelTable, table as brokerFeeTable, versionCheck, type Write } from "../broker-fees/store";
+import { assertStandalonePolicyBilling, standalonePolicyBillingGuard } from "../grouped-draft-billing";
 import { brokerFeeCents, feeAllocations } from "../../../../shared/brokerFees";
 import { randomUUID } from "node:crypto";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
@@ -391,16 +392,21 @@ async function handleAccept(
   const committed = loan.electedAt || (loan.electionCheckoutUrl &&
     loan.electionCheckoutExpiresAt && loan.electionCheckoutExpiresAt > now);
   let checkoutAccount: Pick<Schema["Account"]["type"], "name" | "state"> | undefined;
+  let policyGuard: Write | undefined;
   if (signing && !committed) {
     const jurisdiction = PF_JURISDICTIONS.find(state => state.code === loan.state);
     try {
       const account = await client.models.Account.get({ id: loan.accountId });
       if (account.errors?.length || !account.data || usStateCode(account.data.state) !== loan.state) return CLOSED;
       checkoutAccount = account.data;
-      if (jurisdiction?.maxAddOnApr != null) {
-        const source = loan.policyId
-          ? await client.models.Policy.get({ id: loan.policyId })
-          : loan.quoteId ? await client.models.Quote.get({ id: loan.quoteId }) : null;
+      if (loan.policyId) {
+        const policy = await getModel<Schema["Policy"]["type"]>("Policy", loan.policyId);
+        if (!policy || policy.accountId !== loan.accountId) return CLOSED;
+        if (jurisdiction?.maxAddOnApr != null && (!loan.coverageEffectiveDate || policy.effectiveDate !== loan.coverageEffectiveDate)) return CLOSED;
+        await assertStandalonePolicyBilling(policy);
+        policyGuard = standalonePolicyBillingGuard(policy);
+      } else if (jurisdiction?.maxAddOnApr != null) {
+        const source = loan.quoteId ? await client.models.Quote.get({ id: loan.quoteId }) : null;
         if (!loan.coverageEffectiveDate || source?.errors?.length || !source?.data ||
           source.data.accountId !== loan.accountId || source.data.effectiveDate !== loan.coverageEffectiveDate) return CLOSED;
       }
@@ -480,6 +486,7 @@ async function handleAccept(
               ExpressionAttributeValues: { ":on": true },
             },
           },
+          ...(policyGuard ? [policyGuard] : []),
         ],
       })
     ));
@@ -617,6 +624,7 @@ async function handleAccept(
   // The source pointer and monotonic version serialize a fee-free pre-bind
   // claim with financial Quote edits, even if the loan GSI has not caught up.
   feeClaimGuards.push(...await zeroFeeQuoteClaimWrites(loan));
+  if (policyGuard) feeClaimGuards.push(policyGuard);
   const sessionClaim = `claim-${randomUUID()}`;
   const claimExpiry = new Date(Date.now() + 36 * 60 * 1000).toISOString();
   // A source-pointer guard already verifies this sibling's version AND free

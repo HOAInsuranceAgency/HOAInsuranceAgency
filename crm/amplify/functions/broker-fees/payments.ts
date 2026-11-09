@@ -133,7 +133,7 @@ export async function reserveFeeInvoice(source:Record<string,unknown>|string,inv
 }
 
 /** Bind a processor link to the durable owner before it can be delivered. */
-export async function publishFeeInvoiceLink(invoiceId:string,allocations:BrokerFeeAllocation[],token:string,linkId:string,invoiceWrite:Write):Promise<boolean>{
+export async function publishFeeInvoiceLink(invoiceId:string,allocations:BrokerFeeAllocation[],token:string,linkId:string,invoiceWrite:Write,proofGuards:Write[]=[]):Promise<boolean>{
   if(!allocations.length||allocations.length>25||!linkId)return false;
   for(let attempt=0;attempt<5;attempt++){
     const fees=await Promise.all(allocations.map(part=>getFee(part.quoteId)));
@@ -141,7 +141,7 @@ export async function publishFeeInvoiceLink(invoiceId:string,allocations:BrokerF
     const invoice=await getModel<Record<string,unknown>>('Invoice',invoiceId);
     if(invoice?.stripePaymentLinkId===linkId&&['DRAFT','SENT','PROCESSING','PAID'].includes(String(invoice.status))&&fees.every(fee=>fee!.invoiceSendClaim!.linkId===linkId))return true;
     if(fees.some(fee=>fee!.invoiceSendClaim!.phase!=='PREPARING'))return false;
-    try{await transact([invoiceWrite,...fees.map(fee=>feePut({...fee!,invoiceSendClaim:{...fee!.invoiceSendClaim!,linkId}},fee))]);return true;}
+    try{await transact([invoiceWrite,...fees.map(fee=>feePut({...fee!,invoiceSendClaim:{...fee!.invoiceSendClaim!,linkId}},fee)),...proofGuards]);return true;}
     catch(error){if(!retryable(error))throw error;if(attempt===4)return false;}
   }
   return false;

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { feeAllocations } from "../../../../shared/brokerFees";
 import { billingContact, currentContacts } from "../../../../shared/contacts";
 import { validateAdjustmentLines } from "../../../../shared/invoiceAdjustments";
+import { isGroupedInvoice } from "../../../../shared/groupedInvoiceGuard";
 import {
   directBillWarning,
   invoiceTotals,
@@ -13,7 +14,8 @@ import {
 import { listAllPages } from "../../../../shared/pagination";
 import { useSaveStatus } from "../../components/SaveStatus";
 import { assertGraphqlErrors } from '../../lib/apiResponse';
-import { sendInvoice, voidInvoice } from '../../lib/billingApi';
+import { useIsOwner } from '../../lib/auth';
+import { restoreGroupedInvoice, sendInvoice, voidInvoice } from '../../lib/billingApi';
 import { confirmInvoicePayment } from '../../lib/brokerFees';
 import {
   client,
@@ -35,7 +37,9 @@ export function useInvoiceEditor({
   onLinesChange,
   onDeleted,
   onBusyChange,
+  onGroupedRestored,
 }: InvoiceEditorProps) {
+  const isOwner = useIsOwner();
   const { linesRes, legacyPolicyCharges } = useInvoiceLines(invoice);
 
   const lines = [...linesRes.data].sort(
@@ -67,10 +71,13 @@ export function useInvoiceEditor({
 
   const totals = invoiceTotals(lines);
   const warnings = marginWarnings(lines);
-  const locked = invoice.status === "VOID";
+  const grouped = isGroupedInvoice(invoice);
+  const canRestoreGroup = grouped && invoice.status === "DRAFT" && isOwner;
+  const groupedPolicies = grouped ? policies.filter(policy => invoice.groupedPolicyIds?.includes(policy.id)) : [];
+  const locked = grouped || invoice.status === "VOID";
   const issuedFee = feeAllocations(invoice.brokerFeeAllocations).length > 0;
   const adjustment = invoice.sourcePricingVersion === 2;
-  const sourcePricing = invoice.sourcePricingVersion === 1 || adjustment;
+  const sourcePricing = grouped || invoice.sourcePricingVersion === 1 || adjustment;
   const issuedPricing = sourcePricing && (invoice.status === "SENT" || !!invoice.stripePaymentLinkId);
   const linesLocked = locked || ["PAID", "PROCESSING"].includes(invoice.status) || issuedFee || issuedPricing;
   /**
@@ -84,8 +91,8 @@ export function useInvoiceEditor({
   ];
   const anchorPolicyId =
     invoice.policyId ?? (linePolicyIds.length === 1 ? linePolicyIds[0] : null);
-  const policy = policies.find((p) => p.id === anchorPolicyId) ?? null;
-  const quote = !policy
+  const policy = grouped ? null : policies.find((p) => p.id === anchorPolicyId) ?? null;
+  const quote = !grouped && !policy
     ? (quotes.find((q) => q.id === invoice.quoteId) ?? null)
     : null;
   /**
@@ -343,6 +350,20 @@ export function useInvoiceEditor({
     );
   }
 
+  function restoreGroupedDraft() {
+    if (!canRestoreGroup) return;
+    return enqueue(async () => {
+      await restoreGroupedInvoice(invoice.id);
+      if (!alive.current) return;
+      await onGroupedRestored?.();
+      if (!alive.current) return;
+      // Keep the confirmed status if the account's invoice list lags the restore.
+      const restored = { ...acknowledgedInvoice.current, status: "VOID" as const };
+      acknowledgedInvoice.current = restored;
+      onChange(restored);
+    }, "Separate drafts restored.", false, true);
+  }
+
   async function send() {
     await enqueue(
       async () => {
@@ -412,6 +433,10 @@ export function useInvoiceEditor({
     pending,
     saveEdits,
     locked,
+    grouped,
+    groupedPolicies,
+    canRestoreGroup,
+    restoreGroupedDraft,
     actionBusy,
     voidThis,
     lines,

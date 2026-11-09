@@ -189,6 +189,13 @@ describe('contractual timing forecasts', () => {
     expect(carrierReconciliationBalances(december, '2027-01-31').expectedToDate).toBe(1_200_000);
   });
 
+  it('keeps bind-based timing unknown when an issued renewal has no documented bind date', () => {
+    const p = policy(arrangement({ trigger: 'BIND' }), { boundAt: undefined, transaction: 'RENEWAL' });
+    expect(carrierReconciliationBalances(p, '2026-10-13')).toMatchObject({
+      status: 'UNKNOWN', expectedToDate: null, confirmed: false,
+    });
+  });
+
   it('supports a one-time trigger lag without inventing installments', () => {
     const p = policy(arrangement({ cadence: 'ONCE', paymentDay: undefined, lagDays: 45 }));
     expect(carrierReconciliationBalances(p, '2026-02-14').expectedToDate).toBe(0);

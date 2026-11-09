@@ -5,6 +5,7 @@ import { getFee, getAgreement, getModel } from '../broker-fees/store';
 import { authorizedQuoteTerms } from '../../../../shared/quoteAuthorization';
 import { normalizeClientConditions, normalizePassThroughCharges } from '../../../../shared/passThroughCharges';
 import { validateInvoiceSourceCharges } from '../send-invoice/passThroughInvoice';
+import { GROUPED_INVOICE_REVIEW_ONLY, isGroupedInvoice } from '../../../../shared/groupedInvoiceGuard';
 import { assertAdjustmentInvoiceProof, assertInitialInvoiceAvailable } from '../send-invoice/adjustmentInvoice';
 import { relationshipCurrent } from "../../../../shared/relationships";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
@@ -198,8 +199,14 @@ export class AccountAccess {
     }
     if (model === "Invoice") {
       const previous = input.id ? await this.get("Invoice",id(input.id)) : undefined;
+      if (isGroupedInvoice(previous ?? {}) || previous?.supersededByGroupedInvoiceId || Object.hasOwn(input, 'groupedPolicyIds') || input.sourcePricingVersion === 3) throw new Error(GROUPED_INVOICE_REVIEW_ONLY);
       if(operation==="create") {
         if(![1,2].includes(input.sourcePricingVersion as number)||input.status!=="DRAFT"||!input.quoteId&&!input.policyId)throw new Error("Create a source-priced draft invoice from its quote or policy.");
+        if (input.policyId) {
+          const policy = await this.get('Policy', id(input.policyId));
+          if (policy?.carrierBillType === 'DIRECT' && policy.billType === 'AGENCY') throw new Error('This carrier premium must use the grouped review workflow.');
+          if (id(policy?.groupedDraftInvoiceId) && (await this.get('Invoice', id(policy?.groupedDraftInvoiceId)))?.status !== 'VOID') throw new Error('This policy already belongs to a grouped invoice.');
+        }
         if(input.sourcePricingVersion===2)await assertAdjustmentInvoiceProof(input,(model,key)=>this.get(model,key));
         else {
           if(input.adjustsInvoiceId||input.adjustsPremiumLineId)throw new Error("Only a proven policy adjustment may reference a paid original invoice.");
@@ -229,6 +236,7 @@ export class AccountAccess {
       const previousInvoice=previous?.invoiceId&&previous.invoiceId!==candidate.invoiceId?await this.get("Invoice",id(previous.invoiceId)):undefined;
       const rollover=operation==="update"&&previous&&(!previous.policyId||previous.policyId===input.policyId)&&Object.keys(input).every(field=>["id","policyId","lastWriteBy","updatedBy"].includes(field))&&await this.quotePolicyAttachment(invoice,id(input.policyId));
       for(const parent of [invoice,previousInvoice])if(parent) {
+        if (isGroupedInvoice(parent) || parent.supersededByGroupedInvoiceId) throw new Error(GROUPED_INVOICE_REVIEW_ONLY);
         if(rollover)continue;
         if (["PAID","PROCESSING"].includes(String(parent.status))) throw new Error("Payment allocation lines cannot change after payment is submitted.");
         if([1,2].includes(Number(parent.sourcePricingVersion))&&(parent.status==="SENT"||parent.stripePaymentLinkId))throw new Error("Void the issued source-priced invoice before changing its payment lines.");
@@ -265,6 +273,8 @@ export class AccountAccess {
     if (model === "Quote" && input.status === "BOUND" && (operation === "create" || (await this.get("Quote", id(input.id)))?.status !== "BOUND")) throw new Error("Use the bind workflow to mark a quote bound.");
     if (model === "Policy" && operation === "update") {
       const prior = await this.get("Policy", id(input.id));
+      if (['carrierBillType', 'groupedDraftInvoiceId'].some(field => Object.hasOwn(input, field) && (input[field] ?? null) !== (prior?.[field] ?? null))) throw new Error('Carrier billing and grouped invoice provenance are server-owned.');
+      if (prior?.carrierBillType && Object.hasOwn(input, 'billType') && input.billType !== prior.billType) throw new Error('Preserve the reviewed carrier billing and HOA collection arrangement.');
       assertBrokerFeeAgencyBilling({...prior,...input} as {brokerFee?:number|null;billType?:string|null});
       if(Object.hasOwn(input,"passThroughCharges")&&((input.passThroughCharges!=null)!==(prior?.passThroughCharges!=null)||JSON.stringify(normalizePassThroughCharges(input.passThroughCharges))!==JSON.stringify(normalizePassThroughCharges(prior?.passThroughCharges)))||Object.hasOwn(input,"clientConditions")&&normalizeClientConditions(input.clientConditions)!==normalizeClientConditions(prior?.clientConditions))throw new Error("Bound policy charges and client conditions are immutable. Record a reviewed adjustment instead.");
       if (Object.hasOwn(input, "commissionSnapshotId") && input.commissionSnapshotId !== prior?.commissionSnapshotId) throw new Error("Commission provenance is server-owned.");

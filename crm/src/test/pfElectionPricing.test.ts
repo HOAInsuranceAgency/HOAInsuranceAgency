@@ -4,7 +4,7 @@ import { PF_JURISDICTIONS } from "../../../shared/premiumFinance/jurisdictions";
 import { financePricing } from "../../../shared/premiumFinance/pricing";
 import { buildQuote } from "../../../shared/premiumFinance/quote";
 
-const m = vi.hoisted(() => ({ lookup: vi.fn(), list: vi.fn(), invoices: vi.fn(), account: vi.fn(), policy: vi.fn(), quote: vi.fn(), send: vi.fn(), checkout: vi.fn(), void: vi.fn() }));
+const m = vi.hoisted(() => ({ lookup: vi.fn(), list: vi.fn(), invoices: vi.fn(), account: vi.fn(), policy: vi.fn(), quote: vi.fn(), send: vi.fn(), checkout: vi.fn(), void: vi.fn(), storedInvoice: vi.fn() }));
 vi.mock("../../amplify/functions/data-client", () => ({
   createDataClientGetter: () => async () => ({ models: {
     PfLoan: { listPfLoanByElectionToken: m.lookup, list: m.list },
@@ -23,6 +23,15 @@ vi.mock("@aws-sdk/lib-dynamodb", async original => ({
 vi.mock("stripe", () => ({ default: class { checkout = { sessions: { create: m.checkout } }; } }));
 vi.mock("../../amplify/functions/void-invoice/handler", () => ({ handler: m.void }));
 vi.mock("../../amplify/functions/quote-source-billing", () => ({ zeroFeeQuoteClaimWrites: async () => [] }));
+vi.mock("../../amplify/functions/broker-fees/store", async original => ({
+  ...await original<typeof import("../../amplify/functions/broker-fees/store")>(),
+  getModel: async (model: string, id: string) => {
+    if (model === "Invoice") return m.storedInvoice(id);
+    const { data, errors } = await m.policy({ id });
+    if (errors?.length) throw new Error("Policy read failed");
+    return data ? { id, ...data } : undefined;
+  },
+}));
 vi.mock("../../amplify/functions/broker-fees/bindValidation", () => ({ assertBrokerFeeSigned: vi.fn() }));
 import { handler as elect } from "../../amplify/functions/pf-election/handler";
 
@@ -49,6 +58,7 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date("2027-01-15T18:00:00Z"));
   vi.stubEnv("PF_LOAN_TABLE", "Loans");
+  vi.stubEnv("POLICY_TABLE", "Policies");
   vi.stubEnv("AGENCY_SETTINGS_TABLE", "Settings");
   vi.stubEnv("STRIPE_SECRET_KEY", "test-placeholder");
   vi.stubEnv("SITE_URL", "https://example.test");
@@ -56,6 +66,7 @@ beforeEach(() => {
   m.lookup.mockResolvedValue({ data: [offer()] });
   m.list.mockResolvedValue({ data: [] });
   m.invoices.mockResolvedValue({ data: [] });
+  m.storedInvoice.mockResolvedValue(undefined);
   m.account.mockResolvedValue({ data: { name: "Test Association", state: "IA" } });
   m.policy.mockResolvedValue({ data: { accountId: "account-1", effectiveDate: inputs.effectiveDate } });
   m.quote.mockResolvedValue({ data: { accountId: "account-1", effectiveDate: inputs.effectiveDate } });
@@ -250,6 +261,30 @@ describe("financing jurisdiction at first signature", () => {
     const maApr = financePricing(PF_JURISDICTIONS.find(state => state.code === "MA")!, inputs, "2026-11-15")!.apr;
     m.lookup.mockResolvedValue({ data: [offer({ state: "MA", ...buildQuote({ ...inputs, apr: maApr }), apr: maApr })] });
     m.account.mockResolvedValue({ data: { name: "Test Association", state: "MA" } });
+  });
+
+  it("closes a previously quoted standalone offer on a policy reserved for grouped review", async () => {
+    m.policy.mockResolvedValue({ data: { accountId: "account-1", groupedDraftInvoiceId: "group-1" } });
+    m.storedInvoice.mockResolvedValue({ accountId: "account-1", sourcePricingVersion: 3, groupedPolicyIds: ["policy-1", "policy-2"], status: "DRAFT" });
+    expect(await accept()).toMatchObject({ state: "closed" });
+    expect(m.storedInvoice).toHaveBeenCalledWith("group-1");
+    expect(m.send).not.toHaveBeenCalled();
+    expect(m.void).not.toHaveBeenCalled();
+    expect(m.checkout).not.toHaveBeenCalled();
+  });
+
+  it("guards the first signature transaction against a concurrent grouped reservation", async () => {
+    m.send.mockImplementation(async command => {
+      expect(command).toBeInstanceOf(TransactWriteCommand);
+      expect(command.input.TransactItems).toContainEqual({ ConditionCheck: expect.objectContaining({
+        TableName: "Policies", Key: { id: "policy-1" }, ConditionExpression: expect.stringContaining("attribute_not_exists(groupedDraftInvoiceId)"),
+      }) });
+      throw Object.assign(new Error("Group won"), { name: "TransactionCanceledException", CancellationReasons: [{ Code: "None" }, { Code: "None" }, { Code: "ConditionalCheckFailed" }] });
+    });
+    expect(await accept()).toMatchObject({ state: "closed" });
+    expect(m.send).toHaveBeenCalledTimes(1);
+    expect(m.void).not.toHaveBeenCalled();
+    expect(m.checkout).not.toHaveBeenCalled();
   });
 
   it("closes an unsigned Massachusetts offer after the account's physical state is corrected to Florida", async () => {

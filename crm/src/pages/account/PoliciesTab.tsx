@@ -162,7 +162,9 @@ function AccountPolicies({ accountId }: { accountId: string }) {
                   <td className="small">{(p.lines ?? []).filter(Boolean).join(", ") || "—"}</td>
                   {/* Blank for anything bound before the field existed, which
                       is honest — "Direct" would be a guess about money. */}
-                  <td className="small">{BILL_TYPE_SHORT[p.billType ?? ""] ?? "—"}</td>
+                  <td className="small">{BILL_TYPE_SHORT[p.billType ?? ""] ?? "—"}
+                    {p.billType === "AGENCY" && p.carrierBillType === "DIRECT" && " · carrier direct"}
+                  </td>
                   <td>{fmtMoney(p.premium)}<PolicyCharges source={p} />{(p.brokerFeeRefunded ?? 0) > 0 && <div className="small muted">{fmtMoney(p.brokerFeeRefunded)} HOA broker fee refunded</div>}</td>
                   <td className="small">{commissionCell(p)}</td>
                   <td className="small">{termsSummary(p)}</td>

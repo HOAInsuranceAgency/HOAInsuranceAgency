@@ -14,6 +14,16 @@ beforeEach(()=>{
  m.list.mockImplementation(()=> (async function*(){for(const session of sessions)yield session;})());
  m.intent.mockResolvedValue({status:'requires_action'});
 });
+
+it.each([{sourcePricingVersion:3},{groupedPolicyIds:['p1','p2']}])('keeps a grouped draft on the separate-draft restore path',async grouped=>{
+ Object.assign(row,grouped,{status:'DRAFT'});
+ expect(await handler({arguments:{invoiceId:'i1'}})).toMatchObject({ok:false,error:expect.stringContaining('restore the separate drafts')});
+ expect(m.send.mock.calls.map(([command])=>command.constructor.name)).toEqual(['GetCommand']);
+ expect(m.feeWrites).not.toHaveBeenCalled();
+ expect(m.deactivate).not.toHaveBeenCalled();
+ expect(row.status).toBe('DRAFT');
+});
+
 describe('voiding an issued broker fee invoice',()=>{
  it('expires every open checkout before releasing the invoice',async()=>{
   sessions=[{id:'cs1',status:'open',payment_status:'unpaid'},{id:'cs2',status:'open',payment_status:'unpaid'}];

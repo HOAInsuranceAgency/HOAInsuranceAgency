@@ -7,7 +7,7 @@ import { INVOICE_SEND_GENERATION } from "../../amplify/functions/send-invoice/se
 const h = vi.hoisted(() => ({
   mail: vi.fn(), cognito: vi.fn(), db: vi.fn(), models: {} as Record<string, any>,
   order: [] as string[], run: undefined as any, reportUpdates: [] as any[],
-  invoice: {} as any, writePayment: vi.fn(), createdSub: "synthetic-member-1",
+  invoice: {} as any, policy: {} as any, writePayment: vi.fn(), createdSub: "synthetic-member-1",
   price: vi.fn(), link: vi.fn(),
 }));
 vi.mock("../../amplify/functions/transactional-mail/client", () => ({ TransactionalMailClient: class {
@@ -47,7 +47,10 @@ beforeEach(() => {
   h.mail.mockReset().mockImplementation(async () => { h.order.push("mail"); return { MessageId: "synthetic-provider-receipt" }; });
   h.order.length = 0; h.reportUpdates.length = 0; h.createdSub = "synthetic-member-1";
   h.price.mockReset().mockResolvedValue({ id: "price_synthetic" }); h.link.mockReset().mockResolvedValue({ id: "plink_synthetic", url: "https://pay.example.com/synthetic" });
-  h.db.mockReset().mockImplementation(async () => { h.order.push("business-write"); return {}; });
+  h.db.mockReset().mockImplementation(async command => {
+    if (command.constructor.name === "GetCommand" && command.input.TableName === "synthetic-policy-table") return { Item: structuredClone(h.policy) };
+    h.order.push("business-write"); return {};
+  });
   h.cognito.mockReset().mockImplementation(async command => command.constructor.name === "AdminCreateUserCommand" ? { User: { Username: "synthetic-member", Attributes: [{ Name: "sub", Value: h.createdSub }] } } : {});
   h.writePayment.mockReset().mockImplementation(async () => { h.order.push("payment-write"); return true; });
   for (const [key, value] of Object.entries({
@@ -55,17 +58,18 @@ beforeEach(() => {
     MAGIC_LINK_BASE_URL: "https://crm.protectmyhoa.com", MAGIC_LINK_FROM: "noreply@protectmyhoa.com",
     USER_POOL_ID: "synthetic-destination-pool", PORTAL_URL: "https://crm.protectmyhoa.com", INVITE_FROM: "noreply@protectmyhoa.com",
     AGENCY_MAILBOX: "insurance@protectmyhoa.com", ACCOUNTING_MAILBOX: "accounting@example.com", INVOICE_TABLE: "synthetic-invoice-table",
+    POLICY_TABLE: "synthetic-policy-table",
     MARKETING_REPORT_FROM: "insurance@protectmyhoa.com", STRIPE_WEBHOOK_SECRET: "whsec_synthetic_only",
   })) vi.stubEnv(key, value);
   vi.stubEnv("STRIPE_SECRET_KEY", ""); vi.stubEnv("PF_LOAN_TABLE", ""); vi.stubEnv("SITE_URL", "");
   h.invoice = { id: "synthetic-invoice", number: "INV-SYN-001", accountId: "synthetic-account", policyId: "synthetic-policy", status: "DRAFT", issuedAt: "2026-10-30", updatedAt: "2026-10-30T11:00:00Z", stripePaymentIntentId: "pi_synthetic", remittanceCarrierCents: 80000, remittanceCommissionCents: 20000, remittanceInterestCents: 0 };
+  h.policy = { id: h.invoice.policyId, accountId: h.invoice.accountId, policyNumber: "SYN-001", lines: ["Property"] };
   const lines = [{ id: "synthetic-line", invoiceId: h.invoice.id, policyId: h.invoice.policyId, description: "Synthetic premium", kind: "PREMIUM", retailAmount: 1000, costAmount: 800 }];
   h.models = {
     Invoice: { get: async () => ({ data: h.invoice }), list: async () => ({ data: [h.invoice] }) },
     Account: { get: async () => ({ data: { id: "synthetic-account", name: "Synthetic HOA", state: "NH", address: "1 Test Way" } }) },
     InvoiceLine: { list: async () => ({ data: lines }) },
     Contact: { list: async () => ({ data: [{ id: "synthetic-contact", email: "board@example.com", name: "Synthetic Board", isPrimary: true }] }) },
-    Policy: { get: async () => ({ data: { id: "synthetic-policy", accountId: "synthetic-account", policyNumber: "SYN-001", lines: ["Property"] } }) },
   };
   const runId = `marketing-report:run:manual:${"a".repeat(64)}`;
   h.run = { id: runId, version: 1, data: { id: runId, kind: "manual", actor: "synthetic-admin", status: "queued", recipient: "reports@example.com", asOf: "2026-10-30T12:00:00Z" } };
@@ -119,7 +123,8 @@ describe("real sender to Resend adapter contracts", () => {
     const { handler } = await import("../../amplify/functions/send-invoice/handler");
     h.mail.mockRejectedValue(new MailDeliveryError("DEFERRED", "OP#synthetic"));
     expect(await handler({ arguments: { invoiceId: h.invoice.id, toEmail: "board@example.com" } })).toMatchObject({ ok: false });
-    expect(h.db).not.toHaveBeenCalled();
+    expect(h.mail).toHaveBeenCalledOnce();
+    expect(h.order).not.toContain("business-write");
   });
   it.each(["resend", "ses"])("real invoice handler (%s) reserves before storeLink and never resends a lost acceptance using the newer updatedAt", async provider => {
     vi.setSystemTime(new Date("2026-11-02T14:00:00Z"));
@@ -134,8 +139,16 @@ describe("real sender to Resend adapter contracts", () => {
       invoiceOperationCount: 0, consistentRead: true, completePagination: true };
     h.models.Invoice.get = async () => ({ data: structuredClone(h.invoice) });
     h.db.mockImplementation(async command => {
-      const a = command.input;
-      if (command.constructor.name === "GetCommand") return { Item: structuredClone(a.TableName === "synthetic-invoice-table" ? h.invoice : a.Key.pk.startsWith("CONTROL#") ? proof : deliveries.get(a.Key.pk)) };
+      const name = command.constructor.name;
+      if (name === "GetCommand") {
+        const { TableName, Key } = command.input;
+        if (TableName === "synthetic-policy-table") return { Item: structuredClone(h.policy) };
+        return { Item: structuredClone(TableName === "synthetic-invoice-table" ? h.invoice : Key.pk.startsWith("CONTROL#") ? proof : deliveries.get(Key.pk)) };
+      }
+      if (name === "TransactWriteCommand") expect(command.input.TransactItems).toContainEqual({ ConditionCheck: expect.objectContaining({
+        TableName: "synthetic-policy-table", Key: { id: h.policy.id },
+      }) });
+      const a = name === "TransactWriteCommand" ? command.input.TransactItems[0].Update : command.input;
       const v = a.ExpressionAttributeValues;
       if (a.UpdateExpression === "SET #op = :op") { h.order.push("reserved"); h.invoice.invoiceSendOperation = structuredClone(v[":op"]); }
       else if (a.UpdateExpression.startsWith("SET paymentUrl")) {

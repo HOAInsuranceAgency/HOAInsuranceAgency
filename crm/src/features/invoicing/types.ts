@@ -14,4 +14,5 @@ export type InvoiceEditorProps = {
   onLinesChange: (invoiceId: string, lines: InvoiceLine[]) => void;
   onDeleted: () => void;
   onBusyChange?: (busy: boolean) => void;
+  onGroupedRestored?: () => Promise<void>;
 };

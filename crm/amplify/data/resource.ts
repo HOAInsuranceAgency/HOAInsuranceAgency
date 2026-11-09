@@ -933,6 +933,9 @@ const schema = a
        * existed, turning a missing answer into an unopenable record.
        */
       billType: a.ref("BillType"),
+      /** Original carrier billing when HOA collects a direct-billed premium. */
+      carrierBillType: a.ref("BillType"),
+      groupedDraftInvoiceId: a.id(),
       /**
        * ── Premium-finance eligibility facts (W3), mostly retired ──
        *
@@ -1025,6 +1028,8 @@ const schema = a
     Invoice: a.model({
       /** Versioned initial source pricing; absent only on pre-feature legacy records. */
       sourcePricingVersion: a.integer(),
+      /** Members of an invoice frozen for grouped review. */
+      groupedPolicyIds: a.id().array(),
       adjustsInvoiceId: a.id(),
       adjustsPremiumLineId: a.id(),
       accountId: a.id().required(),
@@ -2275,7 +2280,7 @@ const schema = a
       .authorization(allow => [allow.authenticated()])
       .handler(a.handler.function(commissions)),
     carrierPaymentPreview: a.query()
-      .arguments({ quoteId: a.string().required(), billType: a.string().required() })
+      .arguments({ quoteId: a.string().required(), billType: a.string().required(), issuedRenewal: a.boolean() })
       .returns(a.json())
       .authorization(allow => [allow.authenticated()])
       .handler(a.handler.function(commissions)),
@@ -2380,6 +2385,20 @@ const schema = a
       .returns(a.json())
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(invoiceNumber)),
+
+    createGroupedInvoice: a
+      .mutation()
+      .arguments({ accountId: a.id().required(), policyIds: a.id().array().required(), reviewedTotals: a.json().required() })
+      .returns(a.json())
+      .authorization((allow) => [allow.groups(["OWNER"])])
+      .handler(a.handler.function(crmAccess)),
+
+    restoreGroupedInvoice: a
+      .mutation()
+      .arguments({ invoiceId: a.id().required() })
+      .returns(a.json())
+      .authorization((allow) => [allow.groups(["OWNER"])])
+      .handler(a.handler.function(crmAccess)),
 
     /**
      * Email an invoice to the insured.

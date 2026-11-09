@@ -9,6 +9,9 @@ import {
   PF_DEFAULT_MONTHS,
 } from "../../../../shared/premiumFinance/quote";
 import { originateLoan } from "../pfOrigination";
+import { getModel } from "../broker-fees/store";
+import { assertStandalonePolicyBilling, claimStandalonePolicyLoan, GroupedDraftBillingBlocked } from "../grouped-draft-billing";
+import type { Schema } from "../../data/resource";
 
 /**
  * Custom mutation handler: issueFinanceQuote.
@@ -76,8 +79,10 @@ export const handler = async (event: {
   try {
     const client = await getDataClient();
 
-    const { data: policy } = await client.models.Policy.get({ id: a.policyId });
+    const policy = await getModel<Schema["Policy"]["type"]>("Policy", a.policyId);
     if (!policy) return { ok: false, error: "That policy no longer exists." };
+    await assertStandalonePolicyBilling(policy);
+    const policyLoanClaim = await claimStandalonePolicyLoan(policy);
     const { data: account } = await client.models.Account.get({
       id: policy.accountId,
     });
@@ -116,6 +121,7 @@ export const handler = async (event: {
           lines: policy.lines ?? [],
           coverageEffectiveDate: policy.effectiveDate,
         },
+        policyLoanClaim,
         premium: a.premium,
         downPct: a.downPct,
         months: a.months,
@@ -126,6 +132,7 @@ export const handler = async (event: {
       }
     );
   } catch (err) {
+    if (err instanceof GroupedDraftBillingBlocked) return { ok: false, error: err.message };
     captureHandledFailure(err);
     console.error("pf-originate failed", err);
     return { ok: false, error: "Couldn't evaluate that quote. Try again." };

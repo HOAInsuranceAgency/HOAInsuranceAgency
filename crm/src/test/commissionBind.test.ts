@@ -1,7 +1,7 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 import { packageTerms } from '../../../shared/quotePackages';
 import { commissionPolicy, commissionAccount } from './commissionFixtures';
-import type { CarrierPaymentArrangement } from '../../../shared/commissions';
+import { carrierReconciliationBalances, type CarrierPaymentArrangement } from '../../../shared/commissions';
 const h = vi.hoisted(() => ({
   get: vi.fn(),
   commit: vi.fn(),
@@ -38,6 +38,7 @@ vi.mock('../../amplify/functions/crm-access/access', () => ({
   },
 }));
 import { bindPolicy } from '../../amplify/functions/commissions/bind';
+import { previewCarrierPaymentTerms } from '../../amplify/functions/commissions/payment-preview';
 import { validateInvoiceSourceCharges } from '../../amplify/functions/send-invoice/passThroughInvoice';
 const quote = {
   id: 'q',
@@ -145,7 +146,6 @@ it('copies reviewed supplier charges and client conditions without changing prem
   expect(h.commit.mock.calls[0][0][0].value).toMatchObject({ premiumCents: 10000000, agencyRateUnits: 120000, entries: [] });
 });
 it.each([
-  { billType: '' },
   { agencyRate: '' },
   { agencyRate: '11' },
   { premium: '100000.001' },
@@ -153,6 +153,17 @@ it.each([
 ])('rejects invalid or unconfirmed bind values %#', async (patch) => {
   await expect(bindPolicy(event, { ...input(), ...patch })).rejects.toThrow();
   expect(h.commit).not.toHaveBeenCalled();
+});
+it.each([undefined, '', 'UNREVIEWED'])('rejects an omitted or invalid bill type %s before creating a policy', async billType => {
+  await expect(bindPolicy(event, { ...input(), billType })).rejects.toThrow('Choose a bill type.');
+  expect(h.commit).not.toHaveBeenCalled();
+});
+it.each(['AGENCY', 'DIRECT'])('writes the chosen %s bill type in the policy transaction', async billType => {
+  const { policy } = await bindPolicy(event, { ...input(), billType });
+  expect(policy.billType).toBe(billType);
+  expect(h.commit.mock.calls[0][2]).toContainEqual({ Put: expect.objectContaining({
+    TableName: 'Policy', Item: expect.objectContaining({ id: policy.id, billType }),
+  }) });
 });
 it('uses the renewal rate and freezes it separately', async () => {
   const renewal = { ...quote, renewalPolicyId: 'prior' };
@@ -376,5 +387,92 @@ it('requires an applicable carrier arrangement for the policy term rather than u
   await expect(bindPolicy(event, {
     ...input(), terms: packageTerms(future), carrierTermsVersion: 8, carrierArrangementId: 'property-direct',
   })).rejects.toThrow(/carrier|arrangement|terms/i);
+  expect(h.commit).not.toHaveBeenCalled();
+});
+
+function issuedRenewalInput(quoteBillType: 'DIRECT' | null = 'DIRECT') {
+  const issued = { ...quote, billType: quoteBillType, lines: ['D&O'], effectiveDate: '2026-10-13', expirationDate: '2027-10-13' };
+  h.rows.set('Quote:q', issued);
+  const payment: CarrierPaymentArrangement = {
+    id: 'direct-do-renewal', from: issued.effectiveDate, to: '2027-10-12', lines: issued.lines,
+    billType: 'DIRECT', transaction: 'RENEWAL', basis: 'WRITTEN', payor: 'Carrier',
+    trigger: 'EFFECTIVE', cadence: 'ONCE', lagDays: 0, evidence: 'Direct D&O renewal commission confirmation',
+  };
+  const fallback = h.get.getMockImplementation()!;
+  h.get.mockImplementation(async (kind, id) => kind === 'CARRIER'
+    ? { ...commissionPolicy().carrierTerms, version: 8, arrangements: [
+      payment,
+      { ...payment, id: 'agency-do-renewal', billType: 'AGENCY' },
+      { ...payment, id: 'direct-do-new', transaction: 'NEW' },
+    ] }
+    : fallback(kind, id));
+  return {
+    ...input(), terms: packageTerms(issued), billType: 'AGENCY', carrierBillType: 'DIRECT',
+    issuedRenewalEvidence: 'Issued renewal and premium evidence dated 2026-10-28',
+    carrierTermsVersion: 8, carrierArrangementId: payment.id,
+  };
+}
+
+it('records an issued renewal without a predecessor or bind date and freezes direct carrier terms', async () => {
+  const registration = issuedRenewalInput();
+  expect(await previewCarrierPaymentTerms({ ...event, arguments: { quoteId: 'q', billType: 'DIRECT', issuedRenewal: true } })).toMatchObject({
+    carrierTermsVersion: 8, payment: { id: 'direct-do-renewal', trigger: 'EFFECTIVE' },
+  });
+  const { policy } = await bindPolicy(event, registration);
+  expect(policy).toMatchObject({ billType: 'AGENCY', carrierBillType: 'DIRECT', policyNumber: 'POL-1' });
+  expect(policy).not.toHaveProperty('datePolicyBound');
+  const snapshot = h.commit.mock.calls[0][0][0].value;
+  expect(snapshot).toMatchObject({
+    transaction: 'RENEWAL', producerBps: 800, issuedRenewalEvidence: registration.issuedRenewalEvidence,
+    carrierTerms: { payment: { id: 'direct-do-renewal', billType: 'DIRECT', transaction: 'RENEWAL' } },
+    entries: [],
+  });
+  expect(snapshot).not.toHaveProperty('boundAt');
+  expect(carrierReconciliationBalances(snapshot, '2026-10-13')).toMatchObject({ expectedToDate: 1_200_000, receivedToDate: 0 });
+});
+
+it('preserves a direct renewal without selecting HOA collection', async () => {
+  const { policy } = await bindPolicy(event, { ...issuedRenewalInput(), billType: 'DIRECT' });
+  expect(policy).toMatchObject({ billType: 'DIRECT' });
+  expect(policy).not.toHaveProperty('carrierBillType');
+});
+
+it('saves the confirmed carrier bill type on a quote with missing billing metadata in the bind transaction', async () => {
+  const registration = issuedRenewalInput(null);
+  expect(await previewCarrierPaymentTerms({ ...event, arguments: { quoteId: 'q', billType: 'DIRECT', issuedRenewal: true } })).toMatchObject({
+    payment: { id: 'direct-do-renewal' },
+  });
+  const { policy } = await bindPolicy(event, registration);
+  expect(policy).toMatchObject({ billType: 'AGENCY', carrierBillType: 'DIRECT' });
+  expect(h.commit.mock.calls[0][2]).toContainEqual({ Update: expect.objectContaining({
+    TableName: 'Quote', UpdateExpression: expect.stringContaining('#bt = :carrierBillType'),
+    ConditionExpression: expect.stringContaining('attribute_not_exists(#bt) OR attribute_type(#bt, :nullType)'),
+    ExpressionAttributeNames: expect.objectContaining({ '#bt': 'billType' }),
+    ExpressionAttributeValues: expect.objectContaining({ ':bound': 'BOUND', ':carrierBillType': 'DIRECT', ':nullType': 'NULL' }),
+  }) });
+});
+
+it('requires the active Owner role to preview or record an already-issued renewal', async () => {
+  const registration = issuedRenewalInput();
+  const adminView = { identity: { sub: 'owner', groups: ['OWNER', 'ADMIN'] }, request: { headers: { 'x-crm-role': 'ADMIN' } } };
+  await expect(previewCarrierPaymentTerms({ ...adminView, arguments: { quoteId: 'q', billType: 'DIRECT', issuedRenewal: true } })).rejects.toThrow(/active Owner/);
+  await expect(bindPolicy(adminView, registration)).rejects.toThrow(/active Owner/);
+  expect(h.commit).not.toHaveBeenCalled();
+});
+
+it.each([
+  [{ issuedRenewalEvidence: ' ' }, /renewal evidence/],
+  [{ policyNumber: ' ' }, /issued policy number/],
+  [{ carrierBillType: 'AGENCY' }, /carrier’s billing type/],
+  [{ carrierArrangementId: 'agency-do-renewal' }, /payment terms changed/],
+] as const)('refuses an incomplete or mismatched issued renewal %#', async (change, error) => {
+  await expect(bindPolicy(event, { ...issuedRenewalInput(), ...change })).rejects.toThrow(error);
+  expect(h.commit).not.toHaveBeenCalled();
+});
+
+it('requires review of the existing carrier policy before registering a duplicate term', async () => {
+  const registration = issuedRenewalInput();
+  h.send.mockResolvedValue({ Items: [{ id: 'existing', carrierId: 'c', policyNumber: 'pol-1', effectiveDate: '2026-10-13' }] });
+  await expect(bindPolicy(event, registration)).rejects.toThrow(/carrier policy and term already exist/);
   expect(h.commit).not.toHaveBeenCalled();
 });
