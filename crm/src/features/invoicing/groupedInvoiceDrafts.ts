@@ -7,6 +7,13 @@ import type { Invoice, InvoiceLine, Policy } from "../../lib/client";
 
 interface GroupedInvoiceCandidate { policy: Policy; term: string; draft: Invoice | null; amount: number }
 
+export function parseSupplierGrossCents(value: string): number | null {
+  if (!/^(?:\d+(?:\.\d{1,2})?|\.\d{1,2})$/.test(value)) return null;
+  const [dollars = "", fraction = ""] = value.split(".");
+  const cents = Number(`${dollars}${fraction.padEnd(2, "0")}`);
+  return Number.isSafeInteger(cents) && cents > 0 ? cents : null;
+}
+
 export function policyTermKey(policy: Pick<Policy, "effectiveDate" | "expirationDate">): string | null {
   const { effectiveDate, expirationDate } = policy;
   if (!isRealIsoDay(effectiveDate) || !isRealIsoDay(expirationDate) || effectiveDate >= expirationDate) return null;
@@ -49,7 +56,7 @@ export function groupedInvoiceCandidates(policies: readonly Policy[], invoices: 
 
     const draft = live[0];
     if (live.length !== 1 || !draft || isGroupedInvoice(draft) || draft.status !== "DRAFT" || draft.sourcePricingVersion !== 1 ||
-      draft.adjustsInvoiceId || draft.adjustsPremiumLineId || draft.policyId !== policy.id) return [];
+      draft.adjustsInvoiceId || draft.adjustsPremiumLineId || draft.policyId !== policy.id || draft.quoteId) return [];
 
     const draftLines = lines.filter(line => line.invoiceId === draft.id);
     const premiums = draftLines.filter(line => line.kind === "PREMIUM");

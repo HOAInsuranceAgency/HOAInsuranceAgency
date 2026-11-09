@@ -37,6 +37,7 @@ describe("combined invoice drafts", () => {
     status: "DRAFT", sourcePricingVersion: 1, number: `INV-${id}` });
   const preparedLine = (id: string) => ({ id: `premium-${id}`, invoiceId: `draft-${id}`, accountId: "a1",
     policyId: id, kind: "PREMIUM", retailAmount: 100, costAmount: 80 });
+  const taxLine = (id: string, amount: number) => ({ ...preparedLine(id), id: `tax-${id}`, kind: "TAX", retailAmount: amount, costAmount: amount });
   const travelers = { ...preparedPolicy("travelers"), policyNumber: "TRAVELERS", carrierBillType: "DIRECT", premium: 200 };
   const renderOwner = () => render(<OwnerContext.Provider value={true}><InvoicesTab accountId="a1" /></OwnerContext.Provider>);
   beforeEach(() => {
@@ -50,7 +51,7 @@ describe("combined invoice drafts", () => {
     const drafts = ids.map(preparedDraft);
     const members = [...ids.map(preparedPolicy), travelers];
     api.models.Policy.list.mockResolvedValue({ data: members });
-    api.models.InvoiceLine.list.mockResolvedValue({ data: ids.map(preparedLine) });
+    api.models.InvoiceLine.list.mockResolvedValue({ data: [...ids.map(preparedLine), taxLine("p2", 17.25)] });
     api.models.Invoice.list.mockResolvedValueOnce({ data: drafts }).mockResolvedValue({ data: [
       ...drafts.map(draft => ({ ...draft, status: "VOID" })),
       { id: "grouped", accountId: "a1", status: "DRAFT", number: "INV-GROUP", sourcePricingVersion: 3, groupedPolicyIds: members.map(member => member.id) },
@@ -68,14 +69,51 @@ describe("combined invoice drafts", () => {
     const checkboxes = screen.getAllByRole("checkbox");
     expect(checkboxes).toHaveLength(4);
     for (const box of checkboxes) await userEvent.click(box);
+    expect(create).toBeDisabled();
+    expect(screen.queryByRole("textbox", { name: /Supplier gross total for TRAVELERS/ })).not.toBeInTheDocument();
+    for (const [id, amount] of [["p1", "100"], ["p2", "117.25"], ["p3", "100.00"]]) {
+      const input = screen.getByRole("textbox", { name: new RegExp(`Supplier gross total for POL-${id}`) });
+      expect(input).toHaveValue("");
+      await userEvent.type(input, amount!);
+    }
+    expect(create).toBeEnabled();
     await userEvent.click(create);
 
     expect(await screen.findByText("Editing grouped")).toBeInTheDocument();
-    expect(api.mutations.createGroupedInvoice).toHaveBeenCalledExactlyOnceWith({ accountId: "a1", policyIds: [...ids, "travelers"] });
+    expect(api.mutations.createGroupedInvoice).toHaveBeenCalledExactlyOnceWith({ accountId: "a1", policyIds: [...ids, "travelers"],
+      reviewedTotals: JSON.stringify([{ policyId: "p1", totalCents: 10000 }, { policyId: "p2", totalCents: 11725 }, { policyId: "p3", totalCents: 10000 }]),
+    });
     expect(api.mutations.reserveInvoiceNumber).not.toHaveBeenCalled();
     expect(api.models.Invoice.create).not.toHaveBeenCalled();
     expect(api.models.InvoiceLine.create).not.toHaveBeenCalled();
     expect(screen.queryByRole("option", { name: /POL-p[123]/ })).not.toBeInTheDocument();
+  });
+
+  it("requires exact supplier cents and lets the owner refresh a draft missing a fee or tax", async () => {
+    api.models.Policy.list.mockResolvedValue({ data: [preparedPolicy("ready"), travelers] });
+    api.models.Invoice.list.mockResolvedValue({ data: [preparedDraft("ready")] });
+    api.models.InvoiceLine.list.mockResolvedValueOnce({ data: [preparedLine("ready")] })
+      .mockResolvedValue({ data: [preparedLine("ready"), taxLine("ready", 25.19)] });
+    renderOwner();
+    await userEvent.click(await screen.findByRole("button", { name: "Combine policies" }));
+    await userEvent.click(screen.getByRole("checkbox", { name: /POL-ready/ }));
+    await userEvent.click(screen.getByRole("checkbox", { name: /TRAVELERS/ }));
+    const create = screen.getByRole("button", { name: "Create combined draft" });
+    const input = screen.getByRole("textbox", { name: /Supplier gross total for POL-ready/ });
+
+    await userEvent.type(input, "100.001");
+    expect(screen.getByText("Enter a positive amount with up to two decimal places.")).toBeInTheDocument();
+    expect(create).toBeDisabled();
+    await userEvent.clear(input);
+    await userEvent.type(input, "125.19");
+    expect(screen.getByText("The supplier gross total differs from the draft total of $100.00.")).toBeInTheDocument();
+    expect(create).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: "Refresh invoices" }));
+
+    await waitFor(() => expect(create).toBeEnabled());
+    expect(input).toHaveValue("125.19");
+    expect(screen.getByRole("checkbox", { name: /POL-ready.*\$125\.19/ })).toBeChecked();
+    expect(api.mutations.createGroupedInvoice).not.toHaveBeenCalled();
   });
 
   it("offers only prepared, unissued and ungrouped policy drafts to the owner", async () => {

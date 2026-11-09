@@ -92,19 +92,33 @@ describe("server-owned premium finance pricing", () => {
     expect(loan()?.apr).toBe(15);
   });
 
+  it("claims the private policy loan pointer in the same transaction as the new loan", async () => {
+    vi.stubEnv("POLICY_TABLE", "policy-table");
+    const { claimStandalonePolicyLoan } = await import("../../amplify/functions/grouped-draft-billing");
+    const policyLoanClaim = await claimStandalonePolicyLoan({ id: "policy-1" });
+    const result = await originateLoan(db, reads, true, request("AK", { policyLoanClaim }));
+    const transaction = send.mock.calls.map(([command]) => command).find(command => command instanceof TransactWriteCommand);
+    expect(result).toMatchObject({ ok: true, loanId: loan()?.id });
+    const claim = transaction?.input.TransactItems?.find(write => write.Update)?.Update;
+    expect(claim).toMatchObject({ TableName: "policy-table", Key: { id: "policy-1" },
+      UpdateExpression: "SET sourcePricingLoanId = :newLoan", ExpressionAttributeValues: { ":newLoan": loan()?.id } });
+    expect(claim?.ConditionExpression).toContain("attribute_not_exists(groupedDraftInvoiceId)");
+    expect(claim?.ConditionExpression).toContain("attribute_not_exists(sourcePricingLoanId)");
+  });
+
   it("never creates a standalone loan when a grouped policy claim wins the origination transaction", async () => {
     vi.stubEnv("POLICY_TABLE", "policy-table");
-    const { standalonePolicyBillingGuard } = await import("../../amplify/functions/grouped-draft-billing");
-    const guard = standalonePolicyBillingGuard({ id: "policy-1" });
+    const { claimStandalonePolicyLoan } = await import("../../amplify/functions/grouped-draft-billing");
+    const policyLoanClaim = await claimStandalonePolicyLoan({ id: "policy-1" });
     send.mockImplementation(async (command) => {
       if (command instanceof TransactWriteCommand) {
-        expect(command.input.TransactItems).toContainEqual(guard);
-        expect(guard.ConditionCheck?.ConditionExpression).toContain("attribute_not_exists(groupedDraftInvoiceId)");
+        const claim = command.input.TransactItems?.find(write => write.Update)?.Update;
+        expect(claim?.ConditionExpression).toContain("attribute_not_exists(groupedDraftInvoiceId)");
         throw Object.assign(new Error("Group won"), { name: "TransactionCanceledException", CancellationReasons: [{ Code: "None" }, { Code: "None" }, { Code: "ConditionalCheckFailed" }] });
       }
       return {};
     });
-    await expect(originateLoan(db, reads, true, request("AK", { policyGuard: guard }))).resolves.toMatchObject({ ok: false });
+    await expect(originateLoan(db, reads, true, request("AK", { policyLoanClaim }))).resolves.toMatchObject({ ok: false });
     expect(decisions().filter(row => row.rule === "module-flag").every(row => row.outcome !== "BLOCK")).toBe(true);
   });
 

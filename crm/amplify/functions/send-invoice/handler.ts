@@ -9,7 +9,7 @@ import { validateInvoiceSourceCharges } from "./passThroughInvoice";
 import { assertAdjustmentInvoiceProof, assertInitialInvoiceAvailable } from "./adjustmentInvoice";
 import { isNonpayableAdjustmentStatement } from "../../../../shared/invoicePaymentStatus";
 import { GROUPED_INVOICE_REVIEW_ONLY, isGroupedInvoice } from "../../../../shared/groupedInvoiceGuard";
-import { assertStandalonePolicyBilling, GroupedDraftBillingBlocked, standalonePolicyBillingGuard } from "../grouped-draft-billing";
+import { assertStandalonePolicyBilling, claimStandalonePolicyLoan, GroupedDraftBillingBlocked, readTrackedPolicyLoan, standalonePolicyBillingGuard, type BillingPolicy } from "../grouped-draft-billing";
 import { prepareBrokerFeeAgreement } from "../broker-fees/agreements";
 import { authorizedQuoteTerms } from "../../../../shared/quoteAuthorization";
 import { brokerFeeCents, feeAllocations, type BrokerFeeAllocation, type BrokerFeeInvoiceSendClaim } from "../../../../shared/brokerFees";
@@ -99,7 +99,7 @@ export async function financeOffer(
   retailTotal: number,
   recipientEmail: string | null,
   allocations: BrokerFeeAllocation[] = [],
-  policyGuard?: Write
+  policy?: BillingPolicy | null
 ): Promise<{ url: string; downPayment: number; monthly: number; months: number; apr: number; originationFee: number; brokerFee: number } | null> {
   if (!anchor || retailTotal <= 0) return null;
   const brokerFeeTotalCents = allocations.reduce((sum, allocation) => sum + allocation.amountCents, 0);
@@ -119,9 +119,11 @@ export async function financeOffer(
       anchor.kind === "policy"
         ? { policyId: { eq: anchor.id } }
         : { quoteId: { eq: anchor.id } };
-    const loans = await listAllPages((nextToken) =>
+    const listed = await listAllPages((nextToken) =>
       client.models.PfLoan.list({ filter: anchorFilter, nextToken })
     );
+    const tracked = policy ? await readTrackedPolicyLoan<(typeof listed)[number]>(policy) : undefined;
+    const loans = tracked ? [...listed.filter(loan => loan.id !== tracked.id), tracked] : listed;
     if (
       loans.some((l) =>
         ["ACCEPTED", "ACTIVE", "DEFAULTED", "PAID"].includes(l.status ?? "")
@@ -221,6 +223,7 @@ export async function financeOffer(
     }
 
     if (!loan) {
+      const policyLoanClaim = policy ? await claimStandalonePolicyLoan(policy) : undefined;
       const result = await originateLoan(
         ddb,
         {
@@ -244,7 +247,7 @@ export async function financeOffer(
           premium: retailTotal,
           brokerFeeCents: brokerFeeTotalCents,
           brokerFeeAllocations: allocations,
-          ...(policyGuard ? { policyGuard } : {}),
+          ...(policyLoanClaim ? { policyLoanClaim } : {}),
           downPct: PF_DEFAULT_DOWN_PCT,
           months: PF_DEFAULT_MONTHS,
           effectiveDate: today,
@@ -1025,7 +1028,7 @@ export const handler = async (event: {
       financeableInvoiceTotal(lines),
       to[0] ?? null,
       allocations,
-      policyGuard
+      policy
     );
 
     /**

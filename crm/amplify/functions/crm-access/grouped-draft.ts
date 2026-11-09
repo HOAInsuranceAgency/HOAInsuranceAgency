@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { QueryCommand, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
 import { agencyDay } from '../../../../shared/agencyTime';
 import { isGroupedInvoice } from '../../../../shared/groupedInvoiceGuard';
+import { invoiceTotals } from '../../../../shared/invoiceTotals';
 import { normalizePassThroughCharges } from '../../../../shared/passThroughCharges';
 import { isRealIsoDay } from '../../../../shared/premiumFinance/noticeSequence';
 import { accountModels, db, modelTable, type Write } from '../broker-fees/store';
@@ -46,7 +47,7 @@ export function groupedReviewLines(policy: Row, draft: Row | undefined, lines: R
       retailAmount: Number(policy.premium), costAmount: Number(policy.premium) }];
   }
   if (!draft || !lines.length) throw new Error('Prepare a reviewed, unsent invoice for each agency-billed policy first.');
-  if (draft.status !== 'DRAFT' || draft.sourcePricingVersion !== 1 || draft.policyId !== policyId ||
+  if (draft.status !== 'DRAFT' || draft.sourcePricingVersion !== 1 || draft.policyId !== policyId || draft.quoteId ||
       draft.accountId !== policy.accountId || hasDelivery(draft) || draft.adjustsInvoiceId || draft.adjustsPremiumLineId) {
     throw new Error('Only unsent original policy drafts can be combined.');
   }
@@ -67,19 +68,43 @@ export function groupedReviewLines(policy: Row, draft: Row | undefined, lines: R
   return checked;
 }
 
-async function currentLines(access: AccountAccess, invoiceId: string) {
+async function currentLines(access: AccountAccess, invoice: Row) {
+  const invoiceId = usableId(invoice.id);
   const error = () => new Error('The invoice lines could not be verified completely.');
+  if (invoice.draftLineIds != null && !(invoice.draftLineIds instanceof Set)) throw error();
+  const tracked = new Set(invoice.draftLineIds instanceof Set ? [...invoice.draftLineIds].map(usableId) : []);
   const index = resolveAccessIndex(parseAccessIndexes(process.env.ACCESS_INDEXES, error), 'InvoiceLine.invoiceId', { error });
-  const keys = await collectCompletePages<string>(async cursor => {
+  const indexed = await collectCompletePages<string>(async cursor => {
     const result = await db.send(new QueryCommand({ TableName: modelTable('InvoiceLine'), IndexName: index,
       KeyConditionExpression: 'invoiceId = :invoice', ExpressionAttributeValues: { ':invoice': invoiceId },
       ProjectionExpression: 'id', ExclusiveStartKey: cursor }));
     return { items: (result.Items ?? []).map(row => usableId(row.id)), next: result.LastEvaluatedKey };
   }, { maxPages: 10, maxRows: 100, error });
+  // A saved draft edit joins this set in the same transaction as the line.
+  // The index only discovers pre-tracking rows and can lag adds/deletes.
+  const keys = [...new Set([...indexed, ...tracked])];
+  if (keys.length > 100) throw error();
   await access.prefetch('InvoiceLine', keys);
   const rows = await Promise.all(keys.map(key => access.get('InvoiceLine', key)));
-  if (rows.some(row => !row || row.invoiceId !== invoiceId)) throw error();
-  return (rows as Row[]).sort((a, b) => Number(a.sortOrder ?? 0) - Number(b.sortOrder ?? 0) || String(a.id).localeCompare(String(b.id)));
+  if (rows.some((row, index) => tracked.has(keys[index]) && (!row || row.invoiceId !== invoiceId))) throw error();
+  return rows.filter((row): row is Row => !!row && row.invoiceId === invoiceId)
+    .sort((a, b) => Number(a.sortOrder ?? 0) - Number(b.sortOrder ?? 0) || String(a.id).localeCompare(String(b.id)));
+}
+
+function supplierTotals(value: unknown) {
+  const error = () => new Error('Enter the independently reviewed supplier total for each source draft.');
+  let rows: unknown;
+  try { rows = typeof value === 'string' ? JSON.parse(value) : value; }
+  catch { throw error(); }
+  if (!Array.isArray(rows) || rows.length > MAX_MEMBERS) throw error();
+  const totals = new Map<string, number>();
+  for (const row of rows) {
+    if (typeof row !== 'object' || !row || !('policyId' in row) || !('totalCents' in row)) throw error();
+    const policyId = id(row.policyId), total = row.totalCents;
+    if (!policyId || typeof total !== 'number' || !Number.isSafeInteger(total) || total <= 0 || totals.has(policyId)) throw error();
+    totals.set(policyId, total);
+  }
+  return totals;
 }
 
 function versionCondition(row: Row) {
@@ -115,12 +140,17 @@ export async function createGroupedDraft(access: AccountAccess, args: Row) {
     throw new Error('Choose active, agency-collected policies with valid terms and no HOA broker fee.');
   }
   if (new Set(policies.map(row => `${row.effectiveDate}/${row.expirationDate}`)).size !== 1) throw new Error('The policies must have the same coverage term.');
+  const reviewed = supplierTotals(args.reviewedTotals);
+  const ordinary = policies.filter(policy => !isAdvance(policy));
+  if (reviewed.size !== ordinary.length || ordinary.some(policy => !reviewed.has(String(policy.id)))) throw new Error('Enter the independently reviewed supplier total for each source draft.');
+  const reviewedTotals = [...reviewed.entries()].sort(([a], [b]) => a.localeCompare(b));
   const owners = [...new Set(policies.map(row => id(row.groupedDraftInvoiceId)).filter(Boolean))];
   for (const owner of owners) {
     const group = await access.get('Invoice', owner);
     if (!group || group.accountId !== accountId || !isGroupedInvoice(group)) throw new Error('The existing grouped invoice could not be verified.');
     if (group.status === 'VOID') continue;
     if (group.status === 'DRAFT' && Array.isArray(group.groupedPolicyIds) && policies.every(row => row.groupedDraftInvoiceId === owner) &&
+        JSON.stringify(group.groupedReviewedTotals) === JSON.stringify(reviewedTotals) &&
         JSON.stringify([...group.groupedPolicyIds].sort()) === JSON.stringify(policyIds)) return { ok: true, invoiceId: owner };
     throw new Error('A selected policy already belongs to a grouped invoice.');
   }
@@ -135,7 +165,9 @@ export async function createGroupedDraft(access: AccountAccess, args: Row) {
   ]);
   const relevant = (row: Row) => policyIds.includes(id(row.policyId)) || quoteIds.includes(id(row.quoteId)) ||
     Array.isArray(row.groupedPolicyIds) && row.groupedPolicyIds.some(value => policyIds.includes(id(value)));
-  const loanIds = [...new Set([...loanCandidates.filter(relevant).map(row => usableId(row.id)),
+  const pointedLoans = new Map(policies.flatMap(policy => policy.sourcePricingLoanId == null ? [] :
+    [[usableId(policy.sourcePricingLoanId), usableId(policy.id)] as const]));
+  const loanIds = [...new Set([...loanCandidates.filter(relevant).map(row => usableId(row.id)), ...pointedLoans.keys(),
     ...quotes.flatMap(row => row.sourcePricingLoanId == null ? [] : [usableId(row.sourcePricingLoanId)])])];
   const invoiceIds = [...new Set([...invoiceCandidates.filter(row => relevant(row) || !row.policyId && !row.quoteId && !isGroupedInvoice(row)).map(row => usableId(row.id)),
     ...quotes.flatMap(row => row.sourcePricingInvoiceId == null ? [] : [usableId(row.sourcePricingInvoiceId)])])];
@@ -143,7 +175,8 @@ export async function createGroupedDraft(access: AccountAccess, args: Row) {
   await Promise.all([access.prefetch('Invoice', invoiceIds), access.prefetch('PfLoan', loanIds)]);
   for (const key of loanIds) {
     const loan = await access.get('PfLoan', key);
-    if (!loan || loan.accountId !== accountId || loan.status !== 'CANCELLED' || loan.agreementSignedAt || loan.electedAt || loan.downPaidAt || loan.downPaymentIntentId || loan.electionCheckoutUrl) {
+    if (!loan || loan.accountId !== accountId || (pointedLoans.has(key) && loan.policyId !== pointedLoans.get(key)) ||
+        loan.status !== 'CANCELLED' || loan.agreementSignedAt || loan.electedAt || loan.downPaidAt || loan.downPaymentIntentId || loan.electionCheckoutUrl) {
       throw new Error('A selected policy has existing financing that must be reviewed first.');
     }
   }
@@ -155,7 +188,7 @@ export async function createGroupedDraft(access: AccountAccess, args: Row) {
       if (relevant(invoice) && hasDelivery(invoice)) throw new Error('A selected policy has an issued invoice that must be reviewed first.');
       continue;
     }
-    const lines = await currentLines(access, key);
+    const lines = await currentLines(access, invoice);
     if (!relevant(invoice) && !lines.some(line => policyIds.includes(id(line.policyId)))) continue;
     const policyId = id(invoice.policyId);
     if (!policyIds.includes(policyId) || sources.has(policyId) || invoice.status !== 'DRAFT' || hasDelivery(invoice) || isGroupedInvoice(invoice)) {
@@ -165,7 +198,11 @@ export async function createGroupedDraft(access: AccountAccess, args: Row) {
   }
   const lines = policies.flatMap(policy => {
     const source = sources.get(String(policy.id));
-    return groupedReviewLines(policy, source?.invoice, source?.lines ?? []);
+    const prepared = groupedReviewLines(policy, source?.invoice, source?.lines ?? []);
+    if (!isAdvance(policy) && Math.round(invoiceTotals(prepared).retail * 100) !== reviewed.get(String(policy.id))) {
+      throw new Error('A source draft does not match its reviewed carrier total. Refresh and reconcile the draft before combining.');
+    }
+    return prepared;
   });
   const sourceLineCount = [...sources.values()].reduce((count, source) => count + source.lines.length, 0);
   if (!lines.length || lines.length > MAX_LINES || 3 + quotes.length + policies.length + sources.size + sourceLineCount + lines.length > 100) {
@@ -180,24 +217,32 @@ export async function createGroupedDraft(access: AccountAccess, args: Row) {
     { Put: { TableName: modelTable('Invoice'), ConditionExpression: 'attribute_not_exists(id)', Item: {
       ...base, id: invoiceId, __typename: 'Invoice', number, sourcePricingVersion: 3, groupedPolicyIds: policyIds,
       groupedSourceInvoiceIds: [...sources.values()].map(({ invoice }) => usableId(invoice.id)),
+      groupedReviewedTotals: reviewedTotals,
       status: 'DRAFT', issuedAt: today, dueAt, createdAt: now,
     } } }];
   for (const policy of policies) {
     const guard = versionCondition(policy);
     const previous = id(policy.groupedDraftInvoiceId);
+    const loan = policy.sourcePricingLoanId;
     writes.push({ Update: { TableName: modelTable('Policy'), ...guard,
-      ConditionExpression: guard.ConditionExpression + (previous ? ' AND groupedDraftInvoiceId = :previous' : ' AND attribute_not_exists(groupedDraftInvoiceId)'),
+      ConditionExpression: guard.ConditionExpression + (previous ? ' AND groupedDraftInvoiceId = :previous' : ' AND attribute_not_exists(groupedDraftInvoiceId)') +
+        (loan == null ? ' AND attribute_not_exists(sourcePricingLoanId)' : ' AND sourcePricingLoanId = :loan'),
       UpdateExpression: 'SET groupedDraftInvoiceId = :draft, updatedAt = :now, lastWriteBy = :actor',
       ExpressionAttributeValues: { ...guard.ExpressionAttributeValues, ...(previous ? { ':previous': previous } : {}),
+        ...(loan == null ? {} : { ':loan': loan }),
         ':draft': invoiceId, ':now': now, ':actor': access.actor },
     } });
   }
   for (const { invoice, lines: sourceLines } of sources.values()) {
     const guard = versionCondition(invoice);
+    const revision = invoice.draftLineRevision;
+    if (revision != null && (!Number.isSafeInteger(revision) || Number(revision) < 0)) throw new Error(retry);
     writes.push({ Update: { TableName: modelTable('Invoice'), ...guard,
-      ConditionExpression: `${guard.ConditionExpression} AND #status = :draft AND attribute_not_exists(invoiceSendOperation)`,
+      ConditionExpression: `${guard.ConditionExpression} AND #status = :draft AND attribute_not_exists(invoiceSendOperation) AND ` +
+        (revision == null ? 'attribute_not_exists(draftLineRevision)' : 'draftLineRevision = :revision'),
       UpdateExpression: 'SET #status = :void, updatedAt = :now, lastWriteBy = :actor, supersededByGroupedInvoiceId = :replacement', ExpressionAttributeNames: { '#status': 'status' },
-      ExpressionAttributeValues: { ...guard.ExpressionAttributeValues, ':draft': 'DRAFT', ':void': 'VOID', ':now': now, ':actor': access.actor, ':replacement': invoiceId },
+      ExpressionAttributeValues: { ...guard.ExpressionAttributeValues, ...(revision == null ? {} : { ':revision': revision }),
+        ':draft': 'DRAFT', ':void': 'VOID', ':now': now, ':actor': access.actor, ':replacement': invoiceId },
     } });
     writes.push(...sourceLines.map(row => check('InvoiceLine', row)));
   }

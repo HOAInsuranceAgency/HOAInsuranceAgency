@@ -1,5 +1,6 @@
 import { assertGraphqlErrors } from '../../lib/apiResponse';
 import { createGroupedInvoice, reserveInvoiceNumber } from '../../lib/billingApi';
+import { MoneyInput } from "../../components/inputs";
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
 import { Select } from "../../components/ui/Select";
@@ -12,7 +13,7 @@ import { allWithAuthorizationPriority } from "../../lib/allWithAuthorizationPrio
 import { useAsyncResource } from "../../lib/useAsyncResource";
 import { SaveStatus, useSaveStatus } from "../../components/SaveStatus";
 import { InvoiceEditor } from "../../components/InvoiceEditor";
-import { groupedInvoiceCandidates } from "../../features/invoicing/groupedInvoiceDrafts";
+import { groupedInvoiceCandidates, parseSupplierGrossCents } from "../../features/invoicing/groupedInvoiceDrafts";
 import { policyLabel } from "../../features/invoicing/invoiceInputs";
 import { useIsOwner } from "../../lib/auth";
 import { formatMoney, invoiceTotals, premiumLineFromPolicy } from "../../../../shared/invoiceTotals";
@@ -141,6 +142,7 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
   const [anchorKey, setAnchorKey] = useState("");
   const [combineOpen, setCombineOpen] = useState(false);
   const [selectedPolicyIds, setSelectedPolicyIds] = useState<string[]>([]);
+  const [supplierGross, setSupplierGross] = useState<Record<string, string>>({});
   const [createdGroupId, setCreatedGroupId] = useState<string | null>(null);
 
   /**
@@ -302,19 +304,30 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
   const canOpenCombine = candidates.some(candidate => candidates.filter(other => other.term === candidate.term).length >= 2);
   const selected = candidates.filter(candidate => selectedPolicyIds.includes(candidate.policy.id));
   const selectedTerm = selected[0]?.term;
-  const canCombine = selected.length >= 2 && selected.length <= 8 && selected.length === selectedPolicyIds.length &&
-    selected.every(candidate => candidate.term === selectedTerm);
+  const supplierReviews = new Map(selected.filter(candidate => candidate.draft).map(({ policy, amount }) => {
+    const input = supplierGross[policy.id] ?? "";
+    const totalCents = parseSupplierGrossCents(input);
+    const matches = totalCents === Math.round(amount * 100);
+    return [policy.id, { input, totalCents, matches }] as const;
+  }));
+  const reviewedTotals = [...supplierReviews].flatMap(([policyId, review]) =>
+    review.matches && review.totalCents !== null ? [{ policyId, totalCents: review.totalCents }] : []);
+  const totalMismatch = [...supplierReviews.values()].some(review => review.totalCents !== null && !review.matches);
+  const missingSelection = selected.length !== selectedPolicyIds.length;
+  const canCombine = selected.length >= 2 && selected.length <= 8 && !missingSelection &&
+    selected.every(candidate => candidate.term === selectedTerm) && reviewedTotals.length === supplierReviews.size;
 
   async function combinePolicies() {
     if (!isOwner || !canCombine || creating.current || res.loading || res.error || open || waitingForGroup) return;
     creating.current = true;
     await createStatus.run(async isCurrent => {
-      const invoiceId = await createGroupedInvoice({ accountId, policyIds: selectedPolicyIds });
+      const invoiceId = await createGroupedInvoice({ accountId, policyIds: selectedPolicyIds, reviewedTotals });
       if (!isCurrent()) return;
       setCreatedGroupId(invoiceId);
       setOpenId(invoiceId);
       setCombineOpen(false);
       setSelectedPolicyIds([]);
+      setSupplierGross({});
       setAnchorKey("");
       await res.refetch();
     }, { savedMessage: "Combined draft created.", errorMessage: "Couldn't combine the selected policies." });
@@ -375,29 +388,54 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
         {combineOpen && <div className="card inset">
           <h3>Combine policies</h3>
           <p className="muted small">Choose policies on the same term. The combined draft replaces the selected unsent invoices.</p>
+          {supplierReviews.size > 0 && <p className="muted small">Enter each supplier invoice total before commission, including fees and taxes.</p>}
           <ul className="check-list">
             {candidates.map(({ policy, term, draft, amount }) => {
               const checked = selectedPolicyIds.includes(policy.id);
+              const review = supplierReviews.get(policy.id);
+              const inputId = `supplier-gross-${policy.id}`;
+              const problem = review?.input && !review.matches
+                ? review.totalCents === null ? "Enter a positive amount with up to two decimal places."
+                  : `The supplier gross total differs from the draft total of ${formatMoney(amount)}.`
+                : "";
               return <li key={policy.id}><label>
                 <Input type="checkbox" checked={checked}
                   disabled={createStatus.busy || (!checked && ((!!selectedTerm && term !== selectedTerm) || selectedPolicyIds.length >= 8))}
                   onChange={event => {
                     createStatus.markDirty();
-                    setSelectedPolicyIds(ids => event.target.checked ? [...ids, policy.id] : ids.filter(id => id !== policy.id));
+                    const include = event.target.checked;
+                    setSelectedPolicyIds(ids => include ? [...ids, policy.id] : ids.filter(id => id !== policy.id));
+                    if (!include) setSupplierGross(previous => ({ ...previous, [policy.id]: "" }));
                   }} />
                 <span>{policyLabel(policy)}
                   <span className="muted small"> · {draft ? `Draft ${draft.number ?? "invoice"}` : "HOA carrier advance"} · {formatMoney(amount)}</span>
                 </span>
-              </label></li>;
+              </label>
+                {review && <div className="field">
+                  <label htmlFor={inputId}>Supplier gross total</label>
+                  <MoneyInput id={inputId} value={review.input} disabled={createStatus.busy}
+                    aria-label={`Supplier gross total for ${policyLabel(policy)}`}
+                    aria-required={true} aria-invalid={!!problem} aria-describedby={problem ? `${inputId}-problem` : undefined}
+                    onChange={value => {
+                      createStatus.markDirty();
+                      setSupplierGross(previous => ({ ...previous, [policy.id]: value }));
+                    }} />
+                  {problem && <p id={`${inputId}-problem`} className="error-text small">{problem}</p>}
+                </div>}
+              </li>;
             })}
           </ul>
+          {missingSelection && <p className="warn-inline">A selected draft is no longer available. Close and reopen this form to review available drafts.</p>}
           <div className="inline-actions">
             <Button type="button" variant="primary" disabled={!canCombine || createStatus.busy || res.loading || !!res.error}
               onClick={() => void combinePolicies()}>Create combined draft</Button>
+            {(totalMismatch || createStatus.status.state === "error") && <Button type="button" variant="secondary" disabled={createStatus.busy || res.loading}
+              onClick={() => { createStatus.markDirty(); void res.refetch(); }}>Refresh invoices</Button>}
             <Button type="button" variant="secondary" disabled={createStatus.busy} onClick={() => {
               createStatus.markDirty();
               setCombineOpen(false);
               setSelectedPolicyIds([]);
+              setSupplierGross({});
             }}>Cancel</Button>
           </div>
         </div>}

@@ -15,7 +15,7 @@ const liability = { ...property, id: 'd-and-o', quoteId: 'q2', carrierBillType: 
 const source = { ...base, id: 'orig', policyId: property.id, sourcePricingVersion: 1, status: 'DRAFT', dueAt: '2026-11-21' };
 const premium = { ...base, id: 'premium', invoiceId: source.id, policyId: property.id, kind: 'PREMIUM', description: 'Property premium', retailAmount: 50000, costAmount: 45000 };
 const supplier = { ...premium, id: 'supplier', kind: 'CARRIER_FEE', description: 'Carrier fee', retailAmount: 500, costAmount: 500 };
-const input = { accountId: 'hoa', policyIds: [property.id, liability.id] };
+const input = { accountId: 'hoa', policyIds: [property.id, liability.id], reviewedTotals: [{ policyId: property.id, totalCents: 5050000 }] };
 
 function setup(changes: Record<string, object | undefined> = {}) {
   const rows: Record<string, object | undefined> = { 'Account:hoa': { id: 'hoa', updatedAt }, 'Policy:property': property, 'Policy:d-and-o': liability,
@@ -70,7 +70,7 @@ describe('combined invoice review', () => {
   it('returns an existing identical review without replacing records', async () => {
     const access = setup({ 'Policy:property': { ...property, groupedDraftInvoiceId: 'group' },
       'Policy:d-and-o': { ...liability, groupedDraftInvoiceId: 'group' },
-      'Invoice:group': { ...base, id: 'group', status: 'DRAFT', sourcePricingVersion: 3, groupedPolicyIds: input.policyIds } });
+      'Invoice:group': { ...base, id: 'group', status: 'DRAFT', sourcePricingVersion: 3, groupedPolicyIds: input.policyIds, groupedReviewedTotals: [[property.id, 5050000]] } });
     await expect(createGroupedDraft(access, input)).resolves.toEqual({ ok: true, invoiceId: 'group' });
     expect(h.reserve).not.toHaveBeenCalled();
   });
@@ -78,6 +78,30 @@ describe('combined invoice review', () => {
   it('refuses unreviewed costs and altered supplier charges', () => {
     expect(() => groupedReviewLines(property, source, [{ ...premium, costAmount: null }])).toThrow('supplier costs');
     expect(() => groupedReviewLines(property, source, [premium, { ...supplier, costAmount: 400 }])).toThrow('actual cost');
+  });
+
+  it('refuses an incomplete legacy source even if the invoice index misses a saved fee', async () => {
+    const access = setup();
+    h.send.mockResolvedValue({ Items: [{ id: premium.id }] });
+    await expect(createGroupedDraft(access, input)).rejects.toThrow('reviewed carrier total');
+    expect(h.reserve).not.toHaveBeenCalled();
+  });
+
+  it('includes a tracked fee missing from index discovery and fences the source revision', async () => {
+    const access = setup({ 'Invoice:orig': { ...source, draftLineRevision: 7, draftLineIds: new Set([supplier.id]) } });
+    h.send.mockImplementation((command: { input: { TransactItems?: unknown[] } }) => Promise.resolve(command.input.TransactItems ? {} : { Items: [{ id: premium.id }] }));
+    await expect(createGroupedDraft(access, input)).resolves.toMatchObject({ ok: true });
+    const writes = h.send.mock.calls.at(-1)![0].input.TransactItems;
+    expect(writes).toContainEqual({ Update: expect.objectContaining({ TableName: 'Invoice', Key: { id: source.id },
+      ConditionExpression: expect.stringContaining('draftLineRevision = :revision'), ExpressionAttributeValues: expect.objectContaining({ ':revision': 7 }) }) });
+    expect(writes).toContainEqual({ Put: expect.objectContaining({ TableName: 'InvoiceLine', Item: expect.objectContaining({ retailAmount: 500, kind: 'CARRIER_FEE' }) }) });
+  });
+
+  it('blocks a live policy loan that is not yet visible in the account index', async () => {
+    const access = setup({ 'Policy:property': { ...property, sourcePricingLoanId: 'loan' },
+      'PfLoan:loan': { ...base, id: 'loan', policyId: property.id, status: 'QUOTED' } });
+    await expect(createGroupedDraft(access, input)).rejects.toThrow('existing financing');
+    expect(h.reserve).not.toHaveBeenCalled();
   });
 
   it('restores source drafts and releases all members in one conditional transaction', async () => {

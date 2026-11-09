@@ -2388,7 +2388,7 @@ const schema = a
 
     createGroupedInvoice: a
       .mutation()
-      .arguments({ accountId: a.id().required(), policyIds: a.id().array().required() })
+      .arguments({ accountId: a.id().required(), policyIds: a.id().array().required(), reviewedTotals: a.json().required() })
       .returns(a.json())
       .authorization((allow) => [allow.groups(["OWNER"])])
       .handler(a.handler.function(crmAccess)),

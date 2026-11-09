@@ -12,8 +12,8 @@ export async function reserveInvoiceNumber(): Promise<string> {
     { requireOk: false, fallback: "Couldn't reserve an invoice number. Nothing was created; try again." });
   return value.invoiceNumber;
 }
-export async function createGroupedInvoice(input: { accountId: string; policyIds: string[] }): Promise<string> {
-  const result = await privateApiCall(client.mutations.createGroupedInvoice(input),
+export async function createGroupedInvoice(input: { accountId: string; policyIds: string[]; reviewedTotals: { policyId: string; totalCents: number }[] }): Promise<string> {
+  const result = await privateApiCall(client.mutations.createGroupedInvoice({ ...input, reviewedTotals: JSON.stringify(input.reviewedTotals) }),
     (value): value is ApiRecord & { ok: true; invoiceId: string } => value.ok === true && typeof value.invoiceId === 'string' && !!value.invoiceId,
     { fallback: "Couldn't combine the selected policies." });
   return result.invoiceId;

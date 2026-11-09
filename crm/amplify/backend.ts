@@ -210,8 +210,9 @@ const draftModelArn = (model: string) => Stack.of(backend.data.resources.graphql
 new ManagedPolicy(draftPermissionStack, "GroupedDraftWrites", {
   roles: [backend.crmAccess.resources.lambda.role!],
   statements: [
-    new PolicyStatement({ actions: ["dynamodb:UpdateItem"], resources: [invoiceSeqTable.tableArn, ...["Invoice", "Policy"].map(draftModelArn)] }),
+    new PolicyStatement({ actions: ["dynamodb:UpdateItem"], resources: [invoiceSeqTable.tableArn, ...["Invoice", "InvoiceLine", "Policy"].map(draftModelArn)] }),
     new PolicyStatement({ actions: ["dynamodb:PutItem"], resources: ["Invoice", "InvoiceLine"].map(draftModelArn) }),
+    new PolicyStatement({ actions: ["dynamodb:DeleteItem"], resources: [draftModelArn("InvoiceLine")] }),
     new PolicyStatement({ actions: ["dynamodb:ConditionCheckItem"], resources: ["Account", "Quote", "InvoiceLine"].map(draftModelArn) }),
   ],
 });

@@ -12,7 +12,7 @@ import { bindPremiumFinanceTables, type FinanceBindingGroup } from '../../amplif
 // expected environments or grants from the feature's implementation registry.
 const expected = {
   pfAdmin: [['AGENCY_SETTINGS_TABLE', 'AgencySettings', 'readWrite'], ['PF_COMPLIANCE_LOG_TABLE', 'PfComplianceLog', 'readWrite']],
-  pfOriginate: [['PF_COMPLIANCE_LOG_TABLE', 'PfComplianceLog', 'readWrite'], ['AGENCY_SETTINGS_TABLE', 'AgencySettings', 'read'], ['PF_LOAN_TABLE', 'PfLoan', 'readWrite'], ['POLICY_TABLE', 'Policy', 'read'], ['INVOICE_TABLE', 'Invoice', 'read']],
+  pfOriginate: [['PF_COMPLIANCE_LOG_TABLE', 'PfComplianceLog', 'readWrite'], ['AGENCY_SETTINGS_TABLE', 'AgencySettings', 'read'], ['PF_LOAN_TABLE', 'PfLoan', 'readWrite'], ['POLICY_TABLE', 'Policy', 'readUpdate'], ['INVOICE_TABLE', 'Invoice', 'read']],
   pfServicing: [['PF_COMPLIANCE_LOG_TABLE', 'PfComplianceLog', 'readWrite'], ['PF_LOAN_TABLE', 'PfLoan', 'readWrite'], ['PF_LOAN_PAYMENT_TABLE', 'PfLoanPayment', 'readWrite'], ['PF_NOTICE_TABLE', 'PfNotice', 'readWrite']],
   pfDefaultSweep: [['PF_COMPLIANCE_LOG_TABLE', 'PfComplianceLog', 'readWrite'], ['PF_LOAN_TABLE', 'PfLoan', 'readWrite']],
   sendInvoice: [['INVOICE_TABLE', 'Invoice', 'readWrite'], ['PF_LOAN_TABLE', 'PfLoan', 'readWrite'], ['PF_COMPLIANCE_LOG_TABLE', 'PfComplianceLog', 'write'], ['AGENCY_SETTINGS_TABLE', 'AgencySettings', 'read']],
@@ -51,9 +51,10 @@ function legacyBindings(value: ReturnType<typeof fixture>) {
   for (const name of targets) for (const [key, model, access] of expected[name]) {
     const table = value.tables[model], fn = value.functions[name];
     fn.addEnvironment(key, table.tableName);
-    if (access === 'read') table.grantReadData(fn.resources.lambda);
+    if (access === 'read' || access === 'readUpdate') table.grantReadData(fn.resources.lambda);
     else if (access === 'write') table.grantWriteData(fn.resources.lambda);
     else table.grantReadWriteData(fn.resources.lambda);
+    if (access === 'readUpdate') table.grant(fn.resources.lambda, 'dynamodb:UpdateItem');
     if ((name === 'sendInvoice' && key === 'PF_LOAN_TABLE') || (name === 'pfElection' && key === 'PF_COMPLIANCE_LOG_TABLE')) {
       fn.addEnvironment('SITE_URL', 'https://example.invalid');
     }
@@ -117,6 +118,8 @@ it('retains ConditionCheckItem for flag reads without broadening append-only log
     expect(actions(target, 'PfComplianceLog')).not.toContain('dynamodb:ConditionCheckItem');
   }
   expect(actions('pfAdmin', 'AgencySettings')).toContain('dynamodb:PutItem');
+  expect(actions('pfOriginate', 'Policy')).toContain('dynamodb:UpdateItem');
+  expect(actions('pfOriginate', 'Policy')).not.toContain('dynamodb:PutItem');
   expect(actions('pfServicing', 'PfNotice')).toContain('dynamodb:UpdateItem');
 });
 

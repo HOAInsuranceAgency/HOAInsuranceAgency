@@ -10,7 +10,7 @@ import {
 } from "../../../../shared/premiumFinance/quote";
 import { originateLoan } from "../pfOrigination";
 import { getModel } from "../broker-fees/store";
-import { assertStandalonePolicyBilling, GroupedDraftBillingBlocked, standalonePolicyBillingGuard } from "../grouped-draft-billing";
+import { assertStandalonePolicyBilling, claimStandalonePolicyLoan, GroupedDraftBillingBlocked } from "../grouped-draft-billing";
 import type { Schema } from "../../data/resource";
 
 /**
@@ -82,6 +82,7 @@ export const handler = async (event: {
     const policy = await getModel<Schema["Policy"]["type"]>("Policy", a.policyId);
     if (!policy) return { ok: false, error: "That policy no longer exists." };
     await assertStandalonePolicyBilling(policy);
+    const policyLoanClaim = await claimStandalonePolicyLoan(policy);
     const { data: account } = await client.models.Account.get({
       id: policy.accountId,
     });
@@ -120,7 +121,7 @@ export const handler = async (event: {
           lines: policy.lines ?? [],
           coverageEffectiveDate: policy.effectiveDate,
         },
-        policyGuard: standalonePolicyBillingGuard(policy),
+        policyLoanClaim,
         premium: a.premium,
         downPct: a.downPct,
         months: a.months,

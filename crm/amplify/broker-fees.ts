@@ -65,6 +65,7 @@ export function installBrokerFees(backend: typeof Backend, communicationTable: D
   add(backend.crmAccess,['dynamodb:ConditionCheckItem'],[modelArn('Invoice'),communicationTable.tableArn]);
   add(backend.crmAccess,['dynamodb:UpdateItem'],[modelArn('Invoice')]);
   for(const fn of [backend.sendInvoice,backend.pfElection])add(fn,['dynamodb:UpdateItem'],[modelArn('Quote')]);
+  add(backend.sendInvoice,['dynamodb:UpdateItem'],[modelArn('Policy')]);
   let index=0;
   for(const [fn,statements]of grants)new ManagedPolicy(permissions,`BrokerFeeAccess${index++}`,{roles:[fn.resources.lambda.role!],statements});
   new Rule(Stack.of(backend.brokerFees.resources.lambda),'BrokerFeeReceiptRecovery',{
