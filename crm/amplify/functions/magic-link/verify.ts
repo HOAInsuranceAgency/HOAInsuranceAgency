@@ -6,14 +6,14 @@ import { sendDestinationLink } from "./send";
 /** The challenge answer is the token carried in the emailed link. */
 export const handler: VerifyAuthChallengeResponseTriggerHandler = async (event, context) => {
   assertMigrationAuth(event, context);
-  const email = event.request.userAttributes.email;
+  const { email, sub } = event.request.userAttributes;
   const answer = event.request.challengeAnswer;
+  event.response.answerCorrect = false;
+  if (!email || !sub || !answer) return event;
   if (destinationAuth() && answer === REQUEST_LINK) {
-    await sendDestinationLink(email, event.request.privateChallengeParameters);
-    event.response.answerCorrect = false;
+    await sendDestinationLink(email, sub, event.request.privateChallengeParameters);
     return event;
   }
-  event.response.answerCorrect =
-    !!email && !!answer && verifyToken(answer, email, await getSigningSecret());
+  event.response.answerCorrect = verifyToken(answer, email, sub, await getSigningSecret());
   return event;
 };

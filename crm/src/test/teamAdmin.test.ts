@@ -2,10 +2,11 @@ import type { AppSyncResolverEvent } from "aws-lambda";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AdminAddUserToGroupCommand, AdminCreateUserCommand, AdminDeleteUserCommand, AdminDisableUserCommand, AdminEnableUserCommand, AdminUserGlobalSignOutCommand, AdminGetUserCommand,
-  AdminListGroupsForUserCommand, AdminRemoveUserFromGroupCommand, ListUsersCommand,
+  AdminDisableProviderForUserCommand, AdminListGroupsForUserCommand, AdminRemoveUserFromGroupCommand,
+  AdminUpdateUserAttributesCommand, ListUsersCommand, UserNotFoundException,
   UsernameExistsException,
 } from "@aws-sdk/client-cognito-identity-provider";
-import { GetCommand, QueryCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { DeleteCommand, GetCommand, QueryCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 
 const { cognitoSend, sesSend, dbSend } = vi.hoisted(() => ({ cognitoSend: vi.fn(), sesSend: vi.fn(), dbSend: vi.fn() }));
 vi.mock("@aws-sdk/client-cognito-identity-provider", async importOriginal => ({
@@ -45,6 +46,138 @@ beforeEach(() => {
   });
 });
 afterEach(() => vi.unstubAllEnvs());
+
+describe("team email changes", () => {
+  const userId = "member-sub";
+  const oldEmail = "old@example.com";
+  const email = "new@example.com";
+  const google = JSON.stringify([{ providerName: "Google", userId: "google-subject", primary: "false" }]);
+
+  function member({ enabled = true, identities, taken = false, updateError }: {
+    enabled?: boolean; identities?: string; taken?: boolean; updateError?: Error;
+  } = {}) {
+    let currentEmail = oldEmail;
+    let links = identities;
+    cognitoSend.mockImplementation(async command => {
+      if (command instanceof AdminGetUserCommand) {
+        if (command.input.Username === email && currentEmail !== email) {
+          if (taken) return { Username: "someone-else" };
+          throw new UserNotFoundException({ $metadata: {}, message: "User does not exist." });
+        }
+        return { Username: "canonical-name", Enabled: enabled, UserStatus: "CONFIRMED", UserAttributes: [
+          { Name: "sub", Value: userId },
+          { Name: "email", Value: currentEmail },
+          { Name: "email_verified", Value: "true" },
+          ...(links ? [{ Name: "identities", Value: links }] : []),
+        ] };
+      }
+      if (command instanceof AdminDisableUserCommand) enabled = false;
+      if (command instanceof AdminEnableUserCommand) enabled = true;
+      if (command instanceof AdminDisableProviderForUserCommand) links = undefined;
+      if (command instanceof AdminUpdateUserAttributesCommand) {
+        if (updateError) throw updateError;
+        currentEmail = email;
+      }
+      return {};
+    });
+  }
+
+  it("keeps the existing account and profile, disconnects the old Google sign-in and revokes sessions", async () => {
+    member({ identities: google });
+    dbSend.mockImplementation(async command => {
+      if (command instanceof QueryCommand) return { Items: [{ id: "profile-id", userId, email: oldEmail }] };
+      if (command instanceof GetCommand && command.input.Key?.userId === userId) return { Item: { disabled: true, revokedBefore: 4_000_000_000 } };
+      return {};
+    });
+    expect(await run("updateTeamUserEmail", { userId, email: " New@Example.com " }, ["OWNER"])).toEqual({ ok: true, userId, email });
+    const cognitoWrites = cognitoSend.mock.calls.map(([command]) => command).filter(command => !(command instanceof AdminGetUserCommand || command instanceof AdminListGroupsForUserCommand));
+    expect(cognitoWrites.map(command => command.constructor)).toEqual([
+      AdminDisableUserCommand, AdminDisableProviderForUserCommand, AdminUpdateUserAttributesCommand, AdminEnableUserCommand,
+    ]);
+    expect(cognitoWrites[1].input.User).toEqual({ ProviderName: "Google", ProviderAttributeName: "Cognito_Subject", ProviderAttributeValue: "google-subject" });
+    expect(cognitoWrites[2].input).toMatchObject({
+      Username: "canonical-name",
+      UserAttributes: [{ Name: "email", Value: email }, { Name: "email_verified", Value: "true" }],
+    });
+    const updates = dbSend.mock.calls.map(([command]) => command).filter(command => command instanceof UpdateCommand);
+    expect(updates[0].input).toMatchObject({
+      TableName: "user-access", Key: { userId: `identity-lease:${userId}` },
+      ConditionExpression: "attribute_not_exists(leaseUntil) OR leaseUntil <= :now",
+    });
+    expect(updates[1].input).toMatchObject({
+      TableName: "user-access", Key: { userId },
+      UpdateExpression: expect.stringContaining("if_not_exists(#disabled, :active)"),
+      ExpressionAttributeValues: { ":cutoff": 4_000_000_000 },
+    });
+    expect(updates[2].input).toMatchObject({
+      TableName: "profiles", Key: { id: "profile-id" },
+      ConditionExpression: "userId = :userId",
+      ExpressionAttributeValues: { ":userId": userId, ":email": email },
+    });
+    const release = dbSend.mock.calls.find(([command]) => command instanceof DeleteCommand)?.[0];
+    const leaseOwner = updates[0].input.ExpressionAttributeValues?.[":owner"];
+    expect(leaseOwner).toEqual(expect.any(String));
+    expect(release?.input).toMatchObject({
+      Key: updates[0].input.Key,
+      ConditionExpression: "leaseOwner = :owner",
+      ExpressionAttributeValues: { ":owner": leaseOwner },
+    });
+    expect(sesSend).not.toHaveBeenCalled();
+  });
+
+  it("rejects duplicate addresses, invalid addresses and unauthorized edits before any writes", async () => {
+    member({ taken: true });
+    expect(await run("updateTeamUserEmail", { userId, email }, ["OWNER"])).toMatchObject({ ok: false, error: "That email is already on the team." });
+    expect(await run("updateTeamUserEmail", { userId, email: "not an email" }, ["OWNER"])).toMatchObject({ ok: false, error: "A valid email is required." });
+    expect(await run("updateTeamUserEmail", { userId, email }, ["OWNER", "ADMIN"], "ADMIN")).toMatchObject({ ok: false, error: expect.stringContaining("Only an Owner") });
+    expect(await run("updateTeamUserEmail", { userId, email }, ["ADMIN"])).toMatchObject({ ok: false, error: expect.stringContaining("Only an Owner") });
+    expect(await run("updateTeamUserEmail", { userId, email }, ["PRODUCER"])).toMatchObject({ ok: false, error: "Admin access is required." });
+    expect(cognitoSend.mock.calls.every(([command]) => command instanceof AdminGetUserCommand || command instanceof AdminListGroupsForUserCommand)).toBe(true);
+    const nonLeaseCalls = dbSend.mock.calls.filter(([command]) => command.input.Key?.userId !== `identity-lease:${userId}`);
+    expect(nonLeaseCalls.every(([command]) => command instanceof GetCommand)).toBe(true);
+  });
+
+  it("keeps an inactive account inactive and does not create a missing profile", async () => {
+    member({ enabled: false });
+    expect(await run("updateTeamUserEmail", { userId, email }, ["OWNER"])).toEqual({ ok: true, userId, email });
+    expect(cognitoSend.mock.calls.some(([command]) => command instanceof AdminEnableUserCommand)).toBe(false);
+    expect(dbSend.mock.calls.some(([command]) => command instanceof UpdateCommand && command.input.TableName === "profiles")).toBe(false);
+  });
+
+  it("restores prior sign-in access when the address cannot be saved", async () => {
+    member({ updateError: new Error("unavailable") });
+    expect(await run("updateTeamUserEmail", { userId, email }, ["OWNER"])).toMatchObject({ ok: false });
+    expect(cognitoSend.mock.calls.at(-1)?.[0]).toBeInstanceOf(AdminEnableUserCommand);
+    expect(dbSend.mock.calls.some(([command]) => command instanceof DeleteCommand)).toBe(false);
+  });
+
+  it("does not touch Cognito while Google linking holds the member's lease", async () => {
+    dbSend.mockImplementation(async command => {
+      if (command instanceof UpdateCommand) throw Object.assign(new Error("Lease already held"), { name: "ConditionalCheckFailedException" });
+      return {};
+    });
+    expect(await run("updateTeamUserEmail", { userId, email }, ["OWNER"])).toMatchObject({
+      ok: false, error: expect.stringContaining("sign-in update is in progress"),
+    });
+    expect(cognitoSend).not.toHaveBeenCalled();
+    expect(dbSend.mock.calls.some(([command]) => command instanceof DeleteCommand)).toBe(false);
+  });
+
+  it("reports a partial profile failure and lets an identical retry repair the profile without revoking sessions again", async () => {
+    member({ identities: google });
+    let failProfile = true;
+    dbSend.mockImplementation(async command => {
+      if (command instanceof QueryCommand) return { Items: [{ id: "profile-id", userId, email: oldEmail }] };
+      if (command instanceof UpdateCommand && command.input.TableName === "profiles" && failProfile) throw new Error("unavailable");
+      return {};
+    });
+    expect(await run("updateTeamUserEmail", { userId, email }, ["OWNER"])).toMatchObject({ ok: false, userId, email, error: expect.stringContaining("profile") });
+    failProfile = false;
+    cognitoSend.mockClear();
+    expect(await run("updateTeamUserEmail", { userId, email }, ["OWNER"])).toEqual({ ok: true, userId, email });
+    expect(cognitoSend.mock.calls.every(([command]) => command instanceof AdminGetUserCommand || command instanceof AdminListGroupsForUserCommand)).toBe(true);
+  });
+});
 
 describe("team role assignments", () => {
   it("invites a user with two actual Cognito memberships and one invitation", async () => {

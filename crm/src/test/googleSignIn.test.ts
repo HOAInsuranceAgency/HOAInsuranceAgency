@@ -8,10 +8,13 @@ import {
 } from "@aws-sdk/client-cognito-identity-provider";
 
 const send = vi.hoisted(() => vi.fn());
+const withTeamIdentityLock = vi.hoisted(() => vi.fn());
+const markWrite = vi.fn();
 vi.mock("@aws-sdk/client-cognito-identity-provider", async importOriginal => ({
   ...await importOriginal<object>(),
   CognitoIdentityProviderClient: class { send = send; },
 }));
+vi.mock("../../amplify/functions/crm-access/team-identity-lock", () => ({ withTeamIdentityLock }));
 import { handler } from "../../amplify/functions/google-sign-in/handler";
 
 function event(attributes: Record<string, string> = {}, userName = "Google_subject_123"): PreSignUpTriggerEvent {
@@ -32,6 +35,8 @@ const links = () => send.mock.calls.map(([command]) => command).filter(command =
 
 beforeEach(() => {
   send.mockReset();
+  markWrite.mockReset();
+  withTeamIdentityLock.mockReset().mockImplementation(async (_userId, work) => work(markWrite));
   member = {
     $metadata: {}, Username: "original-cognito-username", Enabled: true, UserStatus: "CONFIRMED",
     UserAttributes: [
@@ -52,15 +57,41 @@ describe("invite-only Google account linking", () => {
     const request = event();
     expect(await handler(request)).toBe(request);
     expect(send.mock.calls.map(([command]) => command.constructor.name)).toEqual([
-      "AdminGetUserCommand", "AdminListGroupsForUserCommand", "AdminLinkProviderForUserCommand",
+      "AdminGetUserCommand", "AdminGetUserCommand", "AdminListGroupsForUserCommand", "AdminLinkProviderForUserCommand",
     ]);
+    expect(withTeamIdentityLock).toHaveBeenCalledExactlyOnceWith("original-sub", expect.any(Function), "us-east-1_pool");
     expect(send.mock.calls[0][0].input).toEqual({ UserPoolId: "us-east-1_pool", Username: "person@example.com" });
+    expect(send.mock.calls[1][0].input).toEqual({ UserPoolId: "us-east-1_pool", Username: "original-cognito-username" });
     expect(links()[0].input).toEqual({
       UserPoolId: "us-east-1_pool",
       DestinationUser: { ProviderName: "Cognito", ProviderAttributeValue: "original-cognito-username" },
       SourceUser: { ProviderName: "Google", ProviderAttributeName: "Cognito_Subject", ProviderAttributeValue: "subject_123" },
     });
+    expect(markWrite).toHaveBeenCalledExactlyOnceWith();
+    expect(markWrite.mock.invocationCallOrder[0]).toBeLessThan(send.mock.invocationCallOrder[3]);
     expect(request.response).toEqual({ autoConfirmUser: false, autoVerifyEmail: false, autoVerifyPhone: false });
+  });
+
+  it("rechecks the current email after acquiring the lock and rejects a stale Google claim", async () => {
+    withTeamIdentityLock.mockImplementation(async (_userId, work) => {
+      // The alias lookup saw the previous address before the email edit.
+      member = { ...member, UserAttributes: member.UserAttributes?.map(attribute =>
+        attribute.Name === "email" ? { ...attribute, Value: "new@example.com" } : attribute) };
+      return work(markWrite);
+    });
+    await expect(handler(event())).rejects.toThrow(/email sign-in link/);
+    expect(send.mock.calls.map(([command]) => command.input.Username)).toEqual([
+      "person@example.com", "original-cognito-username",
+    ]);
+    expect(links()).toHaveLength(0);
+    expect(markWrite).not.toHaveBeenCalled();
+  });
+
+  it("denies linking when an email edit already holds the member's lock", async () => {
+    withTeamIdentityLock.mockRejectedValue(new Error("Identity update in progress"));
+    await expect(handler(event())).rejects.toThrow("Identity update in progress");
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(links()).toHaveLength(0);
   });
 
   it("accepts lowercased Cognito provider prefixes and normalized Workspace email", async () => {
@@ -130,7 +161,7 @@ describe("invite-only Google account linking", () => {
   it.each([false, undefined])("rejects disabled or unconfirmed enabled state (%s)", async enabled => {
     member.Enabled = enabled;
     await expect(handler(event())).rejects.toThrow(/email sign-in link/);
-    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledTimes(2);
     expect(links()).toHaveLength(0);
   });
 
@@ -169,7 +200,8 @@ describe("invite-only Google account linking", () => {
       return {};
     });
     await handler(event());
-    expect(send.mock.calls[2][0].input.NextToken).toBe("next-page");
+    const reads = send.mock.calls.map(([command]) => command).filter(command => command instanceof AdminListGroupsForUserCommand);
+    expect(reads.map(command => command.input.NextToken)).toEqual([undefined, "next-page"]);
     expect(links()).toHaveLength(1);
   });
 
@@ -197,6 +229,6 @@ describe("invite-only Google account linking", () => {
     });
     await expect(handler(request)).rejects.toThrow("Link failed");
     expect(request.response.autoConfirmUser).toBe(false);
-    expect(send).toHaveBeenCalledTimes(3);
+    expect(send).toHaveBeenCalledTimes(4);
   });
 });

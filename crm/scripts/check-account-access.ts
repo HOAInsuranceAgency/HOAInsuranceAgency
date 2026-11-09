@@ -21,8 +21,20 @@ export function checkAccountAccess(backend: typeof Backend, outdir: string) {
     if (!environment.variables.USER_ACCESS_TABLE || !JSON.stringify(environment.variables.USER_ACCESS_TABLE).includes(statusTable.node.id)) throw new Error(`Missing persistent access table: ${resource.node.path}`);
     if (!policyDocuments(fn).includes("dynamodb:GetItem")) throw new Error(`Missing status read permission: ${resource.node.path}`);
   }
-  const managementPolicies = policyDocuments(backend.teamAdmin);
-  for (const action of ["cognito-idp:AdminGetUser", "cognito-idp:AdminDisableUser", "cognito-idp:AdminEnableUser", "cognito-idp:AdminUserGlobalSignOut", "dynamodb:UpdateItem"]) {
+  const teamRole = backend.teamAdmin.resources.lambda.role!.roleName;
+  const teamPolicyIds = new Set(["TeamProfileAndCognitoAccess", "TeamIdentityLease"]);
+  const externalTeamPolicies = backend.stack.node.root.node.findAll().flatMap(node => {
+    if (!(node instanceof CfnPolicy) || !teamPolicyIds.has(node.node.scope?.node.id ?? "")) return [];
+    const stack = Stack.of(node);
+    const resolvedRole = JSON.stringify(stack.resolve(teamRole));
+    const attachedRoles: unknown[] = stack.resolve(node.roles) ?? [];
+    if (!attachedRoles.some(role => JSON.stringify(role) === resolvedRole)) throw new Error(`Team policy is not attached: ${node.node.path}`);
+    return [JSON.stringify(stack.resolve(node.policyDocument))];
+  });
+  const managementPolicies = [policyDocuments(backend.teamAdmin), ...externalTeamPolicies].join("\n");
+  for (const action of ["cognito-idp:AdminGetUser", "cognito-idp:AdminDisableUser", "cognito-idp:AdminEnableUser",
+    "cognito-idp:AdminUserGlobalSignOut", "cognito-idp:AdminUpdateUserAttributes", "cognito-idp:AdminDisableProviderForUser",
+    "dynamodb:UpdateItem", "dynamodb:DeleteItem"]) {
     if (!managementPolicies.includes(action)) throw new Error(`Missing team access permission: ${action}`);
   }
   for (const fn of [backend.communications, backend.communicationWorker, backend.leadIntake, backend.leadReply, backend.assignmentIndexWorker]) {
