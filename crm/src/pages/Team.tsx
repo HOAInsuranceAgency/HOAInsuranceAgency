@@ -74,6 +74,47 @@ function RoleEditor({ user, name, currentUser, onSave, onClose }: {
   </Modal>;
 }
 
+function EmailEditor({ user, name, profileEmail, onSave, onClose }: {
+  user: TeamUser;
+  name: string;
+  profileEmail?: string;
+  onSave: (email: string) => Promise<void>;
+  onClose: () => void;
+}) {
+  const [draft, setDraft] = useState(user.email);
+  const status = useSaveStatus();
+  const pending = useRef(false);
+  const email = draft.trim().toLowerCase();
+  const changed = email !== user.email.toLowerCase() || (profileEmail !== undefined && profileEmail !== email);
+  const close = () => { if (!pending.current) onClose(); };
+  async function save() {
+    if (pending.current || !email || !changed) return;
+    pending.current = true;
+    try {
+      await status.run(async () => { await onSave(email); onClose(); }, { errorMessage: "Couldn't save email." });
+    } finally { pending.current = false; }
+  }
+  return <Modal title={`Edit email for ${name}`} className="modal-form team-connection-modal" onClose={close}>
+    <p className="muted small">The team member will need to sign in with the new address and reconnect Google sign-in if they used it before.</p>
+    <form onSubmit={event => {
+      event.preventDefault();
+      void save();
+    }}>
+      <label className="field">Sign-in email
+        <input type="email" required maxLength={128} autoComplete="off" autoCapitalize="none" spellCheck={false}
+          value={draft} disabled={status.busy} onChange={event => { setDraft(event.target.value); status.markDirty(); }} />
+      </label>
+      <div className="form-actions">
+        <button className="primary" type="submit" disabled={status.busy || !email || !changed}>
+          {status.busy ? "Saving email…" : "Save email"}
+        </button>
+        <button className="secondary" type="button" disabled={status.busy} onClick={close}>Cancel</button>
+        <SaveStatus {...status.status} />
+      </div>
+    </form>
+  </Modal>;
+}
+
 function AccessEditor({ user, name, onSave, onClose }: {
   user: TeamUser;
   name: string;
@@ -215,8 +256,11 @@ export default function Team({ profile }: { profile: UserProfile }) {
   const alertStatus = useSaveStatus({ autoClearMs: 4000 });
   const alertPending = useRef(false);
   const [editingRoles, setEditingRoles] = useState<TeamUser | null>(null);
+  const [editingEmail, setEditingEmail] = useState<{ user: TeamUser; name: string; profileEmail?: string } | null>(null);
   const [editingAccess, setEditingAccess] = useState<TeamUser | null>(null);
+  const memberEditorOpen = !!(editingRoles || editingEmail || editingAccess);
   const roleStatus = useSaveStatus({ autoClearMs: 4000 });
+  const emailStatus = useSaveStatus({ autoClearMs: 4000 });
   const accessStatus = useSaveStatus({ autoClearMs: 4000 });
   const { form, setF, reset } = useFormState(
     { email: "", roles: [DEFAULT_USER_ROLE] as UserRole[] },
@@ -247,17 +291,17 @@ export default function Team({ profile }: { profile: UserProfile }) {
   );
   const { users, profiles } = team.data;
   const eligibilityMembers = useMemo(() => users.map(user => {
-    const memberProfile = profiles.find(p => p.userId === user.userId || p.email === user.email);
+    const memberProfile = profiles.find(p => p.userId === user.userId);
     return { userId: user.userId, email: user.email, groups: user.groups, enabled: user.enabled !== false,
       name: memberProfile ? `${memberProfile.firstName} ${memberProfile.lastName}` : user.email, hasProfile: !!memberProfile };
   }), [users, profiles]);
-  const eligibility = useLeadEligibilitySettings(eligibilityMembers, team.loading || moreLoading || inviteStatus.busy || alertStatus.busy || !!editingRoles || !!editingAccess);
+  const eligibility = useLeadEligibilitySettings(eligibilityMembers, team.loading || moreLoading || inviteStatus.busy || alertStatus.busy || memberEditorOpen);
   const setProfiles = (update: (profiles: UserProfile[]) => UserProfile[]) =>
     team.setData(previous => ({ ...previous, profiles: update(previous.profiles) }));
 
   async function loadMore() {
     const nextToken = team.data.nextToken;
-    if (!nextToken || team.loading || morePending.current || eligibility.disabled || editingRoles || editingAccess) return;
+    if (!nextToken || team.loading || morePending.current || eligibility.disabled || memberEditorOpen) return;
     const version = pageVersion.current;
     morePending.current = true;
     setMoreLoading(true);
@@ -318,7 +362,7 @@ export default function Team({ profile }: { profile: UserProfile }) {
   }
 
   const profileFor = (u: TeamUser) =>
-    profiles.find((p) => p.userId === u.userId || p.email === u.email);
+    profiles.find((p) => p.userId === u.userId);
 
   async function saveRoles(user: TeamUser, roles: UserRole[]) {
     const { data, errors } = await client.mutations.updateUserRoles({ userId: user.userId, roles });
@@ -334,6 +378,24 @@ export default function Team({ profile }: { profile: UserProfile }) {
     roleStatus.markSaved(`Roles updated for ${user.email}.`);
     eligibility.refresh();
     if (user.userId === profile.userId) window.dispatchEvent(new Event("team-roles-changed"));
+  }
+
+  async function saveEmail(user: TeamUser, email: string) {
+    const { data, errors } = await client.mutations.updateTeamUserEmail({ userId: user.userId, email });
+    if (errors?.length) throw new Error(errors[0].message || "Couldn't save email.");
+    const body = parse(data);
+    const savedEmail = body.userId === user.userId && typeof body.email === "string" ? body.email : undefined;
+    if (savedEmail) {
+      team.setData(previous => ({
+        ...previous,
+        users: previous.users.map(member => member.userId === user.userId ? { ...member, email: savedEmail } : member),
+        profiles: body.ok
+          ? previous.profiles.map(member => member.userId === user.userId ? { ...member, email: savedEmail } : member)
+          : previous.profiles,
+      }));
+    }
+    if (!body.ok || !savedEmail) throw new Error(String(body.error ?? "Couldn't save email."));
+    emailStatus.markSaved(`Sign-in email updated to ${savedEmail}.`);
   }
 
   async function saveAccess(user: TeamUser, enabled: boolean) {
@@ -443,7 +505,7 @@ export default function Team({ profile }: { profile: UserProfile }) {
           <div>
             <h2 id="team-members-title" style={{ margin: 0 }}>Team members</h2>
             <p className="muted small" style={{ margin: "4px 0 0" }}>
-              Assign roles and manage access, new leads, lead texts and connections in one place.
+              Manage {canManageOwners ? "sign-in emails, " : ""}roles, access, new leads, lead texts and connections in one place.
               Producers are automatically eligible for account assignments. Receive new leads controls automatic website lead rotation.
               Only the assigned producer gets the Front conversation and lead text.
               Lead texts need both the switch and a mobile number.
@@ -457,6 +519,7 @@ export default function Team({ profile }: { profile: UserProfile }) {
               the card's one status line. */}
           <SaveStatus {...alertStatus.status} />
           <SaveStatus {...roleStatus.status} />
+          <SaveStatus {...emailStatus.status} />
           <SaveStatus {...accessStatus.status} />
         </div>
         <LeadEligibilityFeedback settings={eligibility} />
@@ -490,24 +553,30 @@ export default function Team({ profile }: { profile: UserProfile }) {
                       <td>
                         <div>{name || u.email}</div>
                         {name && <div className="muted small">{u.email}</div>}
-                        {u.email === profile.email && (
+                        {u.userId === profile.userId && (
                           <span className="badge blue" style={{ marginLeft: 6 }}>
                             you
                           </span>
                         )}
+                        {canManageOwners && <div style={{ marginTop: 6 }}>
+                          <button className="secondary" type="button"
+                            disabled={team.loading || moreLoading || eligibility.busy || !!eligibility.editing || memberEditorOpen}
+                            aria-label={`Edit email for ${name || u.email}`}
+                            onClick={() => { emailStatus.markDirty(); setEditingEmail({ user: u, name: name || u.email, profileEmail: p?.email }); }}>Edit email</button>
+                        </div>}
                       </td>
                       <td>
                         <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 6 }}>
                           {(u.groups.filter(isUserRole).length ? u.groups.filter(isUserRole) : [p?.role ?? "—"]).map(role =>
                             <span key={role} className="badge gray">{role}</span>)}
                         </div>
-                        <button type="button" className="secondary" disabled={team.loading || moreLoading || eligibility.busy || !!eligibility.editing || !!editingRoles || !!editingAccess || (u.groups.includes("OWNER") && !canManageOwners)} aria-label={`Edit roles for ${name || u.email}`}
+                        <button type="button" className="secondary" disabled={team.loading || moreLoading || eligibility.busy || !!eligibility.editing || memberEditorOpen || (u.groups.includes("OWNER") && !canManageOwners)} aria-label={`Edit roles for ${name || u.email}`}
                           onClick={() => { roleStatus.markDirty(); setEditingRoles(u); }}>Edit roles</button>
                       </td>
                       <td>
                         <div style={{ marginBottom: 6 }}><span className={`badge ${u.enabled === false ? "gray" : "green"}`}>{u.enabled === false ? "Inactive" : "Active"}</span></div>
                         {canManageOwners && <button type="button" className="secondary"
-                          disabled={u.userId === profile.userId || team.loading || moreLoading || eligibility.busy || !!eligibility.editing || !!editingRoles || !!editingAccess}
+                          disabled={u.userId === profile.userId || team.loading || moreLoading || eligibility.busy || !!eligibility.editing || memberEditorOpen}
                           aria-label={`${u.enabled === false ? "Reactivate" : "Deactivate"} ${name || u.email}`}
                           onClick={() => { accessStatus.markDirty(); setEditingAccess(u); }}>{u.enabled === false ? "Reactivate" : "Deactivate"}</button>}
                       </td>
@@ -537,12 +606,12 @@ export default function Team({ profile }: { profile: UserProfile }) {
                         {/* No profile means the invite is unaccepted — there
                             is no row to write the preference onto yet. */}
                         {p ? (
-                          <LeadTextCell profile={p} disabled={u.enabled === false || team.loading || alertStatus.busy || !!editingAccess} onSave={saveAlerts} />
+                          <LeadTextCell profile={p} disabled={u.enabled === false || team.loading || alertStatus.busy || !!editingAccess || !!editingEmail} onSave={saveAlerts} />
                         ) : (
                           <span className="muted small">—</span>
                         )}
                       </td>
-                      {p ? <LeadEligibilityCells member={member} settings={eligibility} disabled={u.enabled === false || team.loading || moreLoading || !!editingRoles || !!editingAccess} />
+                      {p ? <LeadEligibilityCells member={member} settings={eligibility} disabled={u.enabled === false || team.loading || moreLoading || memberEditorOpen} />
                         : <td colSpan={2} className="muted small">Available after first sign-in</td>}
                       <td className="small">
                         {fmtDate(u.createdAt?.slice(0, 10))}
@@ -560,7 +629,7 @@ export default function Team({ profile }: { profile: UserProfile }) {
         </div>}
         {moreError && <p className="error-text" role="alert">{moreError}</p>}
         {team.data.nextToken && <div className="form-actions">
-          <button type="button" className="secondary" disabled={team.loading || moreLoading || alertStatus.busy || eligibility.disabled || !!editingRoles || !!editingAccess} onClick={() => void loadMore()}>
+          <button type="button" className="secondary" disabled={team.loading || moreLoading || alertStatus.busy || eligibility.disabled || memberEditorOpen} onClick={() => void loadMore()}>
             {moreLoading ? "Loading more…" : moreError ? "Retry loading more" : "Load more team members"}
           </button>
         </div>}
@@ -569,6 +638,8 @@ export default function Team({ profile }: { profile: UserProfile }) {
           name={(() => { const p = profileFor(editingRoles); return p ? `${p.firstName} ${p.lastName}` : editingRoles.email; })()}
           currentUser={editingRoles.userId === profile.userId}
           onSave={roles => saveRoles(editingRoles, roles)} onClose={() => setEditingRoles(null)} />}
+        {canManageOwners && editingEmail && <EmailEditor user={editingEmail.user} name={editingEmail.name} profileEmail={editingEmail.profileEmail}
+          onSave={email => saveEmail(editingEmail.user, email)} onClose={() => setEditingEmail(null)} />}
         {editingAccess && <AccessEditor user={editingAccess}
           name={(() => { const p = profileFor(editingAccess); return p ? `${p.firstName} ${p.lastName}` : editingAccess.email; })()}
           onSave={enabled => saveAccess(editingAccess, enabled)} onClose={() => setEditingAccess(null)} />}

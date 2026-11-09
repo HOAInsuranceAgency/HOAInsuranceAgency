@@ -16,7 +16,7 @@ export const PREVIEW_DENIED_ACTIONS = [
   "s3:PutObject", "s3:DeleteObject*", "s3:AbortMultipartUpload", "s3:RestoreObject",
   "ses:Send*", "sns:Publish", "lambda:InvokeFunction*", "textract:Start*", "textract:Analyze*", "textract:Detect*", "bedrock:Invoke*", "states:Start*",
   "secretsmanager:PutSecretValue", "secretsmanager:UpdateSecret*", "secretsmanager:CreateSecret",
-  "cognito-idp:AdminCreateUser", "cognito-idp:AdminDeleteUser", "cognito-idp:AdminUpdateUserAttributes",
+  "cognito-idp:AdminCreateUser", "cognito-idp:AdminDeleteUser", "cognito-idp:AdminUpdateUserAttributes", "cognito-idp:AdminDisableProviderForUser",
   "cognito-idp:AdminAddUserToGroup", "cognito-idp:AdminRemoveUserFromGroup", "cognito-idp:AdminEnableUser", "cognito-idp:AdminDisableUser",
   "cognito-idp:AdminSetUserPassword", "cognito-idp:AdminResetUserPassword", "cognito-idp:AdminConfirmSignUp",
 ];

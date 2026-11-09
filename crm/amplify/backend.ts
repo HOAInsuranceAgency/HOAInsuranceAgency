@@ -653,6 +653,10 @@ backend.teamAdmin.resources.lambda.addToRolePolicy(new PolicyStatement({
   actions: ["dynamodb:Query"],
   resources: [`${userProfileTable.tableArn}/index/${userProfileIndex.name}`],
 }));
+backend.teamAdmin.resources.lambda.addToRolePolicy(new PolicyStatement({
+  actions: ["dynamodb:UpdateItem"],
+  resources: [userProfileTable.tableArn],
+}));
 backend.teamAdmin.resources.lambda.addToRolePolicy(
   new PolicyStatement({
     actions: [
@@ -664,6 +668,8 @@ backend.teamAdmin.resources.lambda.addToRolePolicy(
       "cognito-idp:AdminAddUserToGroup",
       "cognito-idp:AdminRemoveUserFromGroup",
       "cognito-idp:AdminGetUser",
+      "cognito-idp:AdminUpdateUserAttributes",
+      "cognito-idp:AdminDisableProviderForUser",
       "cognito-idp:AdminListGroupsForUser",
       "cognito-idp:ListUsers",
     ],
