@@ -6,7 +6,7 @@ import {
   AdminUpdateUserAttributesCommand, ListUsersCommand, UserNotFoundException,
   UsernameExistsException,
 } from "@aws-sdk/client-cognito-identity-provider";
-import { GetCommand, QueryCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { DeleteCommand, GetCommand, QueryCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 
 const { cognitoSend, sesSend, dbSend } = vi.hoisted(() => ({ cognitoSend: vi.fn(), sesSend: vi.fn(), dbSend: vi.fn() }));
 vi.mock("@aws-sdk/client-cognito-identity-provider", async importOriginal => ({
@@ -101,14 +101,24 @@ describe("team email changes", () => {
     });
     const updates = dbSend.mock.calls.map(([command]) => command).filter(command => command instanceof UpdateCommand);
     expect(updates[0].input).toMatchObject({
+      TableName: "user-access", Key: { userId: `identity-lease:${userId}` },
+      ConditionExpression: "attribute_not_exists(leaseUntil) OR leaseUntil <= :now",
+    });
+    expect(updates[1].input).toMatchObject({
       TableName: "user-access", Key: { userId },
       UpdateExpression: expect.stringContaining("if_not_exists(#disabled, :active)"),
       ExpressionAttributeValues: { ":cutoff": 4_000_000_000 },
     });
-    expect(updates[1].input).toMatchObject({
+    expect(updates[2].input).toMatchObject({
       TableName: "profiles", Key: { id: "profile-id" },
       ConditionExpression: "userId = :userId",
       ExpressionAttributeValues: { ":userId": userId, ":email": email },
+    });
+    const release = dbSend.mock.calls.find(([command]) => command instanceof DeleteCommand)?.[0];
+    expect(release?.input).toMatchObject({
+      Key: updates[0].input.Key,
+      ConditionExpression: "leaseOwner = :owner",
+      ExpressionAttributeValues: { ":owner": updates[0].input.ExpressionAttributeValues[":owner"] },
     });
     expect(sesSend).not.toHaveBeenCalled();
   });
@@ -121,7 +131,8 @@ describe("team email changes", () => {
     expect(await run("updateTeamUserEmail", { userId, email }, ["ADMIN"])).toMatchObject({ ok: false, error: expect.stringContaining("Only an Owner") });
     expect(await run("updateTeamUserEmail", { userId, email }, ["PRODUCER"])).toMatchObject({ ok: false, error: "Admin access is required." });
     expect(cognitoSend.mock.calls.every(([command]) => command instanceof AdminGetUserCommand || command instanceof AdminListGroupsForUserCommand)).toBe(true);
-    expect(dbSend.mock.calls.every(([command]) => command instanceof GetCommand)).toBe(true);
+    const nonLeaseCalls = dbSend.mock.calls.filter(([command]) => command.input.Key?.userId !== `identity-lease:${userId}`);
+    expect(nonLeaseCalls.every(([command]) => command instanceof GetCommand)).toBe(true);
   });
 
   it("keeps an inactive account inactive and does not create a missing profile", async () => {
@@ -135,6 +146,19 @@ describe("team email changes", () => {
     member({ updateError: new Error("unavailable") });
     expect(await run("updateTeamUserEmail", { userId, email }, ["OWNER"])).toMatchObject({ ok: false });
     expect(cognitoSend.mock.calls.at(-1)?.[0]).toBeInstanceOf(AdminEnableUserCommand);
+    expect(dbSend.mock.calls.some(([command]) => command instanceof DeleteCommand)).toBe(false);
+  });
+
+  it("does not touch Cognito while Google linking holds the member's lease", async () => {
+    dbSend.mockImplementation(async command => {
+      if (command instanceof UpdateCommand) throw Object.assign(new Error("Lease already held"), { name: "ConditionalCheckFailedException" });
+      return {};
+    });
+    expect(await run("updateTeamUserEmail", { userId, email }, ["OWNER"])).toMatchObject({
+      ok: false, error: expect.stringContaining("sign-in update is in progress"),
+    });
+    expect(cognitoSend).not.toHaveBeenCalled();
+    expect(dbSend.mock.calls.some(([command]) => command instanceof DeleteCommand)).toBe(false);
   });
 
   it("reports a partial profile failure and lets an identical retry repair the profile without revoking sessions again", async () => {

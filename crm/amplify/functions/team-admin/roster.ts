@@ -3,7 +3,7 @@ import {
   ListUsersCommand,
   type UserType,
 } from "@aws-sdk/client-cognito-identity-provider";
-import { QueryCommand, type DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
+import { GetCommand, QueryCommand, type DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 
 export type TeamRosterArgs = { nextToken?: string | null };
 
@@ -36,6 +36,28 @@ export async function loadTeamProfile(
   const profile = result.Items?.[0];
   if (!profile || profile.userId !== userId || typeof profile.id !== "string") return null;
   return Object.fromEntries(PROFILE_FIELDS.filter(field => profile[field] !== undefined).map(field => [field, profile[field]])) as TeamProfile;
+}
+
+/** Recover a new onboarding row that hasn't appeared in the userId index yet. */
+export async function loadTeamProfileForEmail(
+  db: DynamoDBDocumentClient,
+  tableName: string,
+  userIdIndexName: string,
+  userId: string,
+): Promise<Pick<TeamProfile, "id" | "userId"> | null> {
+  const indexed = await loadTeamProfile(db, tableName, userIdIndexName, userId);
+  if (indexed) return { id: indexed.id, userId };
+
+  // Onboarding uses this deterministic ID for newly created profiles.
+  const id = `onboarding:${userId}`;
+  const result = await db.send(new GetCommand({
+    TableName: tableName,
+    Key: { id },
+    ConsistentRead: true,
+    ExpressionAttributeNames: { "#id": "id", "#userId": "userId" },
+    ProjectionExpression: "#id, #userId",
+  }));
+  return result.Item?.id === id && result.Item.userId === userId ? { id, userId } : null;
 }
 
 /** One bounded page per request, including its optional profile decorations. */
