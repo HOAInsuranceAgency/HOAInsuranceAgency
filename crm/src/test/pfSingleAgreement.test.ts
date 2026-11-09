@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { decodePDFRawStream, PDFArray, PDFDocument, PDFRawStream } from "pdf-lib";
 
 const m = vi.hoisted(() => ({ loan: vi.fn(), upload: vi.fn(), create: vi.fn(), document: vi.fn(), write: vi.fn() }));
 vi.mock("aws-amplify", () => ({ Amplify: { configure: vi.fn() } }));
@@ -46,6 +47,29 @@ describe("one financing agreement", () => {
     expect(m.upload.mock.calls[0][0].input.Body.length).toBeGreaterThan(1000);
     expect(m.create).toHaveBeenCalledTimes(1);
     expect(m.create).toHaveBeenCalledWith(expect.objectContaining({ category: "PF_AGREEMENT", entityId: "account-1" }));
+  });
+
+  it("files a single grouped agreement with the four frozen policy identifications", async () => {
+    const { data } = await m.loan();
+    const policyLabels = ["Harbor POL-1", "Harbor POL-2", "Harbor POL-3", "Travelers POL-4"];
+    m.loan.mockResolvedValue({ data: { ...data, quoteId: null, groupedInvoiceId: "group-1",
+      groupedPolicyIds: ["p1", "p2", "p3", "p4"], groupedPolicyAgreementLines: policyLabels } });
+    expect(await generate({ arguments: { loanId: "loan-1" } })).toEqual({ ok: true, documentIds: ["agreement-1"] });
+    expect(m.upload).toHaveBeenCalledTimes(1);
+    const pdf = await PDFDocument.load(m.upload.mock.calls[0][0].input.Body);
+    const contents = pdf.getPages().flatMap(page => {
+      const streams = page.node.Contents();
+      return streams instanceof PDFArray ? streams.asArray() : [streams];
+    }).map(ref => {
+      const stream = pdf.context.lookup(ref);
+      if (!(stream instanceof PDFRawStream)) throw new Error("Missing agreement content stream");
+      return Buffer.from(decodePDFRawStream(stream).decode()).toString("latin1")
+        .replace(/<([0-9A-Fa-f]+)>\s*Tj/g, (_, hex: string) => Buffer.from(hex, "hex").toString("latin1"));
+    }).join("\n");
+    for (const policy of policyLabels) expect(contents).toContain(`POLICY: ${policy}`);
+    expect(contents).not.toContain("(to be assigned)");
+    expect(m.create).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ category: "PF_AGREEMENT", entityId: "account-1" }));
+    expect(m.create.mock.calls[0][0]).not.toHaveProperty("policyId");
   });
 
   it("never asks an older client for a resolution or manually activates a loan", async () => {

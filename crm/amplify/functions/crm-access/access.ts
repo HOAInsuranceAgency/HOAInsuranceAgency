@@ -199,7 +199,7 @@ export class AccountAccess {
     }
     if (model === "Invoice") {
       const previous = input.id ? await this.get("Invoice",id(input.id)) : undefined;
-      if (isGroupedInvoice(previous ?? {}) || previous?.supersededByGroupedInvoiceId || Object.hasOwn(input, 'groupedPolicyIds') || input.sourcePricingVersion === 3) throw new Error(GROUPED_INVOICE_REVIEW_ONLY);
+      if (isGroupedInvoice(previous ?? {}) || previous?.supersededByGroupedInvoiceId || Object.hasOwn(input, 'groupedPolicyIds') || Object.hasOwn(input, 'groupedFinanceLoanId') || input.sourcePricingVersion === 3) throw new Error(GROUPED_INVOICE_REVIEW_ONLY);
       if(operation==="create") {
         if(![1,2].includes(input.sourcePricingVersion as number)||input.status!=="DRAFT"||!input.quoteId&&!input.policyId)throw new Error("Create a source-priced draft invoice from its quote or policy.");
         if (input.policyId) {

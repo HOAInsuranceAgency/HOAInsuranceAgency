@@ -56,6 +56,15 @@ const groupedLines: InvoiceLine[] = ([
   ...line, id: `grouped-line-${sortOrder}`, policyId, kind, retailAmount, costAmount: retailAmount, sortOrder,
 }));
 
+function GroupedDraft({ initialInvoice = groupedInvoice, onGroupedRestored }: {
+  initialInvoice?: Invoice;
+  onGroupedRestored?: () => Promise<void>;
+}) {
+  const [invoice, setInvoice] = useState(initialInvoice);
+  return <InvoiceEditor invoice={invoice} policies={groupedPolicies} quotes={[]} account={groupAccount} contacts={contacts}
+    onChange={next => { h.change(next); setInvoice(next); }} onLinesChange={h.linesChange} onDeleted={vi.fn()} onGroupedRestored={onGroupedRestored} />;
+}
+
 it("shows one aggregate financing schedule on a read-only combined draft", async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date("2026-11-09T15:00:00Z"));
@@ -91,15 +100,10 @@ it("lets the owner restore separate drafts and refreshes only after the restore 
     await saving.promise;
     return { data: JSON.stringify({ ok: true }) };
   });
-  function GroupedDraft() {
-    const [invoice, setInvoice] = useState(groupedInvoice);
-    return <InvoiceEditor invoice={invoice} policies={groupedPolicies} quotes={[]} account={groupAccount} contacts={contacts}
-      onChange={setInvoice} onLinesChange={h.linesChange} onDeleted={vi.fn()} onGroupedRestored={refresh} />;
-  }
-  render(<OwnerContext.Provider value={true}><GroupedDraft /></OwnerContext.Provider>);
+  render(<OwnerContext.Provider value={true}><GroupedDraft onGroupedRestored={refresh} /></OwnerContext.Provider>);
   await userEvent.click(await screen.findByRole("button", { name: "Restore separate drafts" }));
   expect(h.restoreGroupedInvoice).not.toHaveBeenCalled();
-  expect(screen.queryByRole("button", { name: /Send invoice|Void|Mark paid/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Void|Mark paid/ })).not.toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Restore drafts" }));
   expect(h.restoreGroupedInvoice).toHaveBeenCalledExactlyOnceWith({ invoiceId: groupedInvoice.id });
   expect(screen.getByRole("button", { name: "Restoring drafts…" })).toBeDisabled();
@@ -113,12 +117,72 @@ it("lets the owner restore separate drafts and refreshes only after the restore 
   expect(h.voidInvoice).not.toHaveBeenCalled();
 });
 
+it("sends the financing-only grouped invoice to the owner's selected contacts and keeps the confirmed sent state", async () => {
+  const sending = deferred();
+  const sentAt = "2026-11-09T15:00:00Z";
+  const sentTo = "primary@example.com,treasurer@example.com";
+  h.list.mockResolvedValue({ data: groupedLines });
+  h.get.mockResolvedValue({ data: groupedInvoice }); // The first read can lag accepted delivery.
+  h.send.mockImplementation(async () => {
+    await sending.promise;
+    return { data: { ok: true, sentAt, sentTo } };
+  });
+  render(<OwnerContext.Provider value={true}><GroupedDraft /></OwnerContext.Provider>);
+  const send = await screen.findByRole("button", { name: "Send invoice" });
+  const primary = screen.getByRole("checkbox", { name: /Primary/ });
+  await userEvent.click(primary);
+  expect(send).toBeDisabled();
+  await userEvent.click(primary);
+  await userEvent.click(screen.getByRole("checkbox", { name: /Treasurer/ }));
+  await userEvent.click(send);
+  await waitFor(() => expect(h.send).toHaveBeenCalledExactlyOnceWith({ invoiceId: groupedInvoice.id, toEmail: sentTo, expectedSentAt: "" }));
+  expect(send).toBeDisabled();
+  expect(screen.queryByText(/Stripe bank-transfer link/)).not.toBeInTheDocument();
+  expect(h.financeHint).not.toHaveBeenCalled();
+  await act(async () => sending.resolve());
+  expect(await screen.findByText("SENT")).toBeInTheDocument();
+  expect(screen.getByText(/Last sent.*treasurer@example.com/)).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Send invoice|Send again|Restore separate drafts|Mark paid|Void/ })).not.toBeInTheDocument();
+  expect(h.update).not.toHaveBeenCalled();
+});
+
+it("allows retrying a reserved grouped delivery while keeping restore unavailable", async () => {
+  const reserved = { ...groupedInvoice, groupedFinanceLoanId: "loan-1" };
+  h.list.mockResolvedValue({ data: groupedLines });
+  h.send.mockRejectedValueOnce(new Error("Delivery response interrupted"));
+  h.get.mockResolvedValue({ data: reserved });
+  render(<OwnerContext.Provider value={true}><GroupedDraft initialInvoice={reserved} /></OwnerContext.Provider>);
+  expect(screen.queryByRole("button", { name: "Restore separate drafts" })).not.toBeInTheDocument();
+  await userEvent.click(await screen.findByRole("button", { name: "Send invoice" }));
+  expect(await screen.findByText("Delivery response interrupted")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Restore separate drafts" })).not.toBeInTheDocument();
+  h.send.mockResolvedValueOnce({ data: { ok: true, sentAt: "2026-11-09T15:00:00Z", sentTo: "primary@example.com" } });
+  await userEvent.click(screen.getByRole("button", { name: "Send invoice" }));
+  await waitFor(() => expect(h.send).toHaveBeenCalledTimes(2));
+  expect(h.send.mock.calls[1]).toEqual(h.send.mock.calls[0]);
+  expect(await screen.findByText("SENT")).toBeInTheDocument();
+});
+
+it("reconciles a lost grouped send response from the persisted recipient and send time", async () => {
+  h.list.mockResolvedValue({ data: groupedLines });
+  h.send.mockRejectedValueOnce(new Error("Delivery response interrupted"));
+  h.get.mockResolvedValue({ data: { ...groupedInvoice, status: "SENT", groupedFinanceLoanId: "loan-1",
+    sentAt: "2026-11-09T15:00:00Z", sentTo: "primary@example.com" } });
+  render(<OwnerContext.Provider value={true}><GroupedDraft /></OwnerContext.Provider>);
+  await userEvent.click(await screen.findByRole("button", { name: "Send invoice" }));
+  expect(await screen.findByText("Sent to primary@example.com.")).toBeInTheDocument();
+  expect(screen.getByText("SENT")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Send invoice|Restore separate drafts/ })).not.toBeInTheDocument();
+  expect(h.send).toHaveBeenCalledOnce();
+});
+
 it("blocks combined pricing when one constituent has no coverage classification", async () => {
   h.list.mockResolvedValue({ data: groupedLines });
-  render(<InvoiceEditor invoice={groupedInvoice} policies={groupedPolicies.map(policy => policy.id === "p4" ? { ...policy, lines: [] } : policy)}
-    quotes={[]} account={groupAccount} contacts={contacts} onChange={h.change} onLinesChange={h.linesChange} onDeleted={vi.fn()} />);
+  render(<OwnerContext.Provider value={true}><InvoiceEditor invoice={groupedInvoice} policies={groupedPolicies.map(policy => policy.id === "p4" ? { ...policy, lines: [] } : policy)}
+    quotes={[]} account={groupAccount} contacts={contacts} onChange={h.change} onLinesChange={h.linesChange} onDeleted={vi.fn()} /></OwnerContext.Provider>);
   expect(await screen.findByText(/TRAVELERS.*lists no coverage lines/)).toBeInTheDocument();
   expect(screen.queryByText("Payment schedule")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Send invoice" })).not.toBeInTheDocument();
 });
 it("serializes independent blur saves and preserves a newer edit while the first request is pending", async () => {
   const first = deferred();

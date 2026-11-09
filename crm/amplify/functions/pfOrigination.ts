@@ -12,8 +12,9 @@ import {
 import { evaluateEligibility } from "../../../shared/premiumFinance/eligibility";
 import { downPctViolation } from "../../../shared/premiumFinance/quote";
 import { financePricing, financeRateDates } from "../../../shared/premiumFinance/pricing";
-import { PF_CONFIG_SHA256 } from "../../../shared/premiumFinance/jurisdictions";
+import { PF_CONFIG_SHA256, type PfJurisdiction } from "../../../shared/premiumFinance/jurisdictions";
 import type { PolicyLoanClaim } from "./grouped-draft-billing";
+import type { Write } from "./broker-fees/store";
 
 /**
  * The one way a loan originates.
@@ -51,12 +52,18 @@ export interface OriginationDecision {
   inputs: Record<string, unknown>;
 }
 
-export interface OriginationAnchor {
-  kind: "policy" | "quote";
+export type OriginationAnchor = {
   id: string;
   lines: readonly (string | null | undefined)[];
   coverageEffectiveDate?: string | null;
-}
+} & (
+  | { kind: "policy" | "quote" }
+  | { kind: "groupedInvoice"; members: readonly {
+    id: string;
+    lines: readonly (string | null | undefined)[];
+    agreementLine: string;
+  }[] }
+);
 
 export interface OriginationAccount {
   id: string;
@@ -74,10 +81,37 @@ export interface OriginationReads {
   listOpinions(code: string): Promise<{ effectiveAt: string; reviewBy: string }[]>;
 }
 
+type CoverageMember = { lines?: readonly (string | null | undefined)[] | null };
+
+async function resolveOriginationGate(account: OriginationAccount, reads: OriginationReads, asOf: string) {
+  const preliminary = originationGate(account.state);
+  const opinionCurrent = preliminary.jurisdiction?.status === "conditional" &&
+    hasCurrentOpinion(await reads.listOpinions(preliminary.jurisdiction.code), asOf);
+  return originationGate(account.state, { hasCurrentCounselOpinion: opinionCurrent });
+}
+
+function policyEligibility(member: CoverageMember, account: OriginationAccount, jurisdiction: PfJurisdiction) {
+  return evaluateEligibility({
+    lines: member.lines ?? [],
+    accountType: account.type,
+    requiresIncorporatedBorrower: jurisdiction.requiresIncorporatedBorrower ?? false,
+    incorporated: account.incorporated,
+    jurisdictionName: jurisdiction.name,
+  });
+}
+
+/** Revalidate facts that can change before an unsigned grouped offer is sent or elected. */
+export async function canUseGroupedOffer(account: OriginationAccount, members: readonly CoverageMember[], amountFinanced: number, reads: OriginationReads, asOf: string): Promise<boolean> {
+  const gate = await resolveOriginationGate(account, reads, asOf);
+  return gate.open && !minPrincipalViolation(amountFinanced, gate.jurisdiction) && members.length >= 2 &&
+    members.every(member => policyEligibility(member, account, gate.jurisdiction).every(check => check.ok));
+}
+
 export interface OriginationRequest {
   account: OriginationAccount;
   anchor: OriginationAnchor;
   policyLoanClaim?: PolicyLoanClaim;
+  groupedLoanClaim?: (loanId: string) => Write[];
   /** The amount being financed — under W8, the invoiced total. */
   premium: number;
   brokerFeeCents?: number;
@@ -159,6 +193,12 @@ export async function originateLoan(
   req: OriginationRequest
 ): Promise<OriginationResult> {
   const { account, anchor } = req;
+  if (anchor.kind === "groupedInvoice" && (!req.groupedLoanClaim || req.policyLoanClaim ||
+      (req.brokerFeeCents ?? 0) !== 0 || req.brokerFeeAllocations?.length ||
+      anchor.members.length < 2 || anchor.members.length > 8 || new Set(anchor.members.map(member => member.id)).size !== anchor.members.length ||
+      anchor.members.some(member => !member.id || !member.agreementLine.trim()))) {
+    return { ok: false, error: "The grouped financing reservation or policy schedule is incomplete." };
+  }
   const now = new Date();
   const originationDay = now.toISOString().slice(0, 10);
 
@@ -167,15 +207,7 @@ export async function originateLoan(
    * within its review date (decision D). The gate itself stays pure; the
    * store is context.
    */
-  const preGate = originationGate(account.state);
-  let opinionCurrent = false;
-  if (preGate.jurisdiction?.status === "conditional") {
-    const opinions = await reads.listOpinions(preGate.jurisdiction.code);
-    opinionCurrent = hasCurrentOpinion(opinions, originationDay);
-  }
-  const gate = originationGate(account.state, {
-    hasCurrentCounselOpinion: opinionCurrent,
-  });
+  const gate = await resolveOriginationGate(account, reads, originationDay);
   const rateDates = gate.open ? financeRateDates(gate.jurisdiction, now) : [];
   // Pricing is server-owned and evaluated only for an open jurisdiction.
   const pricing = moduleOn && gate.open
@@ -195,8 +227,11 @@ export async function originateLoan(
     actorName: req.actorName,
   };
   const decisions: OriginationDecision[] = [];
+  const anchorIds = anchor.kind === "groupedInvoice"
+    ? { groupedInvoiceId: anchor.id, groupedPolicyIds: anchor.members.map(member => member.id) }
+    : anchor.kind === "policy" ? { policyId: anchor.id } : { quoteId: anchor.id };
   const terms = {
-    [anchor.kind === "policy" ? "policyId" : "quoteId"]: anchor.id,
+    ...anchorIds,
     premium: req.premium,
     downPct: req.downPct,
     months: req.months,
@@ -274,21 +309,17 @@ export async function originateLoan(
       // The screens. No override machinery remains: MEP and auditable —
       // the two screens that had one — both retired 2026-08-24, and every
       // surviving screen blocks on a fact only confirming can fix.
-      const checks = evaluateEligibility({
-        lines: anchor.lines,
-        accountType: account.type,
-        requiresIncorporatedBorrower:
-          gate.jurisdiction.requiresIncorporatedBorrower ?? false,
-        incorporated: account.incorporated,
-        jurisdictionName: gate.jurisdiction.name,
-      });
-      for (const c of checks) {
-        decisions.push({
-          rule: c.check,
-          outcome: c.ok ? "PASS" : "BLOCK",
-          reason: c.reason,
-          inputs: terms,
-        });
+      const members = anchor.kind === "groupedInvoice" ? anchor.members : [anchor];
+      for (const member of members) {
+        const checks = policyEligibility(member, account, gate.jurisdiction);
+        for (const c of checks) {
+          decisions.push({
+            rule: c.check,
+            outcome: c.ok ? "PASS" : "BLOCK",
+            reason: c.reason,
+            inputs: anchor.kind === "groupedInvoice" ? { ...terms, policyId: member.id } : terms,
+          });
+        }
       }
 
       if (blocked(decisions).length === 0) {
@@ -340,9 +371,8 @@ export async function originateLoan(
                       createdAt: nowIso,
                       updatedAt: nowIso,
                       accountId: account.id,
-                      ...(anchor.kind === "policy"
-                        ? { policyId: anchor.id }
-                        : { quoteId: anchor.id }),
+                      ...anchorIds,
+                      ...(anchor.kind === "groupedInvoice" ? { groupedPolicyAgreementLines: anchor.members.map(member => member.agreementLine) } : {}),
                       status: "QUOTED",
                       state: gate.jurisdiction.code,
                       configSha256: PF_CONFIG_SHA256,
@@ -370,6 +400,7 @@ export async function originateLoan(
                   },
                 },
                 ...(req.policyLoanClaim ? [req.policyLoanClaim(loanId)] : []),
+                ...(req.groupedLoanClaim ? req.groupedLoanClaim(loanId) : []),
               ],
             })
           ));

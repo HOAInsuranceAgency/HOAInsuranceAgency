@@ -25,3 +25,37 @@ export const CANCELLATION_PROCEDURE =
 /** The signer's authority is part of the single agreement signed at deposit. */
 export const SECURITY_INTEREST_AND_AUTHORITY =
   "SECURITY INTEREST AND AUTHORITY. The unearned premium and unearned dividends under the policy identified above secure this loan. By signing this agreement, the signatory represents that they are authorized to enter into it on behalf of the Borrower.";
+
+interface GroupedAgreementAnchor {
+  policyId?: string | null;
+  quoteId?: string | null;
+  groupedInvoiceId?: string | null;
+  groupedPolicyIds?: readonly (string | null)[] | null;
+  groupedPolicyAgreementLines?: readonly (string | null)[] | null;
+}
+
+export function hasGroupedAgreement(loan: GroupedAgreementAnchor): boolean {
+  return loan.groupedInvoiceId != null || loan.groupedPolicyIds != null || loan.groupedPolicyAgreementLines != null;
+}
+
+/** Display the exact policy identifications that were frozen with the offer. */
+export function groupedAgreementLines(loan: GroupedAgreementAnchor): string[] | null {
+  const ids = loan.groupedPolicyIds, lines = loan.groupedPolicyAgreementLines;
+  if (!loan.groupedInvoiceId || loan.policyId || loan.quoteId || !Array.isArray(ids) || ids.length < 2 || ids.length > 8 ||
+      ids.some(id => typeof id !== 'string' || !id.trim()) || new Set(ids).size !== ids.length ||
+      !Array.isArray(lines) || lines.length !== ids.length || lines.some(line => typeof line !== 'string' || !line.trim())) return null;
+  return lines as string[];
+}
+
+/** The customer election and the filed agreement use the same group clauses. */
+export function groupedAgreementClauses() {
+  return [
+    OWNERSHIP_DISCLOSURE.replace('on the policy.', 'on the policies.'),
+    POWER_OF_ATTORNEY.replace('the insurance policy identified above', 'the insurance policies identified above')
+      .replace('from the insurer', 'from the insurers'),
+    PREPAYMENT_TERMS,
+    CANCELLATION_PROCEDURE.replace('the policy from the insurer', 'the identified policies from their insurers')
+      .replace('returned by the insurer', 'returned by the insurers'),
+    SECURITY_INTEREST_AND_AUTHORITY.replace('the policy identified above', 'the policies identified above'),
+  ] as const;
+}

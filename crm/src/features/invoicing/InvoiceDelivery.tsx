@@ -31,7 +31,15 @@ type InvoiceDeliveryState = Pick<
   | 'markPaid'
 >;
 
-export function InvoiceDelivery({ editor }: { editor: InvoiceDeliveryState }) {
+export function InvoiceSentDetails({ invoice }: { invoice: InvoiceDeliveryState['invoice'] }) {
+  if (!invoice.sentAt) return null;
+  return <p className="muted small">
+    Last sent {new Date(invoice.sentAt).toLocaleString()}
+    {invoice.sentTo ? ` to ${invoice.sentTo}` : ""}
+  </p>;
+}
+
+export function InvoiceDelivery({ editor, financeOnly = false }: { editor: InvoiceDeliveryState; financeOnly?: boolean }) {
   const {
     locked,
     inputId,
@@ -55,8 +63,8 @@ export function InvoiceDelivery({ editor }: { editor: InvoiceDeliveryState }) {
     markPaid,
   } = editor;
   return <>{/* ── Send ───────────────────────────────────────────────────────── */}
-    {!locked && (
-      <div className="card inset">
+    {(!locked || financeOnly) && (
+      <div className={financeOnly ? undefined : "card inset"}>
         <h3>Send</h3>
         <div className="field">
           <label htmlFor={inputId("to")}>Send to</label>
@@ -100,12 +108,12 @@ export function InvoiceDelivery({ editor }: { editor: InvoiceDeliveryState }) {
             </>
           )}
         </div>
-        <p className="muted small">
+        {financeOnly ? <p className="muted small">The email includes the invoice PDF and a link to review and accept financing.</p> : <p className="muted small">
           The agency is copied on every invoice, so a sent copy is findable
           without opening the CRM. A branded PDF is attached automatically,
           {adjustment && totals.retail <= 0 ? " with no payment link for a credit or zero-balance statement." : " and a Stripe bank-transfer link is generated when it sends."}
-        </p>
-        {!adjustment && account && (policy || quote) && (
+        </p>}
+        {!financeOnly && !adjustment && account && (policy || quote) && (
           <FinanceOfferHint
             account={account}
             anchor={
@@ -148,19 +156,14 @@ export function InvoiceDelivery({ editor }: { editor: InvoiceDeliveryState }) {
         {withEmail.length > 0 && toEmails.length === 0 && (
           <p className="muted small">Choose at least one recipient.</p>
         )}
-        {invoice.sentAt && (
-          <p className="muted small">
-            Last sent {new Date(invoice.sentAt).toLocaleString()}
-            {invoice.sentTo ? ` to ${invoice.sentTo}` : ""}.
-          </p>
-        )}
+        <InvoiceSentDetails invoice={invoice} />
       </div>
     )}
 
     {adjustment && invoice.status === "SENT" && totals.retail <= 0 && <p className="muted small" role="status">
       {totals.retail < 0 ? "Credit statement" : "Zero-balance statement"}: no incoming payment is due. This remains sent as the statement record.
     </p>}
-    {(invoice.status === "SENT" || invoice.status === "PROCESSING") && !(adjustment && totals.retail <= 0) && (
+    {!financeOnly && (invoice.status === "SENT" || invoice.status === "PROCESSING") && !(adjustment && totals.retail <= 0) && (
       <div className="inline-actions">
         <Button variant="secondary"
           type="button"

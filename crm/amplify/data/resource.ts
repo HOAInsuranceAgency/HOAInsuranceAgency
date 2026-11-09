@@ -1028,8 +1028,10 @@ const schema = a
     Invoice: a.model({
       /** Versioned initial source pricing; absent only on pre-feature legacy records. */
       sourcePricingVersion: a.integer(),
-      /** Members of an invoice frozen for grouped review. */
+      /** Members of an invoice frozen for grouped billing. */
       groupedPolicyIds: a.id().array(),
+      /** Server-owned reservation for the combined payment plan. */
+      groupedFinanceLoanId: a.id(),
       adjustsInvoiceId: a.id(),
       adjustsPremiumLineId: a.id(),
       accountId: a.id().required(),
@@ -1251,6 +1253,10 @@ const schema = a
          */
         policyId: a.id(),
         quoteId: a.id(),
+        /** Combined invoices are an alternative to a single policy or quote. */
+        groupedInvoiceId: a.id(),
+        groupedPolicyIds: a.id().array(),
+        groupedPolicyAgreementLines: a.string().array(),
         status: a.ref("PfLoanStatus").required(),
         /** Jurisdiction code at origination — frozen; moves do not re-gate. */
         state: a.string().required(),

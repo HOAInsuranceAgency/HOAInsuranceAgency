@@ -41,6 +41,8 @@ interface LoanRow extends PostableLoan {
   state: string;
   policyId: string | null;
   quoteId: string | null;
+  groupedInvoiceId: string | null;
+  groupedPolicyAgreementLines: string[];
   months: number;
   downPayment: number;
   originationFee: number;
@@ -76,6 +78,10 @@ async function readLoan(loanId: string): Promise<LoanRow | null> {
     state: typeof item.state === "string" ? item.state : "",
     policyId: typeof item.policyId === "string" ? item.policyId : null,
     quoteId: typeof item.quoteId === "string" ? item.quoteId : null,
+    groupedInvoiceId: typeof item.groupedInvoiceId === "string" ? item.groupedInvoiceId : null,
+    groupedPolicyAgreementLines: Array.isArray(item.groupedPolicyAgreementLines)
+      ? item.groupedPolicyAgreementLines.filter((line): line is string => typeof line === "string")
+      : [],
     months: typeof item.months === "number" ? item.months : 11,
     downPayment: typeof item.downPayment === "number" ? item.downPayment : 0,
     originationFee: typeof item.originationFee === "number" ? item.originationFee : 0,
@@ -165,19 +171,32 @@ async function mailAccounting(subject: string, lines: string[]) {
  * like every read that follows a money write — a missing name costs a line
  * of detail, never a retry storm.
  */
-async function dealNames(loan: LoanRow): Promise<{ name: string; policy: string }> {
+async function dealNames(loan: LoanRow): Promise<{ name: string; billingLines: string[] }> {
+  let name = "(unknown association)";
+  let policy = "(no policy number)";
   try {
     const ctx = await readPaidContext({
       accountId: loan.accountId,
-      policyId: (loan as { policyId?: string | null }).policyId ?? null,
+      policyId: loan.policyId,
     });
-    return {
-      name: ctx.associationName ?? "(unknown association)",
-      policy: ctx.policyNumber ?? "(no policy number)",
-    };
-  } catch {
-    return { name: "(unknown association)", policy: "(no policy number)" };
+    name = ctx.associationName ?? name;
+    policy = ctx.policyNumber ?? policy;
+  } catch { /* The frozen group or loan ID can still identify the receipt. */ }
+  if (!loan.groupedInvoiceId) return { name, billingLines: [`Policy: ${policy}`] };
+  let invoiceNumber = loan.groupedInvoiceId;
+  if (process.env.INVOICE_TABLE) {
+    try {
+      const { Item } = await ddb.send(new GetCommand({
+        TableName: process.env.INVOICE_TABLE,
+        Key: { id: loan.groupedInvoiceId },
+        ProjectionExpression: 'accountId, #number',
+        ExpressionAttributeNames: { '#number': 'number' },
+        ConsistentRead: true,
+      }));
+      if (Item?.accountId === loan.accountId && typeof Item.number === 'string') invoiceNumber = Item.number;
+    } catch { /* Receipt reporting can fall back to the invoice ID. */ }
   }
+  return { name, billingLines: [`Invoice: ${invoiceNumber}`, ...loan.groupedPolicyAgreementLines] };
 }
 
 /** No earnings while ACH clears; retries recover a hook after the loan state was recorded. */
@@ -402,7 +421,7 @@ async function applyDownPayment(d: PfEventDecision, loan: LoanRow): Promise<stri
       `Financing initial payment received — ${deal.name} — ${money(receipt.initialPaymentAmount)} (payment 1 of ${loan.months + 1})`,
       [
         `Association: ${deal.name}`,
-        `Policy: ${deal.policy}`,
+        ...deal.billingLines,
         ``,
         `Total received: ${money(receipt.initialPaymentAmount)}`,
         `Premium down payment: ${money(loan.downPayment)}`,
@@ -644,7 +663,7 @@ async function applyInstallment(d: PfEventDecision, loan: LoanRow): Promise<stri
       `Financing installment received — ${deal.name} — ${money(result.amount)} (payment ${result.n + 1} of ${loan.months + 1})`,
       [
         `Association: ${deal.name}`,
-        `Policy: ${deal.policy}`,
+        ...deal.billingLines,
         ``,
         `Character: loan repayment, NOT premium. Settles to the trust on the Stripe rail;`,
         `the split below is what keeps it distinct there.`,

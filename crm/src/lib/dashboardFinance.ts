@@ -1,6 +1,7 @@
 import type { ChartRow, ChartSeries } from '../components/StackedBars';
 import type { CommercialEntry } from './commercial';
 import { isInLast30Days, salespersonKey } from './dashboardPeople';
+import { isGroupedInvoice } from '../../../shared/groupedInvoiceGuard';
 
 export const LIVE_FINANCE_STATUSES: readonly string[] = ['ACCEPTED', 'ACTIVE', 'DEFAULTED'];
 interface Anchor { accountId: string; policyId?: string | null; quoteId?: string | null }
@@ -14,8 +15,17 @@ export interface FinanceLoan extends Anchor {
   downPaidAt?: string | null;
   cancellationEffectiveAt?: string | null;
   expectedCarrierRefundAt?: string | null;
+  groupedPolicyIds?: readonly (string | null)[] | null;
 }
-interface FinanceInvoice extends Anchor { id: string; status?: string | null }
+interface FinanceInvoice extends Anchor {
+  id: string;
+  status?: string | null;
+  sourcePricingVersion?: number | null;
+  groupedPolicyIds?: unknown;
+  groupedFinanceLoanId?: string | null;
+  stripePaymentLinkId?: string | null;
+  paymentUrl?: string | null;
+}
 interface FinancePolicy { id: string; accountId: string; quoteId?: string | null }
 interface FinanceInvoiceLine { invoiceId: string; policyId?: string | null }
 
@@ -31,6 +41,13 @@ export function hasFinancingReceivable(loan: FinanceLoan): boolean {
 export function outstandingPrincipal(loan: FinanceLoan): number | null {
   const amount = loan.balance ?? ((loan.paidThrough ?? 0) === 0 ? loan.amountFinanced : null);
   return typeof amount === 'number' && Number.isFinite(amount) && amount >= 0 ? amount : null;
+}
+
+/** A sent grouped financing invoice presents the plan; its loan owns collections. */
+export function hasOpenInvoiceReceivable(invoice: FinanceInvoice): boolean {
+  if (invoice.status === 'PROCESSING') return true;
+  return invoice.status === 'SENT' &&
+    !(isGroupedInvoice(invoice) && invoice.groupedFinanceLoanId && !invoice.stripePaymentLinkId && !invoice.paymentUrl);
 }
 
 /** Financing replaces the pay-in-full bill with a loan; monthly installments
@@ -72,7 +89,7 @@ export function nonBilledReceivables(
   }
   const billedByAccount = new Map<string, BilledAccount>();
   invoices.forEach((invoice, position) => {
-    if (invoice.status !== 'SENT' && invoice.status !== 'PROCESSING') return;
+    if (!hasOpenInvoiceReceivable(invoice)) return;
     const invoiceId = invoice.id, accountId = invoice.accountId;
     let billed = billedByAccount.get(accountId);
     if (!billed) {
@@ -94,7 +111,7 @@ export function nonBilledReceivables(
     if (!hasFinancingReceivable(loan)) continue;
     const principal = outstandingPrincipal(loan);
     if (principal === 0) continue;
-    const loanAnchors = anchors(loan);
+    const loanAnchors = anchors(loan, loan.groupedPolicyIds?.filter((id): id is string => !!id));
     const billed = billedByAccount.get(loan.accountId);
     const matching = new Map<string, number>();
     if (billed) {

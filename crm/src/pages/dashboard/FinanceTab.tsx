@@ -21,7 +21,7 @@ import type { CommercialData } from "../../lib/commercial";
 import type { ReportAccount } from "../../lib/dashboardAssignments";
 import { loadFinanceDashboard, type FinancePaymentReceipt, type FinancePolicyAnchor, type FinanceLineAnchor } from "../../lib/dashboardFinanceLoad";
 import { salespersonKey, salespersonSeries } from "../../lib/dashboardPeople";
-import { interestIncomeBySalesperson, hasFinancingReceivable, nonBilledReceivables, outstandingPrincipal } from "../../lib/dashboardFinance";
+import { interestIncomeBySalesperson, hasFinancingReceivable, hasOpenInvoiceReceivable, nonBilledReceivables, outstandingPrincipal } from "../../lib/dashboardFinance";
 import { StackedBars } from "../../components/StackedBars";
 import type { Schema } from "../../../amplify/data/resource";
 import { brokerFeeBalances, type ReportBrokerFeePolicy } from "../../lib/brokerFeeReporting";
@@ -63,7 +63,7 @@ export default function FinanceTab() {
     [accounts]
   );
   const open = useMemo(
-    () => invoices.filter((i) => i.status === "SENT" || i.status === "PROCESSING"),
+    () => invoices.filter(hasOpenInvoiceReceivable),
     [invoices]
   );
   const nonBilled = useMemo(() => nonBilledReceivables(pfLoans, invoices, policies, invoiceLines), [pfLoans, invoices, policies, invoiceLines]);
@@ -78,7 +78,7 @@ export default function FinanceTab() {
   const nonBilledIncomplete = nonBilled.unknown > 0 || nonBilled.overlaps.length > 0;
   const overlapPrincipal = pfLoans.filter(loan => overlapLoans.has(loan.id)).reduce((sum, loan) => sum + (outstandingPrincipal(loan) ?? 0), 0);
   const overlapUnknown = pfLoans.filter(loan => overlapLoans.has(loan.id) && outstandingPrincipal(loan) == null).length;
-  const nonBilledNote = "Remaining financed principal with no open invoice, including cancelled coverage awaiting refund reconciliation. Installments are collected directly on the loan schedule. Future interest is excluded.";
+  const nonBilledNote = "Remaining financed principal with no separate bill, including cancelled coverage awaiting refund reconciliation. Installments are collected directly on the loan schedule. Future interest is excluded.";
   const gapNote = nonBilledIncomplete
     ? `Non-billed total is incomplete: ${nonBilled.overlaps.length} financing records (${fmtMoney(overlapPrincipal)} in known principal${overlapUnknown ? `; ${overlapUnknown} without a known balance` : ""}) share open billing and are excluded until reconciled; ${nonBilled.unknown} other financing records have no reliable balance.`
     : "";

@@ -8,8 +8,9 @@ import { invoiceBrokerFeeAllocations, brokerFeeInvoiceRefresh } from "./brokerFe
 import { validateInvoiceSourceCharges } from "./passThroughInvoice";
 import { assertAdjustmentInvoiceProof, assertInitialInvoiceAvailable } from "./adjustmentInvoice";
 import { isNonpayableAdjustmentStatement } from "../../../../shared/invoicePaymentStatus";
-import { GROUPED_INVOICE_REVIEW_ONLY, isGroupedInvoice } from "../../../../shared/groupedInvoiceGuard";
+import { isGroupedInvoice } from "../../../../shared/groupedInvoiceGuard";
 import { assertStandalonePolicyBilling, claimStandalonePolicyLoan, GroupedDraftBillingBlocked, readTrackedPolicyLoan, standalonePolicyBillingGuard, type BillingPolicy } from "../grouped-draft-billing";
+import { loadGroupedFinance } from "../grouped-finance";
 import { prepareBrokerFeeAgreement } from "../broker-fees/agreements";
 import { authorizedQuoteTerms } from "../../../../shared/quoteAuthorization";
 import { brokerFeeCents, feeAllocations, type BrokerFeeAllocation, type BrokerFeeInvoiceSendClaim } from "../../../../shared/brokerFees";
@@ -29,13 +30,15 @@ import Stripe from "stripe";
 import { invoiceTotals, remittanceSplit, financeableInvoiceTotal, type RemittanceSplit } from "../../../../shared/invoiceTotals";
 import { electionExpiry, mintElectionToken } from "../pfElectionToken";
 import { originateLoan } from "../pfOrigination";
+import { canUseGroupedOffer } from "../pfOrigination";
+import type { OriginationAnchor } from "../pfOrigination";
 import {
   PF_DEFAULT_DOWN_PCT,
   PF_DEFAULT_MONTHS,
 } from "../../../../shared/premiumFinance/quote";
 import { PF_CONFIG_SHA256, PF_JURISDICTIONS } from "../../../../shared/premiumFinance/jurisdictions";
 import { financePricing, financeRateDates } from "../../../../shared/premiumFinance/pricing";
-import { renderInvoice } from "./invoice";
+import { renderInvoice, type InvoiceView } from "./invoice";
 import { createPaymentLink, InactivePaymentLink, toCents } from "./stripeLink";
 import { buildMimeMessage } from "./mime";
 import { pdfFilename, renderInvoicePdf } from "./pdf";
@@ -64,12 +67,49 @@ const ddb = DynamoDBDocumentClient.from(new DynamoDBClient());
  */
 class SendBlocked extends Error {}
 
-/** The anchor a W8 invoice bills: a policy, or a quote before bind. */
-interface FinanceAnchor {
-  kind: "policy" | "quote";
-  id: string;
-  lines: readonly (string | null | undefined)[];
-  coverageEffectiveDate?: string | null;
+type FinanceAnchor = OriginationAnchor;
+type GroupedSendClaim = Awaited<ReturnType<typeof loadGroupedFinance>> & { leaseId: string };
+type Loan = Schema["PfLoan"]["type"];
+
+function groupedInvoiceCondition(group: GroupedSendClaim, loanId?: string) {
+  const guard = group.invoiceGuard.ConditionCheck;
+  if (!guard?.ConditionExpression) throw new SendBlocked("The grouped invoice could not be reserved.");
+  return {
+    ...guard,
+    ConditionExpression: `${guard.ConditionExpression} AND #groupStatus = :groupDraft AND #groupSend.#groupLease = :groupLease AND ` +
+      (loanId ? "groupedFinanceLoanId = :groupOldLoan" : "attribute_not_exists(groupedFinanceLoanId)"),
+    ExpressionAttributeNames: { ...guard.ExpressionAttributeNames, "#groupStatus": "status", "#groupSend": "invoiceSendOperation", "#groupLease": "leaseId" },
+    ExpressionAttributeValues: { ...guard.ExpressionAttributeValues, ":groupDraft": "DRAFT", ":groupLease": group.leaseId, ...(loanId ? { ":groupOldLoan": loanId } : {}) },
+  };
+}
+
+function groupedLoanWrites(group: GroupedSendClaim, loanTable: string, loanId: string, priorLoanId?: string): Write[] {
+  const invoice = groupedInvoiceCondition(group, priorLoanId);
+  return [
+    ...group.guards,
+    { Update: { ...invoice, UpdateExpression: "SET groupedFinanceLoanId = :groupNewLoan",
+      ExpressionAttributeValues: { ...invoice.ExpressionAttributeValues, ":groupNewLoan": loanId } } },
+    ...(priorLoanId ? [{ ConditionCheck: {
+      TableName: loanTable, Key: { id: priorLoanId }, ConditionExpression: "#s = :cancelled",
+      ExpressionAttributeNames: { "#s": "status" }, ExpressionAttributeValues: { ":cancelled": "CANCELLED" },
+    } }] : []),
+  ];
+}
+
+/** A fresh attempt with no reserved loan and no mail call can be retried or restored. */
+async function releaseUnfundedGroupedSend(group: Awaited<ReturnType<typeof loadGroupedFinance>>, operation: Awaited<ReturnType<typeof beginInvoiceSend>>["operation"]) {
+  const table = process.env.INVOICE_TABLE;
+  if (!table || group.invoice.invoiceSendOperation || group.invoice.groupedFinanceLoanId) return;
+  try {
+    await ddb.send(new UpdateCommand({
+      TableName: table, Key: { id: group.invoice.id }, UpdateExpression: "REMOVE #op",
+      ConditionExpression: "#op = :operation AND #status = :draft AND attribute_not_exists(groupedFinanceLoanId) AND attribute_not_exists(sentAt)",
+      ExpressionAttributeNames: { "#op": "invoiceSendOperation", "#status": "status" },
+      ExpressionAttributeValues: { ":operation": operation, ":draft": "DRAFT" },
+    }));
+  } catch (error) {
+    if ((error as { name?: string }).name !== "ConditionalCheckFailedException") console.error("[send-invoice] could not release an unoffered grouped send", error);
+  }
 }
 
 /**
@@ -99,9 +139,12 @@ export async function financeOffer(
   retailTotal: number,
   recipientEmail: string | null,
   allocations: BrokerFeeAllocation[] = [],
-  policy?: BillingPolicy | null
-): Promise<{ url: string; downPayment: number; monthly: number; months: number; apr: number; originationFee: number; brokerFee: number } | null> {
+  policy?: BillingPolicy | null,
+  grouped?: GroupedSendClaim
+): Promise<(NonNullable<InvoiceView["finance"]> & { groupLoanId?: string }) | null> {
   if (!anchor || retailTotal <= 0) return null;
+  if ((anchor.kind === "groupedInvoice") !== !!grouped) return null;
+  if (grouped && allocations.length) return null;
   const brokerFeeTotalCents = allocations.reduce((sum, allocation) => sum + allocation.amountCents, 0);
   const sameFee = (loan: { brokerFeeCents?: number | null; brokerFeeAllocations?: unknown }) => (loan.brokerFeeCents ?? 0) === brokerFeeTotalCents && JSON.stringify(feeAllocations(loan.brokerFeeAllocations)) === JSON.stringify(allocations);
   const sameState = (loan: { state?: string | null }) => usStateCode(loan.state) === usStateCode(account.state);
@@ -114,15 +157,28 @@ export async function financeOffer(
   try {
     const { data: settings } = await client.models.AgencySettings.get({ id: "AGENCY" });
     if (settings?.premiumFinanceEnabled !== true) return null;
+    const listOpinions = async (code: string) => {
+      const rows = await listAllPages(nextToken => client.models.PfCounselOpinion.list({
+        filter: { jurisdiction: { eq: code } }, nextToken,
+      }));
+      return rows.map(o => ({ effectiveAt: o.effectiveAt, reviewBy: o.reviewBy }));
+    };
 
     const anchorFilter =
       anchor.kind === "policy"
         ? { policyId: { eq: anchor.id } }
         : { quoteId: { eq: anchor.id } };
-    const listed = await listAllPages((nextToken) =>
+    const listed = grouped ? [] : await listAllPages((nextToken) =>
       client.models.PfLoan.list({ filter: anchorFilter, nextToken })
     );
-    const tracked = policy ? await readTrackedPolicyLoan<(typeof listed)[number]>(policy) : undefined;
+    const priorGroupLoan = grouped?.invoice.groupedFinanceLoanId ?? undefined;
+    const tracked = grouped
+      ? priorGroupLoan ? (await ddb.send(new GetCommand({ TableName: loanTable, Key: { id: priorGroupLoan }, ConsistentRead: true }))).Item as Loan | undefined : undefined
+      : policy ? await readTrackedPolicyLoan<(typeof listed)[number]>(policy) : undefined;
+    if (grouped && priorGroupLoan && (!tracked || tracked.id !== priorGroupLoan || tracked.groupedInvoiceId !== grouped.invoice.id ||
+        tracked.accountId !== account.id || tracked.policyId || tracked.quoteId ||
+        JSON.stringify(tracked.groupedPolicyIds) !== JSON.stringify(grouped.invoice.groupedPolicyIds) ||
+        !["QUOTED", "CANCELLED"].includes(tracked.status))) return null;
     const loans = tracked ? [...listed.filter(loan => loan.id !== tracked.id), tracked] : listed;
     if (
       loans.some((l) =>
@@ -156,6 +212,7 @@ export async function financeOffer(
         (loan.electionCheckoutUrl &&
           loan.electionCheckoutExpiresAt &&
           loan.electionCheckoutExpiresAt > nowIso));
+    if (grouped && committed) return null;
     if (loan && committed && (loan.premium !== retailTotal || !sameFee(loan) || !sameState(loan) || !sameCoverageDate(loan))) {
       console.error(
         `[send-invoice] invoice re-priced to ${retailTotal} over committed election on loan ${loan.id} (quoted ${loan.premium}) — offering nothing; resolve by hand`
@@ -164,7 +221,9 @@ export async function financeOffer(
     }
     const today = new Date().toISOString().slice(0, 10);
     const stale = loan && (loan.effectiveDate ?? today) < today;
-    let needsReplacement = !!loan && (loan.premium !== retailTotal || !sameFee(loan) || !sameState(loan) || !sameCoverageDate(loan) || !!stale);
+    let needsReplacement = !!loan && (loan.premium !== retailTotal || !sameFee(loan) || !sameState(loan) || !sameCoverageDate(loan) || !!stale ||
+      (grouped && (loan.coverageEffectiveDate !== anchor.coverageEffectiveDate ||
+        JSON.stringify(loan.groupedPolicyAgreementLines) !== JSON.stringify(grouped.agreementLines))));
     if (loan && !committed) {
       const jurisdiction = PF_JURISDICTIONS.find(row => row.code === usStateCode(account.state));
       if (!jurisdiction || jurisdiction.status === "closed" || jurisdiction.maxAprVerified !== true) return null;
@@ -222,24 +281,14 @@ export async function financeOffer(
       loan = null;
     }
 
+    if (loan && anchor.kind === "groupedInvoice" &&
+        !await canUseGroupedOffer(account, anchor.members, loan.amountFinanced, { listOpinions }, today)) return null;
+
     if (!loan) {
       const policyLoanClaim = policy ? await claimStandalonePolicyLoan(policy) : undefined;
       const result = await originateLoan(
         ddb,
-        {
-          // Paginated to exhaustion: a list filter is applied AFTER the
-          // page is read, so a capped single page can silently miss the
-          // one opinion or override that matters once the table grows.
-          listOpinions: async (code) => {
-            const rows = await listAllPages((nextToken) =>
-              client.models.PfCounselOpinion.list({
-                filter: { jurisdiction: { eq: code } },
-                nextToken,
-              })
-            );
-            return rows.map((o) => ({ effectiveAt: o.effectiveAt, reviewBy: o.reviewBy }));
-          },
-        },
+        { listOpinions },
         settings?.premiumFinanceEnabled === true,
         {
           account,
@@ -248,6 +297,7 @@ export async function financeOffer(
           brokerFeeCents: brokerFeeTotalCents,
           brokerFeeAllocations: allocations,
           ...(policyLoanClaim ? { policyLoanClaim } : {}),
+          ...(grouped ? { groupedLoanClaim: (loanId: string) => groupedLoanWrites(grouped, loanTable, loanId, priorGroupLoan) } : {}),
           downPct: PF_DEFAULT_DOWN_PCT,
           months: PF_DEFAULT_MONTHS,
           effectiveDate: today,
@@ -315,6 +365,16 @@ export async function financeOffer(
         })
       );
     }
+    let finalPayment: number | undefined;
+    if (grouped) {
+      const schedule = typeof loan.schedule === "string" ? JSON.parse(loan.schedule) : loan.schedule;
+      finalPayment = Array.isArray(schedule) ? schedule[schedule.length - 1]?.payment : undefined;
+      if (typeof finalPayment !== "number" || !Number.isFinite(finalPayment) || finalPayment <= 0) return null;
+      await ddb.send(new TransactWriteCommand({ TransactItems: [
+        ...grouped.guards,
+        { ConditionCheck: groupedInvoiceCondition(grouped, loan.id) },
+      ] }));
+    }
     return {
       url: `${siteUrl}/finance/?t=${token}`,
       downPayment: loan.downPayment,
@@ -323,6 +383,8 @@ export async function financeOffer(
       monthly: loan.payment,
       months: loan.months,
       apr: loan.apr,
+      ...(finalPayment !== undefined ? { finalPayment } : {}),
+      ...(grouped ? { groupLoanId: loan.id } : {}),
     };
   } catch (err) {
     console.warn("[send-invoice] financing offer omitted", err);
@@ -681,7 +743,8 @@ async function recordSend(
   invoiceId: string,
   seenStatus: string | null,
   facts: Record<string, unknown>,
-  flipToSent: boolean
+  flipToSent: boolean,
+  group?: { loanId: string; leaseId: string }
 ): Promise<boolean> {
   const tableName = process.env.INVOICE_TABLE;
   if (!tableName) {
@@ -706,12 +769,13 @@ async function recordSend(
         TableName: tableName,
         Key: { id: invoiceId },
         UpdateExpression: flipToSent ? `${factExpr}, #s = :sent` : factExpr,
-        ConditionExpression: "#s = :seenStatus",
-        ExpressionAttributeNames: { ...factNames, "#s": "status" },
+        ConditionExpression: "#s = :seenStatus" + (group ? " AND groupedFinanceLoanId = :loan AND #op.#lease = :lease" : ""),
+        ExpressionAttributeNames: { ...factNames, "#s": "status", ...(group ? { "#op": "invoiceSendOperation", "#lease": "leaseId" } : {}) },
         ExpressionAttributeValues: {
           ...values,
           ":seenStatus": seenStatus,
           ...(flipToSent ? { ":sent": "SENT" } : {}),
+          ...(group ? { ":loan": group.loanId, ":lease": group.leaseId } : {}),
         },
       })
     );
@@ -721,6 +785,7 @@ async function recordSend(
       throw err;
     }
   }
+  if (group) return false;
   // The row moved. Record the facts, leave the status to whoever won.
   await ddb.send(
     new UpdateCommand({
@@ -734,6 +799,135 @@ async function recordSend(
   return false;
 }
 
+async function deliverInvoice({ invoice, view, to, tracked, split, allocations, feeSendClaim, financeUrl, groupLoanId, onAccepted }: {
+  invoice: Schema["Invoice"]["type"];
+  view: InvoiceView;
+  to: string[];
+  tracked?: Awaited<ReturnType<typeof beginInvoiceSend>>;
+  split: RemittanceSplit;
+  allocations: BrokerFeeAllocation[];
+  feeSendClaim?: BrokerFeeInvoiceSendClaim;
+  financeUrl?: string | null;
+  groupLoanId?: string;
+  onAccepted: () => void;
+}) {
+  const invoiceId = invoice.id;
+  const { subject, text, html } = renderInvoice(view);
+
+  /**
+   * The PDF, which is the document they will actually forward.
+   *
+   * Failure here does not stop the send. An invoice that arrives with the
+   * amount, the lines and a Pay button but no attachment is still a working
+   * bill; one that never arrives because a logo fetch timed out is not.
+   */
+  let attachment: { filename: string; contentType: string; content: Uint8Array } | undefined;
+  try {
+    attachment = {
+      filename: pdfFilename(invoice.number),
+      contentType: "application/pdf",
+      content: await renderInvoicePdf(view),
+    };
+  } catch (err) {
+    if (view.financeOnly) throw new SendBlocked("The combined invoice PDF could not be prepared. No email was sent.");
+    console.error("[send-invoice] could not render the PDF; sending without it", err);
+  }
+
+  /**
+   * The agency keeps its own copy, for the reason the lead auto-reply BCCs
+   * itself: a producer should be able to find what was sent without opening
+   * the CRM. Skipped when the invoice is going to that mailbox anyway, since
+   * SES would otherwise deliver it twice.
+   */
+  const selfAddressed = to.some((a) => a.toLowerCase() === MAILBOX.toLowerCase());
+  /**
+   * `Raw`, not `Simple`, because Simple cannot carry an attachment. The Bcc
+   * stays on `Destination` rather than in a header — a `Bcc:` header travels
+   * with the message and is visible to everyone who receives it.
+   */
+  const raw = buildMimeMessage({
+    from: FROM,
+    // Everyone in the To header, so each recipient can see the others were
+    // sent it too — an invoice is not correspondence to keep private from
+    // the board members copied on it.
+    to: to.join(", "),
+    replyTo: MAILBOX,
+    subject,
+    text,
+    html,
+    attachment,
+  });
+  const accepted = await ses.send(
+    new SendEmailCommand({
+      FromEmailAddress: FROM,
+      Destination: {
+        ToAddresses: to,
+        ...(selfAddressed ? {} : { BccAddresses: [MAILBOX] }),
+      },
+      Content: { Raw: { Data: Buffer.from(raw, "utf8") } },
+    }),
+    { idempotencyKey: tracked?.operation.key ?? `invoice:${invoiceId}:${invoice.updatedAt ?? invoice.sentAt ?? "initial"}:${to.join(",")}`, subject, text, html, replyTo: MAILBOX, attachments: attachment ? [attachment] : [] }
+  );
+  if (tracked) onAccepted();
+
+  /**
+   * DRAFT becomes SENT; a resend of an already-SENT or PAID invoice leaves
+   * the status alone. Marking a paid invoice back to SENT because someone
+   * forwarded a copy would be a lie about money.
+   */
+  /**
+   * The division of what this bill collects, stored with the send.
+   *
+   * The webhook is what tells corporate accounting a payment landed, and it
+   * reads the invoice row and nothing else. Written here because this is the
+   * moment the amount is fixed: the Payment Link above bills this total, so
+   * a split taken from the lines later could describe an amount nobody paid.
+   * Rewritten on every send, so a resend after re-costing a line corrects it.
+   */
+  /**
+   * Conditional on the status the send read, because the unconditional form
+   * could revive a void: a DRAFT read at the top, a void landing mid-send,
+   * and this write flipping it to SENT at the bottom. The email is already
+   * gone by this line, so losing the condition must not fail the send —
+   * instead the facts of the send are recorded without the status flip.
+   * `sentAt` on a VOID invoice is true and useful: it says the association
+   * was emailed about a bill that was then withdrawn, which is exactly what
+   * whoever handles the confusion will need to know.
+   */
+  const sentFacts = {
+    sentAt: new Date().toISOString(),
+    sentTo: to.join(", "),
+    ...(invoice.status === "PAID" || invoice.status === "PROCESSING" ? {} : {
+      remittanceCarrierCents: split.carrierCents, remittanceCommissionCents: split.commissionCents, remittanceInterestCents: split.interestCents,
+      remittanceBrokerFeeCents: split.brokerFeeCents,
+      ...(!view.financeOnly ? { brokerFeeAllocations: JSON.stringify(allocations), brokerFeeFinanceUrl: financeUrl ?? null } : {}),
+    }),
+    // Named, because this write does not go through the browser's actor
+    // proxy. Without it the activity log would say "System" sent the bill,
+    // when a person pressed the button.
+    lastWriteBy: "send-invoice",
+  };
+  const recorded = await recordSend(
+    invoiceId,
+    invoice.status ?? null,
+    sentFacts,
+    invoice.status === "DRAFT",
+    groupLoanId && tracked ? { loanId: groupLoanId, leaseId: tracked.operation.leaseId } : undefined
+  );
+  if (!recorded) {
+    if (view.financeOnly) throw new SendBlocked("The financing email was accepted, but its send details need review. Do not send a replacement.");
+    console.error(
+      `send-invoice: ${invoice.number ?? invoiceId} changed mid-send; recorded the send without touching its status`
+    );
+  }
+  if (feeSendClaim) await completeFeeInvoiceSend(invoiceId, allocations, feeSendClaim.token);
+
+  const result = { ok: true as const, sentTo: to.join(", "), subject, sentAt: sentFacts.sentAt };
+  if (tracked) await completeInvoiceSend(invoiceId, tracked.operation, accepted.MessageId, result, { database: ddb });
+  console.log(`send-invoice sent ${invoice.number ?? invoiceId} to ${to.join(", ")}`);
+  return result;
+}
+
 export const handler = async (event: {
   arguments?: { invoiceId?: string; toEmail?: string; expectedSentAt?: string | null };
 }) => {
@@ -744,16 +938,20 @@ export const handler = async (event: {
   let acceptedForReview = false;
 
   try {
-    const { data: invoice } = await client.models.Invoice.get({ id: invoiceId });
-    if (!invoice) return { ok: false, error: "That invoice no longer exists." };
-    if (isGroupedInvoice(invoice)) return { ok: false, error: GROUPED_INVOICE_REVIEW_ONLY };
-    if (invoice.status === "VOID") {
+    const { data: initial } = await client.models.Invoice.get({ id: invoiceId });
+    if (!initial) return { ok: false, error: "That invoice no longer exists." };
+    if (initial.status === "VOID") {
       return { ok: false, error: "That invoice has been voided." };
     }
+    const grouped = isGroupedInvoice(initial);
+    const group = grouped && initial.status === "DRAFT" ? await loadGroupedFinance(client, invoiceId).catch(error => {
+      throw new SendBlocked(error instanceof Error ? error.message : "The combined invoice could not be verified.");
+    }) : null;
+    const invoice = group?.invoice ?? initial;
 
-    const [account, lines] = await Promise.all([
+    const [account, lines] = group ? [{ data: group.account }, group.lines] as const : await Promise.all([
       client.models.Account.get({ id: invoice.accountId }),
-      listAllPages((nextToken) =>
+      grouped ? Promise.resolve([]) : listAllPages((nextToken) =>
         client.models.InvoiceLine.list({
           filter: { invoiceId: { eq: invoiceId } },
           limit: 1000,
@@ -800,6 +998,49 @@ export const handler = async (event: {
         ok: false,
         error: "No valid email address for this account. Add one on the account.",
       };
+    }
+
+    if (grouped) {
+      if (!to.every(email => activeEmails.has(email.toLowerCase()))) throw new SendBlocked("Choose current account contacts for the combined financing invoice.");
+      if (invoice.status !== "DRAFT" && invoice.status !== "SENT") throw new SendBlocked("This combined invoice is not available to send.");
+      const observed = event.arguments?.expectedSentAt;
+      if (invoice.status === "SENT" && invoice.sentAt && observed === invoice.sentAt) {
+        throw new SendBlocked("The combined financing invoice has already been sent.");
+      }
+      if (!["resend", "ses"].includes(process.env.HOA_TRANSACTIONAL_MAIL_PROVIDER ?? "")) {
+        throw new SendBlocked("Combined invoice delivery is not configured. No email was sent.");
+      }
+      if (invoice.status === "DRAFT" && (!process.env.STRIPE_SECRET_KEY || !process.env.PF_LOAN_TABLE || !process.env.SITE_URL)) {
+        throw new SendBlocked("Financing payments are not configured. No email was sent.");
+      }
+      const tracked = await beginInvoiceSend(invoice, to, observed, { database: ddb });
+      if (tracked.completed) return tracked.completed;
+      if (!group || invoice.status !== "DRAFT") throw new SendBlocked("The combined financing invoice has already been sent or needs delivery review.");
+      const [first] = group.policies;
+      const finance = await financeOffer(client, {
+        id: group.account.id, state: group.account.state, type: group.account.type, incorporated: group.account.incorporated,
+      }, {
+        kind: "groupedInvoice",
+        id: invoiceId,
+        lines: group.policies.flatMap(policy => policy.lines ?? []),
+        coverageEffectiveDate: first?.effectiveDate,
+        members: group.policies.map((policy, i) => ({ id: policy.id, lines: policy.lines ?? [], agreementLine: group.agreementLines[i] ?? "" })),
+      }, group.premium, to[0] ?? null, [], null, { ...group, leaseId: tracked.operation.leaseId });
+      if (!finance?.groupLoanId) {
+        await releaseUnfundedGroupedSend(group, tracked.operation);
+        throw new SendBlocked("Financing could not be prepared for this combined invoice. No email was sent.");
+      }
+      const cityStateZip = [group.account.city, [group.account.state, group.account.zip].filter(Boolean).join(" ")].filter(Boolean).join(", ");
+      const address = [group.account.address ?? "", cityStateZip].filter(line => line.trim());
+      const addressee = contacts.find(contact => to.includes((contact.email ?? "").trim()));
+      const view: InvoiceView = {
+        number: invoice.number, associationName: group.account.name, contactFirstName: primary?.name?.trim().split(/\s+/)[0],
+        billToLines: [...(addressee?.name ? [`Attn: ${addressee.name}`] : []), ...address], riskLocation: address,
+        effectiveDate: first?.effectiveDate, expirationDate: first?.expirationDate, coverageBound: true,
+        issuedAt: invoice.issuedAt, financeOnly: true, finance, lines: group.lines,
+      };
+      return await deliverInvoice({ invoice, view, to, tracked, split: remittanceSplit(group.lines), allocations: [],
+        groupLoanId: finance.groupLoanId, onAccepted: () => { acceptedForReview = true; } });
     }
 
     /**
@@ -1079,116 +1320,8 @@ export const handler = async (event: {
       finance: disclosureUrl ? null : finance,
       lines: [...lines].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)),
     };
-    const { subject, text, html } = renderInvoice(view);
-
-    /**
-     * The PDF, which is the document they will actually forward.
-     *
-     * Failure here does not stop the send. An invoice that arrives with the
-     * amount, the lines and a Pay button but no attachment is still a working
-     * bill; one that never arrives because a logo fetch timed out is not.
-     */
-    let attachment: { filename: string; contentType: string; content: Uint8Array } | undefined;
-    try {
-      attachment = {
-        filename: pdfFilename(invoice.number),
-        contentType: "application/pdf",
-        content: await renderInvoicePdf(view),
-      };
-    } catch (err) {
-      console.error("[send-invoice] could not render the PDF; sending without it", err);
-    }
-
-    /**
-     * The agency keeps its own copy, for the reason the lead auto-reply BCCs
-     * itself: a producer should be able to find what was sent without opening
-     * the CRM. Skipped when the invoice is going to that mailbox anyway, since
-     * SES would otherwise deliver it twice.
-     */
-    const selfAddressed = to.some((a) => a.toLowerCase() === MAILBOX.toLowerCase());
-    /**
-     * `Raw`, not `Simple`, because Simple cannot carry an attachment. The Bcc
-     * stays on `Destination` rather than in a header — a `Bcc:` header travels
-     * with the message and is visible to everyone who receives it.
-     */
-    const raw = buildMimeMessage({
-      from: FROM,
-      // Everyone in the To header, so each recipient can see the others were
-      // sent it too — an invoice is not correspondence to keep private from
-      // the board members copied on it.
-      to: to.join(", "),
-      replyTo: MAILBOX,
-      subject,
-      text,
-      html,
-      attachment,
-    });
-    const accepted = await ses.send(
-      new SendEmailCommand({
-        FromEmailAddress: FROM,
-        Destination: {
-          ToAddresses: to,
-          ...(selfAddressed ? {} : { BccAddresses: [MAILBOX] }),
-        },
-        Content: { Raw: { Data: Buffer.from(raw, "utf8") } },
-      }),
-      { idempotencyKey: tracked?.operation.key ?? `invoice:${invoiceId}:${invoice.updatedAt ?? invoice.sentAt ?? "initial"}:${to.join(",")}`, subject, text, html, replyTo: MAILBOX, attachments: attachment ? [attachment] : [] }
-    );
-    acceptedForReview = Boolean(tracked);
-
-    /**
-     * DRAFT becomes SENT; a resend of an already-SENT or PAID invoice leaves
-     * the status alone. Marking a paid invoice back to SENT because someone
-     * forwarded a copy would be a lie about money.
-     */
-    /**
-     * The division of what this bill collects, stored with the send.
-     *
-     * The webhook is what tells corporate accounting a payment landed, and it
-     * reads the invoice row and nothing else. Written here because this is the
-     * moment the amount is fixed: the Payment Link above bills this total, so
-     * a split taken from the lines later could describe an amount nobody paid.
-     * Rewritten on every send, so a resend after re-costing a line corrects it.
-     */
-    /**
-     * Conditional on the status the send read, because the unconditional form
-     * could revive a void: a DRAFT read at the top, a void landing mid-send,
-     * and this write flipping it to SENT at the bottom. The email is already
-     * gone by this line, so losing the condition must not fail the send —
-     * instead the facts of the send are recorded without the status flip.
-     * `sentAt` on a VOID invoice is true and useful: it says the association
-     * was emailed about a bill that was then withdrawn, which is exactly what
-     * whoever handles the confusion will need to know.
-     */
-    const sentFacts = {
-      sentAt: new Date().toISOString(),
-      sentTo: to.join(", "),
-      ...(invoice.status === "PAID" || invoice.status === "PROCESSING" ? {} : {
-        remittanceCarrierCents: split.carrierCents, remittanceCommissionCents: split.commissionCents, remittanceInterestCents: split.interestCents,
-        remittanceBrokerFeeCents: split.brokerFeeCents, brokerFeeAllocations: JSON.stringify(allocations), brokerFeeFinanceUrl: finance?.url ?? null,
-      }),
-      // Named, because this write does not go through the browser's actor
-      // proxy. Without it the activity log would say "System" sent the bill,
-      // when a person pressed the button.
-      lastWriteBy: "send-invoice",
-    };
-    const recorded = await recordSend(
-      invoiceId,
-      invoice.status ?? null,
-      sentFacts,
-      invoice.status === "DRAFT"
-    );
-    if (!recorded) {
-      console.error(
-        `send-invoice: ${invoice.number ?? invoiceId} changed mid-send; recorded the send without touching its status`
-      );
-    }
-    if (feeSendClaim) await completeFeeInvoiceSend(invoiceId, allocations, feeSendClaim.token);
-
-    const result = { ok: true as const, sentTo: to.join(", "), subject, sentAt: sentFacts.sentAt };
-    if (tracked) await completeInvoiceSend(invoiceId, tracked.operation, accepted.MessageId, result, { database: ddb });
-    console.log(`send-invoice sent ${invoice.number ?? invoiceId} to ${to.join(", ")}`);
-    return result;
+    return await deliverInvoice({ invoice, view, to, tracked, split, allocations, feeSendClaim,
+      financeUrl: finance?.url, onAccepted: () => { acceptedForReview = true; } });
   } catch (err) {
     if (err instanceof SendBlocked || err instanceof GroupedDraftBillingBlocked || err instanceof InvoiceSendBlocked || err instanceof MailDeliveryError) {
       return { ok: false, error: err.message };
