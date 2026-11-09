@@ -660,12 +660,31 @@ backend.teamAdmin.resources.lambda.addToRolePolicy(new PolicyStatement({
 // the data stack that already depends on it.
 const teamIdentityStack = backend.createStack("TeamIdentityPermissions");
 const teamRole = backend.teamAdmin.resources.lambda.role!;
-new Policy(teamIdentityStack, "TeamProfileEmailAccess", {
+new Policy(teamIdentityStack, "TeamProfileAndCognitoAccess", {
   roles: [teamRole],
-  statements: [new PolicyStatement({
-    actions: ["dynamodb:GetItem", "dynamodb:UpdateItem"],
-    resources: [userProfileTable.tableArn],
-  })],
+  statements: [
+    new PolicyStatement({
+      actions: ["dynamodb:GetItem", "dynamodb:UpdateItem"],
+      resources: [userProfileTable.tableArn],
+    }),
+    new PolicyStatement({
+      actions: [
+        "cognito-idp:AdminCreateUser",
+        "cognito-idp:AdminDeleteUser",
+        "cognito-idp:AdminDisableUser",
+        "cognito-idp:AdminEnableUser",
+        "cognito-idp:AdminUserGlobalSignOut",
+        "cognito-idp:AdminAddUserToGroup",
+        "cognito-idp:AdminRemoveUserFromGroup",
+        "cognito-idp:AdminGetUser",
+        "cognito-idp:AdminUpdateUserAttributes",
+        "cognito-idp:AdminDisableProviderForUser",
+        "cognito-idp:AdminListGroupsForUser",
+        "cognito-idp:ListUsers",
+      ],
+      resources: [backend.auth.resources.userPool.userPoolArn],
+    }),
+  ],
 });
 const teamIdentityLease = new Policy(teamIdentityStack, "TeamIdentityLease", {
   roles: [teamRole],
@@ -681,6 +700,7 @@ if (googleSignInEnabled) {
   teamIdentityLease.attachToRole(googleRole);
   const lookup = new StringParameter(teamIdentityStack, "TeamIdentityAccessTable", {
     parameterName: `${TEAM_IDENTITY_PARAMETER_PREFIX}${backend.auth.resources.userPool.userPoolId}`,
+    simpleName: false,
     stringValue: userAccessTable.tableName,
   });
   new Policy(teamIdentityStack, "GoogleTeamIdentityTableLookup", {
@@ -688,25 +708,6 @@ if (googleSignInEnabled) {
     statements: [new PolicyStatement({ actions: ["ssm:GetParameter"], resources: [lookup.parameterArn] })],
   });
 }
-backend.teamAdmin.resources.lambda.addToRolePolicy(
-  new PolicyStatement({
-    actions: [
-      "cognito-idp:AdminCreateUser",
-      "cognito-idp:AdminDeleteUser",
-      "cognito-idp:AdminDisableUser",
-      "cognito-idp:AdminEnableUser",
-      "cognito-idp:AdminUserGlobalSignOut",
-      "cognito-idp:AdminAddUserToGroup",
-      "cognito-idp:AdminRemoveUserFromGroup",
-      "cognito-idp:AdminGetUser",
-      "cognito-idp:AdminUpdateUserAttributes",
-      "cognito-idp:AdminDisableProviderForUser",
-      "cognito-idp:AdminListGroupsForUser",
-      "cognito-idp:ListUsers",
-    ],
-    resources: [backend.auth.resources.userPool.userPoolArn],
-  })
-);
 backend.teamAdmin.resources.lambda.addToRolePolicy(
   new PolicyStatement({
     actions: ["ses:SendEmail"],
