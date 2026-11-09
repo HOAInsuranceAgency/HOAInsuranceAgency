@@ -353,6 +353,8 @@ describe("published grouped financing election", () => {
   const groupLoan = (patch: Record<string, unknown> = {}) => offer({
     policyId: null, state: "MA", apr: 18, ...buildQuote({ ...inputs, apr: 18 }),
     groupedInvoiceId: "group-1", groupedPolicyIds: policyIds, groupedPolicyAgreementLines: agreementLines,
+    // AppSync AWSJSON wraps the empty allocation list stored by origination.
+    brokerFeeAllocations: JSON.stringify(JSON.stringify([])),
     ...patch,
   });
   const group = () => ({
@@ -380,6 +382,16 @@ describe("published grouped financing election", () => {
     ]) });
     expect(m.grouped).toHaveBeenCalledExactlyOnceWith(expect.anything(), "group-1");
     expect(m.send).not.toHaveBeenCalled();
+  });
+
+  it("refuses a grouped offer with fee allocations in the AppSync representation", async () => {
+    m.lookup.mockResolvedValue({ data: [groupLoan({
+      brokerFeeAllocations: JSON.stringify(JSON.stringify([{ quoteId: "q1", amountCents: 100 }])),
+    })] });
+    expect(await terms()).toMatchObject({ state: "closed" });
+    expect(await accept()).toMatchObject({ state: "closed" });
+    expect(m.grouped).not.toHaveBeenCalled();
+    expect(m.checkout).not.toHaveBeenCalled();
   });
 
   it("guards signing, checkout claim and URL publication on the same group and never opens a full-pay path", async () => {

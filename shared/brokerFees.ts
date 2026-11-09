@@ -1,3 +1,5 @@
+import { decodeAwsJson } from './apiResponse';
+
 /** Broker fees are agency revenue, separate from premium and carrier commission. */
 export const BROKER_FEE_PURPOSE = 'Insurance placement and policy servicing';
 export const BROKER_FEE_TERMS_VERSION = '2026-11-04.v1';
@@ -44,7 +46,7 @@ export function assertBrokerFeeAgencyBilling(source: { brokerFee?: number | null
   if (brokerFeeCents(source.brokerFee) > 0 && source.billType !== 'AGENCY') throw new Error('Broker fees require agency billing.');
 }
 export function feeAllocations(value: unknown): BrokerFeeAllocation[] {
-  const parsed: unknown = typeof value === 'string' ? JSON.parse(value) : value;
+  const parsed = decodeAwsJson(value);
   if (parsed == null) return [];
   if (!Array.isArray(parsed) || parsed.length > 25) throw new Error('Invalid broker fee allocations.');
   const seen = new Set<string>();
