@@ -29,14 +29,14 @@ export const handler: CreateAuthChallengeTriggerHandler = async (event, context)
     return event;
   }
   const mode = event.request.clientMetadata?.mode === "consume" ? "consume" : "request";
-  const email = event.request.userAttributes.email;
+  const { email, sub } = event.request.userAttributes;
 
   event.response.challengeMetadata = "MAGIC_LINK";
   event.response.publicChallengeParameters = { email, mode };
   event.response.privateChallengeParameters = { mode };
 
-  if (mode === "request" && email) {
-    const token = mintToken(email, await getSigningSecret());
+  if (mode === "request" && email && sub) {
+    const token = mintToken(email, sub, await getSigningSecret());
     const link = `${process.env.MAGIC_LINK_BASE_URL}/#magic=${encodeURIComponent(token)}`;
 
     await ses.send(

@@ -9,7 +9,7 @@ import { defineFunction } from "@aws-amplify/backend";
  *     containing an HMAC-signed, 15-minute token.
  *  2. Clicking the link opens the portal, which starts a fresh sign-in with
  *     mode="consume" (no email sent) and answers the challenge with the
- *     token → verifyAuthChallengeResponse checks signature/expiry/email.
+ *     token → verifyAuthChallengeResponse checks signature, expiry and identity.
  */
 // resourceGroupName "auth": auth triggers must live in the auth stack, or
 // the auth↔function stacks become circularly dependent.

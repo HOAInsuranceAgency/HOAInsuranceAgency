@@ -2332,6 +2332,13 @@ const schema = a
       .authorization((allow) => [allow.groups(["ADMIN", "OWNER"])])
       .handler(a.handler.function(teamAdmin)),
 
+    updateTeamUserEmail: a
+      .mutation()
+      .arguments({ userId: a.string().required(), email: a.string().required() })
+      .returns(a.json())
+      .authorization(allow => [allow.groups(["OWNER"])])
+      .handler(a.handler.function(teamAdmin)),
+
     listTeamUsers: a
       .query()
       .arguments({ nextToken: a.string() })
