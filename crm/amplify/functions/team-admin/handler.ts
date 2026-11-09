@@ -26,6 +26,7 @@ import { DynamoDBDocumentClient, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { isUserRole, type UserRole } from "../../../../shared/enums";
 import { isActiveAdmin, isActiveOwner } from "../crm-access/active-role";
 import { listTeamUsers, loadTeamProfile, type TeamRosterArgs } from "./roster";
+import { updateTeamUserEmail, type UpdateEmailArgs } from "./email";
 import { assertUserSession, readUserAccess } from "../crm-access/user-status";
 import { collectCompletePages } from '../storage/pages';
 
@@ -306,7 +307,7 @@ async function setTeamUserEnabled(args: SetEnabledArgs, actor: { username: strin
 }
 
 export const handler = async (
-  event: AppSyncResolverEvent<InviteArgs | UpdateRolesArgs | SetEnabledArgs | TeamRosterArgs>
+  event: AppSyncResolverEvent<InviteArgs | UpdateRolesArgs | UpdateEmailArgs | SetEnabledArgs | TeamRosterArgs>
 ) => {
   if (!isActiveAdmin(event.identity, event.request)) return { ok: false, error: "Admin access is required." };
   const invokedBy =
@@ -315,11 +316,17 @@ export const handler = async (
 
   // The invocation payload doesn't always carry `info` — fall back to the
   // argument shape to tell the operations apart.
-  const field =
-    event.info?.fieldName ??
-    ("enabled" in (event.arguments ?? {}) ? "setTeamUserEnabled" : "userId" in (event.arguments ?? {}) ? "updateUserRoles" : "email" in (event.arguments ?? {}) ? "inviteUser" : "listTeamUsers");
+  const args = event.arguments ?? {};
+  const field = event.info?.fieldName ?? (
+    "enabled" in args ? "setTeamUserEnabled" :
+    "userId" in args ? ("email" in args ? "updateTeamUserEmail" : "updateUserRoles") :
+    "email" in args ? "inviteUser" : "listTeamUsers"
+  );
   if (field === "setTeamUserEnabled" && !isActiveOwner(event.identity, event.request)) {
     return { ok: false, error: "Only an Owner can deactivate or reactivate team access." };
+  }
+  if (field === "updateTeamUserEmail" && !isActiveOwner(event.identity, event.request)) {
+    return { ok: false, error: "Only an Owner can change a team member's sign-in email." };
   }
   await assertUserSession(event.identity, db);
 
@@ -331,6 +338,11 @@ export const handler = async (
         username: String(invokedBy),
         sub: event.identity && "sub" in event.identity ? event.identity.sub : undefined,
         owner: isActiveOwner(event.identity, event.request),
+      });
+    case "updateTeamUserEmail":
+      return updateTeamUserEmail(event.arguments as UpdateEmailArgs, {
+        cognito, db, poolId: POOL_ID,
+        actorId: event.identity && "sub" in event.identity ? event.identity.sub : String(invokedBy),
       });
     case "setTeamUserEnabled":
       return setTeamUserEnabled(event.arguments as SetEnabledArgs, {

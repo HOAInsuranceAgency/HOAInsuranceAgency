@@ -10,13 +10,14 @@ const listTeamUsers = vi.hoisted(() => vi.fn());
 const UserProfile = vi.hoisted(() => ({ listUserProfileByUserId: vi.fn(), update: vi.fn() }));
 const inviteUser = vi.hoisted(() => vi.fn());
 const updateUserRoles = vi.hoisted(() => vi.fn());
+const updateTeamUserEmail = vi.hoisted(() => vi.fn());
 const setTeamUserEnabled = vi.hoisted(() => vi.fn());
 const communicationRequest = vi.hoisted(() => vi.fn());
 vi.mock("aws-amplify/data", () => ({
   generateClient: () => ({
     models: { UserProfile },
     queries: { listTeamUsers },
-    mutations: { inviteUser, updateUserRoles, setTeamUserEnabled },
+    mutations: { inviteUser, updateUserRoles, updateTeamUserEmail, setTeamUserEnabled },
   }),
 }));
 vi.mock("../lib/communications", () => ({ communicationRequest }));
@@ -490,6 +491,83 @@ describe("Owner role administration", () => {
     expect(within(dialog).getByRole("checkbox", { name: "Owner" })).toBeChecked();
     expect(within(dialog).getByRole("checkbox", { name: "Owner" })).toBeDisabled();
     expect(within(dialog).getByRole("checkbox", { name: "Producer" })).toBeEnabled();
+  });
+});
+
+describe("Team email administration", () => {
+  const renderOwner = () => render(<OwnerContext.Provider value={true}><Team profile={profile} /></OwnerContext.Provider>);
+
+  it("hides the edit email action from Admins", async () => {
+    combinedSetup();
+    renderPage();
+    expect(await screen.findByText("Casey Staff")).toBeVisible();
+    expect(screen.queryByRole("button", { name: /edit email/i })).not.toBeInTheDocument();
+  });
+
+  it("changes the sign-in address on the existing member and preserves it during a stale roster refresh", async () => {
+    combinedSetup();
+    const newEmail = "casey@protectmyhoa.com";
+    let finish!: (result: unknown) => void;
+    updateTeamUserEmail.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    renderOwner();
+    fireEvent.click(await screen.findByRole("button", { name: "Edit email for Casey Staff" }));
+    const dialog = screen.getByRole("dialog", { name: "Edit email for Casey Staff" });
+    const input = within(dialog).getByRole("textbox", { name: "Sign-in email" });
+    const save = within(dialog).getByRole("button", { name: "Save email" });
+    expect(input).toHaveValue(teammate.email);
+    expect(save).toBeDisabled();
+    fireEvent.change(input, { target: { value: newEmail.toUpperCase() } });
+    fireEvent.click(save);
+    fireEvent.click(save);
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(dialog).toBeVisible();
+    expect(input).toBeDisabled();
+    expect(updateTeamUserEmail).toHaveBeenCalledExactlyOnceWith({ userId: teammate.userId, email: newEmail });
+    await act(async () => finish({ data: { ok: true, userId: teammate.userId, email: newEmail } }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    const row = screen.getByText("Casey Staff").closest("tr")!;
+    expect(within(row).getByText(newEmail)).toBeVisible();
+    expect(screen.getByText(`Sign-in email updated to ${newEmail}.`)).toBeVisible();
+    await invalidateLiveUpdates();
+    await waitFor(() => expect(listTeamUsers).toHaveBeenCalledTimes(2));
+    expect(within(row).getByText(newEmail)).toBeVisible();
+  });
+
+  it("keeps a rejected address in the editor", async () => {
+    listTeamUsers.mockResolvedValue({ data: {
+      users: [teammate, { userId: profile.userId, email: profile.email, groups: ["OWNER"] }], profiles: [teammateProfile, profile],
+    } });
+    updateTeamUserEmail.mockResolvedValueOnce({ data: { ok: false, error: "That email is already on the team." } });
+    renderOwner();
+    fireEvent.click(await screen.findByRole("button", { name: "Edit email for Casey Staff" }));
+    const dialog = screen.getByRole("dialog", { name: "Edit email for Casey Staff" });
+    const input = within(dialog).getByRole("textbox", { name: "Sign-in email" });
+    fireEvent.change(input, { target: { value: profile.email } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save email" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("That email is already on the team.");
+    expect(input).toHaveValue(profile.email);
+    expect(screen.getByText(teammate.email)).toBeVisible();
+  });
+
+  it("shows a confirmed address after a partial failure and lets the Owner retry the save", async () => {
+    combinedSetup();
+    const newEmail = "casey@protectmyhoa.com";
+    updateTeamUserEmail.mockResolvedValueOnce({ data: { ok: false, userId: teammate.userId, email: newEmail, error: "The profile could not be updated. Try saving again." } })
+      .mockResolvedValueOnce({ data: { ok: true, userId: teammate.userId, email: newEmail } });
+    renderOwner();
+    fireEvent.click(await screen.findByRole("button", { name: "Edit email for Casey Staff" }));
+    const dialog = screen.getByRole("dialog", { name: "Edit email for Casey Staff" });
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Sign-in email" }), { target: { value: newEmail } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save email" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("The profile could not be updated.");
+    expect(within(screen.getByText("Casey Staff").closest("tr")!).getByText(newEmail)).toBeVisible();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    fireEvent.click(screen.getByRole("button", { name: "Edit email for Casey Staff" }));
+    const retry = screen.getByRole("dialog", { name: "Edit email for Casey Staff" });
+    expect(within(retry).getByRole("textbox", { name: "Sign-in email" })).toHaveValue(newEmail);
+    fireEvent.click(within(retry).getByRole("button", { name: "Save email" }));
+    expect(await screen.findByText(`Sign-in email updated to ${newEmail}.`)).toBeVisible();
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 });
 

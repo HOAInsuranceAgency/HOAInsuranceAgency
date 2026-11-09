@@ -80,7 +80,7 @@ function captured() { const [kind, command, details] = h.mail.mock.calls[0]; ret
 describe("real sender to Resend adapter contracts", () => {
   it("login preserves its exact destination, encoded link, expiry copy, and sender", async () => {
     const { sendDestinationLink } = await import("../../amplify/functions/magic-link/send");
-    await sendDestinationLink("member@example.com", { mode: "destination", requestId: "c8b307f1-8658-4f6a-a3ee-fc17e34ce15e", issuedAt: String(Date.now()) });
+    await sendDestinationLink("member@example.com", "synthetic-member", { mode: "destination", requestId: "c8b307f1-8658-4f6a-a3ee-fc17e34ce15e", issuedAt: String(Date.now()) });
     const { kind, body } = captured();
     expect(kind).toBe("login"); expect(body.from).toBe("noreply@protectmyhoa.com"); expect(body.to).toEqual(["member@example.com"]);
     expect(body.text).toContain("https://crm.protectmyhoa.com/#magic=synthetic-token-never-valid"); expect(body.text).toContain("15 minutes");
@@ -89,7 +89,7 @@ describe("real sender to Resend adapter contracts", () => {
   it("login bubbles a definite transport failure instead of claiming acceptance", async () => {
     const { sendDestinationLink } = await import("../../amplify/functions/magic-link/send");
     h.mail.mockRejectedValue(new MailDeliveryError("DEFERRED", "OP#synthetic"));
-    await expect(sendDestinationLink("member@example.com", { mode: "destination", requestId: "c8b307f1-8658-4f6a-a3ee-fc17e34ce15e", issuedAt: String(Date.now()) })).rejects.toMatchObject({ state: "DEFERRED" });
+    await expect(sendDestinationLink("member@example.com", "synthetic-member", { mode: "destination", requestId: "c8b307f1-8658-4f6a-a3ee-fc17e34ce15e", issuedAt: String(Date.now()) })).rejects.toMatchObject({ state: "DEFERRED" });
   });
   it("invitation preserves roles and portal while giving recreated members a new operation", async () => {
     const { handler } = await import("../../amplify/functions/team-admin/handler");

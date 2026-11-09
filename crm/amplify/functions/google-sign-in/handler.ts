@@ -5,6 +5,7 @@ import {
   AdminListGroupsForUserCommand,
   CognitoIdentityProviderClient,
 } from "@aws-sdk/client-cognito-identity-provider";
+import { withTeamIdentityLock } from "../crm-access/team-identity-lock";
 
 const cognito = new CognitoIdentityProviderClient({ maxAttempts: 2 });
 const CRM_ROLES = new Set(["OWNER", "ADMIN", "STAFF", "PRODUCER"]);
@@ -38,44 +39,45 @@ export async function handler(event: PreSignUpTriggerEvent): Promise<PreSignUpTr
     throw new Error(DENIED);
   }
 
-  // Email is an existing sign-in alias. AdminGetUser is consistent, unlike an
-  // eventually consistent ListUsers lookup that could miss a fresh invite.
-  const member = await cognito.send(new AdminGetUserCommand({
-    UserPoolId: event.userPoolId,
-    Username: email,
-  }));
-  const memberEmail = member.UserAttributes?.find(attribute => attribute.Name === "email")?.Value?.toLowerCase();
-  const memberVerified = member.UserAttributes?.find(attribute => attribute.Name === "email_verified")?.Value;
-  const sub = member.UserAttributes?.find(attribute => attribute.Name === "sub")?.Value;
-  if (!member.Username || !sub || member.Enabled !== true ||
-      !["CONFIRMED", "FORCE_CHANGE_PASSWORD"].includes(member.UserStatus ?? "") ||
-      memberEmail !== email || memberVerified !== "true") {
-    throw new Error(DENIED);
-  }
+  const UserPoolId = event.userPoolId;
+  const getUser = (Username: string) => cognito.send(new AdminGetUserCommand({ UserPoolId, Username }));
+  const candidate = await getUser(email);
+  const username = candidate.Username;
+  const sub = candidate.UserAttributes?.find(attribute => attribute.Name === "sub")?.Value;
+  if (!username || !sub) throw new Error(DENIED);
 
-  // A partially failed invitation must not acquire access through Google.
-  let hasRole = false;
-  let nextToken: string | undefined;
-  do {
-    const page = await cognito.send(new AdminListGroupsForUserCommand({
-      UserPoolId: event.userPoolId,
-      Username: member.Username,
-      NextToken: nextToken,
+  await withTeamIdentityLock(sub, async markWrite => {
+    // An email edit can complete after the alias lookup. Recheck the original
+    // account under the lock so an old Google claim cannot relink it.
+    const member = await getUser(username);
+    const memberAttributes = Object.fromEntries(member.UserAttributes?.map(({ Name, Value }) => [Name, Value]) ?? []);
+    if (member.Username !== username || memberAttributes.sub !== sub || member.Enabled !== true ||
+        !["CONFIRMED", "FORCE_CHANGE_PASSWORD"].includes(member.UserStatus ?? "") ||
+        memberAttributes.email?.toLowerCase() !== email || memberAttributes.email_verified !== "true") {
+      throw new Error(DENIED);
+    }
+
+    // A partially failed invitation must not acquire access through Google.
+    let hasRole = false;
+    let nextToken: string | undefined;
+    do {
+      const page = await cognito.send(new AdminListGroupsForUserCommand({ UserPoolId, Username: username, NextToken: nextToken }));
+      hasRole = (page.Groups ?? []).some(group => CRM_ROLES.has(group.GroupName ?? ""));
+      nextToken = page.NextToken;
+    } while (!hasRole && nextToken);
+    if (!hasRole) throw new Error(DENIED);
+
+    markWrite();
+    await cognito.send(new AdminLinkProviderForUserCommand({
+      UserPoolId,
+      DestinationUser: { ProviderName: "Cognito", ProviderAttributeValue: username },
+      SourceUser: {
+        ProviderName: "Google",
+        ProviderAttributeName: "Cognito_Subject",
+        ProviderAttributeValue: subject,
+      },
     }));
-    hasRole ||= (page.Groups ?? []).some(group => CRM_ROLES.has(group.GroupName ?? ""));
-    nextToken = page.NextToken;
-  } while (!hasRole && nextToken);
-  if (!hasRole) throw new Error(DENIED);
-
-  await cognito.send(new AdminLinkProviderForUserCommand({
-    UserPoolId: event.userPoolId,
-    DestinationUser: { ProviderName: "Cognito", ProviderAttributeValue: member.Username },
-    SourceUser: {
-      ProviderName: "Google",
-      ProviderAttributeName: "Cognito_Subject",
-      ProviderAttributeValue: subject,
-    },
-  }));
+  }, UserPoolId);
   // Do not autoVerifyEmail: with email aliases it can move the alias away from
   // the original account. Linking is the only identity mutation we perform.
   return event;
