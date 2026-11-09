@@ -119,18 +119,26 @@ describe("SES-only transactional mail infrastructure", () => {
   });
 });
 
-it.each(['main','staging'])('grants %s Void/edit/PF only invoice mail OP retirement in an independent managed policy',branch=>{
+it.each(['main','staging'])('keeps %s invoice mail retirement and publication permissions scoped and outside the data stack',branch=>{
  config.businessBranch=branch;
  const {retirement,existing}=infra();
- const policies=resources(retirement).filter(row=>row.Type==='AWS::IAM::ManagedPolicy');expect(policies).toHaveLength(1);
- expect(policies[0].Properties.Roles).toHaveLength(3);
- expect(policies[0].Properties.PolicyDocument.Statement).toEqual([{
+ const policies=resources(retirement).filter(row=>row.Type==='AWS::IAM::ManagedPolicy');expect(policies).toHaveLength(2);
+ const retirementPolicy=policies.find(row=>row.Properties.Roles.length===3)!;
+ const publicationPolicy=policies.find(row=>row.Properties.Roles.length===2)!;
+ const condition={'ForAllValues:StringLike':{'dynamodb:LeadingKeys':[`OP#hoa/${branch}/invoice/*`]}};
+ expect(retirementPolicy.Properties.PolicyDocument.Statement).toEqual([{
   Action:['dynamodb:GetItem','dynamodb:UpdateItem'],Effect:'Allow',Resource:'arn:aws:dynamodb:us-east-1:917680434255:table/HOA-TransactionalMail',
-  Condition:{'ForAllValues:StringLike':{'dynamodb:LeadingKeys':[`OP#hoa/${branch}/invoice/*`]}},
+  Condition:condition,
  }]);
  for(const name of ['voidInvoice','crmAccess','pfElection']){
   expect(mailFunction(existing,name).Properties.Environment.Variables.HOA_TRANSACTIONAL_MAIL_TABLE).toBe('HOA-TransactionalMail');
-  expect(JSON.stringify(policies[0].Properties.Roles)).toContain(name);
+  expect(JSON.stringify(retirementPolicy.Properties.Roles)).toContain(name);
  }
+ expect(publicationPolicy.Properties.PolicyDocument.Statement).toEqual([{
+  Action:'dynamodb:ConditionCheckItem',Effect:'Allow',Resource:'arn:aws:dynamodb:us-east-1:917680434255:table/HOA-TransactionalMail',
+  Condition:condition,
+ }]);
+ for(const name of ['sendInvoice','pfElection']) expect(JSON.stringify(publicationPolicy.Properties.Roles)).toContain(name);
+ expect(JSON.stringify(existing)).not.toContain('dynamodb:ConditionCheckItem');
  expect(JSON.stringify(retirement)).not.toContain('ses:');expect(JSON.stringify(retirement)).not.toContain('s3:');expect(JSON.stringify(retirement)).not.toContain('TransactionalMailSendPermissions');
 });

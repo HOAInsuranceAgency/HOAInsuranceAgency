@@ -58,11 +58,18 @@ export function installTransactionalMail(backend: any, alerts: any) {
   // Void may retire only invoice OP keys in its own environment. It cannot
   // send mail, edit counters/receipts, or access saved envelopes.
   for(const fn of [backend.voidInvoice,backend.crmAccess,backend.pfElection])fn.addEnvironment('HOA_TRANSACTIONAL_MAIL_TABLE',table);
-  if(permissionsStack)new ManagedPolicy(backend.createStack('InvoiceSendRetirementPermissions'),'InvoiceVoidMailRetirement',{roles:[backend.voidInvoice.resources.lambda.role!,backend.crmAccess.resources.lambda.role!,backend.pfElection.resources.lambda.role!],statements:[new PolicyStatement({actions:['dynamodb:GetItem','dynamodb:UpdateItem'],resources:[tableArn],conditions:{'ForAllValues:StringLike':{'dynamodb:LeadingKeys':[`OP#hoa/${businessBranch}/invoice/*`]}}})]});
-  // Publication can attest the exact accepted invoice operation without editing it.
-  if (permissionsStack) for (const fn of [backend.sendInvoice, backend.pfElection]) {
-    fn.resources.lambda.addToRolePolicy(new PolicyStatement({ actions: ['dynamodb:ConditionCheckItem'], resources: [tableArn],
-      conditions: { 'ForAllValues:StringLike': { 'dynamodb:LeadingKeys': [`OP#hoa/${businessBranch}/invoice/*`] } } }));
+  if (permissionsStack) {
+    const invoicePermissions = backend.createStack('InvoiceSendRetirementPermissions');
+    const invoiceKeys = { 'ForAllValues:StringLike': { 'dynamodb:LeadingKeys': [`OP#hoa/${businessBranch}/invoice/*`] } };
+    new ManagedPolicy(invoicePermissions, 'InvoiceVoidMailRetirement', {
+      roles: [backend.voidInvoice, backend.crmAccess, backend.pfElection].map(fn => fn.resources.lambda.role!),
+      statements: [new PolicyStatement({ actions: ['dynamodb:GetItem', 'dynamodb:UpdateItem'], resources: [tableArn], conditions: invoiceKeys })],
+    });
+    // Keep publication's read-only check off the near-limit data template.
+    new ManagedPolicy(invoicePermissions, 'GroupedInvoiceMailPublication', {
+      roles: [backend.sendInvoice, backend.pfElection].map(fn => fn.resources.lambda.role!),
+      statements: [new PolicyStatement({ actions: ['dynamodb:ConditionCheckItem'], resources: [tableArn], conditions: invoiceKeys })],
+    });
   }
   const senderNames = ["magicLinkVerify", "teamAdmin", "sendInvoice", "marketingReportWorker", "stripeWebhook", "mailVerification", "mailRecovery"];
   for (const name of senderNames) {
