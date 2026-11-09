@@ -18,6 +18,7 @@ import { installOwnerProfitability } from "./owner-profitability";
 import { bindPremiumFinanceTables } from './finance-bindings';
 import { ownerProfitability } from "./functions/owner-profitability/resource";
 import { crmAccess } from "./functions/crm-access/resource";
+import { TEAM_IDENTITY_LEASE_PREFIX, TEAM_IDENTITY_PARAMETER_PREFIX } from "./functions/crm-access/team-identity-config";
 import { Alarm, TreatMissingData, Metric, ComparisonOperator } from "aws-cdk-lib/aws-cloudwatch";
 import { SnsAction } from "aws-cdk-lib/aws-cloudwatch-actions";
 import { Topic } from "aws-cdk-lib/aws-sns";
@@ -29,6 +30,7 @@ import { Schedule, ScheduleExpression, ScheduleTargetInput, ContextAttribute } f
 import { LambdaInvoke } from "aws-cdk-lib/aws-scheduler-targets";
 import { ManagedPolicy, Policy, PolicyStatement } from "aws-cdk-lib/aws-iam";
 import { Secret } from "aws-cdk-lib/aws-secretsmanager";
+import { StringParameter } from "aws-cdk-lib/aws-ssm";
 import { CfnUserPoolIdentityProvider } from "aws-cdk-lib/aws-cognito";
 import {
   AttributeType,
@@ -665,10 +667,39 @@ backend.teamAdmin.resources.lambda.addToRolePolicy(new PolicyStatement({
   actions: ["dynamodb:Query"],
   resources: [`${userProfileTable.tableArn}/index/${userProfileIndex.name}`],
 }));
-backend.teamAdmin.resources.lambda.addToRolePolicy(new PolicyStatement({
-  actions: ["dynamodb:UpdateItem"],
-  resources: [userProfileTable.tableArn],
-}));
+// Keep these permissions outside the nearly full data template. The Google
+// trigger discovers the table by pool at runtime, keeping auth independent of
+// the data stack that already depends on it.
+const teamIdentityStack = backend.createStack("TeamIdentityPermissions");
+const teamRole = backend.teamAdmin.resources.lambda.role!;
+new Policy(teamIdentityStack, "TeamProfileEmailAccess", {
+  roles: [teamRole],
+  statements: [new PolicyStatement({
+    actions: ["dynamodb:GetItem", "dynamodb:UpdateItem"],
+    resources: [userProfileTable.tableArn],
+  })],
+});
+const teamIdentityLease = new Policy(teamIdentityStack, "TeamIdentityLease", {
+  roles: [teamRole],
+  statements: [new PolicyStatement({
+    actions: ["dynamodb:UpdateItem", "dynamodb:DeleteItem"],
+    resources: [userAccessTable.tableArn],
+    conditions: { "ForAllValues:StringLike": { "dynamodb:LeadingKeys": [`${TEAM_IDENTITY_LEASE_PREFIX}*`] } },
+  })],
+});
+if (googleSignInEnabled) {
+  const google = Reflect.get(backend, "googleSignIn") as typeof backend.magicLinkVerify;
+  const googleRole = google.resources.lambda.role!;
+  teamIdentityLease.attachToRole(googleRole);
+  const lookup = new StringParameter(teamIdentityStack, "TeamIdentityAccessTable", {
+    parameterName: `${TEAM_IDENTITY_PARAMETER_PREFIX}${backend.auth.resources.userPool.userPoolId}`,
+    stringValue: userAccessTable.tableName,
+  });
+  new Policy(teamIdentityStack, "GoogleTeamIdentityTableLookup", {
+    roles: [googleRole],
+    statements: [new PolicyStatement({ actions: ["ssm:GetParameter"], resources: [lookup.parameterArn] })],
+  });
+}
 backend.teamAdmin.resources.lambda.addToRolePolicy(
   new PolicyStatement({
     actions: [

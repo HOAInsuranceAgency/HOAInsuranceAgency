@@ -7,9 +7,10 @@ import {
   type CognitoIdentityProviderClient,
 } from "@aws-sdk/client-cognito-identity-provider";
 import { UpdateCommand, type DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
+import { TeamIdentityBusy, withTeamIdentityLock } from "../crm-access/team-identity-lock";
 import { readUserAccess } from "../crm-access/user-status";
 import { publishCrmChange, publishPersonalChange } from "../live-changes";
-import { loadTeamProfile } from "./roster";
+import { loadTeamProfileForEmail } from "./roster";
 
 export type UpdateEmailArgs = { userId?: string | null; email?: string | null };
 type Dependencies = {
@@ -22,6 +23,12 @@ type Dependencies = {
 const fail = (error: string) => ({ ok: false as const, error });
 const errorName = (error: unknown) => error instanceof Error ? error.name : "";
 const inUse = "That email is already on the team.";
+
+class EmailChangeIncomplete extends Error {
+  constructor(readonly result: { ok: false; error: string; userId?: string; email?: string }) {
+    super(result.error);
+  }
+}
 
 /** Only de-link identities created by our Google sign-in flow. */
 function googleSubjects(identities: string | undefined): string[] {
@@ -37,12 +44,21 @@ function googleSubjects(identities: string | undefined): string[] {
   });
 }
 
-export async function updateTeamUserEmail(args: UpdateEmailArgs, { cognito, db, poolId, actorId }: Dependencies) {
+export async function updateTeamUserEmail(args: UpdateEmailArgs, deps: Dependencies) {
   const email = typeof args.email === "string" ? args.email.trim().toLowerCase() : "";
   const userId = typeof args.userId === "string" ? args.userId.trim() : "";
-  if (!userId) return fail("A team member is required.");
+  if (!/^[a-zA-Z0-9_-]{1,128}$/.test(userId)) return fail("A team member is required.");
   if (email.length > 128 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return fail("A valid email is required.");
+  try {
+    return await withTeamIdentityLock(userId, markWrite => changeEmail(userId, email, deps, markWrite));
+  } catch (error) {
+    if (error instanceof TeamIdentityBusy) return fail("A sign-in update is in progress. Try again in a moment.");
+    if (error instanceof EmailChangeIncomplete) return error.result;
+    throw error;
+  }
+}
 
+async function changeEmail(userId: string, email: string, { cognito, db, poolId, actorId }: Dependencies, markWrite: () => void) {
   const getUser = (Username: string) => cognito.send(new AdminGetUserCommand({ UserPoolId: poolId, Username }));
   const user = await getUser(userId).catch(error => {
     if (errorName(error) === "UserNotFoundException") return null;
@@ -68,25 +84,15 @@ export async function updateTeamUserEmail(args: UpdateEmailArgs, { cognito, db, 
     }
   }
 
-  const profileTable = process.env.USER_PROFILE_TABLE_NAME!;
-  const profile = await loadTeamProfile(db, profileTable, process.env.USER_PROFILE_USER_ID_INDEX_NAME!, userId);
-  const updateProfile = async () => {
-    if (!profile) return;
-    // The GSI can still show the previous email on a quick A → B → A edit.
-    // Use it only to locate the base record; never skip its update on that read.
-    await db.send(new UpdateCommand({
-      TableName: profileTable, Key: { id: profile.id },
-      ConditionExpression: "userId = :userId",
-      UpdateExpression: "SET email = :email, updatedAt = :now",
-      ExpressionAttributeValues: { ":userId": userId, ":email": email, ":now": new Date().toISOString() },
-    }));
-  };
-
   let confirmedEmail = !changeSignIn;
   let restoreAccess = false;
+  let profile: Awaited<ReturnType<typeof loadTeamProfileForEmail>> = null;
   let failure: string | undefined;
+  let ambiguousSignIn = false;
   try {
     if (changeSignIn) {
+      markWrite();
+      ambiguousSignIn = true;
       // A disabled Cognito member cannot start a new sign-in or re-link Google
       // to the previous address. Disabling also revokes Cognito sessions.
       if (user.Enabled) {
@@ -124,8 +130,20 @@ export async function updateTeamUserEmail(args: UpdateEmailArgs, { cognito, db, 
         throw new Error("Cognito did not confirm the updated sign-in.");
       }
       confirmedEmail = true;
+      ambiguousSignIn = false;
     }
-    await updateProfile();
+    const profileTable = process.env.USER_PROFILE_TABLE_NAME!;
+    profile = await loadTeamProfileForEmail(db, profileTable, process.env.USER_PROFILE_USER_ID_INDEX_NAME!, userId);
+    if (profile) {
+      // An index can still show the previous address on a quick A → B → A edit.
+      // Use it only to locate the base record and always write the verified email.
+      await db.send(new UpdateCommand({
+        TableName: profileTable, Key: { id: profile.id },
+        ConditionExpression: "userId = :userId",
+        UpdateExpression: "SET email = :email, updatedAt = :now",
+        ExpressionAttributeValues: { ":userId": userId, ":email": email, ":now": new Date().toISOString() },
+      }));
+    }
   } catch (error) {
     console.error("Could not complete team email change", { userId, error: errorName(error) });
     failure = confirmedEmail
@@ -138,6 +156,7 @@ export async function updateTeamUserEmail(args: UpdateEmailArgs, { cognito, db, 
       try { await cognito.send(new AdminEnableUserCommand({ UserPoolId: poolId, Username: username })); }
       catch (error) {
         console.error("Could not restore Cognito access after team email change", { userId, error: errorName(error) });
+        ambiguousSignIn = true;
         failure = "Sign-in could not be restored. Refresh the team and ask an Owner to check this member's access.";
       }
     }
@@ -145,7 +164,11 @@ export async function updateTeamUserEmail(args: UpdateEmailArgs, { cognito, db, 
       await Promise.allSettled([publishCrmChange(), publishPersonalChange(userId)]);
     }
   }
-  if (failure) return { ...fail(failure), ...(confirmedEmail ? { userId, email } : {}) };
+  if (failure) {
+    const result = { ...fail(failure), ...(confirmedEmail ? { userId, email } : {}) };
+    if (ambiguousSignIn) throw new EmailChangeIncomplete(result);
+    return result;
+  }
   console.info("Updated team sign-in email", { userId, actorId });
   return { ok: true, userId, email };
 }

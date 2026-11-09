@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { type CognitoIdentityProviderClient, ListUsersCommand } from "@aws-sdk/client-cognito-identity-provider";
-import { QueryCommand, type DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
-import { listTeamUsers, loadTeamProfile } from "../../amplify/functions/team-admin/roster";
+import { GetCommand, QueryCommand, type DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
+import { listTeamUsers, loadTeamProfile, loadTeamProfileForEmail } from "../../amplify/functions/team-admin/roster";
 
 function mockCognito(send: ReturnType<typeof vi.fn>) {
   return { send } as unknown as CognitoIdentityProviderClient;
@@ -94,6 +94,35 @@ describe("bounded team roster pages", () => {
     expect(await listTeamUsers(mockCognito(send), "pool", { nextToken } as { nextToken: string }, vi.fn()))
       .toEqual({ ok: false, error: "Invalid team page token." });
     expect(send).not.toHaveBeenCalled();
+  });
+});
+
+describe("profile lookup for email changes", () => {
+  const userId = "member-sub";
+  const id = `onboarding:${userId}`;
+  const lookup = (send: ReturnType<typeof vi.fn>) =>
+    loadTeamProfileForEmail({ send } as unknown as DynamoDBDocumentClient, "profiles", "by-userId", userId);
+
+  it("finds an onboarding profile before its index entry is visible", async () => {
+    const send = vi.fn().mockResolvedValueOnce({ Items: [] }).mockResolvedValueOnce({ Item: { id, userId } });
+
+    await expect(lookup(send)).resolves.toEqual({ id, userId });
+    expect(send.mock.calls[0][0]).toBeInstanceOf(QueryCommand);
+    expect(send.mock.calls[1][0]).toBeInstanceOf(GetCommand);
+    expect(send.mock.calls[1][0].input).toMatchObject({ TableName: "profiles", Key: { id }, ConsistentRead: true });
+  });
+
+  it("uses an indexed legacy profile ID and does not guess a replacement", async () => {
+    const send = vi.fn().mockResolvedValueOnce({ Items: [{ id: "legacy-profile", userId }] });
+
+    await expect(lookup(send)).resolves.toEqual({ id: "legacy-profile", userId });
+    expect(send).toHaveBeenCalledOnce();
+  });
+
+  it("rejects a deterministic profile that belongs to a different member", async () => {
+    const send = vi.fn().mockResolvedValueOnce({ Items: [] }).mockResolvedValueOnce({ Item: { id, userId: "different-sub" } });
+
+    await expect(lookup(send)).resolves.toBeNull();
   });
 });
 
