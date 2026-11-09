@@ -147,6 +147,17 @@ describe("coverageVerdict — the most important rule in the module", () => {
     }
   });
 
+  it("recognizes the CRM D&O label for the approved Directors & Officers line", () => {
+    expect(normalizeLine("D&O")).toBe(normalizeLine("Directors & Officers"));
+    expect(coverageVerdict(["Commercial Property", "D&O"], "ASSOCIATION")).toEqual({ ok: true });
+  });
+
+  it.each(["DO", "D&O and Other", "Workers Comp"])("still blocks the unrecognized label %s", line => {
+    expect(coverageVerdict([line], "ASSOCIATION")).toMatchObject({
+      ok: false, hard: false, reason: expect.stringContaining(`"${line}"`),
+    });
+  });
+
   it("hard-blocks every line on the signed deny-list, with the retroactive-void warning", () => {
     for (const line of PF_COVERAGE_DENY) {
       const v = coverageVerdict([line], "ASSOCIATION");
