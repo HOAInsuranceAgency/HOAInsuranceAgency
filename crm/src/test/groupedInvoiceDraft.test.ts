@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createGroupedDraft, groupedReviewLines } from '../../amplify/functions/crm-access/grouped-draft';
+import { createGroupedDraft, groupedReviewLines, restoreGroupedDraft } from '../../amplify/functions/crm-access/grouped-draft';
 import type { AccountAccess } from '../../amplify/functions/crm-access/access';
 
 const h = vi.hoisted(() => ({ send: vi.fn(), list: vi.fn(), reserve: vi.fn() }));
@@ -78,5 +78,30 @@ describe('combined invoice review', () => {
   it('refuses unreviewed costs and altered supplier charges', () => {
     expect(() => groupedReviewLines(property, source, [{ ...premium, costAmount: null }])).toThrow('supplier costs');
     expect(() => groupedReviewLines(property, source, [premium, { ...supplier, costAmount: 400 }])).toThrow('actual cost');
+  });
+
+  it('restores source drafts and releases all members in one conditional transaction', async () => {
+    const group = { ...base, id: 'group', sourcePricingVersion: 3, status: 'DRAFT', groupedPolicyIds: input.policyIds,
+      groupedSourceInvoiceIds: [source.id] };
+    const access = setup({ 'Invoice:group': group, 'Invoice:orig': { ...source, status: 'VOID', supersededByGroupedInvoiceId: group.id },
+      'Policy:property': { ...property, groupedDraftInvoiceId: group.id }, 'Policy:d-and-o': { ...liability, groupedDraftInvoiceId: group.id } });
+    await expect(restoreGroupedDraft(access, { invoiceId: group.id })).resolves.toEqual({ ok: true });
+    expect(h.send).toHaveBeenCalledTimes(1);
+    const writes = h.send.mock.calls[0][0].input.TransactItems;
+    expect(writes).toContainEqual({ Update: expect.objectContaining({ TableName: 'Invoice', Key: { id: source.id },
+      ConditionExpression: expect.stringContaining('supersededByGroupedInvoiceId = :group'),
+      ExpressionAttributeValues: expect.objectContaining({ ':draft': 'DRAFT', ':group': group.id }) }) });
+    expect(writes).toContainEqual({ Update: expect.objectContaining({ TableName: 'Invoice', Key: { id: group.id },
+      ExpressionAttributeValues: expect.objectContaining({ ':void': 'VOID' }) }) });
+    expect(writes.filter((item: { Update?: { UpdateExpression: string } }) => item.Update?.UpdateExpression.includes('REMOVE groupedDraftInvoiceId'))).toHaveLength(2);
+  });
+
+  it('does not revive an invoice reserved by a different draft', async () => {
+    const group = { ...base, id: 'group', sourcePricingVersion: 3, status: 'DRAFT', groupedPolicyIds: input.policyIds,
+      groupedSourceInvoiceIds: [source.id] };
+    const access = setup({ 'Invoice:group': group, 'Invoice:orig': { ...source, status: 'VOID', supersededByGroupedInvoiceId: 'other' },
+      'Policy:property': { ...property, groupedDraftInvoiceId: group.id }, 'Policy:d-and-o': { ...liability, groupedDraftInvoiceId: group.id } });
+    await expect(restoreGroupedDraft(access, { invoiceId: group.id })).rejects.toThrow('no longer match');
+    expect(h.send).not.toHaveBeenCalled();
   });
 });

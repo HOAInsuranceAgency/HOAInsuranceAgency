@@ -2393,6 +2393,13 @@ const schema = a
       .authorization((allow) => [allow.groups(["OWNER"])])
       .handler(a.handler.function(crmAccess)),
 
+    restoreGroupedInvoice: a
+      .mutation()
+      .arguments({ invoiceId: a.id().required() })
+      .returns(a.json())
+      .authorization((allow) => [allow.groups(["OWNER"])])
+      .handler(a.handler.function(crmAccess)),
+
     /**
      * Email an invoice to the insured.
      *

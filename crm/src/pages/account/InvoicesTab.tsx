@@ -469,6 +469,7 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
           key={open.id}
           invoice={open}
           onBusyChange={setEditorBusy}
+          onGroupedRestored={res.refetch}
           policies={policies}
           quotes={quotes}
           account={account}

@@ -14,6 +14,8 @@ type InvoiceHeaderState = Pick<
   | 'locked'
   | 'actionBusy'
   | 'voidThis'
+  | 'canRestoreGroup'
+  | 'restoreGroupedDraft'
   | 'lines'
   | 'sourcePricing'
   | 'issuedFee'
@@ -30,6 +32,8 @@ export function InvoiceHeader({ editor }: { editor: InvoiceHeaderState }) {
     locked,
     actionBusy,
     voidThis,
+    canRestoreGroup,
+    restoreGroupedDraft,
     lines,
     sourcePricing,
     issuedFee,
@@ -43,6 +47,15 @@ export function InvoiceHeader({ editor }: { editor: InvoiceHeaderState }) {
     <div className="inline-actions">
       <SaveStatus {...saveStatus.status} />
       {dirty && <Button type="button" disabled={pending > 0} onClick={() => void saveEdits()}>Save changes</Button>}
+      {canRestoreGroup && <ConfirmButton
+        label="Restore separate drafts"
+        confirmLabel="Restore drafts"
+        busyLabel="Restoring drafts…"
+        variant="secondary"
+        message="This closes the combined draft and restores the original drafts."
+        disabled={actionBusy}
+        onConfirm={restoreGroupedDraft}
+      />}
       {/* Voided, not deleted: the number must never be reused, and a gap in
               the sequence is explainable in a way a reissue is not. */}
       {/* Not offered while a debit is clearing: an in-flight ACH cannot be

@@ -89,6 +89,15 @@ function versionCondition(row: Row) {
 
 const check = (model: string, row: Row): Write => ({ ConditionCheck: { TableName: modelTable(model), ...versionCondition(row) } });
 
+async function saveReview(writes: Write[]) {
+  assertTransactionEnvelope(writes, { maxBytes: 3_500_000, keyFields: () => ['id'], error: () => new Error('Too many source records to combine at once.') });
+  try { await sendCrmWrite(db.send(new TransactWriteCommand({ TransactItems: writes }))); }
+  catch (error) {
+    if ((error as { name?: string }).name === 'TransactionCanceledException') throw new Error(retry);
+    throw error;
+  }
+}
+
 export async function createGroupedDraft(access: AccountAccess, args: Row) {
   const accountId = usableId(args.accountId);
   const policyIds = Array.isArray(args.policyIds) ? args.policyIds.map(usableId).sort() : [];
@@ -170,6 +179,7 @@ export async function createGroupedDraft(access: AccountAccess, args: Row) {
   const writes: Write[] = [activeTeamUserCheck(access.actor), check('Account', account), ...quotes.map(row => check('Quote', row)),
     { Put: { TableName: modelTable('Invoice'), ConditionExpression: 'attribute_not_exists(id)', Item: {
       ...base, id: invoiceId, __typename: 'Invoice', number, sourcePricingVersion: 3, groupedPolicyIds: policyIds,
+      groupedSourceInvoiceIds: [...sources.values()].map(({ invoice }) => usableId(invoice.id)),
       status: 'DRAFT', issuedAt: today, dueAt, createdAt: now,
     } } }];
   for (const policy of policies) {
@@ -195,11 +205,57 @@ export async function createGroupedDraft(access: AccountAccess, args: Row) {
     ConditionExpression: 'attribute_not_exists(id)', Item: { ...line, id: `${invoiceId}:${sortOrder}`, invoiceId, accountId,
       __typename: 'InvoiceLine', sortOrder, createdAt: now, updatedAt: now, updatedBy: access.actor },
   } })));
-  assertTransactionEnvelope(writes, { maxBytes: 3_500_000, keyFields: () => ['id'], error: () => new Error('Too many source records to combine at once.') });
-  try { await sendCrmWrite(db.send(new TransactWriteCommand({ TransactItems: writes }))); }
-  catch (error) {
-    if ((error as { name?: string }).name === 'TransactionCanceledException') throw new Error(retry);
-    throw error;
-  }
+  await saveReview(writes);
   return { ok: true, invoiceId };
+}
+
+/** Undo a review without deleting any policy or invoice history. */
+export async function restoreGroupedDraft(access: AccountAccess, args: Row) {
+  const invoiceId = usableId(args.invoiceId);
+  const invoice = await access.requireRecord('Invoice', invoiceId);
+  const policyIds = Array.isArray(invoice.groupedPolicyIds) ? invoice.groupedPolicyIds.map(usableId) : [];
+  const sourceIds = Array.isArray(invoice.groupedSourceInvoiceIds) ? invoice.groupedSourceInvoiceIds.map(usableId) : null;
+  if (invoice.sourcePricingVersion !== 3 || hasDelivery(invoice) || policyIds.length < 2 || policyIds.length > MAX_MEMBERS ||
+      new Set(policyIds).size !== policyIds.length || !sourceIds || sourceIds.length > policyIds.length || new Set(sourceIds).size !== sourceIds.length || sourceIds.includes(invoiceId)) {
+    throw new Error('Only a complete, unsent grouped review can be restored.');
+  }
+  if (invoice.status === 'VOID' && invoice.groupedRestoredAt) return { ok: true };
+  if (invoice.status !== 'DRAFT') throw new Error('Only a grouped draft can be restored.');
+  const accountId = usableId(invoice.accountId);
+  const [policies, sources] = await Promise.all([
+    Promise.all(policyIds.map(key => access.requireRecord('Policy', key))),
+    Promise.all(sourceIds.map(key => access.requireRecord('Invoice', key))),
+  ]);
+  if (policies.some(policy => policy.accountId !== accountId || policy.groupedDraftInvoiceId !== invoiceId) ||
+      sources.some(source => source.accountId !== accountId || !policyIds.includes(id(source.policyId)) ||
+        source.sourcePricingVersion !== 1 || source.status !== 'VOID' || source.supersededByGroupedInvoiceId !== invoiceId || hasDelivery(source))) {
+    throw new Error('The separate drafts no longer match this grouped review.');
+  }
+  const now = new Date().toISOString();
+  const guard = versionCondition(invoice);
+  const writes: Write[] = [activeTeamUserCheck(access.actor), { Update: { TableName: modelTable('Invoice'), ...guard,
+    ConditionExpression: `${guard.ConditionExpression} AND #status = :draft`,
+    UpdateExpression: 'SET #status = :void, groupedRestoredAt = :now, updatedAt = :now, lastWriteBy = :actor',
+    ExpressionAttributeNames: { '#status': 'status' },
+    ExpressionAttributeValues: { ...guard.ExpressionAttributeValues, ':draft': 'DRAFT', ':void': 'VOID', ':now': now, ':actor': access.actor },
+  } }];
+  for (const source of sources) {
+    const version = versionCondition(source);
+    writes.push({ Update: { TableName: modelTable('Invoice'), ...version,
+      ConditionExpression: `${version.ConditionExpression} AND #status = :void AND supersededByGroupedInvoiceId = :group`,
+      UpdateExpression: 'SET #status = :draft, updatedAt = :now, lastWriteBy = :actor REMOVE supersededByGroupedInvoiceId',
+      ExpressionAttributeNames: { '#status': 'status' }, ExpressionAttributeValues: { ...version.ExpressionAttributeValues,
+        ':void': 'VOID', ':group': invoiceId, ':draft': 'DRAFT', ':now': now, ':actor': access.actor },
+    } });
+  }
+  for (const policy of policies) {
+    const version = versionCondition(policy);
+    writes.push({ Update: { TableName: modelTable('Policy'), ...version,
+      ConditionExpression: `${version.ConditionExpression} AND groupedDraftInvoiceId = :group`,
+      UpdateExpression: 'SET updatedAt = :now, lastWriteBy = :actor REMOVE groupedDraftInvoiceId',
+      ExpressionAttributeValues: { ...version.ExpressionAttributeValues, ':group': invoiceId, ':now': now, ':actor': access.actor },
+    } });
+  }
+  await saveReview(writes);
+  return { ok: true };
 }

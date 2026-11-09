@@ -2,6 +2,7 @@ import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, GetCommand, UpdateCommand, TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
 import Stripe from "stripe";
 import { feeAllocations } from "../../../../shared/brokerFees";
+import { isGroupedInvoice } from "../../../../shared/groupedInvoiceGuard";
 import { feeInvoiceVoidWrites } from "../broker-fees/payments";
 import type { Write } from "../broker-fees/store";
 import { isRetiredInvoiceSend, prepareInvoiceSendRetirement, InvoiceSendBlocked, type InvoiceSendOperation } from "../send-invoice/sendOperation";
@@ -38,6 +39,8 @@ interface Row extends Record<string, unknown> {
   number: string | null;
   stripePaymentLinkId: string | null;
   hasBrokerFee: boolean;
+  sourcePricingVersion?: number | null;
+  groupedPolicyIds?: unknown;
 }
 
 async function readRow(tableName: string, id: string): Promise<Row | null> {
@@ -136,6 +139,7 @@ export const handler = async (event: {
     for (let attempt = 1; attempt <= 2; attempt++) {
       const invoice = await readRow(tableName, invoiceId);
       if (!invoice) return { ok: false, error: "That invoice no longer exists." };
+      if (isGroupedInvoice(invoice)) return { ok: false, error: "An Owner can restore the separate drafts from this grouped invoice." };
 
       // Already void, and nothing to undo. Idempotent because a producer who
       // pressed it twice should not see an error the second time.

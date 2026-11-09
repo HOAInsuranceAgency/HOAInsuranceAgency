@@ -2,14 +2,15 @@ import { useState } from "react";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
+import { OwnerContext } from "../lib/auth";
 import type { Account, Contact, Invoice, InvoiceLine, Policy } from "../lib/client";
-const h = vi.hoisted(() => ({ list: vi.fn(), update: vi.fn(), lineUpdate: vi.fn(), lineCreate: vi.fn(), lineDelete: vi.fn(), sourceGet: vi.fn(), get: vi.fn(), send: vi.fn(), voidInvoice: vi.fn(), change: vi.fn(), linesChange: vi.fn(), feeAction: vi.fn(), financeHint: vi.fn() }));
+const h = vi.hoisted(() => ({ list: vi.fn(), update: vi.fn(), lineUpdate: vi.fn(), lineCreate: vi.fn(), lineDelete: vi.fn(), sourceGet: vi.fn(), get: vi.fn(), send: vi.fn(), voidInvoice: vi.fn(), restoreGroupedInvoice: vi.fn(), change: vi.fn(), linesChange: vi.fn(), feeAction: vi.fn(), financeHint: vi.fn() }));
 vi.mock("../lib/client", () => ({
   client: { models: {
     Invoice: { update: h.update, get: h.get, delete: vi.fn() },
     InvoiceLine: { list: h.list, update: h.lineUpdate, create: h.lineCreate, delete: h.lineDelete },
     Policy: { get: h.sourceGet }, Quote: { get: h.sourceGet },
-  }, mutations: { sendInvoice: h.send, voidInvoice: h.voidInvoice, brokerFeeAction: h.feeAction } },
+  }, mutations: { sendInvoice: h.send, voidInvoice: h.voidInvoice, restoreGroupedInvoice: h.restoreGroupedInvoice, brokerFeeAction: h.feeAction } },
   friendlyError: (e: unknown, fallback: string) => e instanceof Error ? e.message || fallback : fallback,
   fmtDate: (date: string) => date,
 }));
@@ -66,7 +67,7 @@ it("shows one aggregate financing schedule on a read-only combined draft", async
     expect(screen.getByText(/\$20,436.08 down plus \$10.00 origination fee/)).toBeInTheDocument();
     expect(screen.getByText(/11 monthly payments/)).toHaveTextContent("11 monthly payments at 19.96% APR. The first 10 are $6,145.00 each and the final payment is $6,144.95.");
     expect(screen.getByText("Carrier direct bill · HOA collection", { exact: false })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Send invoice|Void|Mark paid|Add line/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Send invoice|Void|Mark paid|Add line|Restore separate drafts/ })).not.toBeInTheDocument();
     expect(screen.getByLabelText("Memo")).toBeDisabled();
     for (const input of screen.getAllByLabelText("Costs the agency")) expect(input).toBeDisabled();
     expect(h.financeHint).not.toHaveBeenCalled();
@@ -80,6 +81,36 @@ it("shows one aggregate financing schedule on a read-only combined draft", async
   } finally {
     vi.useRealTimers();
   }
+});
+
+it("lets the owner restore separate drafts and refreshes only after the restore succeeds", async () => {
+  const saving = deferred();
+  const refresh = vi.fn().mockResolvedValue(undefined);
+  h.list.mockResolvedValue({ data: groupedLines });
+  h.restoreGroupedInvoice.mockImplementation(async () => {
+    await saving.promise;
+    return { data: JSON.stringify({ ok: true }) };
+  });
+  function GroupedDraft() {
+    const [invoice, setInvoice] = useState(groupedInvoice);
+    return <InvoiceEditor invoice={invoice} policies={groupedPolicies} quotes={[]} account={groupAccount} contacts={contacts}
+      onChange={setInvoice} onLinesChange={h.linesChange} onDeleted={vi.fn()} onGroupedRestored={refresh} />;
+  }
+  render(<OwnerContext.Provider value={true}><GroupedDraft /></OwnerContext.Provider>);
+  await userEvent.click(await screen.findByRole("button", { name: "Restore separate drafts" }));
+  expect(h.restoreGroupedInvoice).not.toHaveBeenCalled();
+  expect(screen.queryByRole("button", { name: /Send invoice|Void|Mark paid/ })).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "Restore drafts" }));
+  expect(h.restoreGroupedInvoice).toHaveBeenCalledExactlyOnceWith({ invoiceId: groupedInvoice.id });
+  expect(screen.getByRole("button", { name: "Restoring drafts…" })).toBeDisabled();
+  expect(refresh).not.toHaveBeenCalled();
+  await act(async () => saving.resolve());
+  expect(await screen.findByText("Separate drafts restored.")).toBeInTheDocument();
+  expect(screen.getByText("VOID")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Restore separate drafts" })).not.toBeInTheDocument();
+  expect(refresh).toHaveBeenCalledTimes(1);
+  expect(h.send).not.toHaveBeenCalled();
+  expect(h.voidInvoice).not.toHaveBeenCalled();
 });
 
 it("blocks combined pricing when one constituent has no coverage classification", async () => {

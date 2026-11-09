@@ -18,6 +18,9 @@ export async function createGroupedInvoice(input: { accountId: string; policyIds
     { fallback: "Couldn't combine the selected policies." });
   return result.invoiceId;
 }
+export async function restoreGroupedInvoice(invoiceId: string): Promise<void> {
+  await acceptedOperation(client.mutations.restoreGroupedInvoice({ invoiceId }), "Couldn't restore the separate drafts.");
+}
 export async function reserveCertificateNumber(): Promise<string> {
   const value = await privateApiCall(client.mutations.reserveCertificateNumber(),
     (value): value is ApiRecord & { certificateNumber: string } => typeof value.certificateNumber === 'string' && !!value.certificateNumber,

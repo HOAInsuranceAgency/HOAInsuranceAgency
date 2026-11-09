@@ -199,7 +199,7 @@ export class AccountAccess {
     }
     if (model === "Invoice") {
       const previous = input.id ? await this.get("Invoice",id(input.id)) : undefined;
-      if (isGroupedInvoice(previous ?? {}) || Object.hasOwn(input, 'groupedPolicyIds') || input.sourcePricingVersion === 3) throw new Error(GROUPED_INVOICE_REVIEW_ONLY);
+      if (isGroupedInvoice(previous ?? {}) || previous?.supersededByGroupedInvoiceId || Object.hasOwn(input, 'groupedPolicyIds') || input.sourcePricingVersion === 3) throw new Error(GROUPED_INVOICE_REVIEW_ONLY);
       if(operation==="create") {
         if(![1,2].includes(input.sourcePricingVersion as number)||input.status!=="DRAFT"||!input.quoteId&&!input.policyId)throw new Error("Create a source-priced draft invoice from its quote or policy.");
         if (input.policyId) {
@@ -236,7 +236,7 @@ export class AccountAccess {
       const previousInvoice=previous?.invoiceId&&previous.invoiceId!==candidate.invoiceId?await this.get("Invoice",id(previous.invoiceId)):undefined;
       const rollover=operation==="update"&&previous&&(!previous.policyId||previous.policyId===input.policyId)&&Object.keys(input).every(field=>["id","policyId","lastWriteBy","updatedBy"].includes(field))&&await this.quotePolicyAttachment(invoice,id(input.policyId));
       for(const parent of [invoice,previousInvoice])if(parent) {
-        if (isGroupedInvoice(parent)) throw new Error(GROUPED_INVOICE_REVIEW_ONLY);
+        if (isGroupedInvoice(parent) || parent.supersededByGroupedInvoiceId) throw new Error(GROUPED_INVOICE_REVIEW_ONLY);
         if(rollover)continue;
         if (["PAID","PROCESSING"].includes(String(parent.status))) throw new Error("Payment allocation lines cannot change after payment is submitted.");
         if([1,2].includes(Number(parent.sourcePricingVersion))&&(parent.status==="SENT"||parent.stripePaymentLinkId))throw new Error("Void the issued source-priced invoice before changing its payment lines.");
