@@ -28,6 +28,15 @@ function resources(template: any): any[] { return Object.values(template.Resourc
 function statements(template: any): any[] { return resources(template).filter(r => ["AWS::IAM::Policy", "AWS::IAM::ManagedPolicy"].includes(r.Type)).flatMap(r => r.Properties.PolicyDocument.Statement); }
 function mailFunction(template: any, name: string): any { return Object.entries(template.Resources ?? {}).find(([id, r]: [string, any]) => r.Type === "AWS::Lambda::Function" && id.startsWith(name))?.[1]; }
 function senderPolicy(template: any, name: string): any[] { return (Object.entries(template.Resources).find(([id, r]: [string, any]) => r.Type === "AWS::IAM::Policy" && id.startsWith(name))![1] as any).Properties.PolicyDocument.Statement; }
+function attachedSendStatements(existing: any, permissions: any, name: string): any[] {
+  const roleId = mailFunction(existing, name).Properties.Role["Fn::GetAtt"][0];
+  const imports = (existing.Resources[roleId].Properties.ManagedPolicyArns ?? [])
+    .flatMap((ref: any) => ref["Fn::ImportValue"] ? [ref["Fn::ImportValue"]] : []);
+  const policies = Object.values(permissions.Outputs ?? {}).filter((output: any) => imports.includes(output.Export?.Name))
+    .map((output: any) => permissions.Resources[output.Value.Ref]);
+  expect(policies).toHaveLength(1);
+  return policies.flatMap((policy: any) => policy.Properties.PolicyDocument.Statement);
+}
 beforeEach(() => {
   config.migrationDestination = true; config.migrationPreview = false; config.businessBranch = "main";
   vi.stubEnv("HOA_TRANSACTIONAL_MAIL_PROVIDER", "ses"); vi.stubEnv("HOA_SES_DAILY_LIMIT", "1000"); vi.stubEnv("HOA_SES_MONTHLY_LIMIT", "30000");
@@ -62,18 +71,28 @@ describe("SES-only transactional mail infrastructure", () => {
       expect(senderPolicy(existing, name).some(s => s.Effect === "Allow" && s.Resource === "*")).toBe(true);
       const functionRole = mailFunction(existing, name).Properties.Role["Fn::GetAtt"][0];
       expect(JSON.stringify(existing.Resources[functionRole].Properties.ManagedPolicyArns)).toContain("TransactionalMailSendPermissions");
-      const ss = statements(permissions);
+      const ss = attachedSendStatements(existing, permissions, name);
+      const allowedRecipients = name === "magicLinkVerify" ? ["jake@getgim.com", "ethanroden@getgim.com"] : ["jake@getgim.com"];
       const boundary = ss.find(s => s.Effect === "Deny" && s.NotResource); expect(boundary.NotResource).toHaveLength(2); expect(JSON.stringify(boundary)).toContain("identity/protectmyhoa.com"); expect(JSON.stringify(boundary)).toContain(`configuration-set/hoa-transactional-${branch}`);
       expect(ss.some(s => s.Effect === "Deny" && s.Condition?.StringNotEquals?.["ses:FromAddress"]?.join() === allowedFrom.join())).toBe(true);
       const alternate = ss.find(s => s.Effect === "Deny" && Array.isArray(s.Action) && s.Action.includes("ses:SendRawEmail"));
       expect(alternate.Action).toEqual(["ses:SendRawEmail", "ses:SendBulkEmail", "ses:SendTemplatedEmail", "ses:SendBulkTemplatedEmail", "ses:SendCustomVerificationEmail", "ses:SendBounce"]);
       const scoped = ss.find(s => s.Effect === "Allow" && s.Condition?.StringEquals?.["ses:FromAddress"]);
-      expect(scoped.Condition).toEqual({ StringEquals: { "ses:FromAddress": allowedFrom }, ...(branch === "staging" ? { "ForAllValues:StringEquals": { "ses:Recipients": ["jake@getgim.com"] } } : {}) });
+      expect(scoped.Condition).toEqual({ StringEquals: { "ses:FromAddress": allowedFrom }, ...(branch === "staging" ? { "ForAllValues:StringEquals": { "ses:Recipients": allowedRecipients } } : {}) });
       if (branch === "staging") {
-        expect(ss.some(s => s.Effect === "Deny" && s.Condition?.["ForAnyValue:StringNotEquals"]?.["ses:Recipients"]?.[0] === "jake@getgim.com")).toBe(true);
+        expect(ss.some(s => s.Effect === "Deny" && s.Condition?.["ForAnyValue:StringNotEquals"]?.["ses:Recipients"]?.join() === allowedRecipients.join())).toBe(true);
         expect(ss.some(s => s.Effect === "Deny" && s.Condition?.Null?.["ses:Recipients"] === "true")).toBe(true);
       } else expect(JSON.stringify(ss)).not.toContain("ses:Recipients");
       expect(JSON.stringify(ss)).not.toContain("aws:CurrentTime");
+    }
+  });
+  it("grants the extra staging recipient to authentication only", () => {
+    config.businessBranch = "staging";
+    const { existing, permissions } = infra();
+    expect(resources(permissions).filter(r => r.Type === "AWS::IAM::ManagedPolicy")).toHaveLength(2);
+    for (const name of senders) {
+      const serialized = JSON.stringify(attachedSendStatements(existing, permissions, name));
+      expect(serialized.includes("ethanroden@getgim.com")).toBe(name === "magicLinkVerify");
     }
   });
   it("uses one independent stateless managed policy instead of repeating the boundary in sender inline policies", () => {

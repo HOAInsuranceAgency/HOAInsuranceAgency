@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { STAGING_BUSINESS_RECIPIENTS, STAGING_LOGIN_RECIPIENTS } from "./staging-recipients";
 import type { SendEmailCommandInput } from "@aws-sdk/client-sesv2";
 
 export type MailKind = "login" | "invite" | "invoice" | "report" | "accounting" | "test";
@@ -78,7 +79,11 @@ export function assertDestination(kind: MailKind, body: Payload, env = process.e
   const senders = stage ? ["noreply@protectmyhoa.com", "jake+testing@protectmyhoa.com"] : ["noreply@protectmyhoa.com", "insurance@protectmyhoa.com"];
   if (!senders.includes(email(body.from))) throw new Error("Transactional sender is not configured for this destination.");
   const recipients = [...body.to, ...(body.cc ?? []), ...(body.bcc ?? [])];
-  if (stage && recipients.some(a => a !== "jake@getgim.com")) throw new Error("Staging transactional email is restricted to the verified owner.");
+  if (stage) {
+    const allowed = kind === "login" ? STAGING_LOGIN_RECIPIENTS : STAGING_BUSINESS_RECIPIENTS;
+    if (recipients.some(a => !allowed.includes(a))) throw new Error("Staging email recipient is not approved for this message type.");
+    if (kind === "login" && (body.to.length !== 1 || body.cc?.length || body.bcc?.length)) throw new Error("Staging sign-in links require one recipient and no copies.");
+  }
   if (kind === "test") {
     assertVerificationWindow(env, now);
     if (!env.AWS_LAMBDA_FUNCTION_NAME?.toLowerCase().includes("mailverification") || recipients.length !== 1 || recipients[0] !== "jake@getgim.com"

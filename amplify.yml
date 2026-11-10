@@ -44,6 +44,8 @@ applications:
             # handler deploys clean and fails in production. Runs before
             # pipeline-deploy so a type error stops the deploy rather than
             # being reported after it.
+            # Verify authentication delivery and recipient boundaries before deployment.
+            - npx vitest run src/test/sesMailInfrastructure.test.ts src/test/sesTransactionalMail.test.ts src/test/transactionalMail.test.ts src/test/magicLinkRequest.test.ts src/test/resendCallerContracts.test.ts
             - npm run typecheck:backend
             # Validate generated IAM policy sizes and CloudFormation structure
             # before applying any backend changes.

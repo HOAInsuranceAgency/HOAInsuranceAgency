@@ -8,6 +8,7 @@ import { ConfigurationSet, EmailSendingEvent, EventDestination, SuppressionReaso
 import { Subscription, SubscriptionProtocol, Topic } from "aws-cdk-lib/aws-sns";
 import { Queue, QueueEncryption } from "aws-cdk-lib/aws-sqs";
 import { migrationDestination, migrationPreview, businessBranch } from "./migration-config";
+import { STAGING_BUSINESS_RECIPIENTS, STAGING_LOGIN_RECIPIENTS } from "./functions/transactional-mail/staging-recipients";
 
 const SES_IDENTITY_ARN = "arn:aws:ses:us-east-1:917680434255:identity/protectmyhoa.com";
 const MAIN_FROM = ["noreply@protectmyhoa.com", "insurance@protectmyhoa.com"];
@@ -19,7 +20,7 @@ function limit(raw: string | undefined, fallback: number, maximum: number): numb
   return Number(value);
 }
 
-function sesSendPermissions(configurationSet: string, staging: boolean): PolicyStatement[] {
+function sesSendPermissions(configurationSet: string, staging: boolean, recipients = STAGING_BUSINESS_RECIPIENTS): PolicyStatement[] {
   const config = `arn:aws:ses:us-east-1:917680434255:configuration-set/${configurationSet}`;
   const senders = staging ? STAGING_FROM : MAIN_FROM;
   // Older function policies include wildcard SES allows. Explicit boundaries
@@ -30,12 +31,12 @@ function sesSendPermissions(configurationSet: string, staging: boolean): PolicyS
     new PolicyStatement({ effect: Effect.DENY, actions: ["ses:SendRawEmail", "ses:SendBulkEmail", "ses:SendTemplatedEmail", "ses:SendBulkTemplatedEmail", "ses:SendCustomVerificationEmail", "ses:SendBounce"], resources: ["*"] }),
   ];
   if (staging) {
-    statements.push(new PolicyStatement({ effect: Effect.DENY, actions: ["ses:Send*"], resources: ["*"], conditions: { "ForAnyValue:StringNotEquals": { "ses:Recipients": ["jake@getgim.com"] } } }));
+    statements.push(new PolicyStatement({ effect: Effect.DENY, actions: ["ses:Send*"], resources: ["*"], conditions: { "ForAnyValue:StringNotEquals": { "ses:Recipients": recipients } } }));
     statements.push(new PolicyStatement({ effect: Effect.DENY, actions: ["ses:Send*"], resources: ["*"], conditions: { Null: { "ses:Recipients": "true" } } }));
   }
   statements.push(new PolicyStatement({ actions: ["ses:SendEmail"], resources: [SES_IDENTITY_ARN, config], conditions: {
     StringEquals: { "ses:FromAddress": senders },
-    ...(staging ? { "ForAllValues:StringEquals": { "ses:Recipients": ["jake@getgim.com"] } } : {}),
+    ...(staging ? { "ForAllValues:StringEquals": { "ses:Recipients": recipients } } : {}),
   } }));
   return statements;
 }
@@ -55,6 +56,11 @@ export function installTransactionalMail(backend: any, alerts: any) {
   // shares the complete boundary without referencing roles, alerts or topics.
   const permissionsStack = !migrationPreview ? backend.createStack("TransactionalMailSendPermissions") : undefined;
   const sendPermissions = permissionsStack ? new ManagedPolicy(permissionsStack, "SesSendPermissions", { statements: sesSendPermissions(configurationSet, staging) }) : undefined;
+  // Only the authentication sender gets the additional reviewed login recipient.
+  // Business senders retain their original explicit recipient deny.
+  const loginPermissions = permissionsStack && staging
+    ? new ManagedPolicy(permissionsStack, "StagingLoginSendPermissions", { statements: sesSendPermissions(configurationSet, true, STAGING_LOGIN_RECIPIENTS) })
+    : undefined;
   // Void may retire only invoice OP keys in its own environment. It cannot
   // send mail, edit counters/receipts, or access saved envelopes.
   for(const fn of [backend.voidInvoice,backend.crmAccess,backend.pfElection])fn.addEnvironment('HOA_TRANSACTIONAL_MAIL_TABLE',table);
@@ -63,7 +69,7 @@ export function installTransactionalMail(backend: any, alerts: any) {
   for (const name of senderNames) {
     const fn = backend[name];
     for (const [key, value] of Object.entries({ HOA_TRANSACTIONAL_MAIL_PROVIDER: "ses", HOA_TRANSACTIONAL_MAIL_TABLE: table, HOA_TRANSACTIONAL_MAIL_BUCKET: bucket, HOA_TRANSACTIONAL_MAIL_RELEASE: process.env.HOA_TRANSACTIONAL_MAIL_RELEASE ?? "false", HOA_SES_IDENTITY_ARN: SES_IDENTITY_ARN, HOA_SES_CONFIGURATION_SET: configurationSet, HOA_SES_DAILY_LIMIT: String(sesDailyLimit), HOA_SES_MONTHLY_LIMIT: String(sesMonthlyLimit) })) fn.addEnvironment(key, value);
-    if (sendPermissions) fn.resources.lambda.role!.addManagedPolicy(sendPermissions);
+    if (sendPermissions) fn.resources.lambda.role!.addManagedPolicy(name === "magicLinkVerify" && loginPermissions ? loginPermissions : sendPermissions);
     else fn.resources.lambda.addToRolePolicy(new PolicyStatement({ effect: Effect.DENY, actions: ["ses:Send*"], resources: ["*"] }));
     fn.resources.lambda.addToRolePolicy(new PolicyStatement({ actions: ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem"], resources: [tableArn] }));
     fn.resources.lambda.addToRolePolicy(new PolicyStatement({ actions: ["s3:PutObject"], resources: [`arn:aws:s3:::${bucket}/outbox/${businessBranch}/*`] }));
