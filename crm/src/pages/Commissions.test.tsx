@@ -745,7 +745,7 @@ it('shows saved plans, assignments, carrier schedules and account classification
   expect(screen.getByRole('table', { name: 'Saved account classifications' })).toHaveTextContent('Cedar HOA');
   expect(screen.queryByRole('combobox')).toBeNull();
   expect(screen.queryByLabelText('Plan name')).toBeNull();
-  expect(screen.queryByLabelText('Original bind date')).toBeNull();
+  expect(screen.getByLabelText('Original bind date')).not.toBeVisible();
   fireEvent.click(screen.getByRole('button', { name: 'Edit assignment for Brian Cole' }));
   expect(screen.getByLabelText('Assignment starts 1')).toHaveValue('2026-10-05');
 });

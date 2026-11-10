@@ -25,8 +25,8 @@ export default function CommissionPlanSettings({ definitions, plans, team, ...ac
   const [definition, setDefinition] = useState<string | null>(null), [producer, setProducer] = useState<string | null>(null);
   const [definitionDirty, setDefinitionDirty] = useState(false), [assignmentDirty, setAssignmentDirty] = useState(false);
   const chosen = definitions.find(d => d.id === definition), assigned = plans.find(p => p.producerId === producer);
-  const editPlan = (id: string | null) => { if (!definitionDirty || window.confirm('Discard the unsaved plan changes?')) { setDefinitionDirty(false); setDefinition(id); } };
-  const editEmployee = (id: string | null) => { if (!assignmentDirty || window.confirm('Discard the unsaved assignment changes?')) { setAssignmentDirty(false); setProducer(id); } };
+  const editPlan = (id: string | null) => { if (id === definition) return; if (!definitionDirty || window.confirm('Discard the unsaved plan changes?')) { setDefinitionDirty(false); setDefinition(id); } };
+  const editEmployee = (id: string | null) => { if (id === producer) return; if (!assignmentDirty || window.confirm('Discard the unsaved assignment changes?')) { setAssignmentDirty(false); setProducer(id); } };
   const people = [...team, ...plans.filter(p => !team.some(t => t.userId === p.producerId)).map(p => ({ userId: p.producerId, name: p.name }))];
   const now = effectiveToday();
   return <section className="commission-plan-settings" aria-label="Commission plans and assignments">

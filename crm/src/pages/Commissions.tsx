@@ -456,7 +456,7 @@ function Settings({ data, refresh }: { data: CommissionOverview; refresh: () => 
   const [newCarrierStatus, setNewCarrierStatus] = useState('');
   const [newCarrierId, setNewCarrierId] = useState(() => crypto.randomUUID());
   const [manageCarrier, setManageCarrier] = useState(false), [carrierDirty, setCarrierDirty] = useState(false), [addPolicy, setAddPolicy] = useState(false);
-  const selectCarrier = (id: string) => { if (!carrierDirty || window.confirm('Discard unsaved carrier changes?')) { setCarrierDirty(false); setCarrier(id); setManageCarrier(true); } };
+  const selectCarrier = (id: string) => { if (id === carrier) { setManageCarrier(true); return; } if (!carrierDirty || window.confirm('Discard unsaved carrier changes?')) { setCarrierDirty(false); setCarrier(id); setManageCarrier(true); } };
   if (!references.data) return <div className="card"><p role={references.error ? 'alert' : undefined}>{references.error || 'Loading teammates and carriers…'}</p>{references.error && <button className="secondary" onClick={() => void references.refetch()}>Retry team & carriers</button>}</div>;
   return <section className="commission-settings commission-settings-compact">
     <section className="card commission-setup-intro">
