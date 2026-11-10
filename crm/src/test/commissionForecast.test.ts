@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   appendEntry,
+  receiptOnlyCarrierTerms,
   carrierReconciliationBalances,
   policyTotals,
   selectCarrierPaymentTerms,
@@ -368,5 +369,31 @@ describe('manual receipt forecasts and actual reconciliation', () => {
     { reviewedEntryCount: 501 },
   ])('rejects malformed forecast input %j', (invalid) => {
     expect(() => validateReceiptForecast({ items: [], evidence: 'Source', confirmed: true, complete: true, ...invalid })).toThrow();
+  });
+});
+
+describe('actual receipt tracking without a forecast', () => {
+  it('does not invent dates or expected payments and calculates cents only from actual receipts', () => {
+    const carrier = receiptOnlyCarrierTerms({ id: 'c', name: 'Carrier', version: 2 });
+    const selected = selectCarrierPaymentTerms(carrier, context);
+    expect(selected).toEqual(carrier);
+    expect(selected).not.toBe(carrier);
+    expect(selected).not.toHaveProperty('payment');
+    expect(selected).not.toHaveProperty('arrangements');
+    const p = { ...commissionPolicy(), producerBps: 2000, carrierTerms: selected };
+    expect(carrierReconciliationBalances(p, '2026-10-01')).toMatchObject({
+      status: 'UNKNOWN', expectedToDate: null, receivedToDate: 0, overdue: null, forecastTotal: null,
+    });
+    const posted = appendEntry(p, line({ agencyCents: 1980 }), { ...statement(), totalCents: 1980 }, 'actual');
+    expect(posted.entries[0]).toMatchObject({ agencyCents: 1980, producerCents: 396 });
+    expect(carrierReconciliationBalances(posted, '2026-10-01')).toMatchObject({
+      status: 'UNKNOWN', expectedToDate: null, receivedToDate: 1980, overdue: null,
+    });
+  });
+  it('rejects contradictory timing and refuses an unspecified basis in a payment forecast', () => {
+    const carrier = receiptOnlyCarrierTerms({ id: 'c', name: 'Carrier', version: 1 });
+    expect(() => selectCarrierPaymentTerms({ ...carrier, arrangements: [arrangement()] }, context)).toThrow(/cannot contain/);
+    expect(() => selectCarrierPaymentTerms({ ...carrier, payment: arrangement() }, context)).toThrow(/cannot contain/);
+    expect(() => validateCarrierPaymentTerms(terms([arrangement({ basis: 'UNSPECIFIED' as CarrierPaymentArrangement['basis'] })]))).toThrow();
   });
 });

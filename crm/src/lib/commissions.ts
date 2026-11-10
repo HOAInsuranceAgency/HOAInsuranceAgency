@@ -2,7 +2,7 @@ import { client } from './client';
 import type { CommissionOverview, CommissionBasis, CarrierPaymentArrangement } from '../../../shared/commissions';
 export interface CarrierPaymentPreview {
   carrierTermsVersion: number;
-  basis: CommissionBasis;
+  basis: CommissionBasis | 'UNSPECIFIED';
   payment?: Pick<CarrierPaymentArrangement,
     'id' | 'payor' | 'trigger' | 'cadence' | 'lagDays' | 'cutoffDay' | 'paymentDay' | 'earningMethod'>;
 }

@@ -25,6 +25,7 @@ import {
   selectCommissionTerms,
   selectCarrierPaymentTerms,
   validateCarrierPaymentTerms,
+  receiptOnlyCarrierTerms,
   validateReceiptForecast,
   carrierReconciliationBalances,
   type CommissionReceiptForecast,
@@ -172,7 +173,7 @@ export async function handler(event: Event) {
           })),
         };
       }
-      const [plans, carriers, policies, statements, batches, planDefinitions, earnings] = await Promise.all([
+      const [plans, carriers, policies, statements, batches, planDefinitions, earnings, accounts] = await Promise.all([
         store.list<CommissionPlan>('PLAN'),
         store.list<CarrierCommissionTerms>('CARRIER'),
         store.list<CommissionPolicy>('POLICY'),
@@ -180,6 +181,7 @@ export async function handler(event: Event) {
         store.list<CommissionBatch>('BATCH'),
         store.list<CommissionPlanDefinition>('PLAN_DEFINITION'),
         store.list<CommissionEarning>('EARNING'),
+        store.list<CommissionAccount>('ACCOUNT'),
       ]);
       validateAllocationSnapshot(policies, batches, earnings);
       return {
@@ -187,6 +189,7 @@ export async function handler(event: Event) {
         asOf,
         plans,
         planDefinitions,
+        accounts,
         earnings,
         carriers,
         policies,
@@ -305,6 +308,12 @@ export async function handler(event: Event) {
       ).requireRecord('Carrier', carrierId);
       const old = await store.get<CarrierCommissionTerms>('CARRIER', carrierId);
       currentVersion(input, old);
+      if (input.receiptOnly === true) {
+        if (Array.isArray(input.arrangements) && input.arrangements.length) throw new Error('Choose actual receipts or a payment forecast.');
+        const terms = receiptOnlyCarrierTerms({ id: carrierId, name: String(carrier.name), version: Number(input.version) });
+        await store.commit([change('CARRIER', terms, old)], actor);
+        return { ok: true };
+      }
       const arrangements = input.arrangements as CarrierCommissionTerms['arrangements'];
       const terms = validateCarrierPaymentTerms({
         id: carrierId,

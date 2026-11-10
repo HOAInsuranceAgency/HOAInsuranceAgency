@@ -3,6 +3,7 @@ import { beforeEach, expect, it, vi } from 'vitest';
 import { commissionPolicy, commissionAccount, line, statement } from './commissionFixtures';
 import {
   appendEntry,
+  receiptOnlyCarrierTerms,
   type CarrierPaymentArrangement,
   type CommissionPolicy,
 } from '../../../shared/commissions';
@@ -474,24 +475,26 @@ it('saves Owner account classification with an audit version and rejects stale e
     await handler(request('saveAccountClassification', { ...input, id: 'nonexistent' })),
   ).toMatchObject({ ok: false });
 });
-it('loads only the selected classification for the Owner and excludes classifications from overview', async () => {
+it('shows saved account classifications in the Owner overview and keeps them private to Owners', async () => {
   records.set('ACCOUNT:a', commissionAccount());
   h.sources.set('Account:a', { id: 'a', name: 'Cedar HOA' });
   expect(await handler(request('getAccountClassification', { id: 'a' }))).toMatchObject({
-    classification: { id: 'a', version: 2 },
-    accountName: 'Cedar HOA',
+    classification: { id: 'a', version: 2 }, accountName: 'Cedar HOA',
   });
-  expect(h.get).toHaveBeenCalledExactlyOnceWith('ACCOUNT', 'a');
   const owner = request('');
   owner.fieldName = 'commissionOverview';
-  const response = await handler(owner);
-  expect(response).not.toHaveProperty('accounts');
+  expect(await handler(owner)).toMatchObject({ accounts: [{ id: 'a', version: 2, periods: commissionAccount().periods }] });
+  expect(h.list).toHaveBeenCalledWith('ACCOUNT');
+  h.list.mockClear();
+  const producer = request('', {}, 'PRODUCER');
+  producer.fieldName = 'commissionOverview';
+  const result = await handler(producer);
+  expect(result).not.toHaveProperty('accounts');
   expect(h.list.mock.calls.some(([kind]) => kind === 'ACCOUNT')).toBe(false);
-  expect(JSON.stringify(response)).not.toContain('Owner reviewed account source');
-  expect(await handler(request('getAccountClassification', { id: 'a' }, 'PRODUCER'))).toMatchObject(
-    { ok: false },
-  );
+  expect(JSON.stringify(result)).not.toContain('Owner reviewed account source');
+  expect(await handler(request('getAccountClassification', { id: 'a' }, 'PRODUCER'))).toMatchObject({ ok: false });
 });
+
 it.each(['NEW', 'RENEWAL'] as const)(
   'adopts historical GIM %s with original dated classification and concurrency guard',
   async (transaction) => {
@@ -825,4 +828,52 @@ it('adopts the carrier arrangement applicable to historical term facts, not curr
       ExpressionAttributeValues: { ':v': 7 },
     },
   });
+});
+
+it('saves receipt-only tracking with authoritative identity and a versioned audit, without inventing timing', async () => {
+  h.sources.set('Carrier:c', { id: 'c', name: 'Authoritative carrier' });
+  const input = { id: 'c', version: 0, receiptOnly: true, name: 'Untrusted name' };
+  expect(await handler(request('saveCarrier', input))).toEqual({ ok: true });
+  expect(records.get('CARRIER:c')).toEqual({
+    ...receiptOnlyCarrierTerms({ id: 'c', name: 'Authoritative carrier', version: 1 }),
+  });
+  expect(h.commit.mock.calls[0][1]).toBe('producer');
+  expect(await handler(request('saveCarrier', input))).toMatchObject({ ok: false, error: expect.stringMatching(/changed/) });
+  expect(h.commit).toHaveBeenCalledTimes(1);
+});
+it('changes tracking mode only for future snapshots and allows a later confirmed forecast', async () => {
+  h.sources.set('Carrier:c', { id: 'c', name: 'Carrier' });
+  const prior = { ...commissionPolicy().carrierTerms, arrangements: [paymentArrangement()] };
+  records.set('CARRIER:c', prior);
+  const policy = commissionPolicy();
+  records.set('POLICY:p', policy);
+  expect(await handler(request('saveCarrier', { id: 'c', version: 1, receiptOnly: true }))).toEqual({ ok: true });
+  expect(records.get('CARRIER:c')).toMatchObject({ version: 2, receiptOnly: true, basis: 'UNSPECIFIED' });
+  expect(records.get('CARRIER:c')).not.toHaveProperty('arrangements');
+  expect(h.commit.mock.calls[0][0][0].previous).toEqual(prior);
+  expect(records.get('POLICY:p')).toEqual(policy);
+  expect(await handler(request('saveCarrier', { id: 'c', version: 2, arrangements: [paymentArrangement()] }))).toEqual({ ok: true });
+  expect(records.get('CARRIER:c')).toMatchObject({ version: 3, basis: 'WRITTEN', arrangements: [paymentArrangement()] });
+  expect(records.get('CARRIER:c')).not.toHaveProperty('receiptOnly');
+  expect(records.get('POLICY:p')).toEqual(policy);
+});
+it('rejects contradictory receipt-only and forecast setup without writing', async () => {
+  h.sources.set('Carrier:c', { id: 'c', name: 'Carrier' });
+  expect(await handler(request('saveCarrier', { id: 'c', version: 0, receiptOnly: true, arrangements: [paymentArrangement()] }))).toMatchObject({ ok: false });
+  expect(h.commit).not.toHaveBeenCalled();
+});
+it('adopts a historical policy with receipt-only tracking and preserves its eligibility checks', async () => {
+  h.sources.set('Account:a', { id: 'a', name: 'Cedar HOA' });
+  h.sources.set('Policy:old', { id: 'old', accountId: 'a', carrierId: 'c', updatedAt: 'before' });
+  records.set('ACCOUNT:a', commissionAccount());
+  records.set('PLAN:producer', { id: 'producer', producerId: 'producer', name: 'Producer', version: 1,
+    terms: [{ from: '2020-01-01', newBps: 2000, renewalBps: 1000, agreement: 'Signed agreement' }] });
+  records.set('CARRIER:c', receiptOnlyCarrierTerms({ id: 'c', name: 'Carrier', version: 4 }));
+  expect(await handler(request('adoptPolicy', {
+    policyId: 'old', producerId: 'producer', transaction: 'NEW', boundOn: '2026-01-01',
+    effectiveDate: '2026-01-01', expirationDate: '2027-01-01', premium: '10000', agencyRate: '10',
+    evidence: 'Original binder and agency agreement',
+  }))).toEqual({ ok: true });
+  expect(records.get('POLICY:old')).toMatchObject({ producerBps: 2000, planVersion: 1,
+    carrierTerms: { version: 4, receiptOnly: true, basis: 'UNSPECIFIED' }, entries: [] });
 });

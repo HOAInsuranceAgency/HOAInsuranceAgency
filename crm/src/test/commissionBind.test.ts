@@ -1,7 +1,7 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 import { packageTerms } from '../../../shared/quotePackages';
 import { commissionPolicy, commissionAccount } from './commissionFixtures';
-import type { CarrierPaymentArrangement } from '../../../shared/commissions';
+import { receiptOnlyCarrierTerms, type CarrierPaymentArrangement } from '../../../shared/commissions';
 const h = vi.hoisted(() => ({
   get: vi.fn(),
   commit: vi.fn(),
@@ -377,4 +377,17 @@ it('requires an applicable carrier arrangement for the policy term rather than u
     ...input(), terms: packageTerms(future), carrierTermsVersion: 8, carrierArrangementId: 'property-direct',
   })).rejects.toThrow(/carrier|arrangement|terms/i);
   expect(h.commit).not.toHaveBeenCalled();
+});
+
+it('binds receipt-only tracking without guessing a payment arrangement and still freezes the plan', async () => {
+  const original = h.get.getMockImplementation()!;
+  h.get.mockImplementation(async (...args) => args[0] === 'CARRIER'
+    ? receiptOnlyCarrierTerms({ id: 'c', name: 'Carrier', version: 6 }) : original(...args));
+  await bindPolicy(event, { ...input(), carrierTermsVersion: 6 });
+  const [changes, , guards] = h.commit.mock.calls[0];
+  expect(changes[0].value).toMatchObject({ producerBps: 1600, planVersion: 3, entries: [],
+    carrierTerms: { version: 6, receiptOnly: true, basis: 'UNSPECIFIED' } });
+  expect(changes[0].value.carrierTerms).not.toHaveProperty('payment');
+  expect(guards).toContainEqual({ ConditionCheck: { TableName: 'commissions', Key: { kind: 'CARRIER', id: 'c' },
+    ConditionExpression: '#v = :v', ExpressionAttributeNames: { '#v': 'version' }, ExpressionAttributeValues: { ':v': 6 } } });
 });

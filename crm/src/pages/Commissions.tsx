@@ -1,4 +1,4 @@
-import { createContext, useContext, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { useIsOwner } from '../lib/auth';
 import { useAsyncResource } from '../lib/useAsyncResource';
 import { client, listAllPages } from '../lib/client';
@@ -11,6 +11,7 @@ import CommissionExceptions from '../components/CommissionExceptions';
 import CommissionPlanSettings from '../components/CommissionPlanSettings';
 import CommissionStatementImport from '../components/CommissionStatementImport';
 import CommissionPanel from '../components/CommissionPanel';
+import { useUnsavedChanges } from '../lib/editProtection';
 import { isAuthorizationError } from '../lib/authorizationError';
 import { ReportDownload } from '../components/ReportDownload';
 import {
@@ -454,34 +455,22 @@ function Settings({ data, refresh }: { data: CommissionOverview; refresh: () => 
   const [newCarrierName, setNewCarrierName] = useState('');
   const [newCarrierStatus, setNewCarrierStatus] = useState('');
   const [newCarrierId, setNewCarrierId] = useState(() => crypto.randomUUID());
-  if (!references.data)
-    return (
-      <div className="card">
-        <p role={references.error ? 'alert' : undefined}>{references.error || 'Loading teammates and carriers…'}</p>
-        {references.error && <button className="secondary" type="button" disabled={references.loading} onClick={() => void references.refetch()}>Retry team & carriers</button>}
-      </div>
-    );
-  return (
-    <section className="commission-settings">
-      <section className="card commission-setup-guide" aria-labelledby="commission-setup-title">
-        <div className="commission-setup-heading">
-          <div><p className="small muted">Before your first reconciliation</p><h2 id="commission-setup-title">Commission setup checklist</h2></div>
-          <button type="button" className="secondary" disabled={references.loading} onClick={() => void references.refetch()}>Refresh team & carriers</button>
-        </div>
-        <div className="commission-setup-grid">
-          <a className="commission-setup-link" href="#commission-plan-assignments"><span className="commission-setup-step">1</span><span><strong>Assign employee plans</strong><span>{(data.planDefinitions ?? []).filter(p => !p.archived).length} available plans · {data.plans.length} employees with saved assignments</span><small>Choose effective dates, agreement references, and eligibility cutoffs.</small></span></a>
-          <a className="commission-setup-link" href="#commission-carrier-terms"><span className="commission-setup-step">2</span><span><strong>Add carrier payment terms</strong><span>{data.carriers.length} carriers with saved terms · {references.data.carriers.length} in the directory</span><small>Add a missing carrier here, then configure its payment arrangements.</small></span></a>
-          <a className="commission-setup-link" href="#commission-account-eligibility"><span className="commission-setup-step">3</span><span><strong>Confirm account eligibility</strong><span>Standard or GIM classification</span><small>Record the original first-bind date and supporting evidence.</small></span></a>
-          <a className="commission-setup-link" href="#commission-existing-policies"><span className="commission-setup-step">4</span><span><strong>Prepare existing policies</strong><span>{data.policies.length} policy terms tracked</span><small>Add historical policies before matching their statement lines.</small></span></a>
-        </div>
-        <div className="commission-setup-footer"><a className="commission-management-link" href="/settings?tab=team">Manage team members</a><a className="commission-management-link" href="/carriers">Manage carrier directory</a><a className="commission-management-link" href="/policies">Review CRM policies</a></div>
-        <p className="small muted">Saved assignments and carrier terms must cover each policy's relevant dates. Counts show saved records; review their dates and evidence before posting receipts.</p>
-      </section>
-      <CommissionPlanSettings definitions={data.planDefinitions ?? []} plans={data.plans} team={references.data.team} refresh={refresh} denied={invalidate} />
-      <section className="card commission-setting-section">
-      <h2 id="commission-carrier-terms">Carrier payment terms</h2>
-      <p className="muted">Select a carrier to add or edit its commission basis, payor, remittance schedule, and agreement reference. The directory's commission percentage does not create payment terms.</p>
-      <div className="commission-setup-footer"><button type="button" className="secondary" onClick={() => setAddingCarrier(v => !v)} aria-expanded={addingCarrier} aria-controls="commission-new-carrier">{addingCarrier ? 'Close new carrier form' : 'Add a carrier'}</button><a className="commission-management-link" href="/carriers">Open carrier directory</a></div>
+  const [manageCarrier, setManageCarrier] = useState(false), [carrierDirty, setCarrierDirty] = useState(false), [addPolicy, setAddPolicy] = useState(false);
+  const selectCarrier = (id: string) => { if (!carrierDirty || window.confirm('Discard unsaved carrier changes?')) { setCarrierDirty(false); setCarrier(id); setManageCarrier(true); } };
+  if (!references.data) return <div className="card"><p role={references.error ? 'alert' : undefined}>{references.error || 'Loading teammates and carriers…'}</p>{references.error && <button className="secondary" onClick={() => void references.refetch()}>Retry team & carriers</button>}</div>;
+  return <section className="commission-settings commission-settings-compact">
+    <section className="card commission-setup-intro">
+      <div className="commission-section-heading"><div><h2>Agreements & carriers</h2><p>Review what is saved, then edit only what your test policy needs.</p></div><button className="secondary" disabled={references.loading} onClick={() => void references.refetch()}>Refresh team & carriers</button></div>
+      <div className="commission-setup-totals"><span><strong>{(data.planDefinitions ?? []).length}</strong> plans</span><span><strong>{data.plans.length}</strong> assigned employees</span><span><strong>{data.carriers.length}</strong> configured carriers</span></div>
+      <p className="commission-setup-essential"><strong>Needed for a receipt test:</strong> an employee plan, account eligibility, a tracked policy, and proof of money received. Carrier forecasts are optional.</p>
+      <nav className="commission-setup-nav" aria-label="Setup sections"><a href="#commission-plan-assignments">Employees</a><a href="#commission-carrier-terms">Carriers</a><a href="#commission-account-eligibility">Accounts</a><a href="#commission-existing-policies">Policies</a></nav>
+    </section>
+    <CommissionPlanSettings definitions={data.planDefinitions ?? []} plans={data.plans} team={references.data.team} refresh={refresh} denied={invalidate} />
+    <section className="card commission-setting-section" id="commission-carrier-terms">
+      <div className="commission-section-heading"><div><h2>Carriers</h2><p>Use actual receipts to calculate earnings. Add a forecast only when you know the carrier’s schedule.</p></div><div className="commission-inline-actions"><button className="secondary" type="button" onClick={() => { if (!manageCarrier || !carrierDirty || window.confirm('Discard unsaved carrier changes?')) { if (manageCarrier) { setCarrierDirty(false); setCarrier(''); } setManageCarrier(v => !v); } }}>{manageCarrier ? 'Close carrier editor' : 'Configure carrier'}</button><button className="secondary" type="button" onClick={() => { setAddingCarrier(v => !v); setManageCarrier(true); }}>Add a carrier</button></div></div>
+      {data.carriers.length ? <div className="commission-scroll"><table aria-label="Saved carrier settings"><thead><tr><th>Carrier</th><th>Tracking / payment schedule</th><th>Applies to</th><th><span className="sr-only">Actions</span></th></tr></thead><tbody>{data.carriers.map(c => <tr key={c.id}><td><strong>{c.name}</strong></td><td>{c.receiptOnly ? <><span>Actual receipts only</span><span className="commission-row-note">Payment timing not configured</span></> : c.arrangements?.length ? c.arrangements.map(a => <div className="commission-summary-period" key={a.id}><span>{COMMISSION_BASES[a.basis]} · {a.cadence === 'ONCE' ? 'Once per trigger' : a.cadence === 'MONTHLY' ? 'Monthly' : 'Quarterly'}</span><span className="commission-row-note">Paid by {a.payor} · {a.trigger === 'BIND' ? 'After binding' : a.trigger === 'EFFECTIVE' ? 'From effective date' : a.trigger === 'COLLECTION' ? 'After premium collection' : 'As coverage is earned'} · {a.lagDays} day lag{a.cutoffDay ? ' · Cutoff day ' + a.cutoffDay : ''}{a.paymentDay ? ' · Payment day ' + a.paymentDay : ''}</span></div>) : <><span>{COMMISSION_BASES[c.basis]} · {c.schedule}</span><span className="commission-row-note">Legacy terms · forecast not configured</span></>}</td><td>{c.arrangements?.map(a => <div className="commission-summary-period" key={a.id}><span>{a.from}{a.to ? ' – ' + a.to : ' onward'}</span><span className="commission-row-note">{a.lines?.join(', ') || 'All coverage lines'} · {a.transaction ? a.transaction === 'NEW' ? 'New business' : 'Renewals' : 'New & renewal'} · {a.billType ? a.billType === 'DIRECT' ? 'Direct bill' : 'Agency bill' : 'All billing types'}</span><span className="commission-row-note">Reference: {a.evidence}</span></div>) ?? 'All policy dates'}</td><td><button className="secondary" type="button" aria-label={'Edit carrier ' + c.name} onClick={() => selectCarrier(c.id)}>Edit</button></td></tr>)}</tbody></table></div> : <p className="commission-compact-empty">No carriers configured. Choose Configure carrier, then Use actual receipts only to begin.</p>}
+      {manageCarrier && <div className="commission-inline-editor">
+        <div className="commission-section-heading"><h3>Carrier setup</h3><a className="commission-management-link" href="/carriers">Carrier directory</a></div>
       {addingCarrier && <div id="commission-new-carrier">
         <ActionForm title="Add a carrier to the CRM" button="Create carrier" disabled={!newCarrierName.trim() || !newCarrierStatus}
           onDone={async () => { await references.refetch(); setAddingCarrier(false); setNewCarrierName(''); setNewCarrierStatus(''); setNewCarrierId(crypto.randomUUID()); }}
@@ -502,48 +491,27 @@ function Settings({ data, refresh }: { data: CommissionOverview; refresh: () => 
           </div>
         </ActionForm>
       </div>}
-      <label className="field">
-        Carrier
-        <select value={carrier} onChange={(e) => setCarrier(e.target.value)}>
-          <option value="">Choose a carrier…</option>
-          {references.data.carriers.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-            </option>
-          ))}
-        </select>
-      </label>
-      {carrier && (
-        <CarrierEditor
-          key={`${carrier}:${data.carriers.find((c) => c.id === carrier)?.version ?? 0}`}
-          id={carrier}
-          terms={data.carriers.find((c) => c.id === carrier)}
-          refresh={refresh}
-        />
-      )}
-      {!carrier && <div className="commission-empty">{references.data.carriers.length ? 'Choose a carrier, then use Add payment arrangement to enter its first set of terms.' : 'No carriers are in the directory yet. Use Add a carrier above to get started.'}</div>}
-      </section>
-      <AccountClassifications />
-      <div id="commission-existing-policies"><LegacyPolicies data={data} refresh={refresh} /></div>
+        <label className="field">Carrier<select value={carrier} onChange={event => selectCarrier(event.target.value)}><option value="">Choose a carrier…</option>{references.data.carriers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label>
+        {carrier && <CarrierEditor key={carrier + ':' + (data.carriers.find(c => c.id === carrier)?.version ?? 0)} id={carrier} terms={data.carriers.find(c => c.id === carrier)} refresh={refresh} dirty={setCarrierDirty} />}
+      </div>}
     </section>
-  );
-}
-function AccountClassifications() {
-  const [accountId, setAccountId] = useState('');
-  return (
-    <section className="card commission-setting-section">
-      <h2 id="commission-account-eligibility">Account commission classification</h2>
-      <p className="muted">
-        GIM Property Management is the only house-account program. Review each account as Standard
-        or GIM before binding. Classification is an Owner decision; changing a management
-        relationship does not change commission terms.
-      </p>
-      <AccountPicker value={accountId} onChange={setAccountId} disabled={false} />
-      {accountId ? <AccountClassificationResource key={accountId} id={accountId} /> : <div className="commission-empty">Select an account to review its classification history.</div>}
+    <AccountClassifications accounts={data.accounts ?? []} refresh={refresh} />
+    <section className="card commission-setting-section" id="commission-existing-policies">
+      <div className="commission-section-heading"><div><h2>Tracked policies</h2><p>Only add policies that appear on the statement you are testing.</p></div><button type="button" className="secondary" onClick={() => setAddPolicy(v => !v)}>{addPolicy ? 'Close policy form' : 'Add existing policy'}</button></div>
+      {data.policies.length ? <div className="commission-scroll"><table aria-label="Tracked commission policies"><thead><tr><th>Policy / account</th><th>Producer</th><th>Agency / producer rate</th><th>Policy dates</th></tr></thead><tbody>{data.policies.map(p => <tr key={p.id}><td><strong>{p.policyNumber}</strong><span className="commission-row-note">{p.accountName}</span></td><td>{p.producerName}</td><td>{p.agencyRateUnits / 10000}% / {p.producerBps / 100}%<span className="commission-row-note">{p.transaction === 'NEW' ? 'New business' : 'Renewal'}</span></td><td>{p.effectiveDate} – {p.expirationDate}</td></tr>)}</tbody></table></div> : <p className="commission-compact-empty">No policies tracked yet.</p>}
+      <div hidden={!addPolicy} className="commission-inline-editor"><LegacyPolicies data={data} refresh={refresh} /></div>
     </section>
-  );
+  </section>;
 }
-function AccountClassificationResource({ id }: { id: string }) {
+function AccountClassifications({ accounts, refresh }: { accounts: CommissionAccount[]; refresh: () => Promise<void> }) {
+  const [accountId, setAccountId] = useState(''), [editing, setEditing] = useState(false);
+  return <section className="card commission-setting-section" id="commission-account-eligibility">
+    <div className="commission-section-heading"><div><h2>Account eligibility</h2><p>Confirm Standard or GIM and the original first-bind history for the accounts you are testing.</p></div><button className="secondary" type="button" onClick={() => setEditing(v => !v)}>{editing ? 'Close account form' : 'Add account classification'}</button></div>
+    {accounts.length ? <div className="commission-scroll"><table aria-label="Saved account classifications"><thead><tr><th>Account</th><th>Classification / dates</th><th>First bind</th><th><span className="sr-only">Actions</span></th></tr></thead><tbody>{accounts.map(a => <tr key={a.id}><td><strong>{a.name}</strong></td><td>{a.periods.map((p, i) => <div className="commission-summary-period" key={i}>{p.classification === 'GIM' ? 'GIM' : 'Standard'}<span className="commission-row-note">{p.from}{p.to ? ' – ' + p.to : ' onward'}</span></div>)}</td><td>{a.firstBoundOn || (a.neverBound ? 'Never bound' : 'Needs review')}</td><td><button type="button" className="secondary" aria-label={'Edit account ' + a.name} onClick={() => { setAccountId(a.id); setEditing(true); }}>Edit</button></td></tr>)}</tbody></table></div> : <p className="commission-compact-empty">No account classifications saved.</p>}
+    <div hidden={!editing} className="commission-inline-editor"><AccountPicker value={accountId} onChange={setAccountId} disabled={false} />{accountId && <AccountClassificationResource key={accountId} id={accountId} onSaved={refresh} />}</div>
+  </section>;
+}
+function AccountClassificationResource({ id, onSaved }: { id: string; onSaved: () => Promise<void> }) {
   const invalidate = useContext(CommissionAccessContext);
   const resource = useAsyncResource(
     async () => {
@@ -569,7 +537,7 @@ function AccountClassificationResource({ id }: { id: string }) {
       id={id}
       name={resource.data.accountName}
       account={resource.data.classification ?? undefined}
-      refresh={resource.refetch}
+      refresh={async () => { await resource.refetch(); await onSaved(); }}
     />
   );
 }
@@ -762,10 +730,12 @@ function CarrierEditor({
   id,
   terms,
   refresh,
+  dirty,
 }: {
   id: string;
   terms?: CarrierCommissionTerms;
   refresh: () => Promise<void>;
+  dirty?: (changed: boolean) => void;
 }) {
   const [arrangements, setArrangements] = useState<ArrangementDraft[]>(
     () =>
@@ -784,7 +754,20 @@ function CarrierEditor({
   );
   const update = (index: number, change: Partial<ArrangementDraft>) =>
     setArrangements(arrangements.map((a, i) => (i === index ? { ...a, ...change } : a)));
-  return (
+  const [schedule, setSchedule] = useState(!!terms && !terms.receiptOnly);
+  const initial = useRef(JSON.stringify(arrangements));
+  const changed = initial.current !== JSON.stringify(arrangements);
+  useUnsavedChanges(changed);
+  useEffect(() => { dirty?.(changed); }, [changed, dirty]);
+  return <div className="commission-carrier-editor">
+    <div className="commission-receipt-choice">
+      <div><strong>Actual receipts only</strong><p>Enough to reconcile statements and calculate employee earnings. Expected payment dates stay unknown.</p></div>
+      {terms?.receiptOnly ? <span className="commission-status-label">Enabled</span> : <ActionForm title="Enable receipt tracking" button="Use actual receipts only" disabled={changed} onDone={refresh} submit={() => commissionAction('saveCarrier', { id, version: terms?.version ?? 0, receiptOnly: true })}>
+        {terms && <p className="small muted">This replaces the schedule for future policy snapshots. Existing snapshots keep their saved terms.</p>}
+      </ActionForm>}
+    </div>
+    <button type="button" className="secondary" aria-expanded={schedule} onClick={() => setSchedule(v => !v)}>{schedule ? 'Hide payment forecast' : 'Add payment forecast (optional)'}</button>
+    {schedule && (
     <ActionForm
       title="Carrier commission payment terms"
       button="Save carrier payment terms"
@@ -797,7 +780,7 @@ function CarrierEditor({
           version: terms?.version ?? 0,
           basis: first?.basis ?? terms?.basis,
           schedule:
-            terms?.schedule || `${first.cadence} · ${first.trigger} · ${first.lagDays} day lag`,
+            (terms?.schedule && !terms.receiptOnly) ? terms.schedule : `${first.cadence} · ${first.trigger} · ${first.lagDays} day lag`,
           evidence: first?.evidence ?? terms?.evidence,
           arrangements: arrangements.map((a) => ({
             id: a.id,
@@ -828,10 +811,10 @@ function CarrierEditor({
       }}
     >
       <p className="small muted">
-        Commission basis, remittance timing, and the client’s premium payment plan are separate.
-        Terms apply by policy effective date; saved policy snapshots keep their original terms.
+        Optional forecasting only. Enter confirmed carrier rules below; actual receipts determine employee earnings.
+        Effective dates select the agreement for each policy.
       </p>
-      {terms && !terms.arrangements?.length && (
+      {terms && !terms.receiptOnly && !terms.arrangements?.length && (
         <div className="commission-notice">
           <strong>Legacy carrier terms need a structured payment arrangement.</strong>
           <p>
@@ -853,6 +836,10 @@ function CarrierEditor({
               value={a.from}
               change={(v) => update(i, { from: v })}
             />
+          </div>
+          <CommissionPanel title={`Coverage and end date ${i + 1} (optional)`} open={!!(a.to || a.lines || a.transaction || a.billType)}>
+          <p className="small muted">Use only when this agreement applies to specific coverage, business types, or billing methods.</p>
+          <div className="form-grid">
             <label className="field">
               {`Carrier terms through ${i + 1} (optional)`}
               <input type="date" value={a.to} onChange={(e) => update(i, { to: e.target.value })} />
@@ -895,6 +882,9 @@ function CarrierEditor({
                 <option value="DIRECT">Direct bill</option>
               </select>
             </label>
+          </div>
+          </CommissionPanel>
+          <div className="form-grid">
             <label className="field">
               {`Commission basis ${i + 1}`}
               <select
@@ -903,13 +893,13 @@ function CarrierEditor({
                 onChange={(e) =>
                   update(i, {
                     basis: e.target.value as ArrangementDraft['basis'],
-                    trigger: '',
+                    trigger: e.target.value === 'COLLECTED' ? 'COLLECTION' : e.target.value === 'EARNED' ? 'EARNED' : '',
                     earningMethod: '',
                   })
                 }
               >
                 <option value="">Confirm the premium basis…</option>
-                {Object.entries(COMMISSION_BASES).map(([value, label]) => (
+                {Object.entries(COMMISSION_BASES).filter(([value]) => value !== 'UNSPECIFIED').map(([value, label]) => (
                   <option key={value} value={value}>
                     {label}
                   </option>
@@ -973,6 +963,28 @@ function CarrierEditor({
                 onChange={(e) => update(i, { lagDays: e.target.value })}
               />
             </label>
+            {a.basis === 'EARNED' && (
+              <label className="field">
+                {`Earned premium method ${i + 1}`}
+                <select
+                  required
+                  value={a.earningMethod}
+                  onChange={(e) =>
+                    update(i, {
+                      earningMethod: e.target.value as ArrangementDraft['earningMethod'],
+                    })
+                  }
+                >
+                  <option value="">Confirm the method…</option>
+                  <option value="DAILY_PRORATA">Daily pro rata forecast</option>
+                  <option value="MANUAL">Carrier schedule entered manually</option>
+                </select>
+              </label>
+            )}
+          </div>
+          <CommissionPanel title={`Statement dates ${i + 1} (optional)`} open={!!(a.cutoffDay || a.paymentDay)}>
+            <p className="small muted">Only enter documented calendar days. Blank cutoff uses month end; blank remittance day uses the cutoff date.</p>
+            <div className="form-grid">
             <label className="field">
               {`Statement cutoff day ${i + 1} (optional)`}
               <input
@@ -996,25 +1008,9 @@ function CarrierEditor({
                 onChange={(e) => update(i, { paymentDay: e.target.value })}
               />
             </label>
-            {a.basis === 'EARNED' && (
-              <label className="field">
-                {`Earned premium method ${i + 1}`}
-                <select
-                  required
-                  value={a.earningMethod}
-                  onChange={(e) =>
-                    update(i, {
-                      earningMethod: e.target.value as ArrangementDraft['earningMethod'],
-                    })
-                  }
-                >
-                  <option value="">Confirm the method…</option>
-                  <option value="DAILY_PRORATA">Daily pro rata forecast</option>
-                  <option value="MANUAL">Carrier schedule entered manually</option>
-                </select>
-              </label>
-            )}
-          </div>
+
+            </div>
+          </CommissionPanel>
           <Field
             label={`Carrier agreement reference ${i + 1}`}
             value={a.evidence}
@@ -1041,6 +1037,7 @@ function CarrierEditor({
       >
         Add payment arrangement
       </button>
+      <CommissionPanel title="How forecast dates work">
       <p className="small muted">
         Dates are inclusive. Separate lines of business with commas. Monthly cycles close each
         month; quarterly cycles close in March, June, September, and December. Triggers after the
@@ -1055,8 +1052,10 @@ function CarrierEditor({
         mean collected premium. Record the contract’s meaning explicitly. Forecasts never create
         receipts or producer earnings.
       </p>
+      </CommissionPanel>
     </ActionForm>
-  );
+    )}
+  </div>;
 }
 function CarrierBalances({ balances: b }: { balances: CommissionReconciliationBalances }) {
   const value = (amount: number | null) => (amount == null ? 'Unknown' : money(amount));

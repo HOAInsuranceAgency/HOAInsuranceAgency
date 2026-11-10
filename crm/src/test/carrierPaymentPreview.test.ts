@@ -1,6 +1,6 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 import { commissionPolicy } from './commissionFixtures';
-import type { CarrierPaymentArrangement } from '../../../shared/commissions';
+import { receiptOnlyCarrierTerms, type CarrierPaymentArrangement } from '../../../shared/commissions';
 
 const h = vi.hoisted(() => ({ get: vi.fn(), requireRecord: vi.fn() }));
 vi.mock('../../amplify/functions/commissions/store', () => ({ get: h.get }));
@@ -50,4 +50,9 @@ it('rejects missing matches and invalid bill types without returning another arr
   h.get.mockClear();
   await expect(previewCarrierPaymentTerms(event('MONTHLY'))).rejects.toThrow('Choose a bill type');
   expect(h.get).not.toHaveBeenCalled();
+});
+
+it('previews explicit receipt-only tracking without inventing or exposing carrier payment rules', async () => {
+  h.get.mockResolvedValue(receiptOnlyCarrierTerms({ id: 'c', name: 'Carrier', version: 3 }));
+  expect(await previewCarrierPaymentTerms(event())).toEqual({ carrierTermsVersion: 3, basis: 'UNSPECIFIED' });
 });

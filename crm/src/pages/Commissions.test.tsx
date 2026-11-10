@@ -153,6 +153,7 @@ it('searches historical policies in filtered pages and follows empty continuatio
   render(<Commissions />);
   await screen.findByText('Producer earned');
   fireEvent.click(screen.getByRole('tab', { name: 'Agreements & carriers' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Add existing policy' }));
   const search = await screen.findByLabelText('Find historical policy number');
   expect(h.policies).not.toHaveBeenCalled();
   fireEvent.change(search, { target: { value: 'OLD' } });
@@ -188,6 +189,7 @@ it('retries a failed historical search with the same text without leaving the pa
   render(<Commissions />);
   await screen.findByText('Producer earned');
   fireEvent.click(screen.getByRole('tab', { name: 'Agreements & carriers' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Add existing policy' }));
   fireEvent.change(await screen.findByLabelText('Find historical policy number'), {
     target: { value: 'OLD' },
   });
@@ -220,6 +222,7 @@ it('lets the Owner confirm missing historical dates before adopting a policy', a
   render(<Commissions />);
   await screen.findByText('Producer earned');
   fireEvent.click(screen.getByRole('tab', { name: 'Agreements & carriers' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Add existing policy' }));
   fireEvent.change(await screen.findByLabelText('Find historical policy number'), {
     target: { value: 'OLD' },
   });
@@ -259,6 +262,7 @@ it('configures a reusable plan before assigning it to a producer', async () => {
   render(<Commissions />);
   await screen.findByText('Producer earned');
   fireEvent.click(screen.getByRole('tab', { name: 'Agreements & carriers' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Add plan' }));
   await screen.findByLabelText('Plan name');
   for (const [label, value] of [['Plan name','Producer standard'],['Plan new business %','20'],['Plan renewal %','10'],['Plan document reference','Final plan']]) fireEvent.change(screen.getByLabelText(label), { target: { value } });
   fireEvent.click(screen.getByLabelText('Include GIM house-account rates'));
@@ -271,8 +275,9 @@ it('keeps employee effective dates and eligibility on the plan assignment', asyn
   h.read.mockResolvedValue({ ...snapshot(), planDefinitions: [{ id: 'standard', version: 3, name: 'Producer standard', newBps: 2000, renewalBps: 1000, agreement: 'Plan reference', archived: false }] });
   render(<Commissions />); await screen.findByText('Producer earned');
   fireEvent.click(screen.getByRole('tab', { name: 'Agreements & carriers' }));
-  fireEvent.change(await screen.findByLabelText('Producer'), { target: { value: 'producer' } });
+  fireEvent.click(await screen.findByRole('button', { name: 'Assign plan to Brian Cole' }));
   fireEvent.change(screen.getByLabelText('Commission plan 1'), { target: { value: 'standard:3' } });
+  fireEvent.click(screen.getByText('Eligibility limits and end date (optional)'));
   for (const [label, value] of [['Assignment starts 1','2026-10-01'],['Employee agreement reference 1','Brian signed agreement'],['Account first-bind cutoff 1 (optional)','2026-10-01'],['Receipt eligibility begins 1 (optional)','2026-10-01']]) fireEvent.change(screen.getByLabelText(label), { target: { value } });
   fireEvent.click(screen.getByRole('button', { name: 'Save producer assignments' }));
   await waitFor(() => expect(h.action).toHaveBeenCalledWith('savePlanAssignments', expect.objectContaining({ producerId: 'producer', version: 0, assignments: [expect.objectContaining({ planId: 'standard', planVersion: 3, from: '2026-10-01', accountBoundFrom: '2026-10-01', receiptsFrom: '2026-10-01' })] })));
@@ -282,6 +287,7 @@ it('searches and classifies a GIM account with dates and evidence and clears con
   const view = render(<Commissions />);
   await screen.findByText('Producer earned');
   fireEvent.click(screen.getByRole('tab', { name: 'Agreements & carriers' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Add account classification' }));
   fireEvent.change(await screen.findByRole('textbox', { name: /Find insured account/ }), {
     target: { value: 'Cedar' },
   });
@@ -350,6 +356,7 @@ it('does not offer an empty classification editor after a failed read and reload
   render(<Commissions />);
   await screen.findByText('Producer earned');
   fireEvent.click(screen.getByRole('tab', { name: 'Agreements & carriers' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Add account classification' }));
   fireEvent.change(await screen.findByRole('textbox', { name: /Find insured account/ }), {
     target: { value: 'Cedar' },
   });
@@ -415,6 +422,7 @@ it('saves scoped dated carrier payment arrangements without inferring legacy sch
   render(<Commissions />);
   await screen.findByText('Producer earned');
   fireEvent.click(screen.getByRole('tab', { name: 'Agreements & carriers' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Edit carrier Carrier' }));
   fireEvent.change(await screen.findByLabelText('Carrier'), {
     target: { value: 'c' },
   });
@@ -427,6 +435,8 @@ it('saves scoped dated carrier payment arrangements without inferring legacy sch
   expect(screen.getByLabelText('Receipt trigger 1')).toHaveValue('');
   expect(screen.getByLabelText('Remittance frequency 1')).toHaveValue('');
   expect(screen.getByLabelText('Additional lag days 1')).toHaveValue(null);
+  fireEvent.click(screen.getByText('Coverage and end date 1 (optional)'));
+  fireEvent.click(screen.getByText('Statement dates 1 (optional)'));
   for (const [label, value] of [
     ['Carrier terms effective from 1', '2026-01-01'],
     ['Carrier terms through 1 (optional)', '2026-12-31'],
@@ -627,12 +637,12 @@ it('opens the setup checklist from the ledger and refreshes newly added employee
   render(<Commissions />);
   await screen.findByText('Producer earned');
   fireEvent.click(screen.getByRole('button', { name: 'Commission setup' }));
-  await screen.findByRole('heading', { name: 'Commission setup checklist' });
-  expect(screen.getByRole('link', { name: /Add carrier payment terms/ })).toHaveAttribute('href', '#commission-carrier-terms');
-  expect(screen.getByRole('link', { name: /Prepare existing policies/ })).toHaveAttribute('href', '#commission-existing-policies');
+  await screen.findByRole('heading', { name: 'Agreements & carriers' });
+  expect(screen.getByRole('link', { name: 'Carriers' })).toHaveAttribute('href', '#commission-carrier-terms');
+  expect(screen.getByRole('link', { name: 'Policies' })).toHaveAttribute('href', '#commission-existing-policies');
   h.communications.mockResolvedValue({ team: [{ userId: 'producer', name: 'Brian Cole' }, { userId: 'second', name: 'Holly Martin' }] });
   fireEvent.click(screen.getByRole('button', { name: 'Refresh team & carriers' }));
-  await screen.findByRole('option', { name: 'Holly Martin' });
+  await screen.findByRole('button', { name: 'Assign plan to Holly Martin' });
 });
 it('creates a missing carrier, refreshes the directory, and opens its payment terms without inventing terms', async () => {
   h.owner = true;
@@ -647,9 +657,10 @@ it('creates a missing carrier, refreshes the directory, and opens its payment te
   h.carriers.mockResolvedValue({ data: [{ id: 'new-carrier', name: 'New Carrier', appointed: true }], nextToken: null });
   fireEvent.click(screen.getByRole('button', { name: 'Create carrier' }));
   await waitFor(() => expect(h.createCarrier).toHaveBeenCalledWith({ id: expect.any(String), name: 'New Carrier', appointed: true }));
-  await screen.findByRole('button', { name: 'Add payment arrangement' });
+  await screen.findByRole('button', { name: 'Use actual receipts only' });
   expect(screen.getByLabelText('Carrier')).toHaveValue('new-carrier');
-  expect(screen.getByRole('button', { name: 'Save carrier payment terms' })).toBeDisabled();
+  expect(screen.queryByLabelText('Commission payor 1')).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Save carrier payment terms' })).toBeNull();
   expect(h.action).not.toHaveBeenCalledWith('saveCarrier', expect.anything());
 });
 it('prevents a duplicate carrier and preserves the draft when creation fails', async () => {
@@ -675,7 +686,7 @@ it('does not expose owner setup controls in the producer view', async () => {
   render(<Commissions />);
   await screen.findByText('Producer earned');
   expect(screen.queryByRole('button', { name: 'Commission setup' })).toBeNull();
-  expect(screen.queryByRole('heading', { name: 'Commission setup checklist' })).toBeNull();
+  expect(screen.queryByRole('heading', { name: 'Agreements & carriers' })).toBeNull();
 });
 
 it('opens the linked setup view for an Owner without exposing it to a Producer', async () => {
@@ -683,11 +694,11 @@ it('opens the linked setup view for an Owner without exposing it to a Producer',
   try {
     h.owner = true;
     const view = render(<Commissions />);
-    await screen.findByRole('heading', { name: 'Commission setup checklist' });
+    await screen.findByRole('heading', { name: 'Agreements & carriers' });
     h.owner = false;
     view.rerender(<Commissions />);
     await screen.findByText('Producer earned');
-    expect(screen.queryByRole('heading', { name: 'Commission setup checklist' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Agreements & carriers' })).toBeNull();
   } finally {
     window.history.replaceState({}, '', '/');
   }
@@ -714,6 +725,54 @@ it('allows setup reference data to be retried after a temporary lookup failure',
   fireEvent.click(screen.getByRole('button', { name: 'Commission setup' }));
   expect(await screen.findByRole('alert')).toHaveTextContent('Team lookup unavailable');
   fireEvent.click(screen.getByRole('button', { name: 'Retry team & carriers' }));
-  await screen.findByRole('heading', { name: 'Commission setup checklist' });
-  expect(screen.getByRole('option', { name: 'Brian Cole' })).toBeVisible();
+  await screen.findByRole('heading', { name: 'Agreements & carriers' });
+  expect(screen.getByRole('button', { name: 'Assign plan to Brian Cole' })).toBeVisible();
+});
+
+it('shows saved plans, assignments, carrier schedules and account classifications without choosing dropdowns', async () => {
+  h.owner = true;
+  const definition = { id: 'plan', version: 2, name: 'Sales Rep', newBps: 2000, renewalBps: 1000, agreement: 'Plan document', archived: false };
+  h.read.mockResolvedValue({ ...snapshot(), planDefinitions: [definition],
+    plans: [{ id: 'producer', version: 1, producerId: 'producer', name: 'Brian Cole', terms: [{ from: '2026-10-05', newBps: 2000, renewalBps: 1000, agreement: 'Employee agreement', assignment: { id: 'assigned', planId: 'plan', planVersion: 2, planName: 'Sales Rep', planReference: 'Plan document' } }] }],
+    carriers: [{ ...commissionPolicy().carrierTerms, arrangements: [{ id: 'default', from: '2026-01-01', basis: 'WRITTEN', payor: 'Test MGA', trigger: 'EFFECTIVE', cadence: 'MONTHLY', lagDays: 2, evidence: 'Schedule evidence' }] }],
+    accounts: [{ id: 'a', name: 'Cedar HOA', version: 1, firstBoundOn: '2026-10-01', periods: [{ from: '2026-10-01', classification: 'STANDARD', evidence: 'Reviewed' }] }],
+  });
+  render(<Commissions />);
+  fireEvent.click(screen.getByRole('button', { name: 'Commission setup' }));
+  expect(await screen.findByRole('table', { name: 'Saved commission plans' })).toHaveTextContent('Sales Rep');
+  expect(screen.getByRole('table', { name: 'Saved employee assignments' })).toHaveTextContent('2026-10-05');
+  expect(screen.getByRole('table', { name: 'Saved carrier settings' })).toHaveTextContent('Test MGA');
+  expect(screen.getByRole('table', { name: 'Saved account classifications' })).toHaveTextContent('Cedar HOA');
+  expect(screen.queryByRole('combobox')).toBeNull();
+  expect(screen.queryByLabelText('Plan name')).toBeNull();
+  expect(screen.queryByLabelText('Original bind date')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Edit assignment for Brian Cole' }));
+  expect(screen.getByLabelText('Assignment starts 1')).toHaveValue('2026-10-05');
+});
+it('enables actual receipts without asking for payment timing or guessing carrier terms', async () => {
+  h.owner = true;
+  h.carriers.mockResolvedValue({ data: [{ id: 'c', name: 'Carrier' }], nextToken: null });
+  render(<Commissions />);
+  fireEvent.click(screen.getByRole('button', { name: 'Commission setup' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Configure carrier' }));
+  fireEvent.change(screen.getByLabelText('Carrier'), { target: { value: 'c' } });
+  expect(screen.queryByLabelText('Carrier terms effective from 1')).toBeNull();
+  expect(screen.queryByLabelText('Commission payor 1')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Use actual receipts only' }));
+  await waitFor(() => expect(h.action).toHaveBeenCalledWith('saveCarrier', { id: 'c', version: 0, receiptOnly: true }));
+});
+it('prefills the plan reference for an assignment without clearing an employee-specific agreement', async () => {
+  h.owner = true;
+  h.read.mockResolvedValue({ ...snapshot(), planDefinitions: [
+    { id: 'a', version: 1, name: 'Plan A', newBps: 2000, renewalBps: 1000, agreement: 'Plan A agreement', archived: false },
+    { id: 'b', version: 1, name: 'Plan B', newBps: 1600, renewalBps: 800, agreement: 'Plan B agreement', archived: false },
+  ] });
+  render(<Commissions />);
+  fireEvent.click(screen.getByRole('button', { name: 'Commission setup' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Assign plan to Brian Cole' }));
+  fireEvent.change(screen.getByLabelText('Commission plan 1'), { target: { value: 'a:1' } });
+  expect(screen.getByLabelText('Employee agreement reference 1')).toHaveValue('Plan A agreement');
+  fireEvent.change(screen.getByLabelText('Employee agreement reference 1'), { target: { value: 'Signed individual agreement' } });
+  fireEvent.change(screen.getByLabelText('Commission plan 1'), { target: { value: 'b:1' } });
+  expect(screen.getByLabelText('Employee agreement reference 1')).toHaveValue('Signed individual agreement');
 });

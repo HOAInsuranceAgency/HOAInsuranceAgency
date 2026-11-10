@@ -1,7 +1,8 @@
 /** Commission contracts and arithmetic. All ledger amounts are integer USD cents.
  * These records are private; never place them on shared Policy/UserProfile rows. */
 export type CommissionBasis = 'WRITTEN' | 'EARNED' | 'COLLECTED';
-export const COMMISSION_BASES: Record<CommissionBasis, string> = {
+export const COMMISSION_BASES: Record<CommissionBasis | 'UNSPECIFIED', string> = {
+  UNSPECIFIED: 'Actual receipts only',
   WRITTEN: 'Written premium',
   EARNED: 'Earned premium',
   COLLECTED: 'Collected premium',
@@ -75,10 +76,12 @@ export interface CarrierPaymentArrangement {
   notes?: string;
 }
 export interface CarrierCommissionTerms {
+  /** Explicit receipt-only setup: no assumed carrier basis or payment forecast. */
+  receiptOnly?: true;
   id: string;
   version: number;
   name: string;
-  basis: CommissionBasis;
+  basis: CommissionBasis | 'UNSPECIFIED';
   schedule: string;
   evidence: string;
   arrangements?: CarrierPaymentArrangement[];
@@ -233,6 +236,8 @@ export interface CommissionBatch {
   }[];
 }
 export interface CommissionOverview {
+  /** Owner-only saved account settings; never part of an employee projection. */
+  accounts?: CommissionAccount[];
   earnings?: import('./commissionExceptions').CommissionEarning[];
   planDefinitions?: CommissionPlanDefinition[];
   plans: CommissionPlan[];
@@ -604,6 +609,12 @@ function arrangementsOverlap(a: CarrierPaymentArrangement, b: CarrierPaymentArra
   );
 }
 /** New writes require structured, sourced terms. Legacy snapshots remain readable. */
+/** Receipt-only terms deliberately carry no dates, premium basis, or forecast facts. */
+export function receiptOnlyCarrierTerms(input: Pick<CarrierCommissionTerms, 'id' | 'version' | 'name'>): CarrierCommissionTerms {
+  return { id: required(input.id, 'a carrier'), version: integer(input.version, 0, Number.MAX_SAFE_INTEGER, 'carrier version'),
+    name: required(input.name, 'a carrier name', 200), receiptOnly: true, basis: 'UNSPECIFIED',
+    schedule: 'Actual receipts only; payment timing not configured.', evidence: '' };
+}
 export function validateCarrierPaymentTerms(terms: CarrierCommissionTerms): CarrierCommissionTerms {
   const name = required(terms.name, 'a carrier name', 200);
   if (!Array.isArray(terms.arrangements) || !terms.arrangements.length || terms.arrangements.length > 100)
@@ -612,7 +623,7 @@ export function validateCarrierPaymentTerms(terms: CarrierCommissionTerms): Carr
     if (!a || typeof a !== 'object') throw new Error('Enter a valid carrier payment arrangement.');
     const from = day(a.from), to = a.to ? day(a.to) : undefined;
     if (to && to < from) throw new Error('A carrier arrangement cannot end before it starts.');
-    if (!Object.hasOwn(COMMISSION_BASES, a.basis)) throw new Error('Choose a commission basis.');
+    if (!['WRITTEN', 'EARNED', 'COLLECTED'].includes(a.basis)) throw new Error('Choose a commission basis.');
     if (!['BIND', 'EFFECTIVE', 'COLLECTION', 'EARNED'].includes(a.trigger))
       throw new Error('Choose a carrier payment trigger.');
     if ((a.basis === 'WRITTEN' && !['BIND', 'EFFECTIVE'].includes(a.trigger)) ||
@@ -693,6 +704,10 @@ export function selectCarrierPaymentTerms(
   context: CarrierPaymentContext,
 ): CarrierCommissionTerms {
   const effectiveDate = day(context.effectiveDate);
+  if (terms.receiptOnly) {
+    if (terms.arrangements?.length || terms.payment) throw new Error('Receipt-only setup cannot contain a payment forecast.');
+    return receiptOnlyCarrierTerms(terms);
+  }
   if (!terms.arrangements?.length) {
     const { payment: _payment, ...legacy } = terms;
     return { ...legacy };
