@@ -501,7 +501,7 @@ function Settings({ data, refresh }: { data: CommissionOverview; refresh: () => 
             <label className="field">New carrier appointment status<select required value={newCarrierStatus} onChange={e => setNewCarrierStatus(e.target.value)}><option value="">Confirm appointment status…</option><option value="APPOINTED">Appointed</option><option value="PROSPECTIVE">Prospective</option></select></label>
           </div>
         </ActionForm>
-      </div>
+      </div>}
       <label className="field">
         Carrier
         <select value={carrier} onChange={(e) => setCarrier(e.target.value)}>

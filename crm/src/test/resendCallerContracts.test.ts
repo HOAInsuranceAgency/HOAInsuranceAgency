@@ -51,6 +51,10 @@ beforeEach(() => {
   h.cognito.mockReset().mockImplementation(async command => command.constructor.name === "AdminCreateUserCommand" ? { User: { Username: "synthetic-member", Attributes: [{ Name: "sub", Value: h.createdSub }] } } : {});
   h.writePayment.mockReset().mockImplementation(async () => { h.order.push("payment-write"); return true; });
   for (const [key, value] of Object.entries({
+    // Default fixtures exercise the untracked sender contract. The tracked
+    // tests below opt into each provider with their own synthetic table/proof.
+    // Never inherit the Amplify build's live provider configuration.
+    HOA_TRANSACTIONAL_MAIL_PROVIDER: "", HOA_TRANSACTIONAL_MAIL_TABLE: "",
     HOA_MIGRATION_APP_ID: "d1nuh9rw1hcuxo", HOA_MIGRATION_PREVIEW: "false", HOA_MIGRATION_WORKERS_ENABLED: "true",
     MAGIC_LINK_BASE_URL: "https://crm.protectmyhoa.com", MAGIC_LINK_FROM: "noreply@protectmyhoa.com",
     USER_POOL_ID: "synthetic-destination-pool", PORTAL_URL: "https://crm.protectmyhoa.com", INVITE_FROM: "noreply@protectmyhoa.com",
