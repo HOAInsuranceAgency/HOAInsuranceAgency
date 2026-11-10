@@ -1,3 +1,4 @@
+import { STAGING_BUSINESS_RECIPIENTS, STAGING_LOGIN_RECIPIENTS } from "../transactional-mail/staging-recipients";
 import { createHash } from "node:crypto";
 import type { TransactWriteCommandInput } from "@aws-sdk/lib-dynamodb";
 
@@ -78,7 +79,10 @@ export function parseSesRecord(recordValue: unknown, topic: string, now: number)
   const providerId = identifier(mail.messageId);
   if (!Array.isArray(mail.destination) || !mail.destination.length || mail.destination.length > 50) throw new InvalidSesFeedback();
   const recipients = [...new Set(mail.destination.map(address))];
-  if (environment === "staging" && recipients.some(recipient => recipient !== "jake@getgim.com")) throw new InvalidSesFeedback();
+  if (environment === "staging") {
+    const allowed = mailKind === "login" ? STAGING_LOGIN_RECIPIENTS : STAGING_BUSINESS_RECIPIENTS;
+    if (recipients.some(recipient => !allowed.includes(recipient)) || (mailKind === "login" && recipients.length !== 1)) throw new InvalidSesFeedback();
+  }
   const recipientHashes = recipients.map(sesHash).sort();
   const parsed: Parsed = { eventId, digest: sesHash(sns.Message), eventType, eventAt: publishedAt, providerId, environment, operationHash, mailKind, recipientHashes, recipientDigest: sesHash(recipientHashes.join("\n")), suppressedHashes: [] };
   let details: Item | undefined;

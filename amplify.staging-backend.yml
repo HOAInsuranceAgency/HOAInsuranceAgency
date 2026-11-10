@@ -14,7 +14,7 @@ applications:
             - nvm use 22
             - npm ci --cache .npm --prefer-offline
             # Test login delivery and recipient boundaries before applying backend changes.
-            - npx vitest run src/test/sesMailInfrastructure.test.ts src/test/sesTransactionalMail.test.ts src/test/transactionalMail.test.ts src/test/magicLinkRequest.test.ts src/test/resendCallerContracts.test.ts
+            - npx vitest run src/test/sesMailInfrastructure.test.ts src/test/sesMailFeedback.test.ts src/test/sesTransactionalMail.test.ts src/test/transactionalMail.test.ts src/test/magicLinkRequest.test.ts src/test/resendCallerContracts.test.ts
             - npm run typecheck:backend
             - npm run synth:check
             - node scripts/deploy-migration-backend.mjs

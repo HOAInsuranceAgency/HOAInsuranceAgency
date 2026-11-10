@@ -222,6 +222,50 @@ describe("SES feedback staging isolation", () => {
     await expect(handler({ Records: [event] }, context)).rejects.toThrow();
     expect(deps.transact).not.toHaveBeenCalled();
   });
+  function loginRecord(type = "Delivery") {
+    const body = raw(type);
+    body.mail.destination = ["ethanroden@getgim.com"];
+    body.mail.tags["ses:configuration-set"] = ["hoa-transactional-staging"];
+    body.mail.tags.HOAEnvironment = ["staging"];
+    body.mail.tags.HOAMailKind = ["login"];
+    body.mail.tags.HOAOperation = [sesHash(stagingKey.replace("/test/", "/login/"))];
+    if (body.delivery) body.delivery.recipients = ["ethanroden@getgim.com"];
+    if (body.bounce) body.bounce.bouncedRecipients = [{ emailAddress: "ethanroden@getgim.com" }];
+    if (body.complaint) body.complaint.complainedRecipients = [{ emailAddress: "ethanroden@getgim.com" }];
+    const item = record(body); item.Sns.TopicArn = stagingTopic;
+    return item;
+  }
+  it.each(["Send", "Delivery", "DeliveryDelay", "Bounce", "Complaint", "Reject", "Rendering Failure"])("records Ethan's staging login %s feedback on its accepted operation", async type => {
+    const { handler, deps, items } = setup(stagingEnv);
+    const key = stagingKey.replace("/test/", "/login/");
+    items.set(`RECEIPT#ses#${providerId}`, { kind: "RECEIPT", provider: "ses", environment: "staging", operationKey: key, operationHash: sesHash(key), mailKind: "login", providerId });
+    items.set(key, { kind: "OPERATION", provider: "ses", environment: "staging", mailKind: "login", providerId, state: "ACCEPTED" });
+    await handler({ Records: [loginRecord(type)] }, context);
+    const tx = deps.transact.mock.calls[0][0];
+    expect(tx.TransactItems![0].Put!.Item!).toMatchObject({ environment: "staging", eventType: type, recipientHashes: [sesHash("ethanroden@getgim.com")] });
+    expect(tx.TransactItems![2].Update!.Key).toEqual({ pk: key });
+    if (["Bounce", "Complaint"].includes(type)) {
+      expect(tx.TransactItems![3].Update!.Key).toEqual({ pk: `SUPPRESSION#${sesHash("ethanroden@getgim.com")}` });
+    }
+  });
+  it.each(["invite", "invoice", "report", "accounting", "test"])("does not allow Ethan's staging %s feedback under the login exception", async kind => {
+    const { handler, deps } = setup(stagingEnv);
+    const event = loginRecord();
+    const body = JSON.parse(event.Sns.Message);
+    body.mail.tags.HOAMailKind = [kind];
+    event.Sns.Message = JSON.stringify(body);
+    await expect(handler({ Records: [event] }, context)).rejects.toThrow();
+    expect(deps.getItem).not.toHaveBeenCalled(); expect(deps.transact).not.toHaveBeenCalled();
+  });
+  it.each([{ recipients: ["customer@example.com"] }, { recipients: ["ethanroden@getgim.com", "jake@getgim.com"] }])("rejects unapproved or copied staging login feedback: %j", async ({ recipients }) => {
+    const { handler, deps } = setup(stagingEnv);
+    const event = loginRecord();
+    const body = JSON.parse(event.Sns.Message);
+    body.mail.destination = recipients;
+    event.Sns.Message = JSON.stringify(body);
+    await expect(handler({ Records: [event] }, context)).rejects.toThrow();
+    expect(deps.transact).not.toHaveBeenCalled();
+  });
   it("rejects the staging event on the production processor", async () => {
     const { handler, deps } = setup();
     await expect(handler({ Records: [stageRecord()] }, context)).rejects.toThrow();
