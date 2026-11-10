@@ -1,4 +1,5 @@
-# Apply only as the explicit build-spec override for codex-hoa-staging-migration.
+# Reference staging build spec. The repository amplify.yml takes precedence over console overrides.
+# Active staging checks are invoked by amplify.yml through check-staging-commission-ui.mjs.
 # The backend namespace staging stays dormant; this host deploys its retained root.
 # Production continues to use amplify.yml and its unchanged main contract.
 version: 1

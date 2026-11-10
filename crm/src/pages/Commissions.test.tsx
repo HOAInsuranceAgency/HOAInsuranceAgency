@@ -394,10 +394,10 @@ it('preserves unknown carrier receipt timing and recalculates actual receipts at
   });
   const next = screen.getByLabelText('Carrier receipt balances as of 2026-10-01');
   expect(within(next).getByText('Actual received through date').parentElement).toHaveTextContent(
-    '$1000.00',
+    '$1,000.00',
   );
   expect(within(next).getByText('Full-term agency estimate').parentElement).toHaveTextContent(
-    '$12000.00',
+    '$12,000.00',
   );
   expect(h.action).not.toHaveBeenCalled();
 });
@@ -586,7 +586,7 @@ it('shows the safe producer receipt summary without private carrier terms or for
   expect(within(balances).getByText(/Receipt timing unknown/)).toBeVisible();
   expect(
     within(balances).getByText('Actual received through date').parentElement,
-  ).toHaveTextContent('$1000.00');
+  ).toHaveTextContent('$1,000.00');
   expect(screen.queryByText('Manage expected receipts')).toBeNull();
   expect(screen.queryByLabelText('Receipt reconciliation as of')).toBeNull();
   expect(h.action).not.toHaveBeenCalled();
@@ -691,4 +691,29 @@ it('opens the linked setup view for an Owner without exposing it to a Producer',
   } finally {
     window.history.replaceState({}, '', '/');
   }
+});
+
+it('preserves cents from a carrier receipt throughout the ledger', async () => {
+  const data = snapshot();
+  data.policies[0].entries[0].agencyCents = 1980;
+  data.policies[0].entries[0].producerCents = 396;
+  h.read.mockResolvedValue(data);
+  render(<Commissions />);
+  const agencyTotal = await screen.findByText('Agency received');
+  expect(agencyTotal.parentElement).toHaveTextContent('$19.80');
+  expect(screen.getByText('Producer earned').parentElement).toHaveTextContent('$3.96');
+  expect(screen.getAllByText('$19.80').length).toBeGreaterThan(0);
+  expect(screen.getAllByText('$3.96').length).toBeGreaterThan(0);
+});
+
+it('allows setup reference data to be retried after a temporary lookup failure', async () => {
+  h.owner = true;
+  h.communications.mockRejectedValueOnce(new Error('Team lookup unavailable'));
+  render(<Commissions />);
+  await screen.findByText('Producer earned');
+  fireEvent.click(screen.getByRole('button', { name: 'Commission setup' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Team lookup unavailable');
+  fireEvent.click(screen.getByRole('button', { name: 'Retry team & carriers' }));
+  await screen.findByRole('heading', { name: 'Commission setup checklist' });
+  expect(screen.getByRole('option', { name: 'Brian Cole' })).toBeVisible();
 });

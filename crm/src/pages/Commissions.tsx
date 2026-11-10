@@ -1,7 +1,7 @@
 import { createContext, useContext, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { useIsOwner } from '../lib/auth';
 import { useAsyncResource } from '../lib/useAsyncResource';
-import { client, listAllPages, fmtMoney } from '../lib/client';
+import { client, listAllPages } from '../lib/client';
 import { communicationRequest, type TeamEligibility } from '../lib/communications';
 import { commissionAction, readCommissions } from '../lib/commissions';
 import { attachCommissionStatement } from '../lib/commissionStatementAttachment';
@@ -37,7 +37,8 @@ import {
 } from '../../../shared/commissions';
 import './Commissions.css';
 
-const money = (cents: number) => fmtMoney(cents / 100);
+const commissionCurrency = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' });
+const money = (cents: number) => commissionCurrency.format(cents / 100);
 const CommissionAccessContext = createContext<(error: unknown) => void>(() => {});
 const today = () =>
   new Intl.DateTimeFormat('en-CA', {
@@ -455,9 +456,10 @@ function Settings({ data, refresh }: { data: CommissionOverview; refresh: () => 
   const [newCarrierId, setNewCarrierId] = useState(() => crypto.randomUUID());
   if (!references.data)
     return (
-      <p role={references.error ? 'alert' : undefined}>
-        {references.error || 'Loading teammates and carriers…'}
-      </p>
+      <div className="card">
+        <p role={references.error ? 'alert' : undefined}>{references.error || 'Loading teammates and carriers…'}</p>
+        {references.error && <button className="secondary" type="button" disabled={references.loading} onClick={() => void references.refetch()}>Retry team & carriers</button>}
+      </div>
     );
   return (
     <section className="commission-settings">
@@ -1950,7 +1952,7 @@ function LegacyPolicies({
       </label>
       {selected && (
         <p>
-          Recorded premium {selected.premium == null ? 'Missing' : fmtMoney(selected.premium)} ·
+          Recorded premium {selected.premium == null ? 'Missing' : commissionCurrency.format(selected.premium)} ·
           Agency rate {selected.commissionPct ?? 'Missing'}%
         </p>
       )}
