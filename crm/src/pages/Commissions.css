@@ -288,3 +288,31 @@
 .commissions .field .toolbar { margin: 0; gap: 8px; }
 .commissions .field .toolbar input { flex: 1 1 200px; width: auto; }
 .commissions .field .toolbar button { flex: 0 0 auto; }
+
+/* Commission setup uses the same cards and controls as the operating views. */
+.commission-setup-heading, .commission-setup-footer {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+}
+.commission-setup-heading h2 { margin-top: 4px; }
+.commission-setup-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 18px 0; }
+.commission-setup-link {
+  display: flex; align-items: flex-start; gap: 12px; padding: 18px; border: 1px solid var(--border, #dce4ef);
+  border-radius: 10px; background: var(--bg, #f5f7fb); color: var(--text, #142a4c); text-decoration: none;
+}
+.commission-setup-link:hover { border-color: var(--primary, #2e7dd1); background: #edf4fc; }
+.commission-setup-link:focus-visible, .commission-management-link:focus-visible { outline: 3px solid #2e7dd1; outline-offset: 3px; }
+.commission-setup-link > span:last-child { display: grid; gap: 6px; min-width: 0; }
+.commission-setup-link small { color: var(--muted, #64748b); line-height: 1.5; }
+.commission-setup-step { display: grid; place-items: center; flex: 0 0 28px; height: 28px; border-radius: 50%; background: #e1edfa; color: #1c5d9f; font-weight: 700; }
+.commission-setup-footer { justify-content: flex-start; margin: 14px 0; }
+.commission-management-link { display: inline-flex; align-items: center; padding: 9px 13px; border: 1px solid var(--border, #dce4ef); border-radius: 7px; color: var(--text, #142a4c); background: #fff; text-decoration: none; font-weight: 600; font-size: 14px; }
+.commission-management-link:hover { background: #edf4fc; }
+#commission-plan-assignments, #commission-carrier-terms, #commission-account-eligibility, #commission-existing-policies { scroll-margin-top: 24px; }
+.commission-reconciliation-guide { margin: 16px 0; }
+@media (max-width: 700px) {
+  .commission-setup-grid { grid-template-columns: 1fr; }
+  .commission-setup-heading { align-items: stretch; flex-direction: column; }
+  .commission-setup-link { padding: 14px; }
+}
+
+.commission-page-heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; }

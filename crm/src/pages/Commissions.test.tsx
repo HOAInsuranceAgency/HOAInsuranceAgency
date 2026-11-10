@@ -9,6 +9,7 @@ const h = vi.hoisted(() => ({
   action: vi.fn(),
   policies: vi.fn(),
   carriers: vi.fn(),
+  createCarrier: vi.fn(),
   communications: vi.fn(),
 }));
 vi.mock('../lib/auth', () => ({ useIsOwner: () => h.owner }));
@@ -18,7 +19,7 @@ vi.mock('../lib/commissions', () => ({
 }));
 vi.mock('../lib/client', () => ({
   client: {
-    models: { Policy: { list: h.policies }, Carrier: { list: h.carriers } },
+    models: { Policy: { list: h.policies }, Carrier: { list: h.carriers, create: h.createCarrier } },
   },
   listAllPages: async (list: (token?: string) => Promise<{ data: unknown[] }>) =>
     (await list()).data,
@@ -619,4 +620,75 @@ it('counts payable shared earnings in the policy summary without counting review
   render(<Commissions />);
   expect(await screen.findByText(/Employee earnings \$184\.00/)).toBeVisible();
   expect(screen.getByText(/Shared receipts use the individual shares and rates shown above/)).toBeVisible();
+});
+
+it('opens the setup checklist from the ledger and refreshes newly added employees', async () => {
+  h.owner = true;
+  render(<Commissions />);
+  await screen.findByText('Producer earned');
+  fireEvent.click(screen.getByRole('button', { name: 'Commission setup' }));
+  await screen.findByRole('heading', { name: 'Commission setup checklist' });
+  expect(screen.getByRole('link', { name: /Add carrier payment terms/ })).toHaveAttribute('href', '#commission-carrier-terms');
+  expect(screen.getByRole('link', { name: /Prepare existing policies/ })).toHaveAttribute('href', '#commission-existing-policies');
+  h.communications.mockResolvedValue({ team: [{ userId: 'producer', name: 'Brian Cole' }, { userId: 'second', name: 'Holly Martin' }] });
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh team & carriers' }));
+  await screen.findByRole('option', { name: 'Holly Martin' });
+});
+it('creates a missing carrier, refreshes the directory, and opens its payment terms without inventing terms', async () => {
+  h.owner = true;
+  render(<Commissions />);
+  await screen.findByText('Producer earned');
+  fireEvent.click(screen.getByRole('button', { name: 'Commission setup' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Add a carrier' }));
+  expect(screen.getByRole('button', { name: 'Create carrier' })).toBeDisabled();
+  fireEvent.change(screen.getByLabelText('New carrier name'), { target: { value: '  New Carrier  ' } });
+  fireEvent.change(screen.getByLabelText('New carrier appointment status'), { target: { value: 'APPOINTED' } });
+  h.createCarrier.mockResolvedValue({ data: { id: 'new-carrier', name: 'New Carrier', appointed: true } });
+  h.carriers.mockResolvedValue({ data: [{ id: 'new-carrier', name: 'New Carrier', appointed: true }], nextToken: null });
+  fireEvent.click(screen.getByRole('button', { name: 'Create carrier' }));
+  await waitFor(() => expect(h.createCarrier).toHaveBeenCalledWith({ id: expect.any(String), name: 'New Carrier', appointed: true }));
+  await screen.findByRole('button', { name: 'Add payment arrangement' });
+  expect(screen.getByLabelText('Carrier')).toHaveValue('new-carrier');
+  expect(screen.getByRole('button', { name: 'Save carrier payment terms' })).toBeDisabled();
+  expect(h.action).not.toHaveBeenCalledWith('saveCarrier', expect.anything());
+});
+it('prevents a duplicate carrier and preserves the draft when creation fails', async () => {
+  h.owner = true;
+  h.carriers.mockResolvedValue({ data: [{ id: 'existing', name: 'Existing Carrier' }], nextToken: null });
+  render(<Commissions />);
+  await screen.findByText('Producer earned');
+  fireEvent.click(screen.getByRole('button', { name: 'Commission setup' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Add a carrier' }));
+  fireEvent.change(screen.getByLabelText('New carrier name'), { target: { value: ' existing carrier ' } });
+  fireEvent.change(screen.getByLabelText('New carrier appointment status'), { target: { value: 'PROSPECTIVE' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Create carrier' }));
+  await screen.findByText('This carrier is already in the directory. Choose it from the Carrier list below.');
+  expect(h.createCarrier).not.toHaveBeenCalled();
+  fireEvent.change(screen.getByLabelText('New carrier name'), { target: { value: 'Another Carrier' } });
+  h.createCarrier.mockResolvedValue({ data: null, errors: [{ message: 'Carrier service unavailable' }] });
+  fireEvent.click(screen.getByRole('button', { name: 'Create carrier' }));
+  await screen.findByText('Carrier service unavailable');
+  expect(screen.getByLabelText('New carrier name')).toHaveValue('Another Carrier');
+  expect(screen.getByLabelText('Carrier')).toHaveValue('');
+});
+it('does not expose owner setup controls in the producer view', async () => {
+  render(<Commissions />);
+  await screen.findByText('Producer earned');
+  expect(screen.queryByRole('button', { name: 'Commission setup' })).toBeNull();
+  expect(screen.queryByRole('heading', { name: 'Commission setup checklist' })).toBeNull();
+});
+
+it('opens the linked setup view for an Owner without exposing it to a Producer', async () => {
+  window.history.replaceState({}, '', '/commissions?tab=settings');
+  try {
+    h.owner = true;
+    const view = render(<Commissions />);
+    await screen.findByRole('heading', { name: 'Commission setup checklist' });
+    h.owner = false;
+    view.rerender(<Commissions />);
+    await screen.findByText('Producer earned');
+    expect(screen.queryByRole('heading', { name: 'Commission setup checklist' })).toBeNull();
+  } finally {
+    window.history.replaceState({}, '', '/');
+  }
 });

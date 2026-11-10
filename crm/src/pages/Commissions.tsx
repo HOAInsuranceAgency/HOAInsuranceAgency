@@ -56,7 +56,7 @@ function CommissionView({ owner }: { owner: boolean }) {
     errorMessage: 'Could not load commissions.',
     clearDataOnError: () => true,
   });
-  const [tab, setTab] = useState('ledger');
+  const [tab, setTab] = useState(() => owner && new URLSearchParams(window.location.search).get('tab') === 'settings' ? 'settings' : 'ledger');
   const snapshot = resource.data;
   return (
     <CommissionAccessContext.Provider value={resource.invalidate}><div className="commissions">
@@ -64,7 +64,8 @@ function CommissionView({ owner }: { owner: boolean }) {
         <p className="muted small">
           {owner ? 'Owner · private commission management' : 'Your commission statements'}
         </p>
-        <h1>Commissions</h1>
+        <div className="commission-page-heading"><h1>Commissions</h1>
+        {owner && <button className="primary" onClick={() => setTab('settings')}>Commission setup</button>}</div>
         <p className="muted">
           Track expected revenue, carrier receipts, producer earnings, and confirmed payments.
         </p>
@@ -435,7 +436,11 @@ function Settings({ data, refresh }: { data: CommissionOverview; refresh: () => 
     async () => {
       const [team, carriers] = await Promise.all([
         communicationRequest<{ team: TeamEligibility[] }>('team', {}),
-        listAllPages((nextToken) => client.models.Carrier.list({ nextToken })),
+        listAllPages(async (nextToken) => {
+          const page = await client.models.Carrier.list({ nextToken });
+          if (page.errors?.length) throw new Error(page.errors[0].message ?? 'Could not load the carrier directory.');
+          return page;
+        }),
       ]);
       return { team: team.team, carriers };
     },
@@ -444,6 +449,10 @@ function Settings({ data, refresh }: { data: CommissionOverview; refresh: () => 
   );
   const invalidate = useContext(CommissionAccessContext);
   const [carrier, setCarrier] = useState('');
+  const [addingCarrier, setAddingCarrier] = useState(false);
+  const [newCarrierName, setNewCarrierName] = useState('');
+  const [newCarrierStatus, setNewCarrierStatus] = useState('');
+  const [newCarrierId, setNewCarrierId] = useState(() => crypto.randomUUID());
   if (!references.data)
     return (
       <p role={references.error ? 'alert' : undefined}>
@@ -452,10 +461,45 @@ function Settings({ data, refresh }: { data: CommissionOverview; refresh: () => 
     );
   return (
     <section className="commission-settings">
+      <section className="card commission-setup-guide" aria-labelledby="commission-setup-title">
+        <div className="commission-setup-heading">
+          <div><p className="small muted">Before your first reconciliation</p><h2 id="commission-setup-title">Commission setup checklist</h2></div>
+          <button type="button" className="secondary" disabled={references.loading} onClick={() => void references.refetch()}>Refresh team & carriers</button>
+        </div>
+        <div className="commission-setup-grid">
+          <a className="commission-setup-link" href="#commission-plan-assignments"><span className="commission-setup-step">1</span><span><strong>Assign employee plans</strong><span>{(data.planDefinitions ?? []).filter(p => !p.archived).length} available plans · {data.plans.length} employees with saved assignments</span><small>Choose effective dates, agreement references, and eligibility cutoffs.</small></span></a>
+          <a className="commission-setup-link" href="#commission-carrier-terms"><span className="commission-setup-step">2</span><span><strong>Add carrier payment terms</strong><span>{data.carriers.length} carriers with saved terms · {references.data.carriers.length} in the directory</span><small>Add a missing carrier here, then configure its payment arrangements.</small></span></a>
+          <a className="commission-setup-link" href="#commission-account-eligibility"><span className="commission-setup-step">3</span><span><strong>Confirm account eligibility</strong><span>Standard or GIM classification</span><small>Record the original first-bind date and supporting evidence.</small></span></a>
+          <a className="commission-setup-link" href="#commission-existing-policies"><span className="commission-setup-step">4</span><span><strong>Prepare existing policies</strong><span>{data.policies.length} policy terms tracked</span><small>Add historical policies before matching their statement lines.</small></span></a>
+        </div>
+        <div className="commission-setup-footer"><a className="commission-management-link" href="/settings?tab=team">Manage team members</a><a className="commission-management-link" href="/carriers">Manage carrier directory</a><a className="commission-management-link" href="/policies">Review CRM policies</a></div>
+        <p className="small muted">Saved assignments and carrier terms must cover each policy's relevant dates. Counts show saved records; review their dates and evidence before posting receipts.</p>
+      </section>
       <CommissionPlanSettings definitions={data.planDefinitions ?? []} plans={data.plans} team={references.data.team} refresh={refresh} denied={invalidate} />
       <section className="card commission-setting-section">
-      <h2>Carrier payment terms</h2>
-      <p className="muted">Review the carrier’s commission basis, remittance schedule, and agreement reference.</p>
+      <h2 id="commission-carrier-terms">Carrier payment terms</h2>
+      <p className="muted">Select a carrier to add or edit its commission basis, payor, remittance schedule, and agreement reference. The directory's commission percentage does not create payment terms.</p>
+      <div className="commission-setup-footer"><button type="button" className="secondary" onClick={() => setAddingCarrier(v => !v)} aria-expanded={addingCarrier} aria-controls="commission-new-carrier">{addingCarrier ? 'Close new carrier form' : 'Add a carrier'}</button><a className="commission-management-link" href="/carriers">Open carrier directory</a></div>
+      {addingCarrier && <div id="commission-new-carrier">
+        <ActionForm title="Add a carrier to the CRM" button="Create carrier" disabled={!newCarrierName.trim() || !newCarrierStatus}
+          onDone={async () => { await references.refetch(); setAddingCarrier(false); setNewCarrierName(''); setNewCarrierStatus(''); setNewCarrierId(crypto.randomUUID()); }}
+          submit={async () => {
+            const name = newCarrierName.trim();
+            if (!name || !['APPOINTED', 'PROSPECTIVE'].includes(newCarrierStatus)) throw new Error('Enter the carrier name and confirm its appointment status.');
+            const existing = references.data!.carriers.find(c => c.name.trim().toLocaleLowerCase() === name.toLocaleLowerCase());
+            if (existing) throw new Error('This carrier is already in the directory. Choose it from the Carrier list below.');
+            const result = await client.models.Carrier.create({ id: newCarrierId, name, appointed: newCarrierStatus === 'APPOINTED' });
+            if (result.errors?.length || !result.data) throw new Error(result.errors?.[0]?.message ?? 'Could not create the carrier. Refresh the directory before retrying.');
+            setCarrier(result.data.id);
+            return result.data;
+          }}>
+          <p className="small muted">Create the directory record first. Its payment terms and policy commission rates are configured separately.</p>
+          <div className="form-grid">
+            <Field label="New carrier name" value={newCarrierName} change={setNewCarrierName} />
+            <label className="field">New carrier appointment status<select required value={newCarrierStatus} onChange={e => setNewCarrierStatus(e.target.value)}><option value="">Confirm appointment status…</option><option value="APPOINTED">Appointed</option><option value="PROSPECTIVE">Prospective</option></select></label>
+          </div>
+        </ActionForm>
+      </div>
       <label className="field">
         Carrier
         <select value={carrier} onChange={(e) => setCarrier(e.target.value)}>
@@ -475,10 +519,10 @@ function Settings({ data, refresh }: { data: CommissionOverview; refresh: () => 
           refresh={refresh}
         />
       )}
-      {!carrier && <div className="commission-empty">Choose a carrier to review its payment terms.</div>}
+      {!carrier && <div className="commission-empty">{references.data.carriers.length ? 'Choose a carrier, then use Add payment arrangement to enter its first set of terms.' : 'No carriers are in the directory yet. Use Add a carrier above to get started.'}</div>}
       </section>
       <AccountClassifications />
-      <LegacyPolicies data={data} refresh={refresh} />
+      <div id="commission-existing-policies"><LegacyPolicies data={data} refresh={refresh} /></div>
     </section>
   );
 }
@@ -486,7 +530,7 @@ function AccountClassifications() {
   const [accountId, setAccountId] = useState('');
   return (
     <section className="card commission-setting-section">
-      <h2>Account commission classification</h2>
+      <h2 id="commission-account-eligibility">Account commission classification</h2>
       <p className="muted">
         GIM Property Management is the only house-account program. Review each account as Standard
         or GIM before binding. Classification is an Owner decision; changing a management
@@ -1190,6 +1234,11 @@ function Statements({ data, refresh }: { data: CommissionOverview; refresh: () =
         Only Owners can upload, match, review, and post carrier statements. Posting requires a
         verified settlement and reviewed eligibility for every line.
       </p>
+      <div className="card commission-reconciliation-guide">
+        <h2>Prepare a statement for reconciliation</h2>
+        <p>Attach the original PDF as evidence and enter its commission rows manually. CSV and XLSX files also support column mapping. Use the agency commission paid for each row, not premium, full-term commission, or previously paid totals.</p>
+        <p className="small muted">Record the actual settlement date. An invoice's due date is not proof of receipt; retained agency-bill commission needs collection and remittance evidence. Earlier receipts keep their original dates and remain subject to the employee's eligibility cutoffs.</p>
+      </div>
       <button className="primary" onClick={() => setEditing(null)}>
         New reconciliation
       </button>

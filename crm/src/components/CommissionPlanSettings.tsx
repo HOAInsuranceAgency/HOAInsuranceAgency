@@ -28,7 +28,8 @@ export default function CommissionPlanSettings({ definitions, plans, team, ...ac
     <DefinitionForm key={`${definition}:${chosen?.version ?? 0}`} definition={chosen} {...actions} selected={setDefinition} />
     </section>
     <section className="card commission-setting-section">
-    <h2>Producer plan assignments</h2><p className="muted">Only one plan may cover a producer on any date. End the previous assignment before starting another. New business uses its bind date; renewals use the policy effective date.</p>
+    <h2 id="commission-plan-assignments">Producer plan assignments</h2><p className="muted">Only one plan may cover a producer on any date. End the previous assignment before starting another. New business uses its bind date; renewals use the policy effective date.</p>
+    <p className="small muted">Missing an employee? <a href="/settings?tab=team">Manage team members</a>, then use Refresh team & carriers above. Each employee needs a CRM profile before appearing here.</p>
     <label className="field">Producer<select value={producer} onChange={e => setProducer(e.target.value)}><option value="">Choose a producer.</option>{team.map(t => <option key={t.userId} value={t.userId}>{t.name}</option>)}</select></label>
     {producer && <AssignmentForm key={`${producer}:${assigned?.version ?? 0}`} plan={assigned} producerId={producer} name={team.find(t => t.userId === producer)?.name ?? producer} definitions={definitions} {...actions} />}
     {!producer && <div className="commission-empty">Choose a producer to review or add dated plan assignments.</div>}
