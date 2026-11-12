@@ -159,12 +159,14 @@ const Draft = z.object({
 });
 
 async function structure(prompt) {
-  const response = await client.messages.parse({
+  // Streamed: the SDK refuses non-streaming requests that may run past 10 minutes.
+  const response = await client.messages.stream({
     model: MODEL, max_tokens: 32000,
     output_config: { effort: "low", format: zodOutputFormat(Draft) },
     messages: [{ role: "user", content: prompt }],
-  });
+  }).finalMessage();
   if (response.stop_reason === "refusal") throw new Error("The model declined to structure the draft.");
+  if (response.stop_reason === "max_tokens") throw new Error("The structured draft hit its length limit.");
   if (!response.parsed_output) throw new Error("The structured draft could not be parsed.");
   return response.parsed_output;
 }
