@@ -22,9 +22,9 @@ export function destinationLinkRequest(parameters: Record<string, string> | unde
 }
 
 /** Called only after the destination guard and an explicit link request. */
-export async function sendDestinationLink(email: string, parameters: Record<string, string> | undefined) {
+export async function sendDestinationLink(email: string, sub: string, parameters: Record<string, string> | undefined) {
   const request = destinationLinkRequest(parameters);
-  const token = mintToken(email, await getSigningSecret(), request.issuedAt);
+  const token = mintToken(email, sub, await getSigningSecret(), request.issuedAt);
   const link = `${process.env.MAGIC_LINK_BASE_URL}/#magic=${encodeURIComponent(token)}`;
   const preview = migrationPreview();
   await ses.send(new SendEmailCommand({

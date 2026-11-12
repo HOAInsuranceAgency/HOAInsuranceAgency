@@ -80,7 +80,11 @@ beforeEach(() => {
     if (command.constructor.name === 'TransactWriteCommand') {
       for (const item of command.input.TransactItems) if (item.ConditionCheck) {
         const action = item.ConditionCheck, row = await h.model(action.TableName, action.Key.id);
-        if (row?.[action.ExpressionAttributeNames['#v']] !== action.ExpressionAttributeValues[':v']) throw Object.assign(new Error('Proof changed'), { name: 'TransactionCanceledException' });
+        const values = action.ExpressionAttributeValues;
+        if (!row || action.ExpressionAttributeNames?.['#v'] && row[action.ExpressionAttributeNames['#v']] !== values[':v'] ||
+            Object.hasOwn(values, ':draft') && ((row.groupedDraftInvoiceId ?? null) !== values[':draft'] || row.carrierBillType === 'DIRECT' && row.billType === 'AGENCY')) {
+          throw Object.assign(new Error('Proof changed'), { name: 'TransactionCanceledException' });
+        }
       }
       const quoteUpdate=command.input.TransactItems.find((item:any)=>item.Update?.TableName==='Quote')?.Update;
       if(quoteUpdate){
@@ -104,6 +108,17 @@ beforeEach(() => {
 });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 const send = () => handler({ arguments: { invoiceId: 'i', toEmail: 'board@example.test' } });
+
+it.each([{ sourcePricingVersion: 3 }, { groupedPolicyIds: ['p1', 'p2'] }])('blocks incomplete grouped invoices before delivery or payment setup', async grouped => {
+  Object.assign(h.invoice, grouped);
+  await expect(send()).resolves.toEqual({ ok: false, error: 'The combined invoice no longer matches its reviewed policies and amounts. Review the draft before billing.' });
+  expect(h.begin).not.toHaveBeenCalled();
+  expect(h.reserve).not.toHaveBeenCalled();
+  expect(h.link).not.toHaveBeenCalled();
+  expect(h.db).not.toHaveBeenCalled();
+  expect(h.mail).not.toHaveBeenCalled();
+});
+
 function adjustmentFixture(amount = 250, cost: number | null = 200) {
   h.quote.brokerFee = 0;
   Object.assign(h.invoice, { policyId: 'p', sourcePricingVersion: 2, adjustsInvoiceId: 'original', adjustsPremiumLineId: 'original-premium' });
@@ -135,7 +150,7 @@ describe('real broker fee invoice send claim sequencing', () => {
 
   it('passes bound evidence only from the linked policy binding record', async () => {
     h.invoice.policyId = 'p';
-    h.models.Policy = { get: async () => ({ data: { ...h.quote, id: 'p', quoteId: 'q', datePolicyBound: '2026-11-04', effectiveDate: '2026-12-01' } }) };
+    h.records.set('Policy:p', { ...h.quote, id: 'p', quoteId: 'q', datePolicyBound: '2026-11-04', effectiveDate: '2026-12-01' });
     const result = await send();
     expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
     expect(h.pdf.mock.calls[0][0]).toMatchObject({ effectiveDate: '2026-12-01', coverageBound: true });
@@ -309,6 +324,36 @@ describe('real broker fee invoice send claim sequencing', () => {
 });
 
 describe('real adjustment Send proof and source protection', () => {
+  it.each(['DRAFT', 'VOID'])('respects the current grouped invoice status %s for a member policy', async status => {
+    adjustmentFixture();
+    Object.assign(h.records.get('Policy:p')!, { groupedDraftInvoiceId: 'group' });
+    h.records.set('Invoice:group', { id: 'group', accountId: 'a', status, sourcePricingVersion: 3, groupedPolicyIds: ['p', 'p2'] });
+    const result = await send();
+    expect(result.ok).toBe(status === 'VOID');
+    expect(h.link).toHaveBeenCalledTimes(status === 'VOID' ? 1 : 0);
+    expect(h.mail).toHaveBeenCalledTimes(status === 'VOID' ? 1 : 0);
+  });
+
+  it('blocks an agency-collected carrier direct bill from the standalone payment path', async () => {
+    adjustmentFixture();
+    Object.assign(h.records.get('Policy:p')!, { billType: 'AGENCY', carrierBillType: 'DIRECT' });
+    await expect(send()).resolves.toMatchObject({ ok: false, error: expect.stringContaining('direct-bill advance') });
+    expect(h.begin).not.toHaveBeenCalled();
+    expect(h.link).not.toHaveBeenCalled();
+    expect(h.mail).not.toHaveBeenCalled();
+  });
+
+  it('closes an unpublished link when a grouped reservation wins during payment setup', async () => {
+    adjustmentFixture();
+    h.link.mockImplementation(async () => {
+      h.records.get('Policy:p')!.groupedDraftInvoiceId = 'group';
+      return { id: 'pl1', url: 'https://buy.stripe.com/known' };
+    });
+    await expect(send()).resolves.toMatchObject({ ok: false });
+    expect(h.deactivate).toHaveBeenCalledWith('pl1', { active: false });
+    expect(h.mail).not.toHaveBeenCalled();
+  });
+
   it('strongly verifies the paid original and publishes the positive delta with atomic proof guards', async () => {
     adjustmentFixture();
     h.quote.brokerFee = 500;

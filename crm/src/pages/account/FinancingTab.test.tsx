@@ -332,6 +332,7 @@ describe("origination has no UI — servicing reaches every loan", () => {
     expect(
       await screen.findByText(/Offers originate automatically\s+when an invoice is sent/)
     ).toBeInTheDocument();
+    expect(screen.queryByText(/14% APR/)).not.toBeInTheDocument();
   });
 });
 

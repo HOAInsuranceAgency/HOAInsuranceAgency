@@ -210,6 +210,18 @@ it("keeps administrators unfiltered but requires a signed-in identity", async ()
   expect(h.db).not.toHaveBeenCalled();
   await expect(handler({ mode: "read", model: "Account", previous })).rejects.toThrow("not available");
 });
+it("requires the active Owner role to send grouped financing while preserving ordinary invoice access", async () => {
+  h.records.set("invoices:combined", { id: "combined", accountId: "a", sourcePricingVersion: 3 });
+  h.records.set("invoices:ordinary", { id: "ordinary", accountId: "a", sourcePricingVersion: 1 });
+  const send = (invoiceId: string, role: string) => handler({
+    mode: "custom-pre", field: "sendInvoice", identity: { sub: "alice", groups: ["OWNER", "ADMIN", "PRODUCER"] },
+    request: { headers: { "x-crm-role": role } }, arguments: { invoiceId },
+  });
+  await expect(send("combined", "OWNER")).resolves.toBeUndefined();
+  await expect(send("combined", "ADMIN")).rejects.toThrow("not available");
+  await expect(send("combined", "PRODUCER")).rejects.toThrow("not available");
+  await expect(send("ordinary", "PRODUCER")).resolves.toBeUndefined();
+});
 it.each(["PRODUCER", "STAFF"])("uses a dual-role administrator's selected %s scope across records, custom operations, and files", async role => {
   const event = { identity: { sub: "alice", groups: ["ADMIN", role] }, request: { headers: { "x-crm-role": role } } };
   await expect(handler({ ...event, fieldName: "crmAccess" })).resolves.toEqual({ actorId: "alice", admin: false, salespersonIds: ["alice"] });

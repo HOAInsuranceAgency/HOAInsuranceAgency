@@ -29,6 +29,7 @@ import {
   PREPAYMENT_TERMS,
   CANCELLATION_PROCEDURE,
   SECURITY_INTEREST_AND_AUTHORITY,
+  groupedAgreementClauses,
 } from "./agreementTerms";
 export { OWNERSHIP_DISCLOSURE, POWER_OF_ATTORNEY, PREPAYMENT_TERMS, CANCELLATION_PROCEDURE, SECURITY_INTEREST_AND_AUTHORITY };
 
@@ -39,6 +40,7 @@ export interface AgreementView {
   policyNumber: string | null;
   carrierName: string | null;
   policyTerm: string | null;
+  groupedPolicyAgreementLines?: readonly string[];
   premium: number;
   downPayment: number;
   amountFinanced: number;
@@ -104,6 +106,10 @@ function paragraph(page: PDFPage, fonts: Fonts, title: string | null, body: stri
 
 export async function renderAgreementPdf(v: AgreementView): Promise<Uint8Array> {
   const initialPayment = initialPaymentTotalRoundedDollars(v);
+  const groupLines = v.groupedPolicyAgreementLines;
+  const [ownership, powerOfAttorney, prepayment, cancellation, security] = groupLines
+    ? groupedAgreementClauses()
+    : [OWNERSHIP_DISCLOSURE, POWER_OF_ATTORNEY, PREPAYMENT_TERMS, CANCELLATION_PROCEDURE, SECURITY_INTEREST_AND_AUTHORITY];
   const doc = await PDFDocument.create();
   doc.setTitle(`Premium Finance Agreement — ${v.associationName}`);
   doc.setProducer(AGENCY.name);
@@ -124,7 +130,9 @@ export async function renderAgreementPdf(v: AgreementView): Promise<Uint8Array> 
   const partyLines = [
     `LENDER: ${AGENCY.name}, ${AGENCY.addressLine1}, ${AGENCY_FMT.addressLine2}`,
     `BORROWER: ${v.associationName}${v.associationAddress.length ? ", " + v.associationAddress.join(", ") : ""}`,
-    `POLICY: ${v.policyNumber ?? "(to be assigned)"}${v.carrierName ? " — " + v.carrierName : ""}${v.policyTerm ? " — term " + v.policyTerm : ""}`,
+    ...(groupLines ? groupLines.map(line => `POLICY: ${line}`) : [
+      `POLICY: ${v.policyNumber ?? "(to be assigned)"}${v.carrierName ? " — " + v.carrierName : ""}${v.policyTerm ? " — term " + v.policyTerm : ""}`,
+    ]),
   ];
   for (const l of partyLines) {
     for (const row of wrap(l, fonts.regular, 9.5, M.right - M.left)) {
@@ -168,7 +176,7 @@ export async function renderAgreementPdf(v: AgreementView): Promise<Uint8Array> 
   y = boxTop - 92;
 
   y = paragraph(page, fonts, null,
-    `Total premium ${formatMoney(v.premium)}, paid as ${v.months + 1} payments over the policy year. Payment 1 is the down payment of ${formatMoney(v.downPayment)}, due at inception and paid to the Lender's premium trust account. Payments 2 through ${v.months + 1} are ${v.months} monthly payments of ${formatMoney(v.payment)} (the final payment may differ by cents), first due one month after ${v.effectiveDate}. A flat origination fee of ${formatMoney(v.originationFee)} is collected with the down payment, with the full broker fee of ${formatMoney(v.brokerFee ?? 0)} paid upfront separately from the loan, making the initial payment ${formatMoney(initialPayment)}. The origination fee is refundable on prepayment and does not reduce principal. The broker fee is not financed and remains subject to its separate signed disclosure. Monthly payments start automatically on the agreed schedule after the initial payment clears. There are no late fees, delinquency charges, or reinstatement fees under this agreement.`,
+    `Total premium ${formatMoney(v.premium)}, paid as ${v.months + 1} payments over the policy year. Payment 1 is the down payment of ${formatMoney(v.downPayment)}, due at inception and paid to the Lender's premium trust account. Payments 2 through ${v.months + 1} are ${v.months} monthly payments of ${formatMoney(v.payment)} (the final payment may differ by cents), first due one month after ${v.effectiveDate}. A flat origination fee of ${formatMoney(v.originationFee)} is collected with the down payment${groupLines ? "" : `, with the full broker fee of ${formatMoney(v.brokerFee ?? 0)} paid upfront separately from the loan`}, making the initial payment ${formatMoney(initialPayment)}. The origination fee is refundable on prepayment and does not reduce principal.${groupLines ? "" : " The broker fee is not financed and remains subject to its separate signed disclosure."} Monthly payments start automatically on the agreed schedule after the initial payment clears. There are no late fees, delinquency charges, or reinstatement fees under this agreement.`,
     y);
 
   // ── Payment schedule ──────────────────────────────────────────────────
@@ -222,7 +230,7 @@ export async function renderAgreementPdf(v: AgreementView): Promise<Uint8Array> 
   };
 
   // The disclosure is boxed and tinted: prominent is part of the requirement.
-  const discRows = wrap(OWNERSHIP_DISCLOSURE, fonts.bold, 9.5, M.right - M.left - 24);
+  const discRows = wrap(ownership, fonts.bold, 9.5, M.right - M.left - 24);
   const discH = discRows.length * 12 + 22;
   if (y - discH < M.bottom) {
     page = doc.addPage([PAGE.w, PAGE.h]);
@@ -239,10 +247,10 @@ export async function renderAgreementPdf(v: AgreementView): Promise<Uint8Array> 
   }
   y = y - discH - 12;
 
-  clause(null, POWER_OF_ATTORNEY);
-  clause(null, PREPAYMENT_TERMS);
-  clause(null, CANCELLATION_PROCEDURE);
-  clause(null, SECURITY_INTEREST_AND_AUTHORITY);
+  clause(null, powerOfAttorney);
+  clause(null, prepayment);
+  clause(null, cancellation);
+  clause(null, security);
 
   // ── Signatures ────────────────────────────────────────────────────────
   if (y < M.bottom + 110) {

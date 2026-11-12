@@ -5,11 +5,13 @@ import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import { isRealIsoDay } from "../../../../shared/premiumFinance/noticeSequence";
 import { listAllPages } from "../../../../shared/pagination";
 import {
-  PF_DEFAULT_APR,
   PF_DEFAULT_DOWN_PCT,
   PF_DEFAULT_MONTHS,
 } from "../../../../shared/premiumFinance/quote";
 import { originateLoan } from "../pfOrigination";
+import { getModel } from "../broker-fees/store";
+import { assertStandalonePolicyBilling, claimStandalonePolicyLoan, GroupedDraftBillingBlocked } from "../grouped-draft-billing";
+import type { Schema } from "../../data/resource";
 
 /**
  * Custom mutation handler: issueFinanceQuote.
@@ -60,26 +62,27 @@ export const handler = async (event: {
     return { ok: false, error: "Quote terms out of range." };
   }
   /**
-   * W8: the terms are the product's, not the caller's. The send originates
-   * at these constants; this mutation staying open to arbitrary terms would
-   * be an API back door around "not able to be edited".
+   * The down payment and installment count are fixed product terms. The
+   * shared core derives APR from the account's state and rejects a caller
+   * assertion that differs from that price.
    */
   if (
     a.downPct !== PF_DEFAULT_DOWN_PCT ||
-    a.apr !== PF_DEFAULT_APR ||
     a.months !== PF_DEFAULT_MONTHS
   ) {
     return {
       ok: false,
-      error: `Terms are fixed: ${PF_DEFAULT_DOWN_PCT}% down, ${PF_DEFAULT_APR}% APR, ${PF_DEFAULT_MONTHS} monthly installments. The invoice send is the origination path.`,
+      error: `Terms are fixed: ${PF_DEFAULT_DOWN_PCT}% down, ${PF_DEFAULT_MONTHS} monthly installments. The invoice send is the origination path.`,
     };
   }
 
   try {
     const client = await getDataClient();
 
-    const { data: policy } = await client.models.Policy.get({ id: a.policyId });
+    const policy = await getModel<Schema["Policy"]["type"]>("Policy", a.policyId);
     if (!policy) return { ok: false, error: "That policy no longer exists." };
+    await assertStandalonePolicyBilling(policy);
+    const policyLoanClaim = await claimStandalonePolicyLoan(policy);
     const { data: account } = await client.models.Account.get({
       id: policy.accountId,
     });
@@ -116,7 +119,9 @@ export const handler = async (event: {
           kind: "policy",
           id: a.policyId,
           lines: policy.lines ?? [],
+          coverageEffectiveDate: policy.effectiveDate,
         },
+        policyLoanClaim,
         premium: a.premium,
         downPct: a.downPct,
         months: a.months,
@@ -127,6 +132,7 @@ export const handler = async (event: {
       }
     );
   } catch (err) {
+    if (err instanceof GroupedDraftBillingBlocked) return { ok: false, error: err.message };
     captureHandledFailure(err);
     console.error("pf-originate failed", err);
     return { ok: false, error: "Couldn't evaluate that quote. Try again." };

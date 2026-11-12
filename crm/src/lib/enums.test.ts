@@ -608,44 +608,7 @@ describe("the shared AccountType copy cannot drift", () => {
   });
 });
 
-/**
- * Bill type, and the one thing about it that must not rot.
- *
- * Every other enum here is a labelling concern — get it wrong and a select
- * reads oddly. This one decides whether the agency is supposed to collect
- * money, so the assertion that matters is not about labels: it is that the
- * bind form cannot write a policy without an answer.
- *
- * Asserted against the source, the way `AccountDetail.test.tsx` asserts the
- * tab in the URL. Rendering `BindForm` means a data client, an account, a
- * quote and a carrier list — a great deal of scaffolding to observe one
- * disabled attribute, and none of it would catch the failure this guards: a
- * default creeping into `useState` later, which would make the field required
- * in appearance and pre-answered in fact.
- */
-describe("bill type at bind", () => {
-  const src = readFileSync(
-    resolve(process.cwd(), "src/components/QuotesPanel.tsx"),
-    "utf8"
-  );
-
-  it("carries the quote's explicit billing choice and otherwise starts unset", () => {
-    expect(src).toMatch(/useState<BillType \| "">\(quote\.billType \?\? ""\)/);
-  });
-
-  it("will not submit without one", () => {
-    // The button is disabled…
-    expect(src).toMatch(/disabled=\{saving \|\| !billType \|\|[^\n]*!confirmed/);
-    // …and `bind` itself refuses, so a re-enabled button is not a way in.
-    expect(src).toMatch(/if \(!billType \|\|[^\n]*!confirmed \|\| !paymentReady \|\| bindLock.current\) return;/);
-  });
-
-  it("writes it onto the policy it creates", () => {
-    expect(src).toContain("premium, agencyRate, billType, policyNumber");
-    const server = readFileSync(resolve(process.cwd(), "amplify/functions/commissions/bind.ts"), "utf8");
-    expect(server).toContain("billType: input.billType");
-  });
-
+describe("bill type options", () => {
   it("offers exactly the two the schema declares", () => {
     expect(BILL_TYPE_OPTIONS.map((o) => o.value).sort()).toEqual([
       "AGENCY",

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { feeAllocations } from "../../../../shared/brokerFees";
+import { isGroupedInvoice } from "../../../../shared/groupedInvoiceGuard";
 import { listAllPages } from "../../../../shared/pagination";
 import { assertGraphqlErrors } from '../../lib/apiResponse';
 import { readBrokerFeeStatus } from '../../lib/brokerFees';
@@ -23,7 +24,7 @@ export function useInvoiceLines(invoice: Invoice) {
           nextToken,
         })
       );
-      if (invoice.status !== "DRAFT" || invoice.stripePaymentLinkId || feeAllocations(invoice.brokerFeeAllocations).length || (!invoice.policyId && !invoice.quoteId)) return loaded;
+      if (isGroupedInvoice(invoice) || invoice.status !== "DRAFT" || invoice.stripePaymentLinkId || feeAllocations(invoice.brokerFeeAllocations).length || (!invoice.policyId && !invoice.quoteId)) return loaded;
       if (invoice.sourcePricingVersion === 2) {
         if (loaded.length) return loaded;
         const seeded = await client.models.InvoiceLine.create({

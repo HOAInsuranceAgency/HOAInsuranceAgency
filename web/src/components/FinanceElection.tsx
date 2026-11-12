@@ -115,6 +115,7 @@ export function FinanceElection() {
   }
 
   const totalPayments = terms.months + 1;
+  const finalPayment = terms.finalPayment !== terms.payment ? terms.finalPayment : undefined;
   const alreadySigned = !!terms.agreementSignedName;
   const signatureReady =
     alreadySigned || (signerName.trim().length >= 2 && signerRole.trim().length >= 2);
@@ -164,8 +165,10 @@ export function FinanceElection() {
       <p>
         Instead of paying {money(terms.premium)} up front, pay{" "}
         <strong>{money(terms.initialPaymentAmount)} today</strong> as payment 1 of{" "}
-        {totalPayments}, then {terms.months} monthly payments of{" "}
-        <strong>{money(terms.payment)}</strong>.
+        {totalPayments}, then {finalPayment === undefined
+          ? <>{terms.months} monthly payments of <strong>{money(terms.payment)}</strong></>
+          : <>{terms.months > 1 && <>{terms.months - 1} monthly {terms.months === 2 ? 'payment' : 'payments'} of <strong>{money(terms.payment)}</strong> and </>}
+              a final monthly payment of <strong>{money(finalPayment)}</strong></>}.
       </p>
       <table className="fe-terms">
         <tbody>
@@ -175,7 +178,8 @@ export function FinanceElection() {
           <tr><td>Total initial payment (payment 1 of {totalPayments})</td><td>{money(terms.initialPaymentAmount)}</td></tr>
           <tr><td>Amount financed</td><td>{money(terms.amountFinanced)}</td></tr>
           <tr><td>Annual percentage rate</td><td>{terms.apr}%</td></tr>
-          <tr><td>Monthly payment ({terms.months} payments)</td><td>{money(terms.payment)}</td></tr>
+          {(finalPayment === undefined || terms.months > 1) && <tr><td>Monthly payment ({finalPayment === undefined ? terms.months : terms.months - 1} payments)</td><td>{money(terms.payment)}</td></tr>}
+          {finalPayment !== undefined && <tr><td>Final monthly payment</td><td>{money(finalPayment)}</td></tr>}
           <tr><td>Finance charge</td><td>{money(terms.totalInterest)}</td></tr>
           <tr><td>Origination fee (included today; refunded on prepayment)</td><td>{money(terms.originationFee)}</td></tr>
         </tbody>
@@ -184,8 +188,7 @@ export function FinanceElection() {
         Today's bank transfer includes the premium down payment, origination fee{terms.brokerFee > 0 ? ', and the full broker fee' : ''}. Once it settles, monthly payments are automatically collected from
         the same account on the agreed schedule. No separate activation is needed. Early
         payoff is the outstanding principal only — the actuarial method; no
-        other financing charge exists. The broker fee remains subject to its signed disclosure. Accepting closes the pay-in-full link on your
-        invoice.
+        other financing charge exists.{!terms.financingOnly && " The broker fee remains subject to its signed disclosure. Accepting closes the pay-in-full link on your invoice."}
       </p>
 
       <h2 className="fe-h2">The financing agreement</h2>

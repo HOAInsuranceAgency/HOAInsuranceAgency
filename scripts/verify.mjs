@@ -40,6 +40,15 @@ export function synthEnvironment(target) {
     HOA_MIGRATION_PENDING_CUTOFF: contract.pendingCutoff, HOA_MIGRATION_PENDING_ACCOUNT: contract.account,
     HOA_PREVIEW_ADMIN_USER_POOL_ID: contract.pool, HOA_PREVIEW_ADMIN_CLIENT_ID: contract.client,
     VITE_HOA_MIGRATION_PREVIEW: 'false', VITE_HOA_MIGRATION_AUTH: 'true', VITE_HOA_PREVIEW_ADMIN_LOGIN: 'false',
+    // Match the production template footprint without importing its credentials.
+    ...(target === 'main' ? {
+      GOOGLE_SIGN_IN_ENABLED: 'true',
+      SENTRY_DSN: `https://${'0'.repeat(32)}@${'x'.repeat(36)}.example.invalid/1`,
+      SENTRY_ENVIRONMENT: 'production',
+      AWS_COMMIT_ID: '0'.repeat(40),
+      HOA_SES_DAILY_LIMIT: '1000',
+      HOA_SES_MONTHLY_LIMIT: '30000',
+    } : {}),
   };
 }
 

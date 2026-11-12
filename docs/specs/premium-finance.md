@@ -5,6 +5,17 @@ decisions below).
 Target: `crm/` — a `premium_finance` module, feature-flagged off by default.
 Written against `staging` @ f3ba3df.
 
+## Rate revision (Jake, 2026-11-07)
+
+New offers use the highest whole basis-point rate within the configured state
+ceiling, with financing fees included where required. Agreed-rate jurisdictions
+use 18%. This supersedes decision E and W8's fixed 14% APR. Monthly published
+limits use the applicable state calendar and require a configured period;
+principal-dependent exemptions retain their strict thresholds. Existing signed
+agreements keep their frozen terms. Nevada cannot originate without a filed
+rate schedule. This revision changes pricing only; payment terms and servicing
+remain as defined below.
+
 ## Single-document revision (Jake, 2026-09-10)
 
 The financing agreement electronically signed at the initial deposit is the

@@ -42,10 +42,8 @@ describe("originationGate", () => {
   });
 
   it("treats an unverified ceiling as closed, whatever the status says", () => {
-    // Arkansas ships status:open with verified:false — deliberately. Its
-    // ceiling is unresolved, so it behaves closed. (Rhode Island left this
-    // company 2026-08-24 when its § 6-26-2 ceiling was verified.)
-    const d = originationGate("AR");
+    // Nevada has no filed schedule and therefore no verified permitted rate.
+    const d = originationGate("NV");
     expect(d.open).toBe(false);
     if (!d.open) expect(d.reason).toContain("unverified");
   });
@@ -108,9 +106,9 @@ describe("aprCapViolation", () => {
   });
 
   it("accepts any positive rate where there is no statutory cap", () => {
-    const ma = jurisdictionFor("MA")!;
-    expect(aprCapViolation(14.0, ma)).toBeNull();
-    expect(aprCapViolation(24.0, ma)).toBeNull();
+    const hi = jurisdictionFor("HI")!;
+    expect(aprCapViolation(14.0, hi)).toBeNull();
+    expect(aprCapViolation(24.0, hi)).toBeNull();
   });
 
   it("rejects nonsense rates everywhere", () => {
@@ -120,17 +118,14 @@ describe("aprCapViolation", () => {
     }
   });
 
-  it("never treats the cap as a default anywhere in the module", () => {
-    // Decision E. The only place a cap value may surface is a rejection
-    // message; no pf source assigns a default from maxApr.
-    for (const file of ["gate.ts", "quote.ts", "coverage.ts"]) {
-      const src = readFileSync(
-        resolve(process.cwd(), "../shared/premiumFinance", file),
-        "utf8"
-      );
-      expect(src, file).not.toMatch(/DEFAULT_APR\s*=\s*[^;]*maxApr/);
-      expect(src, file).not.toMatch(/apr\s*\?\?\s*[^;]*maxApr/i);
-    }
+  it("uses the agreement month and strict principal threshold for capped states", () => {
+    const ia = jurisdictionFor("IA")!;
+    expect(aprCapViolation(7.1, ia, undefined, "2026-11-30")).not.toBeNull();
+    expect(aprCapViolation(7.1, ia, undefined, "2026-12-01")).toBeNull();
+    expect(aprCapViolation(7, ia, undefined, "2027-01-01")).not.toBeNull();
+    const nd = jurisdictionFor("ND")!;
+    const q = buildQuote({ premium: 48000, downPct: 25, months: 11, apr: 18, effectiveDate: "2026-11-07" });
+    expect(aprCapViolation(18, nd, q, "2026-11-07")).toBeNull();
   });
 });
 
@@ -150,6 +145,17 @@ describe("coverageVerdict — the most important rule in the module", () => {
       const v = coverageVerdict([line], "ASSOCIATION");
       expect(v.ok, line).toBe(true);
     }
+  });
+
+  it("recognizes the CRM D&O label for the approved Directors & Officers line", () => {
+    expect(normalizeLine("D&O")).toBe(normalizeLine("Directors & Officers"));
+    expect(coverageVerdict(["Commercial Property", "D&O"], "ASSOCIATION")).toEqual({ ok: true });
+  });
+
+  it.each(["DO", "D&O and Other", "Workers Comp"])("still blocks the unrecognized label %s", line => {
+    expect(coverageVerdict([line], "ASSOCIATION")).toMatchObject({
+      ok: false, hard: false, reason: expect.stringContaining(`"${line}"`),
+    });
   });
 
   it("hard-blocks every line on the signed deny-list, with the retroactive-void warning", () => {

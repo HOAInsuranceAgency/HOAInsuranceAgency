@@ -110,6 +110,9 @@ it('reads batched line anchors only for open invoices on outstanding-loan accoun
   expect(result.invoiceLines).toHaveLength(2);
   expect(h.forbidden).not.toHaveBeenCalled();
   expect(h.invoiceList).toHaveBeenCalledWith(expect.objectContaining({ filter: { or: [{ status: { eq: 'SENT' } }, { status: { eq: 'PROCESSING' } }] } }));
+  expect(h.loanList).toHaveBeenCalledWith(expect.objectContaining({
+    filter: { or: [{ status: { ne: 'PAID' } }, { groupedInvoiceId: { attributeExists: true } }] },
+  }));
 });
 
 it('deduplicates and bounds policy batches without dropping later pages', async () => {

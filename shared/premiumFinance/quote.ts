@@ -38,13 +38,10 @@ export function downPctViolation(downPct: number): string | null {
   return null;
 }
 /**
- * 14.0 everywhere, whatever the jurisdiction's cap (decision E). The cap is a
- * ceiling, not a target: nothing may ever default an APR to it, and the UI
- * never displays it as a suggestion — pricing to the statutory maximum in
- * every state is how multi-state lenders get caught, and the market rate for
- * $17k–$35k accounts is below most caps anyway.
+ * Agency rate where the applicable state rule permits an agreed rate.
+ * Finite state ceilings are selected by financePricing instead.
  */
-export const PF_DEFAULT_APR = 14.0;
+export const PF_DEFAULT_APR = 18.0;
 
 /**
  * Flat, per-agreement, refundable on prepayment. $10 is at or under the lowest

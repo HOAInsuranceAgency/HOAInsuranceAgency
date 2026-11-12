@@ -933,6 +933,9 @@ const schema = a
        * existed, turning a missing answer into an unopenable record.
        */
       billType: a.ref("BillType"),
+      /** Original carrier billing when HOA collects a direct-billed premium. */
+      carrierBillType: a.ref("BillType"),
+      groupedDraftInvoiceId: a.id(),
       /**
        * ── Premium-finance eligibility facts (W3), mostly retired ──
        *
@@ -1025,6 +1028,10 @@ const schema = a
     Invoice: a.model({
       /** Versioned initial source pricing; absent only on pre-feature legacy records. */
       sourcePricingVersion: a.integer(),
+      /** Members of an invoice frozen for grouped billing. */
+      groupedPolicyIds: a.id().array(),
+      /** Server-owned reservation for the combined payment plan. */
+      groupedFinanceLoanId: a.id(),
       adjustsInvoiceId: a.id(),
       adjustsPremiumLineId: a.id(),
       accountId: a.id().required(),
@@ -1246,6 +1253,10 @@ const schema = a
          */
         policyId: a.id(),
         quoteId: a.id(),
+        /** Combined invoices are an alternative to a single policy or quote. */
+        groupedInvoiceId: a.id(),
+        groupedPolicyIds: a.id().array(),
+        groupedPolicyAgreementLines: a.string().array(),
         status: a.ref("PfLoanStatus").required(),
         /** Jurisdiction code at origination — frozen; moves do not re-gate. */
         state: a.string().required(),
@@ -1256,6 +1267,7 @@ const schema = a
         months: a.integer().required(),
         apr: a.float().required(),
         effectiveDate: a.date().required(),
+        coverageEffectiveDate: a.date(),
         downPayment: a.float().required(),
         amountFinanced: a.float().required(),
         payment: a.float().required(),
@@ -2274,7 +2286,7 @@ const schema = a
       .authorization(allow => [allow.authenticated()])
       .handler(a.handler.function(commissions)),
     carrierPaymentPreview: a.query()
-      .arguments({ quoteId: a.string().required(), billType: a.string().required() })
+      .arguments({ quoteId: a.string().required(), billType: a.string().required(), issuedRenewal: a.boolean() })
       .returns(a.json())
       .authorization(allow => [allow.authenticated()])
       .handler(a.handler.function(commissions)),
@@ -2318,6 +2330,13 @@ const schema = a
       })
       .returns(a.json())
       .authorization((allow) => [allow.groups(["ADMIN", "OWNER"])])
+      .handler(a.handler.function(teamAdmin)),
+
+    updateTeamUserEmail: a
+      .mutation()
+      .arguments({ userId: a.string().required(), email: a.string().required() })
+      .returns(a.json())
+      .authorization(allow => [allow.groups(["OWNER"])])
       .handler(a.handler.function(teamAdmin)),
 
     listTeamUsers: a
@@ -2379,6 +2398,20 @@ const schema = a
       .returns(a.json())
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(invoiceNumber)),
+
+    createGroupedInvoice: a
+      .mutation()
+      .arguments({ accountId: a.id().required(), policyIds: a.id().array().required(), reviewedTotals: a.json().required() })
+      .returns(a.json())
+      .authorization((allow) => [allow.groups(["OWNER"])])
+      .handler(a.handler.function(crmAccess)),
+
+    restoreGroupedInvoice: a
+      .mutation()
+      .arguments({ invoiceId: a.id().required() })
+      .returns(a.json())
+      .authorization((allow) => [allow.groups(["OWNER"])])
+      .handler(a.handler.function(crmAccess)),
 
     /**
      * Email an invoice to the insured.

@@ -6,6 +6,7 @@ import {
   type AgreementView,
 } from "./agreementPdf";
 import { parseScheduleJson } from "../../../../shared/premiumFinance/quote";
+import { groupedAgreementLines, hasGroupedAgreement } from "./agreementTerms";
 
 /**
  * Custom mutation handler: generatePfAgreement. See resource.ts.
@@ -39,6 +40,10 @@ export const handler = async (event: {
     if (!loan) return { ok: false, error: "That loan no longer exists." };
     if (loan.status !== "QUOTED" && loan.status !== "ACCEPTED" && loan.status !== "ACTIVE") {
       return { ok: false, error: `A ${loan.status.toLowerCase()} loan has no agreement to generate.` };
+    }
+    const groupLines = groupedAgreementLines(loan);
+    if (hasGroupedAgreement(loan) && !groupLines) {
+      return { ok: false, error: "The policies covered by this financing agreement could not be verified." };
     }
 
     // The kill switch reaches paperwork too.
@@ -83,6 +88,7 @@ export const handler = async (event: {
       ].filter((l) => l.trim()),
       policyNumber: policy?.policyNumber ?? null,
       carrierName: carrier?.name ?? null,
+      ...(groupLines ? { groupedPolicyAgreementLines: groupLines } : {}),
       policyTerm: (() => {
         const eff = policy?.effectiveDate ?? quote?.effectiveDate;
         const exp = policy?.expirationDate ?? quote?.expirationDate;

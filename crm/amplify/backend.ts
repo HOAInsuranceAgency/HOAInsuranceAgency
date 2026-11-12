@@ -18,6 +18,7 @@ import { installOwnerProfitability } from "./owner-profitability";
 import { bindPremiumFinanceTables } from './finance-bindings';
 import { ownerProfitability } from "./functions/owner-profitability/resource";
 import { crmAccess } from "./functions/crm-access/resource";
+import { TEAM_IDENTITY_LEASE_PREFIX, TEAM_IDENTITY_PARAMETER_PREFIX } from "./functions/crm-access/team-identity-config";
 import { Alarm, TreatMissingData, Metric, ComparisonOperator } from "aws-cdk-lib/aws-cloudwatch";
 import { SnsAction } from "aws-cdk-lib/aws-cloudwatch-actions";
 import { Topic } from "aws-cdk-lib/aws-sns";
@@ -27,8 +28,9 @@ import { ArnFormat, CustomResource, Duration, Names, Stack, TimeZone } from "aws
 import { Provider } from "aws-cdk-lib/custom-resources";
 import { Schedule, ScheduleExpression, ScheduleTargetInput, ContextAttribute } from "aws-cdk-lib/aws-scheduler";
 import { LambdaInvoke } from "aws-cdk-lib/aws-scheduler-targets";
-import { Policy, PolicyStatement } from "aws-cdk-lib/aws-iam";
+import { ManagedPolicy, Policy, PolicyStatement } from "aws-cdk-lib/aws-iam";
 import { Secret } from "aws-cdk-lib/aws-secretsmanager";
+import { StringParameter } from "aws-cdk-lib/aws-ssm";
 import { CfnUserPoolIdentityProvider } from "aws-cdk-lib/aws-cognito";
 import {
   AttributeType,
@@ -202,6 +204,20 @@ const invoiceSeqTable = new Table(invoiceStack, "InvoiceSequence", {
 invoiceSeqTable.grantReadWriteData(backend.invoiceNumber.resources.lambda);
 backend.invoiceNumber.addEnvironment("SEQ_TABLE", invoiceSeqTable.tableName);
 backend.invoiceNumber.addEnvironment("INVOICE_PREFIX", "INV");
+backend.crmAccess.addEnvironment("SEQ_TABLE", invoiceSeqTable.tableName);
+const draftPermissionStack = backend.createStack("GroupedDraftPermissions");
+const draftModelArn = (model: string) => Stack.of(backend.data.resources.graphqlApi).formatArn({
+  service: "dynamodb", resource: "table", resourceName: `${model}-${backend.data.resources.graphqlApi.apiId}-NONE`,
+});
+new ManagedPolicy(draftPermissionStack, "GroupedDraftWrites", {
+  roles: [backend.crmAccess.resources.lambda.role!],
+  statements: [
+    new PolicyStatement({ actions: ["dynamodb:UpdateItem"], resources: [invoiceSeqTable.tableArn, ...["Invoice", "InvoiceLine", "Policy"].map(draftModelArn)] }),
+    new PolicyStatement({ actions: ["dynamodb:PutItem"], resources: ["Invoice", "InvoiceLine"].map(draftModelArn) }),
+    new PolicyStatement({ actions: ["dynamodb:DeleteItem"], resources: [draftModelArn("InvoiceLine")] }),
+    new PolicyStatement({ actions: ["dynamodb:ConditionCheckItem"], resources: ["Account", "Quote", "InvoiceLine"].map(draftModelArn) }),
+  ],
+});
 
 // ── Activity log: DynamoDB Streams → Activity rows ───────────────────
 //
@@ -651,23 +667,59 @@ backend.teamAdmin.resources.lambda.addToRolePolicy(new PolicyStatement({
   actions: ["dynamodb:Query"],
   resources: [`${userProfileTable.tableArn}/index/${userProfileIndex.name}`],
 }));
-backend.teamAdmin.resources.lambda.addToRolePolicy(
-  new PolicyStatement({
-    actions: [
-      "cognito-idp:AdminCreateUser",
-      "cognito-idp:AdminDeleteUser",
-      "cognito-idp:AdminDisableUser",
-      "cognito-idp:AdminEnableUser",
-      "cognito-idp:AdminUserGlobalSignOut",
-      "cognito-idp:AdminAddUserToGroup",
-      "cognito-idp:AdminRemoveUserFromGroup",
-      "cognito-idp:AdminGetUser",
-      "cognito-idp:AdminListGroupsForUser",
-      "cognito-idp:ListUsers",
-    ],
-    resources: [backend.auth.resources.userPool.userPoolArn],
-  })
-);
+// Keep these permissions outside the nearly full data template. The Google
+// trigger discovers the table by pool at runtime, keeping auth independent of
+// the data stack that already depends on it.
+const teamIdentityStack = backend.createStack("TeamIdentityPermissions");
+const teamRole = backend.teamAdmin.resources.lambda.role!;
+new Policy(teamIdentityStack, "TeamProfileAndCognitoAccess", {
+  roles: [teamRole],
+  statements: [
+    new PolicyStatement({
+      actions: ["dynamodb:GetItem", "dynamodb:UpdateItem"],
+      resources: [userProfileTable.tableArn],
+    }),
+    new PolicyStatement({
+      actions: [
+        "cognito-idp:AdminCreateUser",
+        "cognito-idp:AdminDeleteUser",
+        "cognito-idp:AdminDisableUser",
+        "cognito-idp:AdminEnableUser",
+        "cognito-idp:AdminUserGlobalSignOut",
+        "cognito-idp:AdminAddUserToGroup",
+        "cognito-idp:AdminRemoveUserFromGroup",
+        "cognito-idp:AdminGetUser",
+        "cognito-idp:AdminUpdateUserAttributes",
+        "cognito-idp:AdminDisableProviderForUser",
+        "cognito-idp:AdminListGroupsForUser",
+        "cognito-idp:ListUsers",
+      ],
+      resources: [backend.auth.resources.userPool.userPoolArn],
+    }),
+  ],
+});
+const teamIdentityLease = new Policy(teamIdentityStack, "TeamIdentityLease", {
+  roles: [teamRole],
+  statements: [new PolicyStatement({
+    actions: ["dynamodb:UpdateItem", "dynamodb:DeleteItem"],
+    resources: [userAccessTable.tableArn],
+    conditions: { "ForAllValues:StringLike": { "dynamodb:LeadingKeys": [`${TEAM_IDENTITY_LEASE_PREFIX}*`] } },
+  })],
+});
+if (googleSignInEnabled) {
+  const google = Reflect.get(backend, "googleSignIn") as typeof backend.magicLinkVerify;
+  const googleRole = google.resources.lambda.role!;
+  teamIdentityLease.attachToRole(googleRole);
+  const lookup = new StringParameter(teamIdentityStack, "TeamIdentityAccessTable", {
+    parameterName: `${TEAM_IDENTITY_PARAMETER_PREFIX}${backend.auth.resources.userPool.userPoolId}`,
+    simpleName: false,
+    stringValue: userAccessTable.tableName,
+  });
+  new Policy(teamIdentityStack, "GoogleTeamIdentityTableLookup", {
+    roles: [googleRole],
+    statements: [new PolicyStatement({ actions: ["ssm:GetParameter"], resources: [lookup.parameterArn] })],
+  });
+}
 backend.teamAdmin.resources.lambda.addToRolePolicy(
   new PolicyStatement({
     actions: ["ses:SendEmail"],

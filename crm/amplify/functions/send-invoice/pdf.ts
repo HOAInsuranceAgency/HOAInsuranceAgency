@@ -1,7 +1,7 @@
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
 import { AGENCY, AGENCY_FMT } from "../../../../shared/agency";
 import { formatMoney, invoiceTotals } from "../../../../shared/invoiceTotals";
-import { formatDay, invoiceTerms, type InvoiceView } from "./invoice";
+import { formatDay, groupedFinanceSummary, invoiceTerms, type InvoiceView } from "./invoice";
 
 /**
  * The invoice as a PDF, for the attachment on the email.
@@ -99,6 +99,7 @@ async function loadLogo(): Promise<Uint8Array | null> {
 
 export async function renderInvoicePdf(inv: InvoiceView): Promise<Uint8Array> {
   const total = invoiceTotals(inv.lines).retail;
+  if (inv.financeOnly && (total <= 0 || !inv.finance)) throw new Error("A financing invoice requires a payment plan.");
   const doc = await PDFDocument.create();
   if (process.env.HOA_MIGRATION_APP_ID === "d1nuh9rw1hcuxo") {
     // A safe retry of the same invoice must reproduce the saved PDF byte-for-byte.
@@ -165,8 +166,8 @@ export async function renderInvoicePdf(inv: InvoiceView): Promise<Uint8Array> {
   for (const [k, v] of [
     ["Invoice No.:", inv.number ?? ""],
     ["Invoice Date:", formatDayShort(inv.issuedAt)],
-    ["Due Date:", total > 0 ? formatDayShort(inv.dueAt) : ''],
-    ["Terms:", total > 0 ? invoiceTerms(inv.issuedAt, inv.dueAt) : 'No payment due'],
+    ["Due Date:", total > 0 && !inv.financeOnly ? formatDayShort(inv.dueAt) : ''],
+    ["Terms:", inv.financeOnly ? "Financing" : total > 0 ? invoiceTerms(inv.issuedAt, inv.dueAt) : 'No payment due'],
   ] as [string, string][]) {
     if (!v) continue;
     const value = fit(v, fonts.bold, 9, 130);
@@ -336,7 +337,7 @@ export async function renderInvoicePdf(inv: InvoiceView): Promise<Uint8Array> {
     start: { x: TOTAL_LEFT, y: y + 12 }, end: { x: M.right, y: y + 12 },
     thickness: 1.5, color: NAVY,
   });
-  page.drawText(total < 0 ? 'TOTAL CREDIT' : total === 0 ? 'NO PAYMENT DUE' : 'TOTAL DUE', {
+  page.drawText(inv.financeOnly ? 'PREMIUM TOTAL' : total < 0 ? 'TOTAL CREDIT' : total === 0 ? 'NO PAYMENT DUE' : 'TOTAL DUE', {
     x: TOTAL_LEFT, y: y - 6, size: 10, font: fonts.bold, color: NAVY,
   });
   drawRight(page, formatMoney(Math.abs(total)), AMOUNT_COL, y - 8, fonts.bold, 15, NAVY);
@@ -356,12 +357,15 @@ export async function renderInvoicePdf(inv: InvoiceView): Promise<Uint8Array> {
   }
 
   y = drawStatementBox(page, fonts, {
-    title: total > 0 ? 'PAYMENT INSTRUCTIONS' : total < 0 ? 'CREDIT INFORMATION' : 'NO PAYMENT DUE',
+    title: inv.financeOnly ? 'FINANCING TERMS' : total > 0 ? 'PAYMENT INSTRUCTIONS' : total < 0 ? 'CREDIT INFORMATION' : 'NO PAYMENT DUE',
     left: M.left,
     right: M.right,
     top: y,
     emphasis: true,
-    body: total <= 0 ? [
+    body: inv.financeOnly && inv.finance ? [
+      ...groupedFinanceSummary(inv.finance),
+      'Use the financing link in your invoice email to review the agreement and make the initial payment.',
+    ] : total <= 0 ? [
       total < 0 ? 'No payment is due. Contact the agency to apply or return this credit.' : 'No payment is due on this invoice.',
       `${AGENCY.email} or ${AGENCY.phone}`,
       ...(inv.number ? [`Reference invoice ${inv.number} and the named insured.`] : []),

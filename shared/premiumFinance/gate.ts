@@ -3,6 +3,7 @@ import {
   type PfJurisdiction,
 } from "./jurisdictions";
 import { effectiveAprWithFee, type PfQuote } from "./quote";
+import { financeInterestLimit, financeRateLimit, type FinanceRateDate } from "./pricing";
 
 /**
  * The jurisdiction gate: may this agency originate a premium finance loan in
@@ -111,10 +112,8 @@ export function originationGate(
 /**
  * Server-side APR validation for quote issuance. Null = acceptable.
  *
- * The cap is a ceiling, not a target: nothing anywhere defaults an APR to it,
- * and the UI never shows it as a suggestion — it appears only here, in the
- * rejection. (Decision E: pricing to the statutory maximum in every state is
- * how multi-state lenders get caught.)
+ * Pricing and enforcement share the same applicable rate period and principal
+ * threshold. Existing loans keep their frozen terms; this checks new issuance.
  */
 export function aprCapViolation(
   apr: number,
@@ -125,19 +124,31 @@ export function aprCapViolation(
    * quote's schedule can answer. Callers without a quote get the nominal
    * test — correct everywhere the flag is null.
    */
-  quote?: PfQuote
+  quote?: PfQuote,
+  effectiveDate?: FinanceRateDate,
+  coverageEffectiveDate?: string | null
 ): string | null {
   if (!Number.isFinite(apr) || apr <= 0) return "APR must be a positive number.";
-  if (j.maxApr === null || !j.maxAprVerified) return null;
+  if (!j.maxAprVerified) return "Rate ceiling unverified.";
+  if (j.maxAddOnApr !== null) {
+    if (!quote) return "Rate ceiling unverified.";
+    const interestLimit = financeInterestLimit(j, quote, coverageEffectiveDate);
+    if (interestLimit === undefined) return "Rate ceiling unverified.";
+    if (interestLimit === null) return null;
+    return quote.totalInterest > interestLimit ? `${j.name} financing charge exceeds its maximum.` : null;
+  }
+  const cap = financeRateLimit(j, quote?.amountFinanced ?? 0, effectiveDate ?? "");
+  if (cap === undefined) return "Rate ceiling unverified.";
+  if (cap === null) return null;
   if (j.feeCountsTowardCap && quote) {
-    const eff = Math.round(effectiveAprWithFee(quote) * 100) / 100;
-    if (eff > j.maxApr) {
-      return `${eff}% effective — the ${j.name} ceiling counts the origination fee — exceeds the maximum of ${j.maxApr}%.`;
+    const eff = effectiveAprWithFee(quote);
+    if (eff > cap) {
+      return `${eff.toFixed(2)}% effective — the ${j.name} ceiling counts the origination fee — exceeds the maximum of ${cap}%.`;
     }
     return null;
   }
-  if (apr > j.maxApr) {
-    return `${apr}% exceeds the ${j.name} maximum of ${j.maxApr}%.`;
+  if (apr > cap) {
+    return `${apr}% exceeds the ${j.name} maximum of ${cap}%.`;
   }
   return null;
 }

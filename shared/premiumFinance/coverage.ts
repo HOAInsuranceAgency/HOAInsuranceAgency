@@ -15,23 +15,24 @@ import { PF_COVERAGE_ALLOW, PF_COVERAGE_DENY } from "./jurisdictions";
  * config/premium_finance/jurisdictions.yml, not code. `Policy.lines` is free
  * text in this schema, which is exactly why unmatched-blocks is the right
  * default: nobody has to enumerate every way a producer might type a line,
- * they only have to use the canonical names when they want financing.
+ * they can use the canonical names or their recognized CRM labels.
  */
 
 /**
  * Normalize for matching: lowercase, "&" → "and", every other punctuation run
- * → space, collapsed. Symmetric — applied to both the signed lists and the
- * policy's lines — so it can never widen the lists, only make matching
- * insensitive to typography. A compact (space-stripped) form is compared too,
- * so "HO-3", "HO 3" and "HO3" are one token.
+ * → space, collapsed. Applied to both the signed lists and the policy's lines.
+ * The CRM label "D&O" names the approved "Directors & Officers" line. A
+ * compact (space-stripped) form is compared too, so "HO-3", "HO 3" and "HO3"
+ * are one token.
  */
 export function normalizeLine(s: string): string {
-  return s
+  const normalized = s
     .toLowerCase()
     .replace(/&/g, " and ")
     .replace(/[^a-z0-9]+/g, " ")
     .trim()
     .replace(/\s+/g, " ");
+  return normalized === "d and o" ? "directors and officers" : normalized;
 }
 
 const compact = (s: string) => s.replace(/ /g, "");

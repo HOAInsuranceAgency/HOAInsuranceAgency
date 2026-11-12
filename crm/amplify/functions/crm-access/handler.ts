@@ -2,6 +2,7 @@ import { assertPreviewRead } from "../migration-readonly";
 import { GetObjectCommand, HeadObjectCommand, PutObjectCommand, DeleteObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { updateFeeQuoteAtomically } from "./quote-fee-update";
+import { writeInvoiceDraftLine } from "./invoice-line-draft";
 import { AccountAccess } from "./access";
 import { authorizeCustom, filterCustom } from "./custom";
 import { AccessDenied, id, RETIRED_MODELS, type Identity, type RecordData } from "./policy";
@@ -11,10 +12,12 @@ import { listAssigned } from "./listing";
 import { isActiveOwner, type RoleRequest } from "./active-role";
 import { assertUserSession } from "./user-status";
 import { publishCrmChange } from "../live-changes";
+import { createGroupedDraft, restoreGroupedDraft } from "./grouped-draft";
+import { isGroupedInvoice } from "../../../../shared/groupedInvoiceGuard";
 const s3 = fileClient();
-type Event = { identity?: Identity; request?: RoleRequest; fieldName?: string; info?: { fieldName?: string }; arguments?: RecordData; nativeConditions?: unknown; nativeAuthFilter?: unknown; mode?: "notify" | "quote-financial" | "session" | "read" | "write" | "list" | "admin" | "owner" | "custom-pre" | "custom-post"; model?: string; field?: string; operation?: string; previous?: unknown };
+type Event = { identity?: Identity; request?: RoleRequest; fieldName?: string; info?: { fieldName?: string }; arguments?: RecordData; nativeConditions?: unknown; nativeAuthFilter?: unknown; mode?: "notify" | "quote-financial" | "invoice-line-draft" | "session" | "read" | "write" | "list" | "admin" | "owner" | "custom-pre" | "custom-post"; model?: string; field?: string; operation?: string; previous?: unknown };
 export async function handler(event: Event) {
-  assertPreviewRead(!["write", "quote-financial"].includes(event.mode ?? "") && (event.mode !== undefined || (event.fieldName ?? event.info?.fieldName) === "crmAccess"));
+  assertPreviewRead(!["write", "quote-financial", "invoice-line-draft"].includes(event.mode ?? "") && (event.mode !== undefined || (event.fieldName ?? event.info?.fieldName) === "crmAccess"));
   if (event.mode === "session") { await assertUserSession(event.identity); return event.previous; }
   if (event.mode === 'notify') { if (event.previous != null) await publishCrmChange(); return event.previous; }
   const access = new AccountAccess(event.identity, undefined, event.request), args = object(event.arguments);
@@ -37,12 +40,25 @@ export async function handler(event: Event) {
     return event.previous;
   }
   if (event.mode === "quote-financial") { await assertUserSession(event.identity); return updateFeeQuoteAtomically(access, event); }
+  if (event.mode === "invoice-line-draft") { await assertUserSession(event.identity); return writeInvoiceDraftLine(access, event); }
   if (event.mode === "write") { await access.write(id(event.model), id(event.operation), object(args.input)); return event.previous; }
-  if (event.mode === "custom-pre") { await authorizeCustom(access, id(event.field), args); return event.previous; }
+  if (event.mode === "custom-pre") {
+    const field = id(event.field);
+    await authorizeCustom(access, field, args);
+    if (field === "sendInvoice" && !isActiveOwner(event.identity, event.request)) {
+      const invoice = await access.get("Invoice", id(args.invoiceId));
+      if (invoice && isGroupedInvoice(invoice)) throw new AccessDenied();
+    }
+    return event.previous;
+  }
   if (event.mode === "custom-post") return filterCustom(access, id(event.field), args, event.previous);
   // Amplify's generated @function payload places fieldName at the top level.
   const field = id(event.fieldName) || id(event.info?.fieldName);
   if (field === "crmAccess") return { actorId: access.actor, admin: access.admin, salespersonIds: [...await access.salespeople()] };
+  if (field === "createGroupedInvoice" || field === "restoreGroupedInvoice") {
+    if (!isActiveOwner(event.identity, event.request)) throw new AccessDenied();
+    return field === "createGroupedInvoice" ? createGroupedDraft(access, args) : restoreGroupedDraft(access, args);
+  }
   if (field !== "crmFile") throw new AccessDenied();
   const path = typeof args.path === "string" ? args.path : "", operation = id(args.operation);
   const Bucket = process.env.STORAGE_BUCKET; if (!Bucket) throw new Error("File access is not configured");

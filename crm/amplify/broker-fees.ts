@@ -53,7 +53,7 @@ export function installBrokerFees(backend: typeof Backend, communicationTable: D
     fn.addEnvironment('ACCESS_API_ID',api.apiId);
     const models=fn===backend.brokerFees?['Account','Quote','Policy','Invoice','InvoiceLine','Document','AgencySettings','PfLoan']
       :fn===backend.voidInvoice?['Quote','Policy','Invoice']
-      :[backend.communications,backend.sendInvoice,backend.pfElection].includes(fn as typeof backend.communications)?['AgencySettings','Quote','Account','Policy','Invoice','PfLoan',...(fn===backend.sendInvoice?['InvoiceLine']:[])]
+      :[backend.communications,backend.sendInvoice,backend.pfElection].includes(fn as typeof backend.communications)?['AgencySettings','Quote','Account','Policy','Invoice','PfLoan',...(fn===backend.communications?[]:['InvoiceLine','Carrier'])]
       :['Quote','Policy','Document','AgencySettings'];
     add(fn,reads,models.flatMap(model=>[modelArn(model),`${modelArn(model)}/index/*`]));
     const writable=fn===backend.brokerFees?['Account','Invoice','Document','Policy','AgencySettings']:fn===backend.stripeWebhook?['Policy']:fn===backend.commissions?['Document']:fn===backend.voidInvoice?['Invoice']:[];
@@ -65,6 +65,7 @@ export function installBrokerFees(backend: typeof Backend, communicationTable: D
   add(backend.crmAccess,['dynamodb:ConditionCheckItem'],[modelArn('Invoice'),communicationTable.tableArn]);
   add(backend.crmAccess,['dynamodb:UpdateItem'],[modelArn('Invoice')]);
   for(const fn of [backend.sendInvoice,backend.pfElection])add(fn,['dynamodb:UpdateItem'],[modelArn('Quote')]);
+  add(backend.sendInvoice,['dynamodb:UpdateItem'],[modelArn('Policy')]);
   let index=0;
   for(const [fn,statements]of grants)new ManagedPolicy(permissions,`BrokerFeeAccess${index++}`,{roles:[fn.resources.lambda.role!],statements});
   new Rule(Stack.of(backend.brokerFees.resources.lambda),'BrokerFeeReceiptRecovery',{

@@ -71,6 +71,7 @@ export interface InvoiceAnchorLike extends InvoicePaymentStatus {
   status?: string | null;
   policyId?: string | null;
   quoteId?: string | null;
+  groupedPolicyIds?: readonly (string | null)[] | null;
 }
 
 /**
@@ -95,6 +96,9 @@ export function liveAnchorIds(
     if (!live.has(i.id)) continue;
     if (i.policyId) busy.add(i.policyId);
     if (i.quoteId) busy.add(i.quoteId);
+    for (const policyId of i.groupedPolicyIds ?? []) {
+      if (policyId) busy.add(policyId);
+    }
   }
   for (const l of lines) {
     if (live.has(l.invoiceId) && l.policyId) busy.add(l.policyId);

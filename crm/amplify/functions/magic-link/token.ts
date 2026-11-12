@@ -6,7 +6,7 @@ import {
 
 /**
  * Magic-link token: `${base64url(payload)}.${base64url(hmacSha256(payload))}`
- * where payload = JSON {email, exp}. Signed with a Secrets Manager secret
+ * where payload = JSON {email, sub, exp}. Signed with a Secrets Manager secret
  * shared by the create and verify triggers. 15-minute expiry.
  */
 
@@ -32,15 +32,15 @@ const b64url = (buf: Buffer) =>
 const sign = (payload: string, secret: string) =>
   b64url(createHmac("sha256", secret).update(payload).digest());
 
-export function mintToken(email: string, secret: string, issuedAt = Date.now()): string {
+export function mintToken(email: string, sub: string, secret: string, issuedAt = Date.now()): string {
   if (!Number.isSafeInteger(issuedAt) || issuedAt < 0) throw new Error("Invalid magic-link issuance time.");
   const payload = b64url(
-    Buffer.from(JSON.stringify({ email, exp: issuedAt + TOKEN_TTL_MS }))
+    Buffer.from(JSON.stringify({ email, sub, exp: issuedAt + TOKEN_TTL_MS }))
   );
   return `${payload}.${sign(payload, secret)}`;
 }
 
-export function verifyToken(token: string, email: string, secret: string): boolean {
+export function verifyToken(token: string, email: string, sub: string, secret: string): boolean {
   const [payload, sig] = token.split(".");
   if (!payload || !sig) return false;
   const expected = sign(payload, secret);
@@ -50,12 +50,13 @@ export function verifyToken(token: string, email: string, secret: string): boole
   try {
     const parsed = JSON.parse(
       Buffer.from(payload.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString()
-    ) as { email?: string; exp?: number };
+    ) as { email?: string; sub?: string; exp?: number };
     return (
       typeof parsed.exp === "number" &&
       parsed.exp > Date.now() &&
       typeof parsed.email === "string" &&
-      parsed.email.toLowerCase() === email.toLowerCase()
+      parsed.email.toLowerCase() === email.toLowerCase() &&
+      parsed.sub === sub
     );
   } catch {
     return false;

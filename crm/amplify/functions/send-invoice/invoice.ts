@@ -1,5 +1,6 @@
 import { AGENCY, AGENCY_FMT } from "../../../../shared/agency";
 import { formatMoney, invoiceTotals, type LineLike } from "../../../../shared/invoiceTotals";
+import { initialPaymentTotals } from "../../../../shared/premiumFinance/initialPayment";
 
 /**
  * The emailed invoice. Pure: no SES, no data client.
@@ -52,6 +53,7 @@ export interface InvoiceView {
   memo?: string | null;
   paymentUrl?: string | null;
   paymentLabel?: string;
+  financeOnly?: boolean;
   /**
    * W7: the financing fork. Present only when the policy carried a QUOTED
    * finance offer at send time — the email then presents both paths and the
@@ -66,6 +68,7 @@ export interface InvoiceView {
     monthly: number;
     months: number;
     apr: number;
+    finalPayment?: number;
   } | null;
   lines: InvoiceLineView[];
 }
@@ -125,18 +128,31 @@ export interface RenderedInvoice {
   html: string;
 }
 
+/** Exact initial and final amounts for an invoice offered through one financing plan. */
+export function groupedFinanceSummary(finance: NonNullable<InvoiceView["finance"]>): string[] {
+  const fee = finance.originationFee ?? 0;
+  const { totalCents } = initialPaymentTotals({ downPayment: finance.downPayment, originationFee: fee });
+  const upfront = `${formatMoney(totalCents / 100)} initial payment (${formatMoney(finance.downPayment)} down${fee ? ` plus a ${formatMoney(fee)} origination fee` : ""}).`;
+  const installments = finance.finalPayment !== undefined && finance.finalPayment !== finance.monthly
+    ? `${finance.months} monthly payments at ${finance.apr}% APR. The first ${finance.months - 1} are ${formatMoney(finance.monthly)} each and the final payment is ${formatMoney(finance.finalPayment)}.`
+    : `${finance.months} monthly payments of ${formatMoney(finance.monthly)} at ${finance.apr}% APR.`;
+  return [upfront, installments];
+}
+
 export function renderInvoice(inv: InvoiceView): RenderedInvoice {
   const totals = invoiceTotals(inv.lines);
   const credit = totals.retail < 0, payable = totals.retail > 0;
   const due = formatMoney(Math.abs(totals.retail));
-  const balanceLabel = credit ? 'Credit balance' : payable ? 'Amount due' : 'No payment due';
+  if (inv.financeOnly && (!payable || !inv.finance)) throw new Error("A financing invoice requires a payment plan.");
+  const groupedSummary = inv.financeOnly && inv.finance ? groupedFinanceSummary(inv.finance) : null;
+  const balanceLabel = inv.financeOnly ? 'Premium and charges' : credit ? 'Credit balance' : payable ? 'Amount due' : 'No payment due';
   const balanceNote = credit ? 'No payment is due. Contact the agency to apply or return this credit.' : 'No payment is due on this invoice.';
   const number = inv.number?.trim() || "";
   const greeting = inv.contactFirstName?.trim()
     ? `Hi ${inv.contactFirstName.trim()},`
     : "Hello,";
 
-  const subject = number
+  const subject = inv.financeOnly ? `Financing for invoice${number ? ` ${number}` : ""} from ${AGENCY_FMT.displayName}` : number
     ? `Invoice ${number} from ${AGENCY_FMT.displayName} — ${due} ${credit ? 'credit' : 'due'}`
     : `Invoice from ${AGENCY_FMT.displayName} — ${due} ${credit ? 'credit' : 'due'}`;
 
@@ -152,7 +168,7 @@ export function renderInvoice(inv: InvoiceView): RenderedInvoice {
         : "",
     ],
     ["Issued", formatDay(inv.issuedAt)],
-    ["Due", payable ? formatDay(inv.dueAt) : ''],
+    ["Due", payable && !inv.financeOnly ? formatDay(inv.dueAt) : ''],
   ].filter(([, v]) => v !== "") as [string, string][];
 
   const lines = inv.lines.filter(
@@ -163,7 +179,7 @@ export function renderInvoice(inv: InvoiceView): RenderedInvoice {
     greeting,
     "",
     `${balanceLabel}: ${due}`,
-    ...(payable && inv.dueAt ? [`Payable by ${formatDay(inv.dueAt)}.`] : []),
+    ...(payable && !inv.financeOnly && inv.dueAt ? [`Payable by ${formatDay(inv.dueAt)}.`] : []),
     ...(!payable ? [balanceNote] : []),
     "",
     ...meta.map(([k, v]) => `${k}: ${v}`),
@@ -173,11 +189,12 @@ export function renderInvoice(inv: InvoiceView): RenderedInvoice {
     ),
     `  ${credit ? 'Total credit' : 'Total'}  ${due}`,
     ...(inv.memo?.trim() ? ["", inv.memo.trim()] : []),
-    ...(payable && inv.paymentUrl?.trim() ? ["", inv.paymentLabel ? `${inv.paymentLabel}:` : "Pay online:", inv.paymentUrl.trim()] : []),
+    ...(payable && !inv.financeOnly && inv.paymentUrl?.trim() ? ["", inv.paymentLabel ? `${inv.paymentLabel}:` : "Pay online:", inv.paymentUrl.trim()] : []),
     ...(payable && inv.finance
       ? [
           "",
-          `Prefer monthly payments? Finance with ${formatMoney(inv.finance.downPayment)} down (payment 1 of ${inv.finance.months + 1})${inv.finance.brokerFee ? ` plus the ${formatMoney(inv.finance.brokerFee)} broker fee paid in full` : ""}${inv.finance.originationFee ? ` plus a ${formatMoney(inv.finance.originationFee)} origination fee in the initial payment` : ""}, then ${inv.finance.months} monthly payments of ${formatMoney(inv.finance.monthly)} at ${inv.finance.apr}% APR:`,
+          ...(groupedSummary ? [...groupedSummary, "Review and set up financing"]
+            : [`Prefer monthly payments? Finance with ${formatMoney(inv.finance.downPayment)} down (payment 1 of ${inv.finance.months + 1})${inv.finance.brokerFee ? ` plus the ${formatMoney(inv.finance.brokerFee)} broker fee paid in full` : ""}${inv.finance.originationFee ? ` plus a ${formatMoney(inv.finance.originationFee)} origination fee in the initial payment` : ""}, then ${inv.finance.months} monthly payments of ${formatMoney(inv.finance.monthly)} at ${inv.finance.apr}% APR:`]),
           inv.finance.url,
         ]
       : []),
@@ -187,7 +204,7 @@ export function renderInvoice(inv: InvoiceView): RenderedInvoice {
   ].join("\n");
 
   const font = "-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif";
-  const pay = payable ? inv.paymentUrl?.trim() : undefined;
+  const pay = payable && !inv.financeOnly ? inv.paymentUrl?.trim() : undefined;
 
   const html = `<!doctype html>
 <html><head><meta charset="utf-8"><meta name="color-scheme" content="light only"></head>
@@ -206,7 +223,7 @@ export function renderInvoice(inv: InvoiceView): RenderedInvoice {
                the top of this file for why that is not only a design choice. -->
           <div style="font:400 12px/1.4 ${font};color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin:0 0 2px">${balanceLabel}</div>
           <div style="font:800 34px/1.15 ${font};color:#0f172a;margin:0 0 4px">${escapeHtml(due)}</div>
-          ${payable && inv.dueAt ? `<div style="font:400 14px/1.5 ${font};color:#64748b;margin:0 0 18px">Payable by ${escapeHtml(formatDay(inv.dueAt))}</div>` : `<div style="height:14px"></div>`}
+          ${payable && !inv.financeOnly && inv.dueAt ? `<div style="font:400 14px/1.5 ${font};color:#64748b;margin:0 0 18px">Payable by ${escapeHtml(formatDay(inv.dueAt))}</div>` : `<div style="height:14px"></div>`}
           ${!payable ? `<p style="font:400 13px/1.6 ${font};color:#475569">${balanceNote}</p>` : ''}
           ${
             pay
@@ -216,8 +233,8 @@ export function renderInvoice(inv: InvoiceView): RenderedInvoice {
           ${
             payable && inv.finance
               ? `<div style="font:400 13px/1.6 ${font};color:#475569;margin:14px 0 0;padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px">
-            Prefer monthly payments? Finance with <b>${escapeHtml(formatMoney(inv.finance.downPayment))} down</b>${inv.finance.brokerFee ? ` plus the <b>${formatMoney(inv.finance.brokerFee)}</b> broker fee paid in full` : ""}${inv.finance.originationFee ? ` plus a <b>${formatMoney(inv.finance.originationFee)}</b> origination fee in the initial payment` : ""} — payment 1 of ${inv.finance.months + 1} — then ${inv.finance.months} monthly payments of <b>${escapeHtml(formatMoney(inv.finance.monthly))}</b> at ${escapeHtml(String(inv.finance.apr))}% APR.<br>
-            <a href="${escapeHtml(inv.finance.url)}" style="display:inline-block;margin:8px 0 0;font:700 14px/1 ${font};color:#1a365d;text-decoration:underline">Set up financing</a>
+            ${groupedSummary ? groupedSummary.map(escapeHtml).join("<br>") : `Prefer monthly payments? Finance with <b>${escapeHtml(formatMoney(inv.finance.downPayment))} down</b>${inv.finance.brokerFee ? ` plus the <b>${formatMoney(inv.finance.brokerFee)}</b> broker fee paid in full` : ""}${inv.finance.originationFee ? ` plus a <b>${formatMoney(inv.finance.originationFee)}</b> origination fee in the initial payment` : ""} — payment 1 of ${inv.finance.months + 1} — then ${inv.finance.months} monthly payments of <b>${escapeHtml(formatMoney(inv.finance.monthly))}</b> at ${escapeHtml(String(inv.finance.apr))}% APR.`}<br>
+            <a href="${escapeHtml(inv.finance.url)}" style="display:inline-block;margin:8px 0 0;font:700 14px/1 ${font};color:#1a365d;text-decoration:underline">${inv.financeOnly ? "Review and set up financing" : "Set up financing"}</a>
           </div>`
               : ""
           }
