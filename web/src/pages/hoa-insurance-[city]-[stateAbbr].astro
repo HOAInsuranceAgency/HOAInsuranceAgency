@@ -4,6 +4,7 @@ import Hero from "../components/Hero.astro";
 import { ContactForm } from "../components/ContactForm";
 import { QUOTE_URL } from "../constants";
 import { cities } from "../data/cities";
+import { CALIFORNIA_PAGE_LINE, isCalifornia } from "../data/california";
 
 export function getStaticPaths() {
   return cities.map((c) => ({
@@ -45,6 +46,10 @@ const canonicalPath = "/hoa-insurance-" + city.slug + "-" + city.stateAbbr + "/"
     <div class="container reveal" style="max-width: 800px">
       <h2 class="section-title">HOA Insurance in {city.name}, {city.stateAbbr.toUpperCase()}</h2>
       <p style="font-size: 15px; color: var(--color-gray-600); line-height: 1.7; margin-bottom: 32px">{city.intro}</p>
+      {/* California city pages name the California trade name (data/california.ts). */}
+      {isCalifornia(city.stateAbbr) && (
+        <p style="font-size: 14px; color: var(--color-gray-600); line-height: 1.7; margin-bottom: 32px">{CALIFORNIA_PAGE_LINE}</p>
+      )}
     </div>
   </section>
 

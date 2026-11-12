@@ -2,6 +2,8 @@
 /** Site-wide legal identity, contact details, footprint and social links. */
 import { SOCIAL } from "../constants";
 import { AGENCY, AGENCY_FMT } from "../../../shared/agency";
+import PrivacyChoicesLink from "./PrivacyChoicesLink.astro";
+import { CALIFORNIA_DBA_LINE } from "../data/california";
 ---
 
 <footer class="site-footer">
@@ -44,12 +46,15 @@ import { AGENCY, AGENCY_FMT } from "../../../shared/agency";
     <span class="site-footer__dot">&middot;</span>
     <a href="/terms-of-service/">Terms of Service</a>
     <span class="site-footer__dot">&middot;</span>
+    <PrivacyChoicesLink />
+    <span class="site-footer__dot">&middot;</span>
     <span>&copy; {new Date().getFullYear()} {AGENCY.name}</span>
     {/* ™ claims the visible mark; trade-name approval is a separate question. */}
     <span class="site-footer__mark">
       <strong>{AGENCY_FMT.brandMarkedName}</strong> is the consumer-facing brand of
       {" "}{AGENCY.name}. All Insurance is placed by that licensed agency.
     </span>
+    <span class="site-footer__mark">{CALIFORNIA_DBA_LINE}</span>
   </div>
 </footer>
 

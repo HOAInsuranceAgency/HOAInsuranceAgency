@@ -1,4 +1,5 @@
 import { AGENCY, AGENCY_FMT } from "../../shared/agency";
+import { effectiveConsent } from "./lib/consent";
 
 export const PHONE = AGENCY.phone;
 export const PHONE_HREF = AGENCY_FMT.phoneHref;
@@ -161,23 +162,29 @@ export type LeadForm =
  * of the session, not because of this payload.
  *
  * Declines silently when analytics is switched off, when there is no window
- * (SSR), or when the tag has not loaded.
+ * (SSR), or when the tag has not loaded. Sends the GA4 event only with analytics
+ * allowed (on unless declined) and the Ads conversions only with marketing consent.
  */
 export function trackLead(form: LeadForm): void {
   if (ANALYTICS_DISABLED) return;
   if (typeof window === "undefined") return;
   const gtag = (window as Window & { gtag?: Gtag }).gtag;
   if (!gtag) return;
+  // Only what the visitor allowed in "Cookie Preferences" (lib/consent.ts).
+  const consent = effectiveConsent();
 
   // GA4. No send_to — this one is for the measurement property.
-  gtag("event", "generate_lead", {
-    currency: "USD",
-    value: 1.0,
-    form_name: form,
-  });
+  if (consent.analytics) {
+    gtag("event", "generate_lead", {
+      currency: "USD",
+      value: 1.0,
+      form_name: form,
+    });
+  }
 
   // Google Ads. send_to carries the account and the conversion label, so one
   // event per label — a single call cannot credit two accounts.
+  if (!consent.marketing) return;
   for (const sendTo of ADS_CONVERSION_IDS) {
     gtag("event", "conversion", {
       send_to: sendTo,

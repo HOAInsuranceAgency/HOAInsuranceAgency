@@ -1,6 +1,8 @@
 ---
 /** Legal identity footer for full-bleed templates that bypass `Layout`. */
 import { AGENCY, AGENCY_FMT } from "../../../shared/agency";
+import PrivacyChoicesLink from "./PrivacyChoicesLink.astro";
+import { CALIFORNIA_DBA_LINE } from "../data/california";
 ---
 
 <footer class="legal-strip">
@@ -19,6 +21,8 @@ import { AGENCY, AGENCY_FMT } from "../../../shared/agency";
     <span class="legal-strip__dot">&middot;</span>
     <a href="/terms-of-service/">Terms of Service</a>
     <span class="legal-strip__dot">&middot;</span>
+    <PrivacyChoicesLink />
+    <span class="legal-strip__dot">&middot;</span>
     <span>&copy; {new Date().getFullYear()} {AGENCY.name}</span>
   </p>
   <p class="legal-strip__note">
@@ -26,6 +30,7 @@ import { AGENCY, AGENCY_FMT } from "../../../shared/agency";
     Coverage is subject to underwriting, carrier eligibility and the terms of the
     policy issued.
   </p>
+  <p class="legal-strip__note">{CALIFORNIA_DBA_LINE}</p>
 </footer>
 
 <style>

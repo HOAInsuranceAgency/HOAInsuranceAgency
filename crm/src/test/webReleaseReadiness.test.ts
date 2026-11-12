@@ -51,12 +51,16 @@ describe("release legal wording and revision dates", () => {
     expect(terms).not.toContain("insurance agency/broker/producer");
   });
 
-  it.each(["terms-of-service", "privacy-policy"])(
+  it.each([
+    ["terms-of-service", "September 7, 2026"],
+    // Cookie consent, Cookie Preferences and Global Privacy Control.
+    ["privacy-policy", "November 12, 2026"],
+  ])(
     "%s preserves its effective date and records the material revision",
-    (page) => {
+    (page, updated) => {
       const source = read(`../../../web/src/pages/${page}.astro`);
       expect(source).toContain(
-        "Effective Date: January 1, 2026 | Last Updated: September 7, 2026"
+        `Effective Date: January 1, 2026 | Last Updated: ${updated}`
       );
       expect(source).toContain('{EMAIL}');
       expect(source).not.toContain("{LEAD_EMAIL}");
