@@ -17,6 +17,8 @@ calendar inputs and full wall-clock scheduling rules in their domain modules.
 optional-cent presentation. It does not validate amounts, round ledger arithmetic,
 or choose missing-value fallbacks. `usStates.ts` owns the 50-state/DC identities;
 website editorial copy, map geometry, and signed jurisdiction rules stay separate.
+`articleText.mjs` owns Markdown prose word counting for blog automation, website
+publication validation, reading time, and article metadata.
 
 `premiumFinance/initialPayment.ts` owns upfront-payment component composition.
 Checkout rounds down payment and origination dollars separately to cents and accepts

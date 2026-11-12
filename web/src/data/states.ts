@@ -1,4 +1,5 @@
 import { US_STATE_CATALOG, US_STATE_NAMES, type USStateCode } from '../../../shared/usStates';
+import { CALIFORNIA_DBA } from "./california";
 
 interface StateData {
   name: string;
@@ -177,7 +178,18 @@ const reviewedCodes = new Set(reviewedStates.map(state => state.abbr));
 const pendingStates = [...US_STATE_CATALOG]
   .filter(state => !reviewedCodes.has(state.code))
   .sort((a, b) => a.name.localeCompare(b.name))
-  .map(state => pending(state.code));
+  .map(state => pending(state.code))
+  .map(withCaliforniaTradeName);
+
+/** California pages present the business under its California trade name (data/california.ts). */
+function withCaliforniaTradeName(state: StateData): StateData {
+  if (state.abbr !== "CA") return state;
+  return {
+    ...state,
+    title: `HOA Insurance in California — ${CALIFORNIA_DBA.name}`,
+    description: `${CALIFORNIA_DBA.name} places HOA master insurance, liability, D&O and crime coverage for California homeowners and condominium associations.`,
+  };
+}
 
 export const states: StateData[] = [...reviewedStates, ...pendingStates];
 

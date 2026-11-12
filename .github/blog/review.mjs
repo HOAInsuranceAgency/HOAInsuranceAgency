@@ -40,6 +40,7 @@ const comment = process.env.COMMENT_BODY ?? "";
 const lines = comment.split(/\r?\n/).map((l) => l.trim());
 const plain = (s, max) => s.length > 0 && s.length <= max && !/[<>\u0000-\u001f]/.test(s);
 let failed = false;
+let articleChanged = false;
 
 // ── /title ──
 const titleLine = lines.find((l) => /^\/title\b/i.test(l));
@@ -53,6 +54,7 @@ if (titleLine) {
     failed = true;
   } else {
     data.title = title;
+    articleChanged = true;
     replies.push(`**Title set:** ${title}`);
   }
 }
@@ -72,10 +74,12 @@ if (lines.some((l) => /^\/photo\b/i.test(l))) {
   }
   const folder = join(root, imageDir);
   const uploads = existsSync(folder)
-    ? readdirSync(folder).filter((f) => f !== "cover.jpg" && /\.(jpe?g|png|webp)$/i.test(f))
-      .map((f) => ({ f, t: statSync(join(folder, f)).mtimeMs })).sort((a, b) => b.t - a.t).map((x) => x.f)
+    ? readdirSync(folder, { withFileTypes: true })
+      .filter((entry) => entry.isFile() && entry.name !== "cover.jpg" && /\.(jpe?g|png|webp)$/i.test(entry.name))
+      .map((entry) => entry.name)
     : [];
   if (!uploads.length) problems.push(`a photo uploaded into \`${imageDir}/\` on this branch`);
+  if (uploads.length > 1) problems.push(`exactly one uploaded photo in \`${imageDir}/\` (found ${uploads.length}); keep only the intended upload and retry. No photos were changed or deleted`);
   if (problems.length) {
     replies.push(`**Photo not applied.** Still needed: ${problems.join("; ")}.`);
     failed = true;
@@ -96,10 +100,11 @@ if (lines.some((l) => /^\/photo\b/i.test(l))) {
       rmSync(join(folder, "cover.jpg"), { force: true });
       writeFileSync(join(folder, "cover.jpg"), readFileSync(join(folder, "cover.next.jpg")));
       rmSync(join(folder, "cover.next.jpg"));
-      for (const f of uploads) rmSync(join(folder, f));
+      rmSync(upload);
       changed.add(imageDir);
       data.image = { src: `/images/blog/${args.slug}/cover.jpg`, alt, width: 1600, height: 900, credit, provenance: source, ...(sourceUrl ? { sourceUrl } : {}) };
       data.draft = false;
+      articleChanged = true;
       replies.push(`**Photo applied.** Cropped to 1600 × 900 and saved as the cover. Credit: ${credit}. The article is now marked ready and will publish at its planned time once this pull request is merged.`);
     }
   }
@@ -109,6 +114,8 @@ if (!titleLine && !lines.some((l) => /^\/photo\b/i.test(l))) {
   replies.push("No command found. Use `/title` and/or `/photo`.");
   finish(1);
 }
-writeFileSync(join(root, articleFile), writeArticle(data, body));
-changed.add(articleFile);
+if (articleChanged) {
+  writeFileSync(join(root, articleFile), writeArticle(data, body));
+  changed.add(articleFile);
+}
 finish(failed ? 2 : 0);

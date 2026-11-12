@@ -1,5 +1,6 @@
 import { canonicalUrl, absoluteUrl, ORG_ID } from "./seo";
-import { articlePath, articleWordCount, type Article } from "./articles";
+import { articlePath, type Article } from "./articles";
+import { articleWordCount } from "../../../shared/articleText.mjs";
 
 export function articleSchemaNode(article: Article): Record<string, unknown> {
   const { data } = article;

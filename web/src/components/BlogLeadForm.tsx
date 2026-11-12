@@ -1,8 +1,10 @@
 import { useState, type FormEvent } from "react";
 import { PHONE, trackLead } from "../constants";
 import { useLeadSubmission } from "../lib/crmLead";
-import { US_STATES } from "../data/blog";
+import { US_STATE_CATALOG } from "../../../shared/usStates";
 import "./BlogLeadForm.css";
+
+const stateOptions = [...US_STATE_CATALOG].sort((a, b) => a.name.localeCompare(b.name));
 
 /**
  * Blog lead capture, saved to the CRM like every other website form.
@@ -109,7 +111,7 @@ export function BlogLeadForm({
               <label htmlFor={id("state")}>State</label>
               <select id={id("state")} value={state} onChange={(e) => setState(e.target.value)}>
                 <option value="">Select a state</option>
-                {US_STATES.map(([abbr, label]) => <option key={abbr} value={abbr}>{label}</option>)}
+                {stateOptions.map(({ code, name }) => <option key={code} value={code}>{name}</option>)}
               </select>
             </div>
             <div className="blog-form__field">

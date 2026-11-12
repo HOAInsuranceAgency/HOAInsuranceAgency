@@ -16,8 +16,9 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
+import { articleWordCount } from "../../shared/articleText.mjs";
 import {
-  CATEGORY_SLOTS, articleWordCount, checkBody, coverSvg, existingTitles, internalPages,
+  CATEGORY_SLOTS, checkBody, coverSvg, existingTitles, internalPages,
   planSlot, slugify, writeArticle,
 } from "./lib.mjs";
 
@@ -33,7 +34,7 @@ mkdirSync(out, { recursive: true });
 
 const client = new Anthropic();
 const guide = readFileSync(join(root, "docs/BLOG-EDITORIAL-GUIDE.md"), "utf8");
-const pages = internalPages(root);
+const pages = internalPages();
 const queued = args.queued && existsSync(args.queued) ? JSON.parse(readFileSync(args.queued, "utf8")) : [];
 const taken = [...existingTitles(root), ...queued];
 const slot = planSlot({ day: args.day, targetDate: args.date });
@@ -159,12 +160,14 @@ const Draft = z.object({
 });
 
 async function structure(prompt) {
-  const response = await client.messages.parse({
+  // Streamed: the SDK refuses non-streaming requests that may run past 10 minutes.
+  const response = await client.messages.stream({
     model: MODEL, max_tokens: 32000,
     output_config: { effort: "low", format: zodOutputFormat(Draft) },
     messages: [{ role: "user", content: prompt }],
-  });
+  }).finalMessage();
   if (response.stop_reason === "refusal") throw new Error("The model declined to structure the draft.");
+  if (response.stop_reason === "max_tokens") throw new Error("The structured draft hit its length limit.");
   if (!response.parsed_output) throw new Error("The structured draft could not be parsed.");
   return response.parsed_output;
 }

@@ -36,6 +36,7 @@ import { STAGES } from "../data/process";
 import { MARKETS } from "../data/markets";
 import { COVERAGES } from "../data/coverages";
 import CondoIndicationCta from "../components/CondoIndicationCta.astro";
+import { CALIFORNIA_DBA, CALIFORNIA_PAGE_LINE, isCalifornia } from "../data/california";
 import "./StatePage.css";
 
 export function getStaticPaths() {
@@ -46,6 +47,8 @@ export function getStaticPaths() {
 }
 
 const { state } = Astro.props;
+/* California pages present the business under its California trade name. */
+const california = isCalifornia(state.abbr);
 const stateCities = cities.filter(
   (c) => c.stateSlug === state.slug
 );
@@ -82,7 +85,7 @@ const STATE_COVERAGES = COVERAGES.filter((c) => !c.title.startsWith("HO-6"));
 >
   {/* ═══ 01 · Hero — same treatment as the homepage ═══════════════════ */}
   <Hero
-    eyebrow="ProtectMyHOA™ · Licensed Nationwide"
+    eyebrow={california ? `${CALIFORNIA_DBA.name} · California` : "ProtectMyHOA™ · Licensed Nationwide"}
     title={state.heroTitle}
     subtitle={`The master policy, liability, D&O and crime coverage for ${state.name} homeowners and condominium associations, compared across up to 12 appointed Insurance companies and set out in writing for your board.`}
     backgroundImage="/images/hero-people.jpg"
@@ -109,6 +112,7 @@ const STATE_COVERAGES = COVERAGES.filter((c) => !c.title.startsWith("HO-6"));
             Where the association’s coverage ends and each owner’s begins depends on the
             master-policy form, governing documents, applicable law and endorsements.
           </p>
+          {california && <p class="st-closer">{CALIFORNIA_PAGE_LINE}</p>}
           <div class="st-cta">
             <a href={`${QUOTE_URL}?state=${state.abbr}`} class="btn btn-primary">Request Insurance Review</a>
             <span class="st-cta__note">Free review. Any broker fee disclosed before purchase.</span>
@@ -335,6 +339,11 @@ const STATE_COVERAGES = COVERAGES.filter((c) => !c.title.startsWith("HO-6"));
       <p class="section-subtitle st-invert-sub" style="margin: 0 auto 32px">
         Start with a free Insurance review. No commitment, no pressure.
       </p>
+      {california && (
+        <p class="section-subtitle st-invert-sub" style="margin: -16px auto 32px; font-size: 14px">
+          {CALIFORNIA_PAGE_LINE}
+        </p>
+      )}
       <a href={QUOTE_URL} class="btn btn-gold">Request Insurance Review</a>
       <div class="st-close-condo">
         <CondoIndicationCta tone="dark" />

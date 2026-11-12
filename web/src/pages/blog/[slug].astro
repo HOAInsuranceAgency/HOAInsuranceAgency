@@ -2,7 +2,8 @@
 import { getCollection, render, type CollectionEntry } from "astro:content";
 import Layout from "../../layouts/Layout.astro";
 import { BlogLeadForm } from "../../components/BlogLeadForm";
-import { publishedArticles, articlePath, articleDate, articleWordCount } from "../../lib/articles";
+import { publishedArticles, articlePath, articleDate } from "../../lib/articles";
+import { articleWordCount } from "../../../../shared/articleText.mjs";
 import { articleSchemaNode } from "../../lib/article-seo";
 import { breadcrumbSchema } from "../../lib/seo";
 import { categoryCta } from "../../data/blog";
