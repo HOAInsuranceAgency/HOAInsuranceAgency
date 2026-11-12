@@ -61,16 +61,18 @@ describe("reviewed staging login recipients", () => {
     vi.stubEnv("HOA_SES_CONFIGURATION_SET", "hoa-transactional-staging");
     vi.stubEnv("AWS_LAMBDA_FUNCTION_NAME", "amplify-d1nuh9rw1hcuxo-st-magiclinkverify");
   });
-  it.each(["jake@getgim.com", "ethanroden@getgim.com"])("delivers one tracked sign-in link to %s", async recipient => {
+  it.each(["jake@getgim.com", "ethanroden@getgim.com", "brian@protectmyhoa.com"])("delivers one tracked sign-in link to %s", async recipient => {
     const h = harness();
     await expect(new TransactionalMailClient("login", h.deps).send(command(recipient))).resolves.toEqual({ MessageId: "ses-receipt-12345" });
     expect(h.sesMock).toHaveBeenCalledOnce();
     expect(h.sesMock.mock.calls[0][0].input.Destination).toEqual({ ToAddresses: [recipient] });
     expect([...h.rows.values()].find(row => row.kind === "OPERATION")).toMatchObject({ environment: "staging", mailKind: "login", state: "ACCEPTED" });
   });
-  it.each(["invite", "invoice", "report", "accounting", "test"] as const)("does not extend Ethan's login exception to %s", async kind => {
+  it.each(["ethanroden@getgim.com", "brian@protectmyhoa.com"].flatMap(recipient =>
+    (["invite", "invoice", "report", "accounting", "test"] as const).map(kind => ({ recipient, kind }))
+  ))("does not extend $recipient's login exception to $kind", async ({ recipient, kind }) => {
     const h = harness();
-    await expect(new TransactionalMailClient(kind, h.deps).send(command("ethanroden@getgim.com"))).rejects.toThrow("Staging");
+    await expect(new TransactionalMailClient(kind, h.deps).send(command(recipient))).rejects.toThrow("Staging");
     expect(h.database.send).not.toHaveBeenCalled(); expect(h.storage.send).not.toHaveBeenCalled(); expect(h.sesMock).not.toHaveBeenCalled();
   });
   it.each(["ToAddresses", "CcAddresses", "BccAddresses"] as const)("blocks unapproved login recipients in %s", async field => {
@@ -83,6 +85,9 @@ describe("reviewed staging login recipients", () => {
     { ToAddresses: ["ethanroden@getgim.com", "jake@getgim.com"] },
     { ToAddresses: ["ethanroden@getgim.com"], CcAddresses: ["jake@getgim.com"] },
     { ToAddresses: ["ethanroden@getgim.com"], BccAddresses: ["jake@getgim.com"] },
+    { ToAddresses: ["brian@protectmyhoa.com", "ethanroden@getgim.com"] },
+    { ToAddresses: ["brian@protectmyhoa.com"], CcAddresses: ["jake@getgim.com"] },
+    { ToAddresses: ["brian@protectmyhoa.com"], BccAddresses: ["ethanroden@getgim.com"] },
   ])("never copies a sign-in link even to another approved tester: %o", async destination => {
     const h = harness();
     const c = new SendEmailCommand({ ...command().input, Destination: destination });

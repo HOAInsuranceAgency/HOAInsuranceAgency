@@ -72,7 +72,7 @@ describe("SES-only transactional mail infrastructure", () => {
       const functionRole = mailFunction(existing, name).Properties.Role["Fn::GetAtt"][0];
       expect(JSON.stringify(existing.Resources[functionRole].Properties.ManagedPolicyArns)).toContain("TransactionalMailSendPermissions");
       const ss = attachedSendStatements(existing, permissions, name);
-      const allowedRecipients = name === "magicLinkVerify" ? ["jake@getgim.com", "ethanroden@getgim.com"] : ["jake@getgim.com"];
+      const allowedRecipients = name === "magicLinkVerify" ? ["jake@getgim.com", "ethanroden@getgim.com", "brian@protectmyhoa.com"] : ["jake@getgim.com"];
       const boundary = ss.find(s => s.Effect === "Deny" && s.NotResource); expect(boundary.NotResource).toHaveLength(2); expect(JSON.stringify(boundary)).toContain("identity/protectmyhoa.com"); expect(JSON.stringify(boundary)).toContain(`configuration-set/hoa-transactional-${branch}`);
       expect(ss.some(s => s.Effect === "Deny" && s.Condition?.StringNotEquals?.["ses:FromAddress"]?.join() === allowedFrom.join())).toBe(true);
       const alternate = ss.find(s => s.Effect === "Deny" && Array.isArray(s.Action) && s.Action.includes("ses:SendRawEmail"));
@@ -86,13 +86,15 @@ describe("SES-only transactional mail infrastructure", () => {
       expect(JSON.stringify(ss)).not.toContain("aws:CurrentTime");
     }
   });
-  it("grants the extra staging recipient to authentication only", () => {
+  it("grants the extra staging login recipients to authentication only", () => {
     config.businessBranch = "staging";
     const { existing, permissions } = infra();
     expect(resources(permissions).filter(r => r.Type === "AWS::IAM::ManagedPolicy")).toHaveLength(2);
     for (const name of senders) {
       const serialized = JSON.stringify(attachedSendStatements(existing, permissions, name));
-      expect(serialized.includes("ethanroden@getgim.com")).toBe(name === "magicLinkVerify");
+      for (const recipient of ["ethanroden@getgim.com", "brian@protectmyhoa.com"]) {
+        expect(serialized.includes(recipient)).toBe(name === "magicLinkVerify");
+      }
     }
   });
   it("uses one independent stateless managed policy instead of repeating the boundary in sender inline policies", () => {
