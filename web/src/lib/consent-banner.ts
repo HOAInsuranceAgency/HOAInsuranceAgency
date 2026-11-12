@@ -18,6 +18,7 @@ import {
   effectiveConsent,
   gpcEnabled,
   readConsent,
+  refreshConsent,
   saveConsent,
   type ConsentChoice,
   type ConsentState,
@@ -32,6 +33,10 @@ type TagWindow = Window & {
 /* ── Tags ─────────────────────────────────────────────────────────────── */
 
 const loaded = { gtag: false, ga4: false, ads: false, clarity: false };
+let appliedChoice: ConsentChoice | null = null;
+let reloadPending = false;
+let consentChannel: BroadcastChannel | null = null;
+let watchingConsent = false;
 
 function addScript(src: string): void {
   const script = document.createElement("script");
@@ -43,6 +48,10 @@ function addScript(src: string): void {
 /** Load and configure exactly the tags allowed. Never unloads. */
 function applyTags(choice: ConsentChoice): void {
   if (ANALYTICS_DISABLED) return;
+  if (appliedChoice?.analytics === choice.analytics &&
+    appliedChoice.insights === choice.insights &&
+    appliedChoice.marketing === choice.marketing) return;
+  appliedChoice = { ...choice };
   const w = window as TagWindow;
 
   if ((choice.analytics || choice.marketing) && !loaded.gtag) {
@@ -119,26 +128,72 @@ function clearTagCookies(): void {
   }
 }
 
+/** Once an SDK is running, reload to stop it rather than merely deny cookies. */
+function unloadWithdrawnTags(choice: ConsentChoice): boolean {
+  if (reloadPending) return true;
+  if (!((loaded.ga4 && !choice.analytics) ||
+    (loaded.clarity && !choice.insights) ||
+    (loaded.ads && !choice.marketing))) return false;
+  reloadPending = true;
+  clearTagCookies();
+  // Startup verifies preference storage before applying saved choices/defaults.
+  window.location.reload();
+  return true;
+}
+
+/** Notifications carry no permissions: the shared cookie remains authoritative. */
+function syncConsent(): void {
+  if (reloadPending) return;
+  const choice = refreshConsent();
+  if (unloadWithdrawnTags(choice)) return;
+  applyTags(choice);
+  if (readConsent()) hideBanner();
+  else if (consentStorageAvailable()) showBanner();
+}
+
+function watchConsent(): void {
+  if (watchingConsent) return;
+  watchingConsent = true;
+  let timer: ReturnType<typeof setInterval> | undefined;
+  const resume = () => {
+    if (!consentChannel && typeof BroadcastChannel !== "undefined") {
+      try {
+        consentChannel = new BroadcastChannel("pmh-consent");
+        consentChannel.onmessage = (event) => {
+          if (event.data === "changed") syncConsent();
+        };
+      } catch {
+        // Some browser policies block channels. Lifecycle/polling still work.
+        consentChannel = null;
+      }
+    }
+    if (timer === undefined) {
+      // Let the browser throttle hidden tabs; whenever it runs us, recheck.
+      timer = setInterval(syncConsent, 5000);
+    }
+  };
+  window.addEventListener("focus", syncConsent);
+  window.addEventListener("pageshow", () => { resume(); syncConsent(); });
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "hidden") syncConsent();
+  });
+  window.addEventListener("pagehide", () => {
+    consentChannel?.close();
+    consentChannel = null;
+    clearInterval(timer);
+    timer = undefined;
+  });
+  resume();
+}
+
 /** Save, then load newly allowed tags or reload to stop withdrawn ones. */
 function commit(choice: ConsentChoice, source: ConsentState["source"]): void {
-  const before = effectiveConsent();
   const { state: saved, persisted } = saveConsent(choice, source);
+  // Publish before the sender reloads; receivers never rebroadcast the notice.
+  try { consentChannel?.postMessage("changed"); } catch { /* Polling is the fallback. */ }
   hideBanner();
   closeDialog();
-  const withdrew =
-    (before.analytics && !saved.analytics) ||
-    (before.insights && !saved.insights) ||
-    (before.marketing && !saved.marketing) ||
-    (loaded.ga4 && !saved.analytics) ||
-    (loaded.clarity && !saved.insights) ||
-    (loaded.ads && !saved.marketing);
-  if (withdrew) {
-    clearTagCookies();
-    // Startup verifies cookie storage before applying any defaults. If saving
-    // failed because storage is blocked, the reloaded page keeps all tags off.
-    window.location.reload();
-    return;
-  }
+  if (unloadWithdrawnTags(saved)) return;
   if (!persisted) {
     showBanner();
     return;
@@ -393,6 +448,7 @@ function closeDialog(): void {
 /** Called once per page by components/Analytics.astro. */
 export function startConsent(): void {
   applyTags(effectiveConsent());
+  watchConsent();
   if (!readConsent()) showBanner();
 
   document.addEventListener("click", (event) => {

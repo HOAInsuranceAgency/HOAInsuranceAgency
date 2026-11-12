@@ -81,7 +81,8 @@ export function gpcEnabled(): boolean {
 export function consentStorageAvailable(): boolean {
   if (storageAvailable !== undefined) return storageAvailable;
   if (typeof document === "undefined" || typeof window === "undefined") return false;
-  const probe = `${CONSENT_COOKIE}_check`;
+  // Concurrent tabs must not overwrite or delete each other's storage probes.
+  const probe = `${CONSENT_COOKIE}_check_${Math.random().toString(36).slice(2)}`;
   const value = `${Date.now()}-${Math.random()}`;
   const secure = window.location.protocol === "https:" ? "; Secure" : "";
   try {
@@ -133,6 +134,14 @@ export function effectiveConsent(): ConsentChoice {
   if (!consentStorageAvailable()) return { ...NO_CONSENT };
   const saved = readConsent();
   return saved ?? (consentStorageAvailable() ? defaultChoice() : { ...NO_CONSENT });
+}
+
+/** Recheck browser storage when another tab or a resumed page changes consent. */
+export function refreshConsent(): ConsentChoice {
+  // Once storage fails, stay closed for this page until an explicit save
+  // succeeds. A polling probe must not undo an unsuccessful opt-out.
+  if (storageAvailable !== false) storageAvailable = undefined;
+  return effectiveConsent();
 }
 
 /** Verify that the preference was retained; unavailable storage fails closed. */
