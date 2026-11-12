@@ -199,7 +199,8 @@ requests target `main`; this content workflow is the exception to the README's
 staging-first rule for application changes. Keep application and workflow changes
 subject to the normal staging verification before production promotion.
 
-Run `npm ci --prefix .github/blog` and `npm test --prefix .github/blog` for the
+Install the website dependencies with `npm ci --prefix web`, then run
+`npm ci --prefix .github/blog` and `npm test --prefix .github/blog` for the
 offline automation checks, then the repository's `npm run verify`. A manual
 **Blog drafts** run defaults to `dry_run=true`, saving an artifact without a
 pull request or email. It still calls the paid Anthropic API. After reviewing
@@ -221,8 +222,9 @@ The workflows live in `.github/workflows/blog-*.yml` and their scripts in
 2. **Approval email.** The reviewer receives the title options, the fact-check
    summary, the sources and two links: the draft pull request and the photo
    upload folder.
-3. **Review.** In the pull request, the reviewer uploads the cover photo to the
-   article's image folder and comments:
+3. **Review.** In the pull request, the reviewer uploads exactly one JPG, PNG or
+   WebP photo to the article's image folder, with a filename other than
+   `cover.jpg`, and comments:
 
    ```
    /title 2
@@ -236,6 +238,9 @@ The workflows live in `.github/workflows/blog-*.yml` and their scripts in
    `/title` takes 1, 2 or 3, or your own wording. `/photo` crops the photo to
    1600 × 900, replaces the temporary cover and marks the article ready. The
    workflow re-runs the site build and replies on the pull request.
+   If multiple uploaded photos are present, `/photo` leaves all photos unchanged
+   and asks you to keep only the intended upload before retrying. It never
+   chooses a photo by upload time or deletes the other candidates.
 4. **Checks and merge.** When the bot opens or updates an article pull request,
    a reviewer with write access selects **Approve workflows to run** in the
    merge box. Wait for repository verification to pass on the latest commit,

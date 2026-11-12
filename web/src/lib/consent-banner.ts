@@ -14,6 +14,7 @@
 import { ANALYTICS_DISABLED, ADS_IDS, CLARITY_ID, GA4_ID } from "../constants";
 import {
   consentFirstRegion,
+  consentStorageAvailable,
   effectiveConsent,
   gpcEnabled,
   readConsent,
@@ -105,19 +106,23 @@ const TAG_COOKIE = /^(_ga|_gid|_gat|_gcl|_clck|_clsk|CLID|ANONCHK|MUID|SM|MR)/;
 function clearTagCookies(): void {
   const host = window.location.hostname;
   const domains = ["", host, `.${host}`, `.${host.split(".").slice(-2).join(".")}`];
-  for (const part of document.cookie.split("; ")) {
-    const name = part.split("=")[0];
-    if (!TAG_COOKIE.test(name)) continue;
-    for (const domain of domains) {
-      document.cookie = `${name}=; Max-Age=0; Path=/${domain ? `; Domain=${domain}` : ""}`;
+  try {
+    for (const part of document.cookie.split("; ")) {
+      const name = part.split("=")[0];
+      if (!TAG_COOKIE.test(name)) continue;
+      for (const domain of domains) {
+        document.cookie = `${name}=; Max-Age=0; Path=/${domain ? `; Domain=${domain}` : ""}`;
+      }
     }
+  } catch {
+    // Cookie access can be blocked; still unload the tags below.
   }
 }
 
 /** Save, then load newly allowed tags or reload to stop withdrawn ones. */
 function commit(choice: ConsentChoice, source: ConsentState["source"]): void {
   const before = effectiveConsent();
-  const saved = saveConsent(choice, source);
+  const { state: saved, persisted } = saveConsent(choice, source);
   hideBanner();
   closeDialog();
   const withdrew =
@@ -129,7 +134,13 @@ function commit(choice: ConsentChoice, source: ConsentState["source"]): void {
     (loaded.ads && !saved.marketing);
   if (withdrew) {
     clearTagCookies();
+    // Startup verifies cookie storage before applying any defaults. If saving
+    // failed because storage is blocked, the reloaded page keeps all tags off.
     window.location.reload();
+    return;
+  }
+  if (!persisted) {
+    showBanner();
     return;
   }
   applyTags(saved);
@@ -148,6 +159,8 @@ const ALL_OFF: ConsentChoice = { analytics: false, insights: false, marketing: f
 
 const GPC_NOTE =
   "A Global Privacy Control signal has been detected from your browser. Targeting cookies remain disabled.";
+const STORAGE_NOTE =
+  "Your browser is blocking preference storage. Optional tracking is off, and your preferences could not be saved. Allow first-party cookies to save a choice.";
 
 let banner: HTMLElement | null = null;
 let dialog: HTMLDialogElement | null = null;
@@ -188,6 +201,7 @@ function showBanner(): void {
     policyLink(),
   );
   copy.append(text);
+  if (!consentStorageAvailable()) copy.append(el("p", { class: "pmh-consent__gpc", role: "status" }, STORAGE_NOTE));
   if (gpcEnabled()) copy.append(el("p", { class: "pmh-consent__gpc" }, GPC_NOTE));
 
   const actions = el("div", { class: "pmh-consent__actions" });
@@ -198,6 +212,11 @@ function showBanner(): void {
   reject.addEventListener("click", () => commit(ALL_OFF, "banner"));
   manage.addEventListener("click", () => openDialog());
   actions.append(accept, reject, manage);
+  if (!consentStorageAvailable()) {
+    const dismiss = el("button", { type: "button", class: "pmh-consent__btn pmh-consent__btn--quiet pmh-consent__btn--wide" }, "Continue without optional tracking");
+    dismiss.addEventListener("click", hideBanner);
+    actions.append(dismiss);
+  }
 
   inner.append(copy, actions);
   banner.append(inner);
@@ -271,6 +290,7 @@ function buildDialog(): HTMLDialogElement {
     policyLink(),
     ".",
   );
+  if (!consentStorageAvailable()) intro.append(" ", STORAGE_NOTE);
 
   const list = el("div", { class: "pmh-dialog__list" });
   list.append(
@@ -300,7 +320,9 @@ function buildDialog(): HTMLDialogElement {
       badge: null,
       status: current
         ? `Status: ${choice.analytics ? "enabled" : "disabled"} by your saved preferences.`
-        : "Status: active by default; interaction analysis requires your confirmation.",
+        : !consentStorageAvailable()
+          ? "Status: disabled because preferences cannot be stored."
+          : "Status: active by default; interaction analysis requires your confirmation.",
     }),
     categoryRow({
       id: "pmh-targeting",
@@ -315,11 +337,13 @@ function buildDialog(): HTMLDialogElement {
       badge: gpc ? "Disabled" : null,
       status: gpc
         ? "Status: disabled in response to a Global Privacy Control signal."
-        : current
-          ? `Status: ${choice.marketing ? "enabled" : "disabled"} by your saved preferences.`
-          : targetingNeedsConsent()
-            ? "Status: requires your consent before activation."
-            : "Status: active by default; may be disabled at any time.",
+        : !consentStorageAvailable()
+          ? "Status: disabled because preferences cannot be stored."
+          : current
+            ? `Status: ${choice.marketing ? "enabled" : "disabled"} by your saved preferences.`
+            : targetingNeedsConsent()
+              ? "Status: requires your consent before activation."
+              : "Status: active by default; may be disabled at any time.",
     }),
   );
 

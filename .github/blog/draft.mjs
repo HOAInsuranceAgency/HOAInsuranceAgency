@@ -16,8 +16,9 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
+import { articleWordCount } from "../../shared/articleText.mjs";
 import {
-  CATEGORY_SLOTS, articleWordCount, checkBody, coverSvg, existingTitles, internalPages,
+  CATEGORY_SLOTS, checkBody, coverSvg, existingTitles, internalPages,
   planSlot, slugify, writeArticle,
 } from "./lib.mjs";
 
@@ -33,7 +34,7 @@ mkdirSync(out, { recursive: true });
 
 const client = new Anthropic();
 const guide = readFileSync(join(root, "docs/BLOG-EDITORIAL-GUIDE.md"), "utf8");
-const pages = internalPages(root);
+const pages = internalPages();
 const queued = args.queued && existsSync(args.queued) ? JSON.parse(readFileSync(args.queued, "utf8")) : [];
 const taken = [...existingTitles(root), ...queued];
 const slot = planSlot({ day: args.day, targetDate: args.date });

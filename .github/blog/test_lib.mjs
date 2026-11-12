@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { tsImport } from "tsx/esm/api";
+import { articleWordCount } from "../../shared/articleText.mjs";
 import {
-  CATEGORY_SLOTS, ROTATION, approvalEmail, articleWordCount, checkBody, coverSvg, easternOffset,
-  planSlot, readArticle, sesMessage, slugify, writeArticle,
+  CATEGORY_SLOTS, ROTATION, approvalEmail, checkBody, coverSvg, easternOffset,
+  internalPages, planSlot, readArticle, sesMessage, slugify, writeArticle,
 } from "./lib.mjs";
+
+const { states } = await tsImport("../../web/src/data/states.ts", import.meta.url);
 
 test("every rotation slot sits on its category's own day", () => {
   for (const week of ROTATION) {
@@ -44,9 +48,17 @@ test("seasonal swaps stay on Wednesday", () => {
   assert.throws(() => planSlot({ targetDate: "2027-01-11" }), /not a Tuesday/);
 });
 
-test("word count matches the site's counting", () => {
+test("shared prose counting ignores destinations and reference definitions", () => {
   assert.equal(articleWordCount("See [the page](/what-we-do/) now."), 4);
   assert.equal(articleWordCount("HO-6 owner’s policy"), 3);
+  assert.equal(articleWordCount("[Café renewal](https://example.com/several-extra-words)\n\n[ref]: https://example.com/ignore-this"), 2);
+});
+
+test("drafts may link to every generated state page, including California and DC", () => {
+  const routes = internalPages().filter((page) => page.startsWith("/hoa-insurance-"));
+  assert.deepEqual(routes.sort(), states.map(({ slug }) => `/hoa-insurance-${slug}/`).sort());
+  assert.ok(routes.includes("/hoa-insurance-california/"));
+  assert.ok(routes.includes("/hoa-insurance-district-of-columbia/"));
 });
 
 const paragraph = "Boards should confirm the policy form before renewal so owners know what the association insures and what they must insure themselves. ".repeat(4).trim();
@@ -56,6 +68,11 @@ const pages = ["/what-we-do/", "/condo-insurance/"];
 
 test("a well-formed body passes", () => {
   assert.deepEqual(checkBody(goodBody, { pages }), []);
+});
+
+test("editorial validation accepts an actual California service link", () => {
+  const stateBody = goodBody.replace("/condo-insurance/", "/hoa-insurance-california/");
+  assert.deepEqual(checkBody(stateBody, { pages: internalPages() }), []);
 });
 
 test("lists, tables, HTML and unknown links are caught", () => {

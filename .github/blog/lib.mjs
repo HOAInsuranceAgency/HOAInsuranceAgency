@@ -6,6 +6,11 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { parse } from "yaml";
+import { tsImport } from "tsx/esm/api";
+import { articleWordCount } from "../../shared/articleText.mjs";
+
+// Load the shared TypeScript catalog on every supported Node 22 release.
+const { US_STATE_CATALOG } = await tsImport("../../shared/usStates.ts", import.meta.url);
 
 export const TIME_ZONE = "America/New_York";
 
@@ -98,23 +103,14 @@ export function planSlot({ runDate = easternDate(), day, targetDate } = {}) {
   return { date, day: dayKey, category, time, publishedAt, focus, seasonal, rotationWeek: weekIndex + 1 };
 }
 
-/** Same counting as web/src/lib/articles.ts so both agree on 1,000–2,000. */
-export function articleWordCount(body) {
-  return body.replace(/\[[^\]]*\]\([^)]*\)/g, (link) => link.slice(1, link.indexOf("]")))
-    .replace(/^\s*\[[^\]]+\]:.*$/gm, "")
-    .match(/[\p{L}\p{N}]+(?:['’\-][\p{L}\p{N}]+)*/gu)?.length ?? 0;
-}
-
 export const slugify = (text) => text.toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g, "")
   .replace(/&/g, " and ").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 70).replace(/-+$/, "");
 
-/** Pages an article may link to. State pages come from the site's own data. */
-export function internalPages(root) {
-  const states = readFileSync(join(root, "web/src/data/states.ts"), "utf8");
-  const stateSlugs = [...states.matchAll(/^\s*slug: "([a-z-]+)"/gm)].map((m) => m[1]);
+/** Pages an article may link to. Every shared state identity has a site route. */
+export function internalPages() {
   return [
     "/what-we-do/", "/condo-insurance/", "/why-choose-us/", "/quote/", "/contact/", "/carriers/",
-    ...stateSlugs.map((slug) => `/hoa-insurance-${slug}/`),
+    ...US_STATE_CATALOG.map(({ name }) => `/hoa-insurance-${name.toLowerCase().replaceAll(" ", "-")}/`),
   ];
 }
 

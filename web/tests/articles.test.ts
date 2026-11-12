@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { articleSchema } from "../src/lib/article-schema";
 import { articleDate, articlePath, assertArticleHtml, assertArticleMarkdown, publishedArticles } from "../src/lib/articles";
+import { articleSchemaNode } from "../src/lib/article-seo";
+import { articleWordCount } from "../../shared/articleText.mjs";
 
 const metadata = {
   slug: "layout-fixture", title: "Synthetic layout fixture", description: "A synthetic article used only for automated rendering checks.",
@@ -10,6 +12,12 @@ const metadata = {
   sources: [{ title: "Synthetic source", publisher: "Example", url: "https://example.com/reference", accessedAt: "2026-01-14T12:00:00Z" }],
 };
 const article = { id: metadata.slug, data: articleSchema.parse(metadata), body: "Synthetic body." };
+
+test("website metadata uses the shared prose count without citation destinations", () => {
+  const body = "Read [HO-6 owner’s coverage](https://example.com/words-not-in-prose).\n\n[ref]: https://example.com/also-not-prose";
+  assert.equal(articleWordCount(body), 4);
+  assert.equal(articleSchemaNode({ ...article, body }).wordCount, 4);
+});
 
 test("strict metadata rejects missing slugs, credentials, cross-article images and invented authors", () => {
   for (const value of [

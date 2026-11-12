@@ -14,12 +14,6 @@ export const articleDate = (date: string) => new Intl.DateTimeFormat("en-US", {
   month: "long", day: "numeric", year: "numeric", timeZone: "America/New_York",
 }).format(new Date(date));
 
-export function articleWordCount(body: string): number {
-  return body.replace(/\[[^\]]*\]\([^)]*\)/g, (link) => link.slice(1, link.indexOf("]")))
-    .replace(/^\s*\[[^\]]+\]:.*$/gm, "")
-    .match(/[\p{L}\p{N}]+(?:['’\-][\p{L}\p{N}]+)*/gu)?.length ?? 0;
-}
-
 type ContentNode = {
   type: string;
   children?: ContentNode[];

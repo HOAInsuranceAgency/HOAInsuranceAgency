@@ -5,7 +5,8 @@ import { parseFrontmatter } from "astro/markdown";
 import { imageMetadata } from "astro/assets/utils";
 import type { Loader, LoaderContext } from "astro/loaders";
 import { articleSchema } from "./article-schema";
-import { assertArticleMarkdown, assertArticleHtml, articleWordCount } from "./articles";
+import { assertArticleMarkdown, assertArticleHtml } from "./articles";
+import { articleWordCount } from "../../../shared/articleText.mjs";
 
 /** Compare resolved paths with their platform's own separator and drive rules. */
 export function isWithinArticleDirectory(root: string, candidate: string, paths: Pick<PlatformPath, "relative" | "isAbsolute" | "sep"> = path): boolean {

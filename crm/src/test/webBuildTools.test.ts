@@ -103,14 +103,14 @@ describe("Astro 7 build compatibility", () => {
 
   it("passes the approved plain-text Hero eyebrows without double-encoding trademarks", () => {
     const eyebrows = {
-      index: "Licensed Nationwide · Independent HOA & Condo Insurance Agency",
-      "what-we-do": "Homeowners Association Insurance · Licensed Nationwide",
-      "why-choose-us": "ProtectMyHOA™ · Licensed Nationwide",
-      "hoa-insurance-[state]": "ProtectMyHOA™ · Licensed Nationwide",
+      index: '"Licensed Nationwide · Independent HOA & Condo Insurance Agency"',
+      "what-we-do": '"Homeowners Association Insurance · Licensed Nationwide"',
+      "why-choose-us": '"ProtectMyHOA™ · Licensed Nationwide"',
+      "hoa-insurance-[state]": '{california ? `${CALIFORNIA_DBA.name} · California` : "ProtectMyHOA™ · Licensed Nationwide"}',
     };
     for (const [page, eyebrow] of Object.entries(eyebrows)) {
       const source = read(`../../../web/src/pages/${page}.astro`);
-      expect(source).toContain(`eyebrow="${eyebrow}"`);
+      expect(source).toContain(`eyebrow=${eyebrow}`);
       expect(source).not.toContain('eyebrow="ProtectMyHOA&trade;');
     }
   });

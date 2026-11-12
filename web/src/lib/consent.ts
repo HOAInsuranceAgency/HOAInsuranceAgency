@@ -21,11 +21,14 @@
  * The choice is stored on the visitor's own device in a first-party cookie
  * (`pmh_consent`) for 12 months. Changing CONSENT_VERSION asks everyone again,
  * which is what to do when a new kind of tag is added.
+ * If the browser cannot retain an opt-out, all optional tags stay disabled.
  */
 
 export const CONSENT_VERSION = 2;
 export const CONSENT_COOKIE = "pmh_consent";
 const MAX_AGE_SECONDS = 365 * 24 * 60 * 60;
+const NO_CONSENT: ConsentChoice = { analytics: false, insights: false, marketing: false };
+let storageAvailable: boolean | undefined;
 
 export interface ConsentChoice {
   /** Google Analytics 4. On unless declined. */
@@ -74,13 +77,36 @@ export function gpcEnabled(): boolean {
   return (navigator as Navigator & { globalPrivacyControl?: boolean }).globalPrivacyControl === true;
 }
 
+/** Defaults may enable tags only if this browser can retain an opt-out. */
+export function consentStorageAvailable(): boolean {
+  if (storageAvailable !== undefined) return storageAvailable;
+  if (typeof document === "undefined" || typeof window === "undefined") return false;
+  const probe = `${CONSENT_COOKIE}_check`;
+  const value = `${Date.now()}-${Math.random()}`;
+  const secure = window.location.protocol === "https:" ? "; Secure" : "";
+  try {
+    document.cookie = `${probe}=${value}; Max-Age=60; Path=/; SameSite=Lax${secure}`;
+    storageAvailable = document.cookie.split("; ").includes(`${probe}=${value}`);
+    document.cookie = `${probe}=; Max-Age=0; Path=/; SameSite=Lax${secure}`;
+  } catch {
+    storageAvailable = false;
+  }
+  return storageAvailable;
+}
+
 /** The saved choice, or null when the visitor has not chosen (or it expired). */
 export function readConsent(): ConsentState | null {
-  if (typeof document === "undefined") return null;
-  const raw = document.cookie
-    .split("; ")
-    .find((part) => part.startsWith(`${CONSENT_COOKIE}=`))
-    ?.slice(CONSENT_COOKIE.length + 1);
+  if (!consentStorageAvailable()) return null;
+  let raw: string | undefined;
+  try {
+    raw = document.cookie
+      .split("; ")
+      .find((part) => part.startsWith(`${CONSENT_COOKIE}=`))
+      ?.slice(CONSENT_COOKIE.length + 1);
+  } catch {
+    storageAvailable = false;
+    return null;
+  }
   if (!raw) return null;
   try {
     const value = JSON.parse(decodeURIComponent(raw)) as Partial<ConsentState>;
@@ -104,11 +130,13 @@ export function readConsent(): ConsentState | null {
 
 /** The choice in effect now: the saved one, or the default before any choice. */
 export function effectiveConsent(): ConsentChoice {
-  return readConsent() ?? defaultChoice();
+  if (!consentStorageAvailable()) return { ...NO_CONSENT };
+  const saved = readConsent();
+  return saved ?? (consentStorageAvailable() ? defaultChoice() : { ...NO_CONSENT });
 }
 
-/** Save a choice for 12 months and return what was stored. */
-export function saveConsent(choice: ConsentChoice, source: ConsentState["source"]): ConsentState {
+/** Verify that the preference was retained; unavailable storage fails closed. */
+export function saveConsent(choice: ConsentChoice, source: ConsentState["source"]): { state: ConsentState; persisted: boolean } {
   const gpc = gpcEnabled();
   const state: ConsentState = {
     v: CONSENT_VERSION,
@@ -120,8 +148,15 @@ export function saveConsent(choice: ConsentChoice, source: ConsentState["source"
     source,
   };
   const secure = window.location.protocol === "https:" ? "; Secure" : "";
-  document.cookie =
-    `${CONSENT_COOKIE}=${encodeURIComponent(JSON.stringify(state))}` +
-    `; Max-Age=${MAX_AGE_SECONDS}; Path=/; SameSite=Lax${secure}`;
-  return state;
+  const encoded = encodeURIComponent(JSON.stringify(state));
+  try {
+    document.cookie = `${CONSENT_COOKIE}=${encoded}; Max-Age=${MAX_AGE_SECONDS}; Path=/; SameSite=Lax${secure}`;
+    storageAvailable = document.cookie.split("; ").includes(`${CONSENT_COOKIE}=${encoded}`);
+  } catch {
+    storageAvailable = false;
+  }
+  return {
+    state: storageAvailable ? state : { ...state, ...NO_CONSENT },
+    persisted: storageAvailable,
+  };
 }
