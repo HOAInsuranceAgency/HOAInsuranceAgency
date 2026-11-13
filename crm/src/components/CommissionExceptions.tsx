@@ -1,3 +1,5 @@
+import { CommissionTarget, useCommissionWorkflow } from '../lib/commissionWorkflow';
+import { payrollRowKey } from '../../../shared/commissionPayroll';
 import {
   useContext,
   useRef,
@@ -25,9 +27,10 @@ import CommissionPanel from "./CommissionPanel";
 type Departure = CommissionDeparture & {
   worklist: ReturnType<typeof departureWorklist>;
 };
-type Workspace = {
+export type CommissionExceptionWorkspace = {
   policies: CommissionPolicy[];
   earnings: CommissionEarning[];
+  earningReviews?: {id:string;earningId:string;reason:string;at:string;by:string;amountCents:number}[];
   departures: Departure[];
   adjustments: CommissionAdjustment[];
   carrierAdjustments?: { policyId: string; policyNumber: string; accountName: string; unpaidAdjustment: number; paidRecovery: number; partialAdjustment?: number }[];
@@ -129,7 +132,7 @@ function Form({
     <form className="payroll-action" onSubmit={(e) => void submit(e)}>
       <fieldset disabled={busy}>
         <div className="payroll-form-body">{children}</div>
-        <div className="payroll-form-footer">
+        <div className="payroll-form-footer commission-action-bar">
           <button className="primary" disabled={disabled}>
             {busy ? "Saving…" : label}
           </button>
@@ -170,10 +173,11 @@ export default function CommissionExceptions({
   refreshLedger: () => Promise<void>;
   onAccessDenied: (error: unknown) => void;
 }) {
+  const { target, navigate } = useCommissionWorkflow();
   const resource = useAsyncResource(
     async () => {
       try {
-        return await commissionAction<Workspace>("commissionExceptions", {});
+        return await commissionAction<CommissionExceptionWorkspace>("commissionExceptions", {});
       } catch (e) {
         if (isAuthorizationError(e)) onAccessDenied(e);
         throw e;
@@ -219,6 +223,7 @@ export default function CommissionExceptions({
         {!data && !resource.error && <p>Loading commission cases…</p>}
         {data && (
           <>
+            <div className="commission-action-bar"><button className="secondary" onClick={()=>navigate({tab:'queue'})}>Back to work queue</button>{(target.policyId||target.producerId||target.adjustmentId||target.departureId) && <button className="secondary" onClick={()=>navigate({tab:'exceptions'})}>Show all reviews</button>}</div>
             <Panel title="Approve a policy commission allocation">
               <AllocationForm data={data} refresh={refresh} />
             </Panel>
@@ -300,25 +305,27 @@ export default function CommissionExceptions({
                 earnings.
               </div>
             )}
-            {data.departures.map((c) => (
+            {data.departures.filter(c=>!target.producerId||c.producerId===target.producerId).map((c) => (
+              <CommissionTarget kind="departureId" id={c.id} key={c.id}>
               <DepartureCard
                 key={c.id + ":" + c.version}
                 value={c}
                 data={data}
                 refresh={refresh}
-              />
+              /></CommissionTarget>
             ))}
-            {!!data.earnings.filter((e) => e.status === "REVIEW").length && (
+            {!!data.earnings.filter((e) => ["REVIEW","RESOLVED"].includes(e.status)).length && (
               <>
                 <h3>Carrier adjustments & recovery reviews</h3>
                 {data.earnings
-                  .filter((e) => e.status === "REVIEW")
+                  .filter((e) => ["REVIEW","RESOLVED"].includes(e.status) && (!target.policyId||e.policyId===target.policyId))
                   .map((e) => (
-                    <EarningReview
+                    <CommissionTarget kind="earningId" id={e.id} key={e.id}><EarningReview
+                      history={data.earningReviews?.filter(r=>r.earningId===e.id) ?? []}
                       key={e.id + ":" + e.version}
                       value={e}
                       refresh={refresh}
-                    />
+                    /></CommissionTarget>
                   ))}
               </>
             )}
@@ -328,13 +335,14 @@ export default function CommissionExceptions({
                 No compensation adjustments recorded.
               </div>
             )}
-            {data.adjustments.map((a) => (
+            {data.adjustments.filter(a=>!target.policyId||a.policyId===target.policyId).map((a) => (
+              <CommissionTarget kind="adjustmentId" id={a.id} key={a.id}>
               <AdjustmentCard
                 key={a.id + ":" + a.version}
                 value={a}
                 data={data}
                 refresh={refresh}
-              />
+              /></CommissionTarget>
             ))}
           </>
         )}
@@ -346,10 +354,11 @@ function AllocationForm({
   data,
   refresh,
 }: {
-  data: Workspace;
+  data: CommissionExceptionWorkspace;
   refresh: () => Promise<void>;
 }) {
-  const [policyId, setPolicy] = useState(""),
+  const {target}=useCommissionWorkflow();
+  const [policyId, setPolicy] = useState(target.policyId ?? ""),
     [from, setFrom] = useState(""),
     [agreement, setAgreement] = useState(""),
     [house, setHouse] = useState("0"),
@@ -456,12 +465,13 @@ function DepartureForm({
   refresh,
   value,
 }: {
-  data: Workspace;
+  data: CommissionExceptionWorkspace;
   refresh: () => Promise<void>;
   value?: Departure;
 }) {
+  const {target}=useCommissionWorkflow();
   const blank = {
-    producerId: "",
+    producerId: target.producerId ?? "",
     employmentEndOn: "",
     eligibilityThrough: "",
     accessDisabledOn: "",
@@ -590,7 +600,7 @@ function DepartureCard({
   refresh,
 }: {
   value: Departure;
-  data: Workspace;
+  data: CommissionExceptionWorkspace;
   refresh: () => Promise<void>;
 }) {
   const [confirmed, setConfirmed] = useState(false);
@@ -620,9 +630,10 @@ function DepartureCard({
         <div><dt>Owner review due</dt><dd>{c.reviewOn}</dd></div>
         <div><dt>HR payment due</dt><dd>{c.paymentDueOn}</dd></div>
       </dl>
-      <p className="small">
-        {c.agreement} · {c.evidence}
-      </p>
+      <details><summary>Agreement, evidence & decision history</summary><p>{c.agreement} · {c.evidence}</p>
+        {c.decisions.map((d,i)=><p key={i}>{d.policyId} · {d.outcome} · {d.reason} · {d.at} · {d.by}</p>)}
+        {c.pendingResolutions?.map((d,i)=><p key={'pending:'+i}>{d.policyId} · {d.reason} · {d.at} · {d.by}</p>)}
+      </details>
       <p className="small muted">
         Later receipts: {c.laterReceipts.toLowerCase()} · Renewals:{" "}
         {c.renewals.toLowerCase()}. New receipts remain visible after access
@@ -893,13 +904,14 @@ function AdjustmentForm({
   refresh,
   value,
 }: {
-  data: Workspace;
+  data: CommissionExceptionWorkspace;
   refresh: () => Promise<void>;
   value?: CommissionAdjustment;
 }) {
+  const {target}=useCommissionWorkflow();
   const blank = {
-    policyId: "",
-    producerId: "",
+    policyId: target.policyId ?? "",
+    producerId: target.producerId ?? "",
     kind: "ADDITIONAL",
     target: "",
     corrected: "",
@@ -1059,10 +1071,12 @@ function AdjustmentCard({
   refresh,
 }: {
   value: CommissionAdjustment;
-  data: Workspace;
+  data: CommissionExceptionWorkspace;
   refresh: () => Promise<void>;
 }) {
   const [confirmed, setConfirmed] = useState(false);
+  const {navigate}=useCommissionWorkflow();
+  const earning=data.earnings.find(e=>e.adjustmentId===a.id&&e.status==="PAYABLE"&&!e.batchId);
   return (
     <Panel
       title={
@@ -1090,7 +1104,9 @@ function AdjustmentCard({
         </span>
       </div>
       <p>{a.reason}</p>
-      <p className="small muted">{a.evidence}</p>
+      <details><summary>Source evidence & decision history</summary><p>{a.evidence}</p><p>Source entry: {a.targetEntryId ?? a.targetEarningId ?? 'Additional earnings'} · {a.status.toLowerCase()}</p>{a.approvedAt&&<p>Approved {a.approvedAt} by {a.approvedBy}</p>}</details>
+      <div className="commission-action-bar"><button className="secondary" onClick={()=>navigate({tab:'ledger',policyId:a.policyId})}>Review original policy earnings</button>
+      {earning && <button className="secondary" onClick={()=>navigate({tab:'payroll',earningKeys:[payrollRowKey(earning)],producerId:earning.producerId})}>Prepare off-cycle payment</button>}</div>
       {a.adjustmentType === "PAID_RECOVERY" && (
         <p className="payroll-notice">
           Proposed recovery only. No automatic payroll deduction.
@@ -1184,10 +1200,13 @@ function PendingResolution({
 function EarningReview({
   value: e,
   refresh,
+  history,
 }: {
   value: CommissionEarning;
   refresh: () => Promise<void>;
+  history: NonNullable<CommissionExceptionWorkspace["earningReviews"]>;
 }) {
+  const {navigate}=useCommissionWorkflow();
   const [reason, setReason] = useState(""),
     [confirmed, setConfirmed] = useState(false);
   useUnsavedChanges(!!reason);
@@ -1197,7 +1216,10 @@ function EarningReview({
         e.producerName + " · " + e.policyNumber + " · " + money(e.amountCents)
       }
     >
-      <Form
+      <p>{e.receivedOn} · {e.source.toLowerCase()} · {e.status.toLowerCase()} · affected employee amount {money(e.amountCents)}</p>
+      <button className="secondary" onClick={()=>navigate({tab:'ledger',policyId:e.policyId})}>Review source receipt</button>
+      <details><summary>Resolution history</summary>{history.length?history.map(r=><p key={r.id}>{r.reason} · {r.at} · {r.by} · {money(r.amountCents)}</p>):<p>No resolution recorded.</p>}</details>
+      {e.status==='REVIEW' && <Form
         label="Record review resolution"
         disabled={!confirmed}
         refresh={refresh}
@@ -1225,7 +1247,7 @@ function EarningReview({
           I verified the resolution and any separate payment or recovery
           handling.
         </Confirm>
-      </Form>
+      </Form>}
     </Panel>
   );
 }

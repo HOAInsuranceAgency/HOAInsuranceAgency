@@ -58,3 +58,21 @@
   .commission-panel-body { padding: 14px; }
   .commission-panel > summary { padding-left: 14px; }
 }
+
+.commission-action-bar { display:flex;flex-wrap:wrap;align-items:center;gap:.65rem;margin:.75rem 0; }
+.commission-action-bar button,.intake-actions button,.payroll-form-footer button { min-height:38px;padding:.55rem .85rem;line-height:1.35; }
+.commission-work-queue { min-width:0; }
+.commission-work-item { display:flex;align-items:center;justify-content:space-between;gap:1rem;border-top:1px solid var(--border);padding:1rem 0; }
+.commission-work-item p { margin:.35rem 0; }
+.commission-work-item > div { min-width:0;overflow-wrap:anywhere; }
+.commission-work-item button { flex-shrink:0; }
+.commission-target { scroll-margin-top:1rem;outline-offset:4px;min-width:0; }
+.commission-badge,.intake-status { font-size:.8rem;padding:.25rem .6rem;border-radius:5px;line-height:1.4; }
+.commission-financial-summary { background:var(--bg);padding:1rem;border:1px solid var(--border);border-radius:8px; }
+.payroll-check,.commission-check { align-items:flex-start;line-height:1.5;white-space:normal; }
+.payroll-check input,.commission-check input { flex-shrink:0;margin-top:.25rem; }
+.payroll-form-footer { justify-content:flex-start; }
+.payroll-readiness-grid { grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); }
+@media(max-width:650px) { .commission-work-item { align-items:stretch;flex-direction:column; }.commission-action-bar { align-items:stretch; }.commission-action-bar button { flex:1 1 160px; } }
+
+.commission-cancel-modal { max-width:560px; }.commission-cancel-modal .preview-title { white-space:normal; }

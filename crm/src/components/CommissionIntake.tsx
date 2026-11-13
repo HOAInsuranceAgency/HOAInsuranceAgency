@@ -1,3 +1,5 @@
+import CommissionSourcePreview from './CommissionSourcePreview';
+import { useCommissionPreference, useCommissionWorkflow, CommissionBadge } from '../lib/commissionWorkflow';
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { commissionAction } from "../lib/commissions";
 import { attachCommissionStatement } from "../lib/commissionStatementAttachment";
@@ -74,11 +76,13 @@ function useTask(onError?: (error: unknown) => void) {
   return { busy, error, message, setMessage, run };
 }
 function Feedback({ task }: { task: ReturnType<typeof useTask> }) {
+  const {navigate}=useCommissionWorkflow();
   return (
     <>
       {task.error && (
         <p className="error-text" role="alert">
           {task.error}
+          {/GIM|assignment|agreement|plan rate/i.test(task.error) && <button className="secondary" onClick={()=>navigate({tab:"settings"})}>Review employee assignment</button>}
         </p>
       )}
       {task.message && (
@@ -145,6 +149,34 @@ function StatementProgress({ intake, settlements }: { intake: StatementIntake; s
   </ol><p className="small muted">Save working copies as you go. Only reviewed, actually received settlements create earnings.</p></nav>;
 }
 
+
+function StatementSummary({ detail, data }: { detail: Detail; data: CommissionOverview }) {
+  const { intake, settlements } = detail;
+  const { navigate } = useCommissionWorkflow();
+  const postedStatements = new Set(settlements.flatMap(s=>s.statementIds));
+  const entries = data.policies.flatMap(p=>p.entries.filter(e=>postedStatements.has(e.statementId)));
+  const entryIds = new Set(entries.map(e=>e.id));
+  const shared = (data.earnings ?? []).filter(e=>e.source==='SHARED_RECEIPT' && entryIds.has(e.entryId) && e.status==='PAYABLE');
+  const earned = sum([...entries.filter(e=>e.kind==='RECEIPT'&&!e.allocationId).map(e=>e.producerCents), ...shared.map(e=>e.amountCents)]);
+  const recorded = sum(settlements.filter(s=>s.status!=='VOID').map(s=>s.totalCents));
+  const allocated = sum(settlements.filter(s=>s.status!=='VOID').flatMap(s=>s.allocations.map(a=>a.amountCents)));
+  const complete = phase(intake,settlements)==='Posted';
+  const preparation = intake.needsReview || intake.unmatched || !intake.rowCount || intake.totalCents===undefined || intake.totalCents!==intake.rowTotalCents ? 'Review needed' : 'Matches complete';
+  const payment = !settlements.some(s=>s.status!=='VOID') ? 'Awaiting payment' : settlements.some(s=>['RECORDED','POSTING'].includes(s.status)) ? 'Received · posting needed' : complete ? 'Fully posted' : 'Partially paid';
+  const next = !intake.rowCount ? 'Read and import source' : preparation==='Review needed' ? 'Review unresolved rows' : settlements.some(s=>['RECORDED','POSTING'].includes(s.status)) ? 'Review and post payment' : complete ? 'Continue to payroll' : 'Confirm carrier payment';
+  const move = () => {
+    if (complete) { navigate({tab:'payroll',intakeId:intake.id}); return; }
+    const node = document.getElementById(!intake.rowCount ? 'intake-import' : preparation==='Review needed' ? 'intake-rows' : 'intake-payment');
+    node?.querySelectorAll('details').forEach(d=>d.open=true);
+    node?.scrollIntoView?.({block:'start'}); node?.querySelector<HTMLElement>('button,input,select')?.focus({preventScroll:true});
+  };
+  return <section className="intake-summary" aria-label="Statement totals and next action">
+    <div className="commission-action-bar"><CommissionBadge>{preparation}</CommissionBadge><CommissionBadge tone={complete?'green':'amber'}>{payment}</CommissionBadge><button className="primary" onClick={move}>{next}</button></div>
+    <div className="intake-totals"><span>Source <strong>{intake.totalCents===undefined?'Not entered':money(intake.totalCents)}</strong></span><span>Recorded receipts <strong>{money(recorded)}</strong></span><span>Allocated <strong>{money(allocated)}</strong></span><span>Posted agency receipts <strong>{money(intake.postedCents)}</strong></span><span>Employee earnings <strong>{money(earned)}</strong></span><span>Source remaining <strong>{intake.totalCents===undefined?'Not entered':money(intake.totalCents-intake.postedCents)}</strong></span></div>
+    {!!entries.length && <p className="small">Posted earnings: {entries.some(e=>e.batchId)||shared.some(e=>e.batchId)?'Some or all are included in payroll; inspect the selected cycle for approval and payment status.':'Awaiting payroll review.'}</p>}
+  </section>;
+}
+
 export default function CommissionIntake({
   data,
   refreshLedger,
@@ -162,10 +194,13 @@ export default function CommissionIntake({
     { clearDataOnError: () => true },
   );
   const { requestLeave } = useEditProtection();
-  const [selected, setSelected] = useState(""),
-    [adding, setAdding] = useState(false),
-    [query, setQuery] = useState(""),
-    [filter, setFilter] = useState("active");
+  const { target, remember } = useCommissionWorkflow();
+  const [selected, saveSelected] = useCommissionPreference('selected-statement', '');
+  const setSelected = (id:string) => { saveSelected(id); remember?.({intakeId:id,statementId:undefined}); };
+  const [adding, setAdding] = useState(false);
+  const [query, setQuery] = useCommissionPreference('statement-search', '');
+  const [filter, setFilter] = useCommissionPreference('statement-filter', 'active');
+  useEffect(() => { if (target.intakeId) { saveSelected(target.intakeId); setAdding(false); } }, [target.intakeId]);
   const denied = (error: unknown) => {
     if (isAuthorizationError(error)) {
       resource.invalidate(error);
@@ -190,6 +225,16 @@ export default function CommissionIntake({
         )}
       </div>
     );
+  if (selected) return <section className="commission-intake" aria-label="Carrier statement inbox"><IntakeDetail
+          key={selected}
+          id={selected}
+          data={data}
+          templates={workspace.templates}
+          refresh={refresh}
+          renderPolicySetup={renderPolicySetup}
+          onError={denied}
+          close={() => requestLeave(() => setSelected(""))}
+        /></section>;
   const queue = [...workspace.intakes].sort((a, b) => priority(a, workspace.settlements) - priority(b, workspace.settlements) || a.documentReceivedOn.localeCompare(b.documentReceivedOn) || a.reference.localeCompare(b.reference));
   const items = queue.filter(
     (s) =>
@@ -371,18 +416,7 @@ export default function CommissionIntake({
           </p>
         )}
       </div>
-      {selected && (
-        <IntakeDetail
-          key={selected}
-          id={selected}
-          data={data}
-          templates={workspace.templates}
-          refresh={refresh}
-          renderPolicySetup={renderPolicySetup}
-          onError={denied}
-          close={() => requestLeave(() => setSelected(""))}
-        />
-      )}
+
     </section>
   );
 }
@@ -602,6 +636,8 @@ function IntakeDetail({
       ) : (
         <>
           <StatementProgress intake={intake} settlements={settlements} />
+          <StatementSummary detail={detail} data={data} />
+          <CommissionPanel title="Statement details & control total" open={intake.totalCents===undefined} remember={'header-panel:'+intake.id}>
           <HeaderEditor
             key={
               "header-" + intake.totalCents + ":" + (intake.statementDate ?? "")
@@ -610,7 +646,10 @@ function IntakeDetail({
             refresh={reload}
             onError={onError}
           />
+          </CommissionPanel>
+          <div className="intake-review-layout"><div className="intake-review-main"><div id="intake-import">
           <CommissionPanel
+            remember={'import-panel:' + intake.id}
             title="Import statement rows"
             open={!rows.length}
             hint="Reuse a carrier format or extract a PDF"
@@ -625,7 +664,7 @@ function IntakeDetail({
               onError={onError}
             />
           </CommissionPanel>
-          <RowsEditor
+          </div><RowsEditor
             key={"rows-" + rows.map((r) => r.id + ":" + r.version).join(",")}
             detail={detail}
             data={data}
@@ -633,7 +672,8 @@ function IntakeDetail({
             renderPolicySetup={renderPolicySetup}
             onError={onError}
           />
-          <section className="card">
+          </div><CommissionSourcePreview intake={intake} onError={onError} /></div>
+          <section className="card" id="intake-payment">
             <div className="commission-section-heading">
               <div>
                 <h3>Payment & settlement</h3>
@@ -644,6 +684,7 @@ function IntakeDetail({
               </div>
             </div>
             <CommissionPanel
+              remember={"payment-panel:" + intake.id}
               title="Record a settlement"
               open={!!rows.length && !intake.needsReview && !settlements.length}
               hint="Supports partial payments and net offsets"
@@ -1069,7 +1110,9 @@ function IntakeImport({
                   disabled={!reviewed || task.busy || !preview.length}
                   onClick={() =>
                     void task.run(async () => {
-                      await saveRows(preview, false);
+                      await commissionAction("saveCarrierImportTemplate", { carrierId: intake.carrierId, version: template?.version ?? 0, headers: table![0], mapping });
+                      try { await saveRows(preview, false); }
+                      catch (error) { throw new Error('Carrier format saved; row import needs retry. ' + (error instanceof Error ? error.message : 'Refresh and review retained rows.')); }
                       setReviewed(false);
                       task.setMessage(
                         "Source rows saved. Review matches and eligibility below.",
@@ -1077,26 +1120,9 @@ function IntakeImport({
                     })
                   }
                 >
-                  Import rows for review
+                  Import rows & remember format
                 </button>
-                <button
-                  className="secondary"
-                  disabled={!reviewed || task.busy}
-                  onClick={() =>
-                    void task.run(async () => {
-                      await commissionAction("saveCarrierImportTemplate", {
-                        carrierId: intake.carrierId,
-                        version: template?.version ?? 0,
-                        headers: table![0],
-                        mapping,
-                      });
-                      await refresh();
-                      task.setMessage("Carrier column mapping saved.");
-                    })
-                  }
-                >
-                  Remember carrier format
-                </button>
+
               </div>
             </>
           )}
@@ -1156,7 +1182,24 @@ function RowsEditor({
     detail.settlements.some(
       (s) => s.status !== "VOID" && s.allocations.some((a) => a.rowId === r.id),
     );
-  const visible = drafts.slice(page * 10, page * 10 + 10);
+  const [rowFilter, setRowFilter] = useCommissionPreference('rows-filter:' + detail.intake.id, 'unresolved');
+  const [focusedRow, setFocusedRow] = useCommissionPreference('focused-row:' + detail.intake.id, '');
+  const unresolved = (r: IntakeRow) => !locked(r) && (!r.deleted && (r.reviewStatus === 'PENDING' || !!rowIssues(r, detail.intake.carrierId, data.policies, drafts).length));
+  const filtered = rowFilter === 'all' ? drafts : drafts.filter(unresolved);
+  const currentPage = Math.min(page, Math.max(0, Math.ceil(filtered.length / 10) - 1));
+  const visible = filtered.slice(currentPage * 10, currentPage * 10 + 10);
+  const focus = filtered.find(r => r.id === focusedRow)?.id ?? filtered[0]?.id;
+  const mobileRow = filtered.find(r => r.id === focus);
+  const displayed = mobileRow && !visible.some(r => r.id === mobileRow.id) ? [...visible, mobileRow] : visible;
+  const routine = drafts.filter(r => !locked(r) && !r.deleted && r.reviewStatus === 'PENDING' && r.transactionType === 'RECEIPT' && !r.importIssue && (r.agencyCents ?? 0) > 0 && exactPolicyMatches(r,detail.intake.carrierId,data.policies).length === 1 && !rowIssues({...r,reviewStatus:'ELIGIBLE'},detail.intake.carrierId,data.policies,drafts).length);
+  const missingGroups = [...new Map(drafts.filter(r=>!locked(r)&&!r.deleted&&!r.policyId).map(r=>[r.policyNumber+'|'+r.effectiveDate,r])).values()];
+  useEffect(() => {
+    setDrafts(prev => prev.map(r => {
+      const matches=exactPolicyMatches(r, detail.intake.carrierId, data.policies);
+      return !locked(r) && !r.policyId && !r.importIssue && matches.length===1 ? {...r,policyId:matches[0].id,reviewStatus:'PENDING'} : r;
+    }));
+    setConfirmed(false);
+  }, [data.policies]);
   const add = () => {
     const id = crypto.randomUUID();
     setDrafts([
@@ -1176,7 +1219,7 @@ function RowsEditor({
         postedCents: 0,
       },
     ]);
-    setPage(Math.floor(drafts.length / 10));
+    setRowFilter("all"); setFocusedRow(id); setPage(Math.floor(drafts.length / 10));
   };
   const setup = drafts.find((r) => r.id === setupRow);
   const submit = async (e: FormEvent) => {
@@ -1207,7 +1250,7 @@ function RowsEditor({
     });
   };
   return (
-    <section className="card intake-rows">
+    <section className="card intake-rows" id="intake-rows">
       <div className="commission-section-heading">
         <div>
           <h3>Policy matches & eligibility</h3>
@@ -1224,6 +1267,12 @@ function RowsEditor({
           Add source row
         </button>
       </div>
+      <div className="intake-filters"><label className="field">Rows to review<select value={rowFilter} onChange={e=>{setRowFilter(e.target.value);setPage(0);}}><option value="unresolved">Unresolved rows ({drafts.filter(unresolved).length})</option><option value="all">All rows ({drafts.length})</option></select></label>
+      <label className="field intake-mobile-picker">Focused source row<select value={focus ?? ''} onChange={e=>setFocusedRow(e.target.value)}>{filtered.map(r=><option key={r.id} value={r.id}>{r.lineRef || r.policyNumber || 'New row'}</option>)}</select></label></div>
+      {!!missingGroups.length && <CommissionPanel title="Resolve missing policy groups" hint="Complete tracking once, then recheck every matching row">
+        {missingGroups.map(r=><p key={r.id}>{r.policyNumber || 'Missing policy number'} · {r.effectiveDate || 'Term required if ambiguous'} · {drafts.filter(x=>x.policyNumber===r.policyNumber&&x.effectiveDate===r.effectiveDate&&!x.policyId).length} rows <button className="secondary" onClick={()=>setSetupRow(r.id)}>Find policy / complete tracking</button></p>)}
+      </CommissionPanel>}
+      {!!routine.length && <div className="commission-notice"><strong>{routine.length} routine rows ready for your review</strong><p>Exact policy-term match, positive receipt, readable amount and no source issues. Confirm the original and eligibility before approval.</p><button className="secondary" onClick={()=>setSelected(routine.map(r=>r.id))}>Select routine review group</button></div>}
       <form onSubmit={(e) => void submit(e)}>
         <fieldset disabled={task.busy}>
           <div className="intake-actions">
@@ -1286,7 +1335,7 @@ function RowsEditor({
                 </tr>
               </thead>
               <tbody>
-                {visible.map((r) => {
+                {displayed.map((r) => {
                   let previewAmount = r.agencyCents;
                   try {
                     previewAmount = amounts[r.id]?.trim()
@@ -1306,9 +1355,9 @@ function RowsEditor({
                   return (
                     <tr
                       key={r.id}
-                      className={r.deleted ? "intake-excluded" : ""}
+                      className={(r.deleted ? "intake-excluded " : "") + (r.id === focus ? "intake-focused-row " : "") + (!visible.some(v=>v.id===r.id) ? "intake-mobile-only" : "")}
                     >
-                      <td>
+                      <td data-label="Select row">
                         <input
                           type="checkbox"
                           aria-label={
@@ -1328,7 +1377,7 @@ function RowsEditor({
                           {r.sourceRow ? "Row " + r.sourceRow : "Manual"}
                         </div>
                       </td>
-                      <td>
+                      <td data-label="Source policy / reference">
                         <input
                           aria-label={"Source policy " + r.id}
                           disabled={frozen}
@@ -1371,7 +1420,7 @@ function RowsEditor({
                           </span>
                         )}
                       </td>
-                      <td>
+                      <td data-label="Policy match">
                         <select
                           aria-label={"Policy match " + r.id}
                           disabled={frozen}
@@ -1438,7 +1487,7 @@ function RowsEditor({
                           </select>
                         )}
                       </td>
-                      <td>
+                      <td data-label="Agency commission">
                         <input
                           aria-label={"Agency amount " + r.id}
                           disabled={frozen}
@@ -1474,7 +1523,7 @@ function RowsEditor({
                           {frozen ? " · Allocated row locked" : ""}
                         </span>
                       </td>
-                      <td>
+                      <td data-label="Review">
                         <select
                           aria-label={"Eligibility " + r.id}
                           disabled={frozen}
@@ -1530,6 +1579,7 @@ function RowsEditor({
               </tbody>
             </table>
           </div>
+          {!!drafts.length && !filtered.length && <p>No unresolved rows. Choose All rows to inspect completed review decisions.</p>}
           {!drafts.length && (
             <p className="commission-compact-empty">
               Import the original statement or add a source row. Incomplete rows
@@ -1546,12 +1596,12 @@ function RowsEditor({
               Previous rows
             </button>
             <span className="small">
-              Page {page + 1} of {Math.max(1, Math.ceil(drafts.length / 10))}
+              Page {currentPage + 1} of {Math.max(1, Math.ceil(filtered.length / 10))}
             </span>
             <button
               type="button"
               className="secondary"
-              disabled={(page + 1) * 10 >= drafts.length}
+              disabled={(currentPage + 1) * 10 >= filtered.length}
               onClick={() => setPage(page + 1)}
             >
               Next rows
@@ -1593,7 +1643,9 @@ function RowsEditor({
             setup.policyNumber,
             detail.intake.carrierId,
             (policyId) => {
-              update(setup.id, { policyId, reviewStatus: "PENDING" });
+              // A single adoption can suggest all identical terms, while ambiguous terms stay unresolved.
+              setDrafts(prev=>prev.map(r=>!locked(r)&&!r.policyId&&r.policyNumber.trim().toUpperCase()===setup.policyNumber.trim().toUpperCase()&&r.effectiveDate===setup.effectiveDate ? {...r,policyId,reviewStatus:'PENDING'}:r));
+              setConfirmed(false);
               setSetupRow("");
             },
           )}
@@ -1719,7 +1771,10 @@ function SettlementCard({
   refresh: () => Promise<void>;
   onError: (e: unknown) => void;
 }) {
-  const [amounts, setAmounts] = useState<Record<string, string>>({}),
+  const reviewedAvailable = detail.rows.filter(r=>!r.deleted && r.agencyCents!==undefined && !rowIssues(r,detail.intake.carrierId,data.policies,detail.rows).length);
+  const proposed: Record<string,string> = Object.fromEntries(reviewedAvailable.map(r=>[r.id, ((r.agencyCents! - reservedCents(r.id,detail.settlements,s.id))/100).toFixed(2)]).filter(([,v])=>Number(v)!==0));
+  const fullPayment = sum(Object.values(proposed).map(importedMoney)) === s.totalCents && s.totalCents > 0 && Object.keys(proposed).length > 0;
+  const [amounts, setAmounts] = useState<Record<string, string>>(() => fullPayment ? proposed : {}),
     [confirmed, setConfirmed] = useState(false),
     [page, setPage] = useState(0);
   const task = useTask(onError);
@@ -1747,6 +1802,16 @@ function SettlementCard({
   } catch {
     amountError = "Correct the allocated amounts.";
   }
+  const allocationKey = JSON.stringify(amounts);
+  const [previewKey, setPreviewKey] = useState(allocationKey);
+  useEffect(()=>{const timer=window.setTimeout(()=>setPreviewKey(allocationKey),400);return()=>window.clearTimeout(timer);},[allocationKey]);
+  type FinancialPreview = { employeeCents: number; calculations: { lineRef: string; producerName: string; producerBps: number; shareBps?: number; amountCents: number; reviewOnly: boolean }[] };
+  const financial = useAsyncResource(async () => {
+    if (s.status!=='RECORDED' || amountError || total!==s.totalCents || previewKey!==allocationKey) return null;
+    try { return await commissionAction<FinancialPreview>('previewIntakeSettlement',{id:detail.intake.id,settlementId:s.id,version:s.version,allocations:Object.entries(JSON.parse(previewKey) as Record<string,string>).filter(([,v])=>v.trim()).map(([rowId,v])=>({rowId,amountCents:importedMoney(v)}))}); }
+    catch(error){onError(error);throw error;}
+  }, [previewKey,s.version,detail.intake.version], {clearDataOnError:()=>true});
+  const previewReady = previewKey === allocationKey && !financial.loading && !!financial.data?.calculations && !financial.error;
   const post = async () => {
       const fresh = await commissionAction<Detail>("getStatementIntake", {
         id: detail.intake.id,
@@ -1809,13 +1874,14 @@ function SettlementCard({
         " rows posted"
       }
     >
-      <p className="small">Evidence: {s.evidence}</p>
+      <details><summary>Payment evidence</summary><p>{s.evidence}</p></details>
       {s.status === "VOID" && <p>Void reason: {s.voidReason}</p>}
       {s.status === "RECORDED" && (
         <form
           onSubmit={(e) => {
             e.preventDefault();
             void task.run(async () => {
+              if (!previewReady) throw new Error("Wait for the current financial review before posting.");
               await commissionAction("allocateIntakeSettlement", {
                 id: detail.intake.id,
                 settlementId: s.id,
@@ -1836,6 +1902,8 @@ function SettlementCard({
           }}
         >
           <fieldset disabled={task.busy}>
+            {fullPayment && <p className="commission-notice">This verified full payment matches the remaining reviewed balance. The complete allocation is proposed below; review it before posting.</p>}
+            {!fullPayment && <p className="commission-notice">Partial or net payment: allocate only the amounts supported by payment evidence. No policy allocation is assumed.</p>}
             <p>
               Allocate this payment to the reviewed source rows. Enter a smaller
               amount for a partial payment.
@@ -1930,7 +1998,11 @@ function SettlementCard({
                 ? " · " + money(s.totalCents - total) + " difference"
                 : " · Balanced"}
             </p>
+            <p>Remaining after this payment: {detail.intake.totalCents===undefined?'Enter source total':money(detail.intake.totalCents-detail.intake.postedCents-s.totalCents)}</p>
             {amountError && <p className="error-text">{amountError}</p>}
+            {financial.loading && total===s.totalCents && <p role="status">Checking employee calculations…</p>}
+            {financial.error && <p role="alert">{financial.error}<button type="button" className="secondary" onClick={()=>void financial.refetch()}>Refresh financial review</button></p>}
+            {previewReady && <div className="commission-financial-summary"><strong>Employee earnings to post: {money(financial.data!.employeeCents)}</strong><details open><summary>Employee calculations</summary><ul>{financial.data!.calculations.map((c,i)=><li key={i}>{c.producerName} · {c.lineRef} · {c.shareBps===undefined?'':(c.shareBps/100)+'% share × '}{c.producerBps/100}% saved rate · {money(c.amountCents)}{c.reviewOnly?' — exception review; no automatic payroll change':''}</li>)}</ul></details></div>}
             <label className="commission-check">
               <input
                 type="checkbox"
@@ -1941,9 +2013,9 @@ function SettlementCard({
             </label>
             <button
               className="primary"
-              disabled={!confirmed || !!amountError || total !== s.totalCents}
+              disabled={!confirmed || !!amountError || total !== s.totalCents || !previewReady}
             >
-              Confirm allocation & post settlement
+              Confirm allocation & post earnings
             </button>
           </fieldset>
         </form>

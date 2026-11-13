@@ -193,6 +193,7 @@ it("confirms allocation and posts the verified settlement in one reviewed action
   h.action.mockImplementation(async(op,input)=>{
     if(op==="intakeWorkspace")return{intakes:[source],settlements:[settlement],templates:[]};
     if(op==="getStatementIntake")return{intake:source,rows:[{...row,reviewStatus:"ELIGIBLE"}],settlements:[settlement]};
+    if(op==="previewIntakeSettlement")return{calculations:[],employeeCents:1000};
     if(op==="allocateIntakeSettlement"){settlement={...settlement,status:"POSTING",version:2,allocations:input.allocations};return{ok:true}}
     if(op==="postIntakeSettlement")return{complete:true,postedRows:1,totalRows:1};
     return{draft:null};
@@ -200,7 +201,7 @@ it("confirms allocation and posts the verified settlement in one reviewed action
   renderInbox();
   fireEvent.click(await screen.findByRole("button",{name:"Open"}));
   fireEvent.click(await screen.findByRole("button",{name:"Fill remaining reviewed amounts"}));
-  const button=screen.getByRole("button",{name:"Confirm allocation & post settlement"});
+  const button=screen.getByRole("button",{name:"Confirm allocation & post earnings"});
   expect(button).toBeDisabled();
   fireEvent.click(screen.getByLabelText(/I reviewed the source matches/));
   fireEvent.click(button);
@@ -216,6 +217,7 @@ it("retains a resumable allocation when posting is interrupted instead of alloca
   h.action.mockImplementation(async(op,input)=>{
     if(op==="intakeWorkspace")return{intakes:[source],settlements:[settlement],templates:[]};
     if(op==="getStatementIntake")return{intake:source,rows:[{...row,reviewStatus:"ELIGIBLE"}],settlements:[settlement]};
+    if(op==="previewIntakeSettlement")return{calculations:[],employeeCents:1000};
     if(op==="allocateIntakeSettlement"){settlement={...settlement,status:"POSTING",version:2,allocations:input.allocations};return{ok:true}}
     if(op==="postIntakeSettlement"){if(interrupted){interrupted=false;throw new Error("Connection lost")}return{complete:true,postedRows:1,totalRows:1}}
     return{draft:null};
@@ -224,7 +226,7 @@ it("retains a resumable allocation when posting is interrupted instead of alloca
   fireEvent.click(await screen.findByRole("button",{name:"Open"}));
   fireEvent.click(await screen.findByRole("button",{name:"Fill remaining reviewed amounts"}));
   fireEvent.click(screen.getByLabelText(/I reviewed the source matches/));
-  fireEvent.click(screen.getByRole("button",{name:"Confirm allocation & post settlement"}));
+  fireEvent.click(screen.getByRole("button",{name:"Confirm allocation & post earnings"}));
   await screen.findByText(/Allocation saved. Posting stopped/);
   fireEvent.click(screen.getByRole("button",{name:"Refresh statement"}));
   fireEvent.click(await screen.findByRole("button",{name:"Post verified settlement"}));

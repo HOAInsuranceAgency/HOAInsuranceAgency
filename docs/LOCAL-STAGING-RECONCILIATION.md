@@ -87,3 +87,14 @@ must also complete successfully at its exact source commit.
 Live authenticated file extraction, cross-session draft recovery, and financial
 posting acceptance still require controlled staging records. Fictional browser
 previews and service tests do not establish that business-data acceptance.
+
+## Remaining simplifications release
+The prior workflow commit e3726325c3fb96322eea5735bfba091f5d40c2f4 was verified as staging deployment 49. Before this pass, GitHub staging still matched that commit; production main remained 0bf1db926dcd77fbdf1346eea4590904d696a445. The original working copy still had its 93 pre-existing modified/untracked entries and remains outside this work.
+
+This pass completes the remaining requested workflow surfaces: default work queue and renamed navigation; focused statements with separate preparation/payment states and next actions; source comparison; unresolved-first and grouped review; combined format/import; full-payment proposals and server-calculated financial summaries; private draft autosave and browser navigation recovery; selected-cycle readiness, linked review/calculations and searchable history; contextual off-cycle selection; confirmed payroll cancellation; and contextual exception evidence/history.
+
+The read-only settlement preview reuses the existing posting-plan validator. Financial posting and payroll mutations retain their existing authorization, version, duplicate, historical-rate and approval controls. No infrastructure, production setting, email schedule or report-enable setting is intentionally changed.
+
+See COMMISSION-SIMPLIFIED-WORKFLOW-TEST-PLAN.md for the current acceptance exercise. Live financial acceptance requires controlled staging records and is distinct from automated regression and fictional browser checks. Publish this release only to codex-hoa-staging-migration; verify the successful Amplify job and served frontend identify the exact release commit.
+
+Release validation: 24 staging gate files / 517 tests passed, plus all 134 financial payroll checks. Frontend and backend TypeScript checks, the CRM/sidebar build, and local backend synthesis passed. Desktop 1440-pixel and mobile 390-pixel fictional previews checked focused source rows, side-by-side originals, acknowledgements, approval controls and cancellation dialogs. The final remote staging check still matched e3726325c3fb96322eea5735bfba091f5d40c2f4, so no additional staging merge was needed. Automatic builds remain off; payroll scheduling was DISABLED and saved report settings remained enabled=false (version 1) before publication.

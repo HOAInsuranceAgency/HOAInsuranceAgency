@@ -1,3 +1,4 @@
+import { CommissionWorkflowContext } from '../lib/commissionWorkflow';
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
   fireEvent,
@@ -20,7 +21,7 @@ let workspace: PayrollWorkspace;
 beforeEach(() => {
   vi.resetAllMocks();
   vi.useFakeTimers({ toFake: ["Date"] });
-  vi.setSystemTime(new Date("2026-11-05T15:00:00Z"));
+  vi.setSystemTime(new Date("2026-11-21T15:00:00Z"));
   workspace = {
     owner: true,
     environment: "local",
@@ -415,4 +416,48 @@ it("keeps readiness dates and employee totals on the same selected cycle", async
   fireEvent.change(picker,{target:{value:"2026-11"}});
   expect(screen.getByRole("table",{name:"Employee totals for 2026-11"})).toBeInTheDocument();
   expect(screen.getByRole("region",{name:"Payroll readiness"})).toHaveTextContent("Nov 16, 2026");
+});
+
+it("uses the same inclusive cutoff block in readiness and the approval action",async()=>{
+  vi.setSystemTime(new Date('2026-11-16T22:00:00Z'));
+  workspace.statementReadiness={activeStatements:0,statementsNeedingReview:0,unmatchedRows:0,pendingSettlements:[]};
+  render(<CommissionPayroll owner refreshLedger={vi.fn()}/>);
+  await screen.findByRole('button',{name:'Approve payroll cycle'});
+  fireEvent.click(screen.getByRole('checkbox',{name:/I reviewed carrier receipts/}));
+  expect(screen.getByRole('button',{name:'Approve payroll cycle'})).toBeDisabled();
+  expect(screen.getByRole('region',{name:'Payroll readiness'})).toHaveTextContent('inclusive receipt cutoff');
+  expect(h.action.mock.calls.some(([op])=>op==='approvePayrollCycle')).toBe(false);
+});
+it("opens cancellation as a separate confirmed dialog without cancelling on open",async()=>{
+  render(<CommissionPayroll owner refreshLedger={vi.fn()}/>);
+  fireEvent.click(await screen.findByRole('button',{name:'Cancel cycle…'}));
+  const modal=within(screen.getByRole('dialog'));
+  expect(modal.getByRole('button',{name:'Cancel payroll cycle'})).toBeDisabled();
+  expect(h.action.mock.calls.some(([op])=>op==='cancelPayrollCycle')).toBe(false);
+  fireEvent.change(modal.getByLabelText('Cancellation reason'),{target:{value:'TEST duplicate draft'}});
+  fireEvent.click(modal.getByRole('checkbox',{name:/I confirm this cycle/}));
+  fireEvent.click(modal.getByRole('button',{name:'Cancel payroll cycle'}));
+  await waitFor(()=>expect(h.action).toHaveBeenCalledWith('cancelPayrollCycle',{id:'2026-11',version:1,reason:'TEST duplicate draft'}));
+});
+it("carries a contextual earning into an off-cycle draft without including another earning",async()=>{
+  workspace.producers=[{id:'p',name:'Avery'}];
+  const row={producerId:'p',producerName:'Avery',policyId:'policy',policyNumber:'POL-1',accountName:'Cedar',entryId:'receipt',receivedOn:'2026-11-02',transaction:'NEW' as const,agencyCents:100000,producerBps:1000,amountCents:10000,earningId:undefined,source:undefined,shareBps:undefined};
+  workspace.availableEarnings=[row,{...row,entryId:'other',amountCents:5000}];
+  const key=JSON.stringify(['receipt','policy','receipt']);
+  render(<CommissionWorkflowContext.Provider value={{target:{tab:'payroll',earningKeys:[key],producerId:'p'},navigate:vi.fn()}}><CommissionPayroll owner refreshLedger={vi.fn()}/></CommissionWorkflowContext.Provider>);
+  const title=await screen.findByText('Add an off-cycle payment');
+  const form=within(title.closest('details')!);
+  expect(form.getByRole('checkbox',{name:'Include Avery POL-1 2026-11-02 $100.00'})).toBeChecked();
+  expect(form.getByRole('checkbox',{name:'Include Avery POL-1 2026-11-02 $50.00'})).not.toBeChecked();
+  fireEvent.change(form.getByLabelText('Off-cycle reason'),{target:{value:'TEST selected earning'}});
+  fireEvent.click(form.getByRole('button',{name:'Create off-cycle draft'}));
+  await waitFor(()=>expect(h.action).toHaveBeenCalledWith('savePayrollCycle',expect.objectContaining({selectedEarningKeys:[key],producerIds:['p']})));
+});
+it("opens the exact review destination supplied by payroll validation",async()=>{
+  workspace.cycles[0].preview!.blockers=['Finish received settlement TEST'];
+  workspace.cycles[0].preview!.issues=[{message:'Finish received settlement TEST',target:{tab:'statements',intakeId:'source-123'}}];
+  const navigate=vi.fn();
+  render(<CommissionWorkflowContext.Provider value={{target:{tab:'payroll'},navigate}}><CommissionPayroll owner refreshLedger={vi.fn()}/></CommissionWorkflowContext.Provider>);
+  fireEvent.click(await screen.findByRole('button',{name:'Resolve'}));
+  expect(navigate).toHaveBeenCalledWith({tab:'statements',intakeId:'source-123'});
 });

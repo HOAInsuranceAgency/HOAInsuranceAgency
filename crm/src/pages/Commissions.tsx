@@ -1,3 +1,6 @@
+import { getCurrentUser } from 'aws-amplify/auth';
+import { CommissionWorkflowContext, CommissionTarget, useCommissionWorkflow, type CommissionDestination } from '../lib/commissionWorkflow';
+import CommissionWorkQueue from '../components/CommissionWorkQueue';
 import CommissionIntake from '../components/CommissionIntake';
 import CommissionPolicyLink from '../components/CommissionPolicyLink';
 import { createContext, useContext, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
@@ -61,16 +64,47 @@ function CommissionView({ owner }: { owner: boolean }) {
     errorMessage: 'Could not load commissions.',
     clearDataOnError: () => true,
   });
-  const [tab, setTab] = useState(() => owner && new URLSearchParams(window.location.search).get('tab') === 'settings' ? 'settings' : 'ledger');
+  const [target, setTarget] = useState<CommissionDestination>(() => ({ tab: owner ? (new URLSearchParams(window.location.search).get('tab') === 'settings' ? 'settings' : 'queue') : 'ledger' }));
+  const [storageKey, setStorageKey] = useState<string>();
+  const tab = target.tab;
+  const interacted = useRef(false);
+  const navigate = (next: CommissionDestination) => requestLeave(() => {
+    interacted.current = true;
+    setTarget(next);
+    if (storageKey) try { localStorage.setItem(storageKey + ':location', JSON.stringify(next)); } catch { /* Optional browser preferences. */ }
+  });
+  const remember = (patch: Partial<CommissionDestination>) => setTarget(previous => {
+    interacted.current = true;
+    const next={...previous,...patch};
+    if(storageKey) try{localStorage.setItem(storageKey+':location',JSON.stringify(next));}catch{/* Optional preferences. */}
+    return next;
+  });
+  useEffect(() => {
+    if (!owner) return;
+    let active = true;
+    void getCurrentUser().then(user => {
+      if (!active) return;
+      const key = 'hoa-commission-navigation:' + user.userId + ':owner';
+      setStorageKey(key);
+      try {
+        const saved = JSON.parse(localStorage.getItem(key + ':location') ?? 'null') as CommissionDestination | null;
+        if (!interacted.current && saved && ['queue','statements','payroll','ledger','exceptions','settings'].includes(saved.tab) && !window.location.search.includes('tab=settings')) setTarget(saved);
+      } catch { /* Optional browser preferences. */ }
+    }).catch(() => {});
+    return () => { active = false; };
+  }, [owner]);
+  useEffect(() => {
+    if (storageKey && interacted.current) try { localStorage.setItem(storageKey + ':location', JSON.stringify(target)); } catch { /* Optional browser preferences. */ }
+  }, [storageKey, target]);
   const snapshot = resource.data;
   return (
-    <CommissionAccessContext.Provider value={resource.invalidate}><div className="commissions">
+    <CommissionAccessContext.Provider value={resource.invalidate}><CommissionWorkflowContext.Provider value={{ target, navigate, storageKey, remember }}><div className="commissions">
       <header>
         <p className="muted small">
           {owner ? 'Owner · private commission management' : 'Your commission statements'}
         </p>
         <div className="commission-page-heading"><h1>Commissions</h1>
-        {owner && <button className="primary" onClick={() => requestLeave(() => setTab('settings'))}>Commission setup</button>}</div>
+        </div>
         <p className="muted">
           Track expected revenue, carrier receipts, producer earnings, and confirmed payments.
         </p>
@@ -78,18 +112,19 @@ function CommissionView({ owner }: { owner: boolean }) {
       {owner && (
         <div className="commission-tabs" role="tablist" aria-label="Commission views">
           {[
-            ['ledger', 'Ledger'],
-            ['statements', 'Reconciliation'],
+            ['queue', 'Work queue'],
+            ['statements', 'Statements'],
             ['payroll', 'Payroll'],
-            ['exceptions', 'Shared & exceptions'],
-            ['settings', 'Agreements & carriers'],
+            ['ledger', 'Ledger'],
+            ['exceptions', 'Reviews & exceptions'],
+            ['settings', 'Setup'],
           ].map(([id, label]) => (
             <button
               key={id}
               role="tab"
               aria-selected={tab === id}
               className={tab === id ? 'primary' : 'secondary'}
-              onClick={() => requestLeave(() => setTab(id))}
+              onClick={() => navigate({ tab: id })}
             >
               {label}
             </button>
@@ -112,19 +147,20 @@ function CommissionView({ owner }: { owner: boolean }) {
         !resource.error && <p>Loading commissions…</p>
       ) : (
         <>
+          {owner && tab === 'queue' && <CommissionWorkQueue data={snapshot} onAccessDenied={resource.invalidate} />}
           {tab === 'ledger' && <Ledger data={snapshot} owner={owner} refresh={resource.refetch} />}
           {owner && tab === 'settings' && <Settings data={snapshot} refresh={resource.refetch} />}
           {owner && tab === 'statements' && (
             <><CommissionIntake data={snapshot} refreshLedger={resource.refetch} onAccessDenied={resource.invalidate}
               renderPolicySetup={(policyNumber, carrierId, adopted) => <CommissionPolicyLink policyNumber={policyNumber} carrierId={carrierId} data={snapshot} refresh={resource.refetch} adopted={adopted} denied={resource.invalidate} renderAccountSetup={(id, saved) => <AccountClassificationResource id={id} onSaved={saved} />} />} />
-            <CommissionPanel title="Earlier reconciliation records" hint="Review existing drafts and posted statement history"><Statements data={snapshot} refresh={resource.refetch} /></CommissionPanel></>
+            <CommissionPanel open={!!target.statementId} title="Earlier reconciliation records" hint="Review existing drafts and posted statement history"><Statements data={snapshot} refresh={resource.refetch} /></CommissionPanel></>
           )}
           {owner && tab === 'exceptions' && <CommissionExceptions refreshLedger={resource.refetch} onAccessDenied={resource.invalidate} />}
-          {owner && tab === 'payroll' && <Payroll data={snapshot} refresh={resource.refetch} reviewStatements={() => requestLeave(() => setTab('statements'))} />}
+          {owner && tab === 'payroll' && <Payroll data={snapshot} refresh={resource.refetch} reviewStatements={() => navigate({ tab: 'statements' })} />}
           {!owner && <BatchList batches={snapshot.batches} />}
         </>
       )}
-    </div></CommissionAccessContext.Provider>
+    </div></CommissionWorkflowContext.Provider></CommissionAccessContext.Provider>
   );
 }
 function Ledger({
@@ -137,6 +173,9 @@ function Ledger({
   refresh: () => Promise<void>;
 }) {
   const [asOf, setAsOf] = useState(today);
+  const { target, navigate } = useCommissionWorkflow();
+  const [search, setSearch] = useState('');
+  const displayed = data.policies.filter(p => (!target.policyId || p.id === target.policyId) && (p.policyNumber + ' ' + p.accountName + ' ' + p.producerName + ' ' + p.entries.map(e => e.lineRef).join(' ')).toLowerCase().includes(search.toLowerCase()));
   const totals = data.policies.map(policyTotals),
     recoveries = data.policies.map((p) => recoveryBalances(p, data.batches)),
     paid = sum(data.batches.map(batchPaidCents));
@@ -225,7 +264,9 @@ function Ledger({
           ],
         }}
       />
-      {!!earningRows.length && <section className="card"><h2>Shared commission & adjustment earnings</h2><div className="commission-scroll"><table><thead><tr>{owner&&<th>Employee</th>}<th>Policy</th><th>Date</th><th>Source</th><th>Share / rate</th><th>Employee amount</th><th>Status</th></tr></thead><tbody>{earningRows.map(e=><tr key={e.id}>{owner&&<td>{e.producerName}</td>}<td>{e.accountName}<div className="small muted">{e.policyNumber}</div></td><td>{e.receivedOn}</td><td>{e.source==='ADJUSTMENT'?'Approved adjustment':'Shared receipt'}</td><td>{e.shareBps===undefined?'—':e.shareBps/100+'% share · '+e.producerBps/100+'% rate'}</td><td>{money(e.amountCents)}</td><td>{e.batchId?(data.batches.find(b=>b.id===e.batchId)?.status??'Allocated'):e.status}</td></tr>)}</tbody></table></div><p className="small muted">Shared earnings reference one carrier receipt. Compensation adjustments do not change agency cash received.</p></section>}
+      {!!earningRows.length && <section className="card"><h2>Shared commission & adjustment earnings</h2><div className="commission-scroll"><table><thead><tr>{owner&&<th>Employee</th>}<th>Policy</th><th>Date</th><th>Source</th><th>Share / rate</th><th>Employee amount</th><th>Status</th></tr></thead><tbody>{earningRows.map(e=><tr key={e.id}>{owner&&<td>{e.producerName}</td>}<td>{e.accountName}<div className="small muted">{e.policyNumber}</div></td><td>{e.receivedOn}</td><td>{e.source==='ADJUSTMENT'?'Approved adjustment':'Shared receipt'}</td><td>{e.shareBps===undefined?'—':e.shareBps/100+'% share · '+e.producerBps/100+'% rate'}</td><td>{money(e.amountCents)}</td><td>{e.batchId?(data.batches.find(b=>b.id===e.batchId)?.status??'Allocated'):e.status}
+      {owner && e.status==='PAYABLE' && !e.batchId && e.amountCents>0 && <button className="secondary" onClick={()=>navigate({tab:'payroll',earningKeys:[JSON.stringify(['earning',e.id])],producerId:e.producerId})}>Prepare off-cycle payment</button>}
+      {owner && <button className="secondary" onClick={()=>navigate({tab:'exceptions',...(e.adjustmentId?{adjustmentId:e.adjustmentId}:{policyId:e.policyId}),producerId:e.producerId})}>Review source & decisions</button>}</td></tr>)}</tbody></table></div><p className="small muted">Shared earnings reference one carrier receipt. Compensation adjustments do not change agency cash received.</p></section>}
       {!data.policies.length && !earningRows.length && (
         <div className="card">
           No commission snapshots yet.{' '}
@@ -245,13 +286,15 @@ function Ledger({
           />
         </label>
       )}
-      {data.policies.map((p) => {
+      <label className="field">Search ledger<input type="search" value={search} onChange={e => setSearch(e.target.value)} placeholder="Policy, employee or transaction reference" /></label>
+      {target.policyId && <button className="secondary" onClick={() => navigate({ tab: 'ledger' })}>Show all policies</button>}
+      {displayed.map((p) => {
         const t = policyTotals(p);
         const allocatedEarnings = earningRows.filter(e => e.policyId === p.id && e.status === 'PAYABLE');
         const employeeEarned = t.earned + sum(allocatedEarnings.map(e => e.amountCents));
         const hasSharedReceipts = p.entries.some(e => e.allocationId);
         return (
-          <section className="card" key={p.id}>
+          <CommissionTarget kind="policyId" id={p.id} key={p.id}><section className="card">
             <h2>
               {p.accountName} · {p.policyNumber}
             </h2>
@@ -286,6 +329,7 @@ function Ledger({
             </p>
             {owner ? (
               <>
+                <div className="commission-action-bar"><button className="secondary" onClick={() => navigate({ tab: 'exceptions', policyId: p.id, producerId: p.producerId })}>Review shares, adjustments & employee decisions</button></div>
                 <CarrierBalances balances={carrierReconciliationBalances(p, asOf)} />
                 <CommissionPanel title="Manage expected receipts">
                   <ReceiptForecastEditor
@@ -334,7 +378,8 @@ function Ledger({
                                 ? 'Unpaid'
                                 : 'Not commissionable'}
                         </td>
-                        {owner && <td>{e.eligibilityNote}</td>}
+                        {owner && <td><details><summary>Evidence</summary>{e.eligibilityNote}</details>
+                          {!e.batchId && !e.supersededBy && !e.excludedByCase && !e.allocationId && e.kind === 'RECEIPT' && e.producerCents > 0 && <button className="secondary" onClick={() => navigate({ tab: 'payroll', earningKeys: [JSON.stringify(['receipt', p.id, e.id])], producerId: p.producerId })}>Prepare off-cycle payment</button>}</td>}
                       </tr>
                     ))}
                   </tbody>
@@ -345,7 +390,7 @@ function Ledger({
                 Awaiting carrier commission or broker fee receipts. Binding alone does not create payable earnings.
               </p>
             )}
-          </section>
+          </section></CommissionTarget>
         );
       })}
     </>
@@ -1241,7 +1286,9 @@ function ReceiptForecastEditor({
   );
 }
 function Statements({ data, refresh }: { data: CommissionOverview; refresh: () => Promise<void> }) {
+  const {target}=useCommissionWorkflow();
   const [editing, setEditing] = useState<CommissionStatement | null | undefined>(undefined);
+  useEffect(()=>{if(target.statementId){const statement=data.statements.find(s=>s.id===target.statementId);if(statement)setEditing(statement);}},[target.statementId,data.statements]);
   const [query, setQuery] = useState('');
   const { requestLeave } = useEditProtection();
   const matches = data.statements.filter(s => [s.reference, s.settlementRef, ...s.lines.map(l => l.lineRef), ...s.lines.map(l => data.policies.find(p => p.id === l.policyId)?.policyNumber ?? '')].join(' ').toLowerCase().includes(query.trim().toLowerCase()));

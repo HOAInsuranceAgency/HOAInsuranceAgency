@@ -43,6 +43,7 @@ export const intakeOperations = new Set([
   "recordIntakeSettlement",
   "voidIntakeSettlement",
   "allocateIntakeSettlement",
+  "previewIntakeSettlement",
   "postIntakeSettlement",
   "saveCarrierImportTemplate",
   "extractIntakeDocument",
@@ -744,8 +745,8 @@ export async function intakeAction(
     );
     return { ok: true };
   }
-  if (operation === "allocateIntakeSettlement") {
-    if (settlement.status !== "RECORDED" || input.confirmed !== true)
+  if (operation === "allocateIntakeSettlement" || operation === "previewIntakeSettlement") {
+    if (settlement.status !== "RECORDED" || (operation === "allocateIntakeSettlement" && input.confirmed !== true))
       throw new Error(
         "Confirm reviewed source rows and payment allocation before posting.",
       );
@@ -769,7 +770,7 @@ export async function intakeAction(
       allocations,
       policies,
     );
-    assertStatementPostingPlan(
+    const financialPreview = assertStatementPostingPlan(
       {
         id: settlement.id,
         version: 0,
@@ -825,6 +826,7 @@ export async function intakeAction(
       throw new Error(
         "A carrier transaction is already associated with another source row or earlier reconciliation.",
       );
+    if (operation === "previewIntakeSettlement") return { ok: true, ...financialPreview };
     await store.commit(
       [
         change(

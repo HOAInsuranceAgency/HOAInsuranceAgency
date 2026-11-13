@@ -22,7 +22,13 @@ export interface PayrollCycle {
   paidOn?: string; paymentReference?: string; confirmationPaidOn?: string;
   reviewRequired?: string;
   approvalToken?: string; cancellationReason?: string;
-  preview?: { token: string; totalCents: number; entryCount: number; employees: { producerId: string; name: string; amountCents: number }[]; blockers: string[] };
+  preview?: { rows?: ReturnType<typeof payrollPreview>; issues?: PayrollReviewIssue[]; token: string; totalCents: number; entryCount: number; employees: { producerId: string; name: string; amountCents: number }[]; blockers: string[] };
+}
+export interface PayrollReviewIssue { message: string; target?: { tab: string; intakeId?: string; statementId?: string; policyId?: string; departureId?: string; adjustmentId?: string; cycleId?: string } }
+export const payrollCutoffIssue = (cycle: Pick<PayrollCycle, 'cutoff'>, asOf = payrollDay()) =>
+  asOf <= cycle.cutoff ? 'Approve after the inclusive receipt cutoff has ended.' : '';
+export function payrollApprovalIssues(cycle: PayrollCycle, asOf = payrollDay()) {
+  return [...new Set([...(cycle.preview?.blockers ?? []), ...(cycle.status === 'OPEN' && payrollCutoffIssue(cycle, asOf) ? [payrollCutoffIssue(cycle, asOf)] : []), ...(cycle.reviewRequired ? [cycle.reviewRequired] : [])])];
 }
 export interface PayrollDelivery {
   id: string; version: number; cycleId: string; cycleRevision: number; reportType: 'REVIEW' | 'PAYROLL' | 'OVERDUE' | 'CALENDAR' | 'HOLD' | 'OWNER_COPY';
@@ -42,6 +48,7 @@ export interface PayrollWorkspace {
   owner: boolean; settings?: PayrollSettings; cycles: PayrollCycle[];
   deliveries: PayrollDelivery[]; batches: CommissionBatch[];
   environment: string;
+  sourceLinks?: { policyId: string; entryId: string; statementId: string; intakeId?: string }[];
   reports?: { id: string; cycleId: string; revision: number; totalCents: number; createdAt: string; createdBy: string; contentHash: string }[];
   legacyBatches?: CommissionBatch[];
   producers?: { id: string; name: string }[];
@@ -125,7 +132,7 @@ export function payrollBlockers(cycle: PayrollCycle, policies: CommissionPolicy[
 /** One approval reserves all included earnings for the named employee. */
 export function buildPayrollApproval(cycle: PayrollCycle, policies: CommissionPolicy[], batches: CommissionBatch[], _settings: PayrollSettings, actor: string, at: string, earnings: CommissionEarning[] = [], departures: CommissionDeparture[] = []) {
   if (cycle.status !== 'OPEN') throw new Error('Only an open cycle can be approved.');
-  if (payrollDay(new Date(at)) <= cycle.cutoff) throw new Error('Approve after the inclusive receipt cutoff has ended.');
+  if (payrollCutoffIssue(cycle, payrollDay(new Date(at)))) throw new Error(payrollCutoffIssue(cycle, payrollDay(new Date(at))));
   validateAllocationSnapshot(policies, batches, earnings);
   const blockers = payrollBlockers(cycle,policies,[],earnings,departures);
   if(blockers.length) throw new Error(blockers.join(' '));

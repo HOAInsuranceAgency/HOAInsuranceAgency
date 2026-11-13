@@ -21,7 +21,7 @@ try {
   assert.match(text,/\$120\.00/);
   assert.doesNotMatch(text,/Jordan Hayes|\$64\.00/);
   const tabs=[...document.querySelectorAll('[role="tab"]')].map(e=>e.textContent);
-  for(const name of ['Payroll','Reconciliation','Shared & exceptions','Agreements & carriers'])assert.ok(!tabs.includes(name),name+' is hidden');
+  for(const name of ['Work queue','Statements','Payroll','Reviews & exceptions','Setup'])assert.ok(!tabs.includes(name),name+' is hidden');
   const reports=[...document.querySelectorAll('a[aria-label^="View PDF:"]')];
   assert.equal(reports.length,4);
   assert.ok(reports.every(link=>link.getAttribute('aria-label').includes('Avery Brooks earnings')));

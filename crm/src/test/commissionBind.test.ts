@@ -270,7 +270,7 @@ it.each(['missing account', 'missing GIM terms'])(
             }
         : fallback(kind, id),
     );
-    await expect(bindPolicy(event, input())).rejects.toThrow(/Owner must/);
+    await expect(bindPolicy(event, input())).rejects.toThrow(scenario === "missing GIM terms" ? /No GIM rate covers/ : /Owner must/);
     expect(h.commit).not.toHaveBeenCalled();
   },
 );

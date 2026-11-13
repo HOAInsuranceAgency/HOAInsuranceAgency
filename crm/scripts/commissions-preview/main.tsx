@@ -38,7 +38,7 @@ createRoot(document.getElementById('root')!).render(
     <main className="main">
       <section className="card" aria-label="Preview controls">
         <strong>Read-only preview · Fictional records</strong>
-        <p className="small muted">Choose a sample below, then open Payroll or Shared &amp; exceptions. Changes to records and email delivery are disabled.</p>
+        <p className="small muted">Choose a sample below, then open Payroll or Reviews &amp; exceptions. Changes to records and email delivery are disabled.</p>
         <div style={{display:'flex',flexWrap:'wrap',gap:16}}>
           <label className="field" style={{minWidth:200,flex:1}}>
             Sample scenario

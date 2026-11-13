@@ -135,6 +135,7 @@ export const payrollWorkspace: PayrollWorkspace = {
     batchIds: [],
     totalCents: 0,
     preview: {
+      rows: payrollPreview(data.policies, suggestPayrollDates(month).cutoff, undefined, data.earnings),
       token: "fictional-preview",
       totalCents: 32000,
       entryCount: 1,
@@ -374,6 +375,7 @@ if (previewQuery.get("scenario") === "shared") {
       data.earnings,
     );
     cycle.preview = {
+      rows,
       token: "fictional-preview",
       totalCents: rows.reduce((n, r) => n + r.amountCents, 0),
       entryCount: rows.length,

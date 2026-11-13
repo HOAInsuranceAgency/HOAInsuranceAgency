@@ -92,6 +92,7 @@ export function assertStatementPostingPlan(
 ) {
   const updated = new Map(policies.map((p) => [p.id, p]));
   const earnings = [...savedEarnings];
+  const calculations: { policyId: string; lineRef: string; producerId: string; producerName: string; agencyCents: number; producerBps: number; shareBps?: number; amountCents: number; reviewOnly: boolean }[] = [];
   for (const [index, line] of statement.lines.entries()) {
     const policy = updated.get(line.policyId);
     if (!policy || policy.carrierId !== statement.carrierId)
@@ -102,7 +103,12 @@ export function assertStatementPostingPlan(
       statement,
       "preflight:" + statement.id + ":" + index,
     );
-    earnings.push(...receiptEarnings(next, next.entries.at(-1)!, earnings));
+    const entry = next.entries.at(-1)!;
+    const created = receiptEarnings(next, entry, earnings);
+    earnings.push(...created);
+    if (!entry.allocationId) calculations.push({ policyId: policy.id, lineRef: line.lineRef, producerId: policy.producerId, producerName: policy.producerName, agencyCents: line.agencyCents, producerBps: policy.producerBps, amountCents: entry.producerCents, reviewOnly: line.kind !== 'RECEIPT' });
+    for (const earning of created) calculations.push({ policyId: policy.id, lineRef: line.lineRef, producerId: earning.producerId, producerName: earning.producerName, agencyCents: line.agencyCents, producerBps: earning.producerBps, shareBps: earning.shareBps, amountCents: earning.amountCents, reviewOnly: earning.status !== 'PAYABLE' });
     updated.set(policy.id, next);
   }
+  return { calculations, employeeCents: calculations.filter(c => !c.reviewOnly).reduce((n,c) => n+c.amountCents,0) };
 }

@@ -44,3 +44,23 @@ it("can reload recovery data after a rejected save without silently retrying it"
   await waitFor(()=>expect(h.action.mock.calls.filter(([op])=>op==="getIntakeWorkingDraft")).toHaveLength(2));
   expect(h.action.mock.calls.filter(([op])=>op==="saveIntakeWorkingDraft")).toHaveLength(1);
 });
+
+it("autosaves only edited working values after a pause without approving anything",async()=>{
+  h.action.mockImplementation(async(op,input)=>op==='getIntakeWorkingDraft'?{draft:null}:{draft:{...input,version:1,savedAt:'2026-11-13T12:00:00Z'}});
+  const restore=vi.fn(),onError=vi.fn();
+  const view=render(<CommissionDraftRecovery intake={intake} scope="rows" value={{amount:""}} restore={restore} onError={onError}/>);
+  await waitFor(()=>expect(screen.getByRole('button',{name:'Save working draft'})).toBeEnabled());
+  expect(h.action.mock.calls.some(([op])=>op==='saveIntakeWorkingDraft')).toBe(false);
+  view.rerender(<CommissionDraftRecovery intake={intake} scope="rows" value={{amount:"12"}} restore={restore} onError={onError}/>);
+  view.rerender(<CommissionDraftRecovery intake={intake} scope="rows" value={{amount:"12.50"}} restore={restore} onError={onError}/>);
+  await waitFor(()=>expect(h.action).toHaveBeenCalledWith('saveIntakeWorkingDraft',expect.objectContaining({data:{amount:'12.50'}})),{timeout:2500});
+  expect(h.action.mock.calls.filter(([op])=>op==='saveIntakeWorkingDraft')).toHaveLength(1);
+});
+it("does not autosave over an unrecovered working copy",async()=>{
+  h.action.mockResolvedValue({draft:{version:2,baseVersion:3,savedAt:'2026-11-13T12:00:00Z',data:{amount:'old'}}});
+  const view=render(<CommissionDraftRecovery intake={intake} scope="rows" value={{amount:""}} restore={vi.fn()} onError={vi.fn()}/>);
+  await screen.findByRole('button',{name:'Restore saved draft'});
+  view.rerender(<CommissionDraftRecovery intake={intake} scope="rows" value={{amount:"new"}} restore={vi.fn()} onError={vi.fn()}/>);
+  await new Promise(resolve=>setTimeout(resolve,1100));
+  expect(h.action.mock.calls.some(([op])=>op==='saveIntakeWorkingDraft')).toBe(false);
+});

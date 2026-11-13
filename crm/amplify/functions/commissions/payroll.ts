@@ -1,7 +1,7 @@
 import { intakePayrollStatements, type IntakeSettlement, type StatementIntake } from '../../../../shared/commissionIntake';
 import type { CommissionEarning, CommissionDeparture, CommissionAdjustment } from '../../../../shared/commissionExceptions';
 import { createHash, randomUUID } from 'node:crypto';
-import { buildPayrollApproval, COMMISSION_START_MONTH, cycleBatches, defaultPayrollSettings, payrollBlockers, payrollDay, payrollPreview, cyclePayrollRows, payrollRowKey, suggestPayrollDates, validatePayrollCycle, validatePayrollSettings, type PayrollCycle, type PayrollDelivery, type PayrollSettings, type PayrollWorkspace } from '../../../../shared/commissionPayroll';
+import { buildPayrollApproval, COMMISSION_START_MONTH, cycleBatches, defaultPayrollSettings, payrollBlockers, payrollCutoffIssue, payrollDay, payrollPreview, cyclePayrollRows, payrollRowKey, suggestPayrollDates, validatePayrollCycle, validatePayrollSettings, type PayrollCycle, type PayrollDelivery, type PayrollSettings, type PayrollWorkspace } from '../../../../shared/commissionPayroll';
 import { batchPaidCents, day, integer, required, sum, validateAllocationSnapshot, type CommissionBatch, type CommissionPolicy, type CommissionStatement } from '../../../../shared/commissions';
 import type { PayrollReport } from '../../../../shared/commissionPayroll';
 import { archiveReport, readReport, reportFiles } from './report-history';
@@ -27,7 +27,7 @@ const version = (input: store.Data, row?: { version: number }) => { if (input.ve
 function preview(cycle: PayrollCycle, policies: CommissionPolicy[], settings: PayrollSettings | undefined, statements: CommissionStatement[], earnings: CommissionEarning[] = [], departures: CommissionDeparture[] = [], adjustments: CommissionAdjustment[] = []) {
   const rows = cyclePayrollRows(cycle, policies, earnings, departures);
   const token = createHash('sha256').update(JSON.stringify([cycle.version, settings?.version ?? 0, adjustments.map(a=>[a.id,a.version]).sort(), rows, earnings.map(e=>[e.id,e.version]).sort(), departures.map(c=>[c.id,c.version]).sort(), policies.filter(p => rows.some(r => r.policyId === p.id)).map(p => [p.id, p.version]).sort()])).digest('hex');
-  return { token, blockers: [...payrollBlockers(cycle, policies, statements, earnings, departures), ...adjustments.filter(a=>a.status==='DRAFT'&&a.adjustmentType==='UNPAID_CORRECTION'&&a.effectiveOn<=cycle.payDate&&(!cycle.producerIds||cycle.producerIds.includes(a.producerId))).map(a=>'Resolve unpaid compensation correction '+a.id+' before payroll approval.')], totalCents: sum(rows.map(r => r.amountCents)), entryCount: rows.length, employees: [...new Set(rows.map(r => r.producerId))].map(producerId => ({ producerId, name: rows.find(r => r.producerId === producerId)!.producerName, amountCents: sum(rows.filter(r => r.producerId === producerId).map(r => r.amountCents)) })) };
+  return { token, rows, blockers: [...(payrollCutoffIssue(cycle) ? [payrollCutoffIssue(cycle)] : []), ...payrollBlockers(cycle, policies, statements, earnings, departures), ...adjustments.filter(a=>a.status==='DRAFT'&&a.adjustmentType==='UNPAID_CORRECTION'&&a.effectiveOn<=cycle.payDate&&(!cycle.producerIds||cycle.producerIds.includes(a.producerId))).map(a=>'Resolve unpaid compensation correction '+a.id+' before payroll approval.')], totalCents: sum(rows.map(r => r.amountCents)), entryCount: rows.length, employees: [...new Set(rows.map(r => r.producerId))].map(producerId => ({ producerId, name: rows.find(r => r.producerId === producerId)!.producerName, amountCents: sum(rows.filter(r => r.producerId === producerId).map(r => r.amountCents)) })) };
 }
 
 export async function payrollAction(_event: Event, actor: string, owner: boolean, operation: string, input: store.Data) {
@@ -53,13 +53,30 @@ export async function payrollAction(_event: Event, actor: string, owner: boolean
     const [intakes, intakeSettlements] = await Promise.all([store.list<StatementIntake>('STATEMENT_INTAKE'), store.list<IntakeSettlement>('INTAKE_SETTLEMENT')]);
     statements.push(...intakePayrollStatements(intakeSettlements));
     validateAllocationSnapshot(policies, batches, earnings);
-    for (const c of cycles) if (c.status === 'OPEN') c.preview = preview(c, policies, settings, statements, earnings, departures, adjustments);
+    for (const c of cycles) if (c.status === 'OPEN') {
+      c.preview = preview(c, policies, settings, statements, earnings, departures, adjustments);
+      c.preview.issues = c.preview.blockers.map(message => {
+        const statement = statements.find(s => message === 'Reconcile draft statement ' + s.reference + ' received ' + s.receivedOn + '.');
+        const settlement = statement && intakeSettlements.find(s => statement.id === s.id);
+        const policyMatches = policies.filter(p => message.startsWith(p.policyNumber + ':'));
+        const departureMatches = departures.filter(d => message.startsWith(d.producerName + ':'));
+        const adjustment = adjustments.find(a => message === 'Resolve unpaid compensation correction ' + a.id + ' before payroll approval.');
+        const target = statement ? { tab: 'statements', ...(settlement ? { intakeId: settlement.intakeId } : { statementId: statement.id }) } :
+          adjustment ? { tab: 'exceptions', adjustmentId: adjustment.id } :
+          departureMatches.length === 1 ? { tab: 'exceptions', departureId: departureMatches[0].id } :
+          policyMatches.length === 1 ? { tab: 'ledger', policyId: policyMatches[0].id } :
+          message.startsWith('Selected off-cycle') ? { tab: 'payroll', cycleId: c.id } : undefined;
+        return { message, ...(target ? { target } : {}) };
+      });
+    }
     const ids = new Set(cycles.flatMap(c => c.batchIds));
     const reports = (await store.list<PayrollReport>('PAYROLL_REPORT')).map(r => ({ id: r.id, cycleId: r.cycle.id, revision: r.cycle.revision, totalCents: r.cycle.totalCents, createdAt: r.createdAt, createdBy: r.createdBy, contentHash: r.contentHash }));
     const workspace: PayrollWorkspace = { owner, settings: settings ?? defaultPayrollSettings(PRODUCTION_OWNER_MAILBOX), cycles: cycles.sort((a,b) => b.id.localeCompare(a.id)), deliveries: deliveries.sort((a,b) => b.createdAt.localeCompare(a.createdAt)), batches: batches.filter(b => ids.has(b.id)), reports, legacyBatches: batches.filter(b => !b.cycleId && b.status === 'APPROVED'), environment: payrollEnvironment() };
     workspace.producers = [...new Map([...policies.map(p => [p.producerId, { id: p.producerId, name: p.producerName }] as const),...earnings.map(e => [e.producerId,{id:e.producerId,name:e.producerName}] as const)]).values()].sort((a,b) => a.name.localeCompare(b.name));
     const activeIntakes = intakes.filter(s => s.status === 'OPEN' && (!s.rowCount || s.completedRows !== s.rowCount));
     workspace.statementReadiness = { activeStatements: activeIntakes.length, statementsNeedingReview: activeIntakes.filter(s => !s.rowCount || s.needsReview > 0 || s.totalCents === undefined || s.totalCents !== s.rowTotalCents).length, unmatchedRows: activeIntakes.reduce((n, s) => n + s.unmatched, 0), pendingSettlements: statements.filter(s => s.status === 'DRAFT').map(s => ({ id: s.id, reference: s.reference, receivedOn: s.receivedOn, status: 'Needs posting' })) };
+    workspace.sourceLinks = policies.flatMap(p => p.entries.map(e => ({ policyId: p.id, entryId: e.id, statementId: e.statementId,
+      ...(intakeSettlements.find(s => s.statementIds.includes(e.statementId)) ? { intakeId: intakeSettlements.find(s => s.statementIds.includes(e.statementId))!.intakeId } : {}) })));
     workspace.availableEarnings = payrollPreview(policies, payrollDay(), undefined, earnings, departures);
     return { ok: true, ...workspace };
   }

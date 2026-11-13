@@ -630,3 +630,21 @@ it("discards working values with a versioned tombstone and leaves the statement 
   expect(await call("saveIntakeWorkingDraft",{...input,version:1,data:null})).toMatchObject({ok:true,draft:{version:2,data:null}});
   expect(version()).toBe(1);
 });
+
+it("previews the validated settlement using saved rates without recording money or locking rows",async()=>{
+  await save([row()]);
+  const s=await payment('PREVIEW-ONLY',10000);
+  const before=h.commit.mock.calls.length;
+  const result=await call('previewIntakeSettlement',{id:'inbox',settlementId:s.id,version:s.version,allocations:[{rowId:'row1',amountCents:10000}]});
+  expect(result).toMatchObject({ok:true,employeeCents:1600,calculations:[{producerBps:1600,amountCents:1600,reviewOnly:false}]});
+  expect(h.commit).toHaveBeenCalledTimes(before);
+  expect(get<IntakeSettlement>('INTAKE_SETTLEMENT',s.id).status).toBe('RECORDED');
+  expect(get<CommissionPolicy>('POLICY','p').entries).toHaveLength(0);
+  expect(await handler(request('previewIntakeSettlement',{id:'inbox',settlementId:s.id,version:s.version,allocations:[]},'ADMIN',['OWNER','ADMIN']))).toMatchObject({ok:false});
+});
+it("rejects an unbalanced financial preview without changing the recorded settlement",async()=>{
+  await save([row()]);
+  const s=await payment('PREVIEW-INVALID',10000);
+  expect(await call('previewIntakeSettlement',{id:'inbox',settlementId:s.id,version:s.version,allocations:[{rowId:'row1',amountCents:9999}]})).toMatchObject({ok:false});
+  expect(get<IntakeSettlement>('INTAKE_SETTLEMENT',s.id).allocations).toHaveLength(0);
+});

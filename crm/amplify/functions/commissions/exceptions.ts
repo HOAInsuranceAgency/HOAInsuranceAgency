@@ -78,7 +78,7 @@ export async function exceptionAction(
   input: store.Data,
 ) {
   if (operation === "commissionExceptions") {
-    const [policies, earnings, departures, adjustments, batches, plans] =
+    const [policies, earnings, departures, adjustments, batches, plans, earningReviews] =
       await Promise.all([
         store.list<CommissionPolicy>("POLICY"),
         store.list<CommissionEarning>("EARNING"),
@@ -86,11 +86,13 @@ export async function exceptionAction(
         store.list<CommissionAdjustment>("ADJUSTMENT"),
         store.list<CommissionBatch>("BATCH"),
         store.list<CommissionPlan>("PLAN"),
+        store.list("EARNING_REVIEW"),
       ]);
     return {
       ok: true,
       policies,
       earnings,
+      earningReviews,
       departures: departures.map((c) => ({
         ...c,
         worklist: departureWorklist(c, policies, earnings, batches),

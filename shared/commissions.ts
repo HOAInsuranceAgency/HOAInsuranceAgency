@@ -409,7 +409,7 @@ export function selectCommissionTerms(
   const rates = classification.classification === 'GIM' ? term.gim : term;
   if (!rates)
     throw new Error(
-      `An Owner must configure this producer’s GIM house-account rates for ${rateDate}. Standard rates cannot be used.`,
+      `No GIM rate covers this policy’s bind date (${rateDate}). Review the employee assignment in Setup and add the documented historical GIM rate. Standard rates cannot be used.`,
     );
   return {
     ...(eligibility ? { eligibility } : {}),

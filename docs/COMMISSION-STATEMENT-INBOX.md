@@ -2,8 +2,8 @@
 
 ## Workflow
 
-1. Open **Commissions → Reconciliation → Log carrier statement**. Choose the carrier, original file, statement reference and date the document arrived. Save immediately; policy matches, source totals and payment details can remain incomplete.
-2. Open the saved statement. Enter its **agency commission total**. Import CSV/XLSX rows or request PDF/image extraction. Check the original, select the table and header, and map columns. **Remember carrier format** stores column headings for subsequent statements; reordered columns are matched by heading. Extraction produces suggestions for human review, never approved earnings.
+1. Open **Commissions → Statements → Log carrier statement**. Choose the carrier, original file, statement reference and date the document arrived. Save immediately; policy matches, source totals and payment details can remain incomplete.
+2. Open the saved statement. Enter its **agency commission total**. Import CSV/XLSX rows or request PDF/image extraction. Check the original, select the table and header, and map columns. **Import rows & remember format** saves the reviewed rows and stores column headings for subsequent statements; reordered columns are matched by heading. Extraction produces suggestions for human review, never approved earnings.
 3. Review the compact source rows. Exact carrier/policy/term matches are suggested. Ambiguous renewals remain unmatched. **Find in CRM / add tracking** reuses the account, policy dates, premium and agency rate, then asks for the original producer and transaction. Complete missing classification or employee plan inline. Confirm historical facts before adopting a policy.
 4. Save incomplete rows as pending. Select routine rows for bulk eligibility review. Review reversals, restorations and excluded rows individually, with evidence. Reconcile every source amount to the control total before allocating a payment.
 5. Record the **actual** agency commission settlement, date, unique reference and evidence. A statement arrival or invoice due date is not payment evidence. For retained agency-bill commission, record collection/remittance evidence. Allocate a partial payment only to the amounts actually received. Positive receipts and negative offsets can form a net settlement.
@@ -62,7 +62,7 @@ their own working copies, limited to 100 KB per section; use normal pending-row
 saves to retain large, valid row sets.
 
 After actual payment is recorded and the allocation balances, **Confirm allocation
-& post settlement** validates and posts in resumable groups. If interrupted, use
+& post earnings** validates and posts in resumable groups. If interrupted, use
 **Refresh statement**, then **Resume posting** (or **Post verified settlement** if
 the first group never posted). The recorded allocation remains; do not record the
 same deposit again.
@@ -70,3 +70,16 @@ same deposit again.
 Payroll uses one cycle selector for both readiness and employee totals. The oldest
 open cutoff is shown first. Earlier cycles remain selectable, and approval,
 cancellation, report history and payment safeguards retain their existing rules.
+
+## Completed workflow simplifications
+Use [the current simplified workflow acceptance plan](COMMISSION-SIMPLIFIED-WORKFLOW-TEST-PLAN.md) for the current navigation and controls.
+
+Work queue is the first-visit default, with received money prioritized by affected payroll cutoff and linked review cases. Statement preparation and payment are separate, with a focused next action, persistent totals, desktop source comparison, unresolved-first review, grouped missing-policy setup and a focused mobile row editor.
+
+Private drafts now save after a short pause, showing Saving, Saved or Needs retry. Existing unrecovered or conflicting drafts are not silently overwritten. Restore remains deliberate and clears confirmations. Navigation preferences reopen the same work in the same browser for the same Owner; financial working values stay in the private server draft.
+
+Full reviewed payments receive a proposed allocation. The final financial preview uses the existing server posting calculations and does not mutate records. Confirm allocation & post earnings retains version, eligibility, evidence, balance and duplicate checks.
+
+Payroll has shared cutoff/readiness checks, employee calculation/source links, contextual issue resolution, searchable cycle history, selected-cycle reports and delivery evidence, a compact approval bar and confirmed cancellation dialog. Off-cycle drafts can start from selected ledger earnings or approved adjustments. Shared credit, departures and corrections remain accessible in Reviews & exceptions with contextual links and retained decision history.
+
+No automatic report delivery is enabled by these changes.

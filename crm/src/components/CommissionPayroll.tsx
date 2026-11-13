@@ -1,5 +1,8 @@
+import Modal from './Modal';
+import { useCommissionWorkflow, useCommissionPreference } from '../lib/commissionWorkflow';
 import {
   createContext,
+  useEffect,
   useContext,
   useRef,
   useState,
@@ -22,6 +25,7 @@ import CommissionPanel from "./CommissionPanel";
 import {
   COMMISSION_START_MONTH,
   payrollDay,
+  payrollApprovalIssues,
   payrollRowKey,
   suggestPayrollDates,
   type PayrollCycle,
@@ -76,13 +80,17 @@ function Panel({
   hint,
   children,
   danger = false,
+  open,
+  id,
 }: {
   title: string;
   hint?: string;
   children: ReactNode;
   danger?: boolean;
+  open?: boolean;
+  id?: string;
 }) {
-  return <CommissionPanel title={title} hint={hint} danger={danger}>{children}</CommissionPanel>;
+  return <CommissionPanel id={id} title={title} hint={hint} danger={danger} open={open}>{children}</CommissionPanel>;
 }
 const PayrollAccessContext = createContext<(error: unknown) => void>(() => {});
 export default function CommissionPayroll({
@@ -96,7 +104,10 @@ export default function CommissionPayroll({
   onAccessDenied?: (error: unknown) => void;
   reviewStatements?: () => void;
 }) {
-  const [auditOpen, setAuditOpen] = useState(false), [selectedCycle, setSelectedCycle] = useState("");
+  const [auditOpen, setAuditOpen] = useState(false), [historyQuery,setHistoryQuery]=useState('');
+  const { target, navigate, remember } = useCommissionWorkflow();
+  const [selectedCycle, saveSelectedCycle] = useCommissionPreference('payroll-cycle','');
+  const setSelectedCycle=(id:string)=>{saveSelectedCycle(id);remember?.({cycleId:id,intakeId:undefined});};
   const { requestLeave } = useEditProtection();
   const resource = useAsyncResource(
     async () => {
@@ -120,9 +131,20 @@ export default function CommissionPayroll({
   };
   const data = resource.data;
   const cycles = data?.workspace.cycles ?? [];
+  useEffect(()=>{
+    if (target.cycleId) saveSelectedCycle(target.cycleId);
+    else if (target.intakeId && data) {
+      const links=data.workspace.sourceLinks?.filter(l=>l.intakeId===target.intakeId) ?? [];
+      const batch=data.workspace.batches.find(b=>b.lines.some(l=>links.some(s=>s.policyId===l.policyId&&s.entryId===l.entryId)));
+      const dates=(data.workspace.availableEarnings??[]).filter(r=>links.some(s=>s.policyId===r.policyId&&s.entryId===r.entryId)).map(r=>r.receivedOn).sort();
+      const next=batch?.cycleId ?? cycles.filter(c=>c.status==='OPEN'&&(!dates.length||c.cutoff>=dates.at(-1)!)).sort((a,b)=>a.cutoff.localeCompare(b.cutoff))[0]?.id;
+      if(next)saveSelectedCycle(next);
+    }
+  },[target.cycleId,target.intakeId,data]);
   const focused = cycles.find(c => c.id === selectedCycle) ??
     cycles.filter(c => c.status === "OPEN").sort((a,b) => a.cutoff.localeCompare(b.cutoff))[0] ??
     cycles.find(c => c.status === "APPROVED") ?? cycles[0];
+  const selectedDeliveries = data?.workspace.deliveries.filter(d=>!focused||d.cycleId===focused.id) ?? [];
   return (
     <PayrollAccessContext.Provider
       value={(error) => {
@@ -167,6 +189,10 @@ export default function CommissionPayroll({
               <small className="muted">One cycle at a time. Earlier reports and payment history remain available.</small>
             </label>}
             {owner && <PayrollReadiness workspace={data.workspace} cycle={focused} reviewStatements={reviewStatements} />}
+            <Panel title="Search payroll history" hint="Find completed cycles by date, employee, reference or status">
+              <label className="field">Find a payroll cycle<input type="search" value={historyQuery} onChange={e=>setHistoryQuery(e.target.value)} /></label>
+              {cycles.filter(c=>c.status!=='OPEN' && (c.id+' '+c.status+' '+c.payDate+' '+(c.paymentReference??'')+' '+data.workspace.batches.filter(b=>c.batchIds.includes(b.id)).map(b=>b.producerName).join(' ')).toLowerCase().includes(historyQuery.toLowerCase())).map(c=><div className="commission-work-item" key={c.id}><span>{c.id} · {c.status.toLowerCase()} · {money(c.totalCents)}</span><button className="secondary" onClick={()=>requestLeave(()=>setSelectedCycle(c.id))}>Review {c.id}</button></div>)}
+            </Panel>
             <div className="payroll-tools">
               {owner && data.workspace.settings && (
                 <Panel
@@ -195,10 +221,15 @@ export default function CommissionPayroll({
               )}
               {owner && (
                 <Panel
+                  open={!!target.earningKeys?.length}
                   title="Add an off-cycle payment"
                   hint="Create a supplemental employee run"
                 >
                   <OffCycleForm
+                    key={JSON.stringify(target.earningKeys ?? [])}
+                    initialKeys={target.earningKeys}
+                    initialProducer={target.producerId}
+                    onCreated={id=>{setSelectedCycle(id);navigate({tab:"payroll",cycleId:id});}}
                     producers={data.workspace.producers ?? []}
                     earnings={data.workspace.availableEarnings ?? []}
                     refresh={refresh}
@@ -257,7 +288,9 @@ export default function CommissionPayroll({
                 refresh={refresh}
               />
             ))}
+            <CommissionPanel title="Report delivery history" hint="Delivery evidence for the selected cycle" open={selectedDeliveries.some(d=>d.status==='FAILED'||d.status==='UNKNOWN'||!!d.failureState)}>
             <section
+              id="payroll-delivery-history"
               className="payroll-history"
               aria-label="Report delivery history"
             >
@@ -270,13 +303,13 @@ export default function CommissionPayroll({
                   </p>
                 </div>
                 <span className="badge gray">
-                  {data.workspace.deliveries.length} deliveries
+                  {selectedDeliveries.length} deliveries
                 </span>
               </div>
-              {!data.workspace.deliveries.length && (
+              {!selectedDeliveries.length && (
                 <div className="payroll-empty">No reports have been sent.</div>
               )}
-              {data.workspace.deliveries.map((d) => (
+              {selectedDeliveries.map((d) => (
                 <div className="payroll-delivery" key={d.id + ":" + d.version}>
                   <div className="payroll-section-heading">
                     <strong>
@@ -319,8 +352,8 @@ export default function CommissionPayroll({
                   )}
                 </div>
               ))}
-            </section>
-            {owner && <ReportHistory workspace={data.workspace} />}
+            </section></CommissionPanel>
+            {owner && <ReportHistory workspace={{...data.workspace,reports:data.workspace.reports?.filter(r=>!focused||r.cycleId===focused.id)}} />}
             {owner && (
               <>
                 <button
@@ -341,6 +374,7 @@ export default function CommissionPayroll({
 function PayrollReadiness({ workspace, cycle, reviewStatements }: { workspace: PayrollWorkspace; cycle?: PayrollCycle; reviewStatements?: () => void }) {
   const readiness = workspace.statementReadiness;
   if (!cycle || !readiness) return null;
+  const approvalIssues = payrollApprovalIssues(cycle);
   const pending = readiness.pendingSettlements.filter(s => s.receivedOn <= cycle.cutoff);
   const batches = workspace.batches.filter(b => cycle.batchIds.includes(b.id));
   const paid = sum(batches.map(batchPaidCents));
@@ -352,8 +386,10 @@ function PayrollReadiness({ workspace, cycle, reviewStatements }: { workspace: P
     <div className="payroll-readiness-grid">
       <div><span>Statement preparation</span><strong>{readiness.statementsNeedingReview} to review</strong><small>{readiness.unmatchedRows} unmatched rows · {readiness.activeStatements} active statements</small></div>
       <div><span>Received by cutoff</span><strong>{pending.length} settlements to post</strong><small>Unpaid statements do not block payroll</small></div>
-      <div><span>{cycle.status === 'OPEN' ? 'Eligible earnings in preview' : 'Approved commission'}</span><strong>{money(cycle.preview?.totalCents ?? cycle.totalCents)}</strong><small>{cycle.preview?.blockers.length ? cycle.preview.blockers.length + ' approval issues to resolve' : cycle.status === 'OPEN' ? 'Ready for Owner review' : 'Revision ' + cycle.revision}</small></div>
-      <div><span>HR delivery & payment</span><strong>{delivery}</strong><small>{money(paid)} paid · {money(Math.max(0, cycle.totalCents - paid))} approved balance</small></div>
+      <div><span>{cycle.status === 'OPEN' ? 'Eligible earnings in preview' : 'Approved commission'}</span><strong>{money(cycle.preview?.totalCents ?? cycle.totalCents)}</strong><small>{approvalIssues.length ? approvalIssues.length + ' approval issues to resolve' : cycle.status === 'OPEN' ? 'Ready for Owner review' : 'Revision ' + cycle.revision}</small></div>
+      <div><span>Approval</span><strong>{cycle.status.toLowerCase()}</strong><small>{approvalIssues[0] ?? 'Review the selected cycle'}</small></div>
+      <div><span>Report delivery</span><strong>{delivery}</strong><small>Delivery is separate from approval and payment</small></div>
+      <div><span>Employee payment</span><strong>{money(paid)} paid</strong><small>{money(Math.max(0,cycle.totalCents-paid))} approved balance</small></div>
     </div>
     {!!pending.length && <p className="commission-notice">Finish posting: {pending.slice(0, 3).map(s => s.reference).join('; ')}{pending.length > 3 ? ' and ' + (pending.length - 3) + ' more' : ''}.</p>}
     {reviewStatements && <button className="secondary" onClick={reviewStatements}>Review statement inbox</button>}
@@ -367,12 +403,16 @@ function Action({
   refresh,
   children,
   disabled = false,
+  secondaryAction,
+  disabledReason,
 }: {
   label: string;
   action: () => Promise<unknown>;
   refresh: () => Promise<void>;
   children?: ReactNode;
   disabled?: boolean;
+  secondaryAction?: ReactNode;
+  disabledReason?: string;
 }) {
   const invalidate = useContext(PayrollAccessContext);
   const [busy, setBusy] = useState(false),
@@ -406,7 +446,7 @@ function Action({
     >
       <fieldset disabled={busy}>
         {children && <div className="payroll-form-body">{children}</div>}
-        <div className="payroll-form-footer">
+        <div className="payroll-form-footer commission-action-bar">
           <button
             type="submit"
             className={
@@ -420,6 +460,8 @@ function Action({
           >
             {busy ? "Working…" : label}
           </button>
+          {secondaryAction}
+          {disabled && disabledReason && <span className="small">{disabledReason}</span>}
           {saved && (
             <span className="payroll-saved" role="status">
               Saved.
@@ -649,6 +691,9 @@ function CycleCard({
   owner: boolean;
   refresh: () => Promise<void>;
 }) {
+  const { navigate } = useCommissionWorkflow();
+  const issues = payrollApprovalIssues(c);
+  const [cancelOpen,setCancelOpen]=useState(false),[cancelConfirmed,setCancelConfirmed]=useState(false);
   const [confirmed, setConfirmed] = useState(false),
     [paidOn, setPaidOn] = useState(payrollDay()),
     [reference, setReference] = useState(""),
@@ -659,6 +704,15 @@ function CycleCard({
       .filter((b) => c.batchIds.includes(b.id))
       .map(batchPaidCents),
   );
+  const deliveryIssue=workspace.deliveries.some(d=>d.cycleId===c.id&&d.cycleRevision===c.revision&&(d.status==='FAILED'||d.status==='UNKNOWN'||!!d.failureState));
+  const nextLabel=issues.length?'Resolve review items':c.status==='OPEN'?'Review approval':deliveryIssue?'Review delivery issue':c.status==='APPROVED'&&paidCents>0?'Record remaining payment':c.status==='APPROVED'?'Inspect approved reports':c.status==='CANCELLED'?'Prepare replacement cycle':'Review payment history';
+  const nextReview=()=>{
+    const root=document.getElementById('payroll-cycle-'+c.id);
+    const node=issues.length?root?.querySelector('[role=alert]'):deliveryIssue?document.getElementById('payroll-delivery-history'):c.status==='OPEN'?root?.querySelector('.payroll-cycle-actions'):document.getElementById((c.status==='CANCELLED'?'payroll-replace-':c.status==='PAID'||paidCents>0?'payroll-payments-':'payroll-reports-')+c.id);
+    let parent=node; while(parent){if(parent.tagName==='DETAILS')(parent as HTMLDetailsElement).open=true;parent=parent.parentElement;}
+    node?.scrollIntoView?.({block:'start'}); (node?.querySelector('button,input,summary') as HTMLElement|null)?.focus({preventScroll:true});
+  };
+  const canCancel=owner && ['OPEN','APPROVED'].includes(c.status) && paidCents===0 && !workspace.deliveries.some(d=>d.cycleId===c.id&&d.cycleRevision===c.revision&&d.reportType==='PAYROLL');
   const rows =
     c.status === "OPEN"
       ? (c.preview?.employees ?? [])
@@ -678,6 +732,7 @@ function CycleCard({
   }
   return (
     <section
+      id={"payroll-cycle-"+c.id}
       className="card payroll-cycle"
       aria-label={
         displayMonth(c.id) +
@@ -751,13 +806,14 @@ function CycleCard({
           </span>
         </div>
       )}
-      {!!c.preview?.blockers.length && (
+      {c.status === "OPEN" && !!issues.length && (
         <div className="payroll-notice" role="alert">
           <strong>Resolve before approval</strong>
           <ul>
-            {c.preview.blockers.map((b) => (
-              <li key={b}>{b}</li>
-            ))}
+            {issues.map((b) => {
+              const issue=c.preview?.issues?.find(i=>i.message===b);
+              return <li key={b}>{b} {issue?.target && <button className="secondary" onClick={()=>navigate(issue.target!)}>Resolve</button>}</li>;
+            })}
           </ul>
         </div>
       )}
@@ -767,6 +823,8 @@ function CycleCard({
           only after checking that all carrier receipts have been reconciled.
         </p>
       )}
+      <div className="commission-action-bar"><button className="secondary" onClick={nextReview}>{nextLabel}</button></div>
+      <p className="commission-notice">Next: {issues.length?'resolve the listed review items':c.status==='OPEN'?'review calculations and approve this cycle':c.status==='APPROVED'?'inspect approved reports, review delivery, then record actual employee payments':c.status==='PAID'?'review payment history':'select another cycle or prepare a replacement'}.</p>
       <div className="commission-scroll payroll-totals">
         <table aria-label={"Employee totals for " + c.id}>
           <thead>
@@ -802,6 +860,7 @@ function CycleCard({
           </tfoot>
         </table>
       </div>
+      <EmployeeCalculations cycle={c} workspace={workspace} />
       <div className="payroll-cycle-actions">
       {owner && c.status === "OPEN" && (
         <>
@@ -812,7 +871,9 @@ function CycleCard({
           </Panel>
           <Action
             label="Approve payroll cycle"
-            disabled={!confirmed || !c.preview || !!c.preview.blockers.length}
+            disabled={!confirmed || !c.preview || !!issues.length}
+            disabledReason={issues.length ? 'Resolve ' + issues.length + ' item' + (issues.length===1?'':'s') + ' before approval.' : !confirmed ? 'Confirm the review above before approval.' : 'Refresh the payroll preview.'}
+            secondaryAction={canCancel && <button type="button" className="secondary payroll-danger-button" onClick={()=>setCancelOpen(true)}>Cancel cycle…</button>}
             refresh={refresh}
             action={() =>
               commissionAction("approvePayrollCycle", {
@@ -835,35 +896,14 @@ function CycleCard({
           </Action>
         </>
       )}
-      {owner &&
-        ["OPEN", "APPROVED"].includes(c.status) &&
-        paidCents === 0 &&
-        !workspace.deliveries.some(
-          (d) =>
-            d.cycleId === c.id &&
-            d.cycleRevision === c.revision &&
-            d.reportType === "PAYROLL",
-        ) && (
-          <Panel title="Cancel this unpaid cycle" danger>
-            <Action
-              label="Cancel payroll cycle"
-              refresh={refresh}
-              action={() =>
-                commissionAction("cancelPayrollCycle", {
-                  id: c.id,
-                  version: c.version,
-                  reason,
-                })
-              }
-            >
-              <Input
-                label="Cancellation reason"
-                value={reason}
-                set={setReason}
-              />
-            </Action>
-          </Panel>
-        )}
+      {canCancel && c.status==='APPROVED' && <button className="secondary payroll-danger-button" onClick={()=>setCancelOpen(true)}>Cancel cycle…</button>}
+      {cancelOpen && <Modal className="modal-form commission-cancel-modal" title="Cancel unpaid payroll cycle" onClose={()=>setCancelOpen(false)}>
+        <Action label="Cancel payroll cycle" disabled={!cancelConfirmed || !reason.trim()} refresh={async()=>{setCancelOpen(false);await refresh();}} action={()=>commissionAction('cancelPayrollCycle',{id:c.id,version:c.version,reason})}>
+          <p>This releases this unpaid cycle's reserved earnings. Approval and audit history remain available.</p>
+          <Input label="Cancellation reason" value={reason} set={setReason} />
+          <label className="payroll-check"><input type="checkbox" checked={cancelConfirmed} onChange={e=>setCancelConfirmed(e.target.checked)} />I confirm this cycle is unpaid and should be cancelled.</label>
+        </Action>
+      </Modal>}
       </div>
       {["APPROVED", "PAID"].includes(c.status) && (
         <Action
@@ -874,7 +914,7 @@ function CycleCard({
         />
       )}
       {["APPROVED", "PAID"].includes(c.status) && (
-        <Panel title="Employee pay-file documents">
+        <Panel id={"payroll-reports-"+c.id} title="Employee pay-file documents">
           {workspace.batches
             .filter((b) => c.batchIds.includes(b.id))
             .map((b) => (
@@ -890,7 +930,7 @@ function CycleCard({
       )}
       {c.status === "APPROVED" && (
         <>
-          <Panel title="Record individual employee payments">
+          <Panel id={"payroll-payments-"+c.id} title="Record individual employee payments">
             <p>
               Record the amount actually paid, including partial payments. The
               remaining balance stays open until every employee is fully paid.
@@ -951,12 +991,12 @@ function CycleCard({
         </p>
       )}
       {owner && c.status === "CANCELLED" && (
-        <Panel title="Prepare a replacement cycle">
+        <Panel id={"payroll-replace-"+c.id} title="Prepare a replacement cycle">
           <CycleForm cycle={c} refresh={refresh} />
         </Panel>
       )}
       {c.status === "PAID" && (
-        <Panel title="Employee payment history">
+        <Panel id={"payroll-payments-"+c.id} title="Employee payment history">
           {workspace.batches
             .filter((b) => c.batchIds.includes(b.id))
             .map((b) => (
@@ -1137,8 +1177,10 @@ function OffCycleForm({
   producers,
   earnings,
   refresh,
+  initialKeys, initialProducer, onCreated,
 }: {
   producers: { id: string; name: string }[];
+  initialKeys?: string[]; initialProducer?: string; onCreated?: (id: string) => void;
   cycle?: PayrollCycle;
   earnings: NonNullable<PayrollWorkspace['availableEarnings']>;
   refresh: () => Promise<void>;
@@ -1147,9 +1189,9 @@ function OffCycleForm({
       cycle ? { id: cycle.id, cutoff: cycle.cutoff, reviewOn: cycle.reviewOn, hrDueOn: cycle.hrDueOn, processingOn: cycle.processingOn, payDate: cycle.payDate } : suggestPayrollDates(payrollDay().slice(0, 7)),
     ),
     [reason, setReason] = useState(cycle?.reason ?? ""),
-    [producerIds, setProducers] = useState<string[]>(cycle?.producerIds ?? []),
+    [producerIds, setProducers] = useState<string[]>(cycle?.producerIds ?? (initialProducer ? [initialProducer] : [...new Set(earnings.filter(e=>initialKeys?.includes(payrollRowKey(e))).map(e=>e.producerId))])),
     [requestId, setRequestId] = useState(() => crypto.randomUUID().slice(0, 8));
-  const [selection, setSelection] = useState<string[] | undefined>(cycle?.selectedEarningKeys);
+  const [selection, setSelection] = useState<string[] | undefined>(cycle?.selectedEarningKeys ?? initialKeys);
   const available = earnings.filter(e => producerIds.includes(e.producerId) && e.receivedOn <= dates.cutoff);
   const selected = available.filter(e => !selection || selection.includes(payrollRowKey(e)));
   const stale = !!selection?.some(key => !available.some(e => payrollRowKey(e) === key));
@@ -1176,6 +1218,7 @@ function OffCycleForm({
           setProducers([]);
           setSelection(undefined);
           setRequestId(crypto.randomUUID().slice(0, 8));
+          onCreated?.(dates.payDate.slice(0,7)+"-OFF-"+requestId);
         }
       }}
     >
@@ -1359,4 +1402,21 @@ function AuditHistory() {
       )}
     </section>
   );
+}
+
+function EmployeeCalculations({cycle,workspace}:{cycle:PayrollCycle;workspace:PayrollWorkspace}) {
+  const {navigate}=useCommissionWorkflow();
+  const rows=cycle.status==='OPEN' ? (cycle.preview?.rows ?? []) : workspace.batches.filter(b=>cycle.batchIds.includes(b.id)).flatMap(b=>b.lines.map(l=>({...l,producerId:b.producerId,producerName:b.producerName})));
+  return <CommissionPanel title="Employee calculations & source statements">
+    {!rows.length && <p>No calculation lines in this cycle. Refresh payroll if this preview predates the current workflow.</p>}
+    {[...new Set(rows.map(r=>r.producerId))].map(id=><details key={id}><summary>{rows.find(r=>r.producerId===id)?.producerName} · {money(sum(rows.filter(r=>r.producerId===id).map(r=>r.amountCents)))}</summary>
+      {rows.filter(r=>r.producerId===id).map(r=>{
+        const source=workspace.sourceLinks?.find(s=>s.policyId===r.policyId&&s.entryId===r.entryId);
+        return <div className="commission-work-item" key={payrollRowKey(r)}><div><strong>{r.policyNumber} · {money(r.amountCents)}</strong><p>{r.receivedOn} · agency {money(r.agencyCents)} · {r.shareBps===undefined?'':(r.shareBps/100)+'% share × '}{r.producerBps/100}% saved rate{r.source==='ADJUSTMENT'?' · approved compensation adjustment':''}</p></div>
+          <button className="secondary" onClick={()=>navigate(source?{tab:'statements',...(source.intakeId?{intakeId:source.intakeId}:{statementId:source.statementId})}:{tab:'ledger',policyId:r.policyId})}>Open source</button>
+          {cycle.status==='OPEN' && <button className="secondary" onClick={()=>navigate({tab:'payroll',earningKeys:[payrollRowKey(r)],producerId:r.producerId})}>Prepare off-cycle payment</button>}
+        </div>;
+      })}
+    </details>)}
+  </CommissionPanel>;
 }
