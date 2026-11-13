@@ -13,6 +13,7 @@ import type { LeadSummary } from "../../../../shared/leadTextAlerts";
 import type { Submission } from "../lead-intake/handler";
 import { renderIntakeBrief } from "../lead-intake/brief";
 import type { Communication, LeadWorkflow, Responsibility, TeamEligibility } from "../../../../shared/leadWorkflow";
+import { customerEmailIdentity } from "../../../../shared/customerEmailIdentity";
 import { activeTeamUserCheck } from "../crm-access/user-status";
 
 class AssignmentError extends ProviderError {
@@ -31,11 +32,11 @@ async function assignedSalesperson(userId: string | undefined) {
 }
 
 /** Identity captured with the generated body; never guess a producer at send time. */
-export async function assignedEmailProducer(userId: string | undefined) {
+export async function assignedEmailProducer(userId: string | undefined, options: { includeVerifiedSignatureHtml?: boolean } = {}) {
   const member = await assignedSalesperson(userId);
   const name = typeof member.data.name === "string" ? member.data.name.trim() : "";
   if (!name || name.length > 200 || /[\r\n\x00-\x1f\x7f]/.test(name)) throw new AssignmentError("Add the assigned salesperson’s name in Team settings before sending the initial email");
-  const emailIdentity = await resolveProducerEmail(member.data);
+  const emailIdentity = await resolveProducerEmail(member.data, options);
   return { member, producerId: userId!, producerName: name, emailIdentity };
 }
 
@@ -46,6 +47,8 @@ export interface Operation {
   conversationId?: string; recipient?: string; subject?: string; html?: string; text?: string;
   uid?: string; messageId?: string; error?: string; leaseUntil?: string; assigneeId?: string;
   producerId?: string; producerName?: string; emailIdentity?: ProducerEmailIdentity;
+  /** California signatures are frozen in the body; Front must not append a second signature. */
+  customerEmailState?: "CA";
   lead?: LeadSummary; sourceMessageId?: string; attachmentId?: string; requestedBy?: string;
   // Legacy reminder metadata is retained so queued deliveries can be retired.
   reminder?: { taskId: string; noticeAt: string; recipientId: string; escalated: boolean; stage?: string; workflowVersion?: number };
@@ -158,8 +161,8 @@ export async function runOperation(candidate: Row<Operation>) {
       if (!identity || identity.signatureMode !== "FRONT") throw new AssignmentError("Initial email held: its sending mailbox and signature were not recorded. Review this queued email and handle the lead personally before sending");
       if ((["frontId", "channelId", "senderEmail", "signatureId", "signatureMode"] as const).some(key => identity[key] !== producer.emailIdentity[key])) throw new AssignmentError("Initial email held: the salesperson’s sending mailbox or signature changed after this email was prepared. Review it before sending");
       path = `/conversations/${wf.data.conversationId}/messages`;
-      body = { channel_id: identity.channelId, author_id: identity.frontId, to: [op.data.recipient], cc: [], bcc: [], sender_name: op.data.producerName, subject: op.data.subject,
-        body: op.data.html, text: op.data.text, quote_body: "", should_add_default_signature: false, signature_id: identity.signatureId, options: { archive: false } };
+      body = { channel_id: identity.channelId, author_id: identity.frontId, to: [op.data.recipient], cc: [], bcc: [], sender_name: op.data.customerEmailState === "CA" ? `${op.data.producerName} | ${customerEmailIdentity("CA").displayName}` : op.data.producerName, subject: op.data.subject,
+        body: op.data.html, text: op.data.text, quote_body: "", should_add_default_signature: false, ...(op.data.customerEmailState === "CA" ? {} : { signature_id: identity.signatureId }), options: { archive: false } };
     } else if (op.data.type === "COMMENT") {
       const cnv = op.data.conversationId ?? wf.data.conversationId;
       if (!cnv) throw new ProviderError("Waiting for a linked Front conversation", 0, false);

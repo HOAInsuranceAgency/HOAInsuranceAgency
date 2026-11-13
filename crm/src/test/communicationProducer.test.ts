@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 const h = vi.hoisted(() => ({ state: "WAITING", operation: undefined as any, submission: undefined as any,
-  accountName: "Willow Condominium Association", contacts: [] as any[], workflow: undefined as any, producer: vi.fn(),
+  accountState: "MA", accountName: "Willow Condominium Association", contacts: [] as any[], workflow: undefined as any, producer: vi.fn(),
   resolveIssue: vi.fn(), waitProjectionError: false, projectError: false, workerWins: false, model: vi.fn(), update: vi.fn(), issue: vi.fn(), queue: vi.fn() }));
 vi.mock("aws-amplify", () => ({ Amplify: { configure: vi.fn() } }));
 vi.mock("@aws-amplify/backend/function/runtime", () => ({ getAmplifyDataClientConfig: async () => ({ resourceConfig: {}, libraryOptions: {} }) }));
 vi.mock("aws-amplify/data", () => ({ generateClient: () => ({ models: {
   LeadReply: { leadRepliesByStatusAndDueAt: async ({ status }: any) => ({ data: status === "WAITING" ? [{ id: "r1", accountId: "a1", submissionId: "submission-1", contactEmail: "test@example.com", status: "WAITING", dueAt: "2026-01-01T14:00:00Z", uploadCount: 0 }] : [] }), update: h.update },
-  Account: { get: async () => ({ data: { id: "a1", name: h.accountName, state: "MA" } }) },
+  Account: { get: async () => ({ data: { id: "a1", name: h.accountName, state: h.accountState } }) },
   Document: { list: async () => ({ data: [] }) }, Contact: { list: async () => ({ data: h.contacts }) },
   UploadPortal: { list: async () => ({ data: [{ token: "preview-token", expiresAt: "2099-01-01T00:00:00Z" }] }) },
 } }) }));
@@ -32,7 +32,7 @@ beforeEach(() => {
   vi.clearAllMocks(); h.waitProjectionError = false; h.state = "WAITING"; h.operation = undefined; h.projectError = false; h.workerWins = false; delete process.env.SITE_BASE_URL;
   h.workflow = { data: { disposition: "ACTIVE", humanTakeover: false, salespersonId: "jake" } };
   h.producer.mockReset().mockResolvedValue({ producerId: "jake", producerName: "Jake Greasley", emailIdentity: { frontId: "tea_jake", channelId: "cha_jake", senderEmail: "jake@protectmyhoa.com", signatureId: "sig_jake", signatureMode: "FRONT" } });
-  h.submission = undefined; h.accountName = "Willow Condominium Association"; h.contacts = [];
+  h.submission = undefined; h.accountState = "MA"; h.accountName = "Willow Condominium Association"; h.contacts = [];
   h.update.mockResolvedValue({ data: {} }); h.issue.mockResolvedValue(undefined);
   h.model.mockResolvedValue({ content: [{ type: "tool_use", input: { subject: "Your HOA insurance enquiry", body: "I'll review what you shared about your association's insurance." } }] });
   h.queue.mockImplementation(async () => { h.operation = { data: { state: "READY" } }; if (h.workerWins) h.state = "SENT"; return h.operation; });
@@ -150,4 +150,21 @@ describe("producer and delivery ownership", () => {
   it("does not overwrite SENT when the worker wins before the producer writes QUEUED", async () => {
     h.workerWins = true; await handler(); expect(h.state).toBe("SENT"); expect(h.update).not.toHaveBeenCalled();
   });
+});
+
+it("freezes California's branded personal signature and state into the queued email", async () => {
+  h.accountState = "CA";
+  h.producer.mockResolvedValue({ producerId: "jake", producerName: "Jake Greasley", emailIdentity: {
+    frontId: "tea_jake", channelId: "cha_jake", senderEmail: "jake@protectmyhoa.com", signatureId: "sig_jake", signatureMode: "FRONT",
+    verifiedSignatureHtml: "<div>Jake Greasley<br>CA License No. SAMPLE<br>HOA Insurance Agency LLC</div>",
+  } });
+  await handler();
+  const email = h.queue.mock.calls[0][1];
+  expect(h.producer).toHaveBeenLastCalledWith("jake", { includeVerifiedSignatureHtml: true });
+  expect(h.model.mock.calls[0][0].system).toContain("a licensed producer at Condo Insurance Agency.");
+  expect(email.customerEmailState).toBe("CA");
+  expect(email.text).toContain("Thank you for contacting Condo Insurance Agency.");
+  expect(email.text).toContain("CA License No. SAMPLE");
+  expect(email.text).toContain("does business in California as Condo Insurance Agency.");
+  expect(email.emailIdentity.verifiedSignatureHtml).toBeUndefined();
 });
