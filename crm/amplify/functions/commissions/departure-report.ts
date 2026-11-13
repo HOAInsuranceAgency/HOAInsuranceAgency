@@ -1,3 +1,4 @@
+import { reportReference } from './reports';
 import { createHash } from 'node:crypto';
 import { gzipSync, gunzipSync } from 'node:zlib';
 import type { CommissionDeparture, departureWorklist } from '../../../../shared/commissionExceptions';
@@ -56,7 +57,7 @@ export async function departureStatement(c: CommissionDeparture, worklist: Retur
   if(!c.decisions.length)pdf.paragraph('No individual eligibility decisions recorded.');
   for(const decision of c.decisions){
     const row=worklist.rows.find(row=>row.entryId===decision.entryId && (!decision.earningId || row.earningId===decision.earningId));
-    pdf.paragraph((row?.policyNumber??'Policy record')+' | '+decision.outcome+' | '+decision.reason,9,true);
+    pdf.paragraph((row?.policyNumber??'Policy record')+' | '+reportReference(decision.entryId)+' | '+decision.outcome+' | '+decision.reason,9,true);
     pdf.paragraph('Decision '+decision.at+' | '+decision.by+(decision.earningId?' | Earnings allocation '+decision.earningId:''),7);
   }
   for(const resolution of c.pendingResolutions??[]){

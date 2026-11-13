@@ -503,7 +503,7 @@ test('paid amounts prevent cancellation and report replacement, including partia
 });
 test('partial payments are visible to their employee without internal payment references',async()=>{
   seed();await approve();await partial();const event=apiEvent('commissionOverview','','PRODUCER');event.identity.sub='producer';
-  const result=await commissionHandler(event);assert.equal(result.ok,true);assert.equal(result.batches[0].paidCents,6000);assert.equal(result.batches[0].payments,undefined);assert.doesNotMatch(JSON.stringify(result),/PAY-1/);
+  const result=await commissionHandler(event);assert.equal(result.ok,true);assert.equal(result.batches[0].paidCents,6000);assert.deepEqual(result.batches[0].payments,[{id:'1',amountCents:6000,paidOn:'2026-11-20'}]);assert.doesNotMatch(JSON.stringify(result),/PAY-1/);
 });
 test('partially paid reversals require allocation review instead of assuming all or no wages were paid',async()=>{
   seed();await approve();await partial();const policy=appendEntry(state.records.get('POLICY:p'),line({kind:'REVERSAL',agencyCents:-50000,originalId:'receipt'}),{...statement(),receivedOn:'2026-11-20'},'reversal');
@@ -816,4 +816,51 @@ test('departure PDF keeps totals, carrier balances, decisions and long evidence 
   for(const token of ['$440.00','$10,500.00','12.5%','AGREEMENT_END','EVIDENCE_END','entry-49'])assert.ok(text.includes(token),token);
   assert.doesNotMatch(text,/TEST DATA/);
   assert.ok((await PDFDocument.load(bytes)).getPageCount()>1);
+});
+
+test('voiding a duplicate draft clears its blocker without changing receipts and preserves the immutable record',async()=>{
+  seed();
+  const draft={...statement(),id:createHash('sha256').update('c|test-void').digest('hex'),reference:'TEST-VOID',lines:[line()]};
+  state.records.set('STATEMENT:'+draft.id,draft);
+  const before=JSON.stringify(state.records.get('POLICY:p'));
+  assert.match((await ownerAction('payrollWorkspace')).cycles[0].preview.blockers.join(' '),/TEST-VOID/);
+  const input={id:draft.id,version:1,reason:'TEST duplicate; original retained',confirmed:true};
+  assert.equal((await ownerApi('voidStatement',input)).ok,true);
+  assert.equal((await ownerApi('voidStatement',input)).ok,true);
+  const closed=state.records.get('STATEMENT:'+draft.id);
+  assert.equal(closed.status,'VOID');assert.equal(closed.version,2);assert.deepEqual(closed.lines,draft.lines);
+  assert.equal(JSON.stringify(state.records.get('POLICY:p')),before);
+  assert.equal((await ownerAction('payrollWorkspace')).cycles[0].preview.blockers.length,0);
+  assert.equal((await ownerApi('postStatement',{id:draft.id,version:2,confirmed:true})).ok,false);
+  assert.equal((await ownerApi('saveStatement',{...draft,version:2})).ok,false);
+});
+test('a concurrent post wins safely over a stale void without partial reconciliation writes',async()=>{
+  seed();state.records.set('STATEMENT:s',{...statement(),lines:[line()]});
+  state.beforeCommit=()=>state.records.set('STATEMENT:s',{...statement(),version:2,status:'POSTED',lines:[line()]});
+  const result=await ownerApi('voidStatement',{id:'s',version:1,reason:'TEST stale draft',confirmed:true});
+  assert.equal(result.ok,false);assert.equal(state.records.get('STATEMENT:s').status,'POSTED');
+  assert.equal(state.records.get('PAYROLL_STATE:reconciliation'),undefined);
+});
+test('selected off-cycle adjustment survives save, reserves once, pays in parts and never enters monthly payroll',async()=>{
+  seed();
+  const e={id:'extra',kind:'EARNING',version:1,producerId:'producer',producerName:'Avery',policyId:'p',policyNumber:'POL-1',accountName:'Cedar HOA',transaction:'NEW',entryId:'adjustment:extra',receivedOn:'2026-11-16',agencyCents:0,producerBps:1600,amountCents:5000,source:'ADJUSTMENT',status:'PAYABLE'};
+  state.records.set('EARNING:extra',e);
+  const id='2026-11-OFF-abcdef12',selectedEarningKeys=[JSON.stringify(['earning','extra'])];
+  await ownerAction('savePayrollCycle',{...cycle(),id,version:0,producerIds:['producer'],reason:'TEST adjustment only',selectedEarningKeys});
+  let c=(await ownerAction('payrollWorkspace')).cycles.find(c=>c.id===id);
+  assert.equal(c.preview.totalCents,5000);
+  await ownerAction('approvePayrollCycle',{id,version:c.version,previewToken:c.preview.token,confirmed:true});
+  c=state.records.get('PAYROLL_CYCLE:'+id);
+  const original=await ownerAction('downloadPayrollCycle',{id});
+  assert.equal(original.files.length,2);
+  assert.equal((await ownerAction('payrollWorkspace')).cycles.find(c=>c.id==='2026-11').preview.totalCents,16000);
+  await ownerAction('confirmPayrollEmployee',{id,version:c.version,batchId:c.batchIds[0],amountCents:2500,paymentId:'part-a',paymentReference:'TEST-PAY-A',paidOn:'2026-11-20',confirmed:true});
+  c=state.records.get('PAYROLL_CYCLE:'+id);
+  await ownerAction('confirmPayrollEmployee',{id,version:c.version,batchId:c.batchIds[0],amountCents:2500,paymentId:'part-b',paymentReference:'TEST-PAY-B',paidOn:'2026-11-20',confirmed:true});
+  c=state.records.get('PAYROLL_CYCLE:'+id);
+  assert.equal(c.status,'PAID');assert.deepEqual(c.selectedEarningKeys,selectedEarningKeys);
+  const history=await ownerAction('downloadPayrollCycle',{id,historicalConfirmed:true});
+  assert.deepEqual(history.files.map(f=>f.content),original.files.map(f=>f.content));
+  assert.equal((await ownerAction('payrollWorkspace')).cycles.find(c=>c.id==='2026-11').preview.totalCents,16000);
+  assert.equal(state.records.get('BATCH:'+c.batchIds[0]).payments.length,2);
 });
