@@ -3,6 +3,7 @@ import type { DashboardReport, ReportSnapshot, ReportValue } from './reportDownl
 
 export interface CommissionLedgerSummary {
   scope: string;
+  isTest?: boolean;
   agencyReceivedCents: number;
   earnedCents: number;
   paidCents: number;
@@ -21,6 +22,15 @@ const date = (value: ReportValue) => /^\d{4}-\d{2}-\d{2}$/.test(text(value))
 const line = (value: ReportValue, className = 'detail') => text(value) ? '<span class="' + className + '">' + escape(value) + '</span>' : '';
 const badge = (value: ReportValue) => '<span class="badge">' + escape(value) + '</span>';
 
+function readableReference(value: ReportValue): string {
+  const id=text(value), receipt=id.match(/^[a-f0-9]{64}:(.+)$/i);
+  if(receipt)return receipt[1];
+  if(id.startsWith('receipt:')) { try { const parts=JSON.parse(id.slice(8)); if(Array.isArray(parts)&&parts.length===3)return readableReference(parts[1]); } catch { /* Keep nonstandard references. */ } }
+  if(/^[a-f0-9-]{32,}$/i.test(id)||id.startsWith('adjustment:'))return 'Record '+id.replace(/^adjustment:/,'').slice(0,10);
+  const cycle=id.match(/^cycle:(.+):(\d+):[^:]+$/);
+  return cycle ? cycle[1]+' · revision '+cycle[2] : id;
+}
+
 /** Shares the approved payroll PDF branding. Grouped columns retain all source fields.
  * Totals come from the ledger calculation, never by subtracting proposed reversals.
  */
@@ -28,6 +38,8 @@ export function commissionLedgerHtml(report: DashboardReport, snapshot: ReportSn
   const summary = report.commissionLedger!;
   const transactions = report.sections[0]?.rows ?? [];
   const earnings = report.sections[1]?.rows ?? [];
+  const payments = report.sections[2]?.rows ?? [];
+  const isTest = snapshot.isTest ?? summary.isTest;
   const at = snapshot.asOf.toLocaleString('en-US', {
     timeZone: snapshot.timezone, month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short',
   });
@@ -35,20 +47,20 @@ export function commissionLedgerHtml(report: DashboardReport, snapshot: ReportSn
   const receiptRows = transactions.map(r => {
     const shared = text(r[4]).includes('shared allocation');
     return '<tr><td><strong>' + escape(r[1]) + '</strong>' + line(r[2], 'policy') + line(r[0]) + '</td>'
-      + '<td><strong>' + date(r[3]) + '</strong>' + line(r[4]) + line(r[5]) + '</td>'
+      + '<td><strong>' + date(r[3]) + '</strong>' + line(r[4]) + line(r[5]) + line(r[10] ? 'Reference: '+readableReference(r[10]) : '') + '</td>'
       + '<td class="number">' + amount(r[6]) + '</td>'
       + '<td class="number">' + (shared ? '<span class="shared-note">See employee allocations</span>' : '<strong>' + amount(r[8]) + '</strong><span class="detail">' + percent(r[7]) + ' frozen rate</span>') + '</td>'
-      + '<td>' + (r[9] ? escape(r[9]) : '<span class="muted">Not assigned</span>') + '</td></tr>';
+      + '<td>' + (r[9] ? escape(readableReference(r[9])) : '<span class="muted">Not assigned</span>') + '</td></tr>';
   }).join('');
   const earningRows = earnings.map(r => '<tbody class="allocation-group"><tr><td><strong>' + escape(r[0]) + '</strong>' + line(r[1]) + line(r[2], 'policy') + '</td>'
     + '<td><strong>' + date(r[3]) + '</strong>' + line(text(r[4]).replaceAll('_', ' ')) + (typeof r[5] === 'number' ? '<span class="detail">' + percent(r[5]) + ' share × ' + percent(r[6]) + ' plan rate</span>' : '') + '</td>'
     + '<td class="number"><strong>' + amount(r[7]) + '</strong></td>'
-    + '<td>' + badge(r[8]) + line(r[9] || 'Unallocated') + '</td></tr>'
-    + '<tr class="reference-row"><td colspan="4"><span>Source receipt / adjustment</span> ' + escape(r[11]) + '<br><span>Earning ID</span> ' + escape(r[10]) + '</td></tr></tbody>').join('');
+    + '<td>' + badge(r[8]) + line(r[9] ? readableReference(r[9]) : 'Unallocated') + '</td></tr>'
+    + '<tr class="reference-row"><td colspan="4"><span>Source receipt / adjustment</span> ' + escape(readableReference(r[11])) + '<br><span>Earning record</span> ' + escape(readableReference(r[10])) + '</td></tr></tbody>').join('');
   return '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>' + escape(report.title) + '</title><style>'
     + ledgerCss + '</style></head><body>'
     + '<div class="print-toolbar"><div><strong>Commission ledger</strong><span>Letter paper · Save as PDF · All displayed records</span></div><button type="button" onclick="window.print()">Print / save PDF</button></div>'
-    + '<main class="document">' + (snapshot.isTest ? '<div class="watermark" aria-hidden="true">TEST DATA</div><div class="test-banner"><strong>TEST DATA — DO NOT PAY</strong><span>Fictional records for visual review</span></div>' : '')
+    + '<main class="document">' + (isTest ? '<div class="watermark" aria-hidden="true">TEST DATA</div><div class="test-banner"><strong>TEST DATA — DO NOT PAY</strong><span>Fictional records for visual review</span></div>' : '')
     + brandHeader
     + '<div class="title-row"><span class="eyebrow">EARNINGS &amp; AGENCY RECEIPTS</span>' + badge('LEDGER SNAPSHOT') + '</div><h1>' + escape(report.title) + '</h1><p class="subtitle">Actual receipts, frozen rates, and recorded employee earnings.</p>'
     + '<div class="facts"><div><span>DATA AS OF</span><strong>' + escape(at) + '</strong><small>' + escape(snapshot.timezone) + '</small></div><div><span>REPORT SCOPE</span><strong>' + escape(summary.scope) + '</strong><small>Amounts in USD</small></div></div>'
@@ -57,6 +69,7 @@ export function commissionLedgerHtml(report: DashboardReport, snapshot: ReportSn
     + '<section class="report-section"><div class="section-heading"><span>01</span><h2>Agency receipts &amp; transactions</h2><small>' + transactions.length + ' ' + (transactions.length === 1 ? 'row' : 'rows') + '</small></div><p class="section-note">Agency cash is recorded once. Reversals remain separate proposed adjustments.</p>'
     + '<table class="transactions"><colgroup><col style="width:28%"><col style="width:23%"><col style="width:15%"><col style="width:19%"><col style="width:15%"></colgroup><thead><tr><th>Account / policy / producer</th><th>Receipt date / type</th><th class="number">Agency amount</th><th class="number">Producer amount / rate</th><th>Payment batch</th></tr></thead><tbody>' + (receiptRows || '<tr><td colspan="5">No matching records.</td></tr>') + '</tbody></table></section>'
     + '<section class="report-section allocations"><div class="continuation">' + brandHeader + '<p>Producer commission ledger · Continued · ' + escape(at) + '</p></div><div class="section-heading"><span>02</span><h2>Employee earnings allocations</h2><small>' + earnings.length + ' ' + (earnings.length === 1 ? 'row' : 'rows') + '</small></div><p class="section-note">Shared commissions and compensation adjustments. These rows do not add to agency cash.</p><table><colgroup><col style="width:29%"><col style="width:32%"><col style="width:17%"><col style="width:22%"></colgroup><thead><tr><th>Employee / account / policy</th><th>Date / source / calculation</th><th class="number">Employee amount</th><th>Status / payment batch</th></tr></thead>' + (earningRows || '<tbody><tr><td colspan="4">No matching records.</td></tr></tbody>') + '</table></section>'
+    + (payments.length ? '<section class="report-section payments"><div class="section-heading"><span>03</span><h2>Recorded payments</h2><small>'+payments.length+' entries</small></div><p class="section-note">Payment history supports the recorded paid total. It is not an instruction to pay again.</p><table><thead><tr><th>Employee / cycle</th><th>Payment date</th><th class="number">Amount paid</th><th>Reference</th></tr></thead><tbody>'+payments.map(r=>'<tr><td><strong>'+escape(r[0])+'</strong>'+line(readableReference(r[1]))+'</td><td>'+date(r[2])+'</td><td class="number">'+amount(r[3])+'</td><td>'+escape(r[4])+'</td></tr>').join('')+'</tbody></table></section>' : '')
     + '<footer><span>HOA Insurance Agency · Private commission ledger</span><span>Snapshot ' + escape(snapshot.asOf.toISOString()) + '</span></footer></main></body></html>';
 }
 
@@ -90,5 +103,5 @@ tr,.allocation-group{break-inside:avoid}td>strong{color:#1b3658}.number{text-ali
 .reference-row td{background:#fafbfd;font-size:8px;color:#526683;padding-top:7px;padding-bottom:8px;overflow-wrap:anywhere}.reference-row span{font-weight:700;color:#1b3658;margin-right:5px}
 footer{border-top:1px solid #d4deeb;display:flex;justify-content:space-between;gap:14px;margin-top:28px;padding-top:12px;font-size:8px;color:#526683}
 @media(max-width:600px){.print-toolbar{margin:14px 12px}.print-toolbar span{max-width:170px}.document{margin:0;border-radius:0;padding:24px 18px}.test-banner span{display:none}h1{font-size:23px}.amount-panel{flex-direction:column;gap:12px}dl{width:100%}.brand-header div{font-size:8px}.brand-header strong{font-size:8px}.section-heading h2{font-size:13px}th,td{padding:8px 5px}footer{flex-direction:column;gap:4px}}
-@media print{body{background:white}.continuation{display:block;margin-bottom:18px}.continuation .brand-header{margin-bottom:10px}.continuation p{font-size:10px;color:#526683}.print-toolbar{display:none}.document{max-width:none;padding:0;margin:0;border:0;border-radius:0;box-shadow:none}.allocations{break-before:page;margin-top:0}.brand-header{break-inside:avoid}.watermark{font-size:88px}footer{break-inside:avoid}}
+@media print{body{background:white;font-size:11px}.continuation{display:none;margin-bottom:18px}.continuation .brand-header{margin-bottom:10px}.continuation p{font-size:10px;color:#526683}.print-toolbar{display:none}.document{max-width:none;padding:0;margin:0;border:0;border-radius:0;box-shadow:none}.allocations{break-before:auto;margin-top:18px}.brand-header{margin-bottom:16px;padding-bottom:12px}h1{font-size:23px}.amount-panel{padding:15px 18px}.notice{margin-bottom:15px}.report-section{margin-top:18px}th,td{padding:8px 7px}.reference-row td{font-size:8px}.brand-header{break-inside:avoid}.watermark{font-size:88px}footer{break-inside:avoid}}
 `;

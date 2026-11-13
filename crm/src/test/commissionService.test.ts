@@ -141,6 +141,7 @@ it.each([
     'file',
     'saveStatement',
     'postStatement',
+    'voidStatement',
     'preparePayroll',
     'payPayroll',
     'adoptPolicy',
@@ -876,4 +877,34 @@ it('adopts a historical policy with receipt-only tracking and preserves its elig
   }))).toEqual({ ok: true });
   expect(records.get('POLICY:old')).toMatchObject({ producerBps: 2000, planVersion: 1,
     carrierTerms: { version: 4, receiptOnly: true, basis: 'UNSPECIFIED' }, entries: [] });
+});
+
+it('voids only a reviewed draft and retains its evidence without creating earnings', async () => {
+  const original = { ...statement(), lines: [line()] };
+  records.set('STATEMENT:s', original);
+  records.set('POLICY:p', commissionPolicy());
+  const input = { id: 's', version: 1, reason: 'TEST duplicate; do not post', confirmed: true };
+  expect(await handler(request('voidStatement', input))).toEqual({ ok: true });
+  expect(records.get('STATEMENT:s')).toMatchObject({ ...original, status: 'VOID', version: 2, voidReason: input.reason, voidedBy: 'producer', voidedAt: expect.any(String) });
+  expect((records.get('POLICY:p') as CommissionPolicy).entries).toEqual([]);
+  expect(h.commit.mock.calls[0][0].map((c: {kind: string})=>c.kind)).toEqual(['STATEMENT','PAYROLL_STATE']);
+  expect(await handler(request('voidStatement', input))).toEqual({ ok: true });
+  expect(h.commit).toHaveBeenCalledTimes(1);
+  expect(await handler(request('postStatement', {id:'s',version:2,confirmed:true}))).toMatchObject({ok:false,error:expect.stringMatching(/Only a draft/)});
+});
+it.each([
+  [{ confirmed: false }, /Confirm/],
+  [{ reason: ' ' }, /reason/],
+  [{ version: 0 }, /changed/i],
+])('rejects invalid void requests without changing history: %j', async (patch, error) => {
+  records.set('STATEMENT:s', {...statement(),lines:[line()]});
+  expect(await handler(request('voidStatement', {id:'s',version:1,reason:'Duplicate',confirmed:true,...patch}))).toMatchObject({ok:false,error:expect.stringMatching(error)});
+  expect(h.commit).not.toHaveBeenCalled();
+});
+it('cannot void a posted receipt or overwrite a different void decision', async () => {
+  records.set('STATEMENT:s', {...statement(),status:'POSTED'});
+  expect(await handler(request('voidStatement',{id:'s',version:1,reason:'Wrong draft',confirmed:true}))).toMatchObject({ok:false});
+  records.set('STATEMENT:s', {...statement(),status:'VOID',voidReason:'Original reason',voidedBy:'producer'});
+  expect(await handler(request('voidStatement',{id:'s',version:1,reason:'New reason',confirmed:true}))).toMatchObject({ok:false});
+  expect(h.commit).not.toHaveBeenCalled();
 });

@@ -365,3 +365,11 @@
 }
 
 .commission-settings-compact [hidden] { display: none !important; }
+
+.commission-workflow-strip{display:flex;gap:12px;flex-wrap:wrap;margin:16px 0;color:var(--navy,#1b3658)}
+.commission-workflow-strip span{display:flex;align-items:center;gap:8px;background:white;border:1px solid #d9e2ef;border-radius:8px;padding:10px 14px;font-size:13px}
+.commission-workflow-strip b{display:grid;place-items:center;width:24px;height:24px;border-radius:50%;background:#edf3fa;font-size:12px}
+.commission-notice,.payroll-selection{background:#f6f8fc;border:1px solid #d9e2ef;border-radius:8px;padding:16px;margin:12px 0}
+.commission-notice p{margin:6px 0 0}
+.commission-form textarea{min-height:80px;resize:vertical}
+@media(max-width:600px){.commission-workflow-strip{gap:6px}.commission-workflow-strip span{padding:8px;font-size:12px}.commission-workflow-strip b{width:20px;height:20px}}

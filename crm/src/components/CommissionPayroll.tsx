@@ -22,6 +22,7 @@ import CommissionPanel from "./CommissionPanel";
 import {
   COMMISSION_START_MONTH,
   payrollDay,
+  payrollRowKey,
   suggestPayrollDates,
   type PayrollCycle,
   type PayrollSettings,
@@ -184,6 +185,7 @@ export default function CommissionPayroll({
                 >
                   <OffCycleForm
                     producers={data.workspace.producers ?? []}
+                    earnings={data.workspace.availableEarnings ?? []}
                     refresh={refresh}
                   />
                 </Panel>
@@ -516,6 +518,7 @@ function CycleForm({
         payDate: cycle.payDate,
         reason: cycle.reason,
         producerIds: cycle.producerIds,
+        selectedEarningKeys: cycle.selectedEarningKeys,
       }
     : { ...suggestPayrollDates(COMMISSION_START_MONTH), version: 0 };
   const [draft, setDraft] = useState(initial),
@@ -763,8 +766,10 @@ function CycleCard({
       </div>
       {owner && c.status === "OPEN" && (
         <>
-          <Panel title="Edit payroll dates">
-            <CycleForm cycle={c} refresh={refresh} />
+          <Panel title={c.cycleType === 'OFF_CYCLE' ? 'Edit off-cycle dates and earnings' : 'Edit payroll dates'}>
+            {c.cycleType === 'OFF_CYCLE'
+              ? <OffCycleForm cycle={c} producers={workspace.producers??[]} earnings={workspace.availableEarnings??[]} refresh={refresh} />
+              : <CycleForm cycle={c} refresh={refresh} />}
           </Panel>
           <Action
             label="Approve payroll cycle"
@@ -1088,42 +1093,52 @@ async function downloadReport(input: Record<string, unknown>) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 function OffCycleForm({
+  cycle,
   producers,
+  earnings,
   refresh,
 }: {
   producers: { id: string; name: string }[];
+  cycle?: PayrollCycle;
+  earnings: NonNullable<PayrollWorkspace['availableEarnings']>;
   refresh: () => Promise<void>;
 }) {
   const [dates, setDates] = useState(
-      suggestPayrollDates(payrollDay().slice(0, 7)),
+      cycle ? { id: cycle.id, cutoff: cycle.cutoff, reviewOn: cycle.reviewOn, hrDueOn: cycle.hrDueOn, processingOn: cycle.processingOn, payDate: cycle.payDate } : suggestPayrollDates(payrollDay().slice(0, 7)),
     ),
-    [reason, setReason] = useState(""),
-    [producerIds, setProducers] = useState<string[]>([]),
+    [reason, setReason] = useState(cycle?.reason ?? ""),
+    [producerIds, setProducers] = useState<string[]>(cycle?.producerIds ?? []),
     [requestId, setRequestId] = useState(() => crypto.randomUUID().slice(0, 8));
-  useUnsavedChanges(!!reason || !!producerIds.length);
+  const [selection, setSelection] = useState<string[] | undefined>(cycle?.selectedEarningKeys);
+  const available = earnings.filter(e => producerIds.includes(e.producerId) && e.receivedOn <= dates.cutoff);
+  const selected = available.filter(e => !selection || selection.includes(payrollRowKey(e)));
+  const stale = !!selection?.some(key => !available.some(e => payrollRowKey(e) === key));
+  const draftState=JSON.stringify({ dates, reason, producerIds, selection });
+  const initialState=useRef(draftState);
+  useUnsavedChanges(draftState !== initialState.current);
   return (
     <Action
-      label="Create off-cycle draft"
-      disabled={!producerIds.length}
+      label={cycle ? "Save off-cycle draft" : "Create off-cycle draft"}
+      disabled={!producerIds.length || (selection !== undefined && (!selection.length || stale))}
       refresh={refresh}
       action={async () => {
         await commissionAction("savePayrollCycle", {
           ...dates,
-          id: `${dates.payDate.slice(0, 7)}-OFF-${requestId}`,
-          version: 0,
+          id: cycle?.id ?? `${dates.payDate.slice(0, 7)}-OFF-${requestId}`,
+          version: cycle?.version ?? 0,
           reason,
           producerIds,
+          ...(selection ? { selectedEarningKeys: selection } : {}),
         });
-        setReason("");
-        setProducers([]);
-        setRequestId(crypto.randomUUID().slice(0, 8));
+        if (!cycle) {
+          setReason("");
+          setProducers([]);
+          setSelection(undefined);
+          setRequestId(crypto.randomUUID().slice(0, 8));
+        }
       }}
     >
-      <p>
-        Choose employees with existing CRM commission records. Review the draft
-        totals before approval. Only eligible, reconciled earnings not already
-        assigned to another cycle are included.
-      </p>
+      <p>Choose employees, then include all available earnings or select specific receipts and adjustments. Earnings reserved by another approved cycle are excluded.</p>
       <div className="payroll-people">
         {producers.map((p) => (
           <label className="payroll-check payroll-person" key={p.id}>
@@ -1145,6 +1160,23 @@ function OffCycleForm({
       {!producers.length && (
         <p>No employees with commission policy records are available yet.</p>
       )}
+      <label className="field">Earnings to include
+        <select value={selection === undefined ? 'all' : 'selected'} onChange={e => setSelection(e.target.value === 'all' ? undefined : [])}>
+          <option value="all">All eligible earnings through the cutoff</option>
+          <option value="selected">Choose specific earnings</option>
+        </select>
+      </label>
+      {!!producerIds.length && <div className="payroll-selection">
+        <div className="commission-section-heading"><div><strong>{selected.length} earnings · {money(sum(selected.map(e => e.amountCents)))}</strong><p className="small muted">Current preview. Eligibility is checked again at approval.</p></div></div>
+        {selection !== undefined && <div className="commission-scroll"><table><thead><tr><th>Include</th><th>Employee / policy</th><th>Receipt / source</th><th>Amount</th></tr></thead><tbody>
+          {available.map(e => <tr key={payrollRowKey(e)}><td><input type="checkbox" aria-label={'Include ' + e.producerName + ' ' + e.policyNumber + ' ' + e.receivedOn + ' ' + money(e.amountCents)}
+            checked={selection.includes(payrollRowKey(e))} onChange={event => setSelection(keys => event.target.checked ? [...(keys ?? []), payrollRowKey(e)] : (keys ?? []).filter(key => key !== payrollRowKey(e)))} /></td>
+            <td>{e.producerName}<div className="small muted">{e.accountName} · {e.policyNumber}</div></td><td>{e.receivedOn}<div className="small muted">{e.source === 'ADJUSTMENT' ? 'Approved adjustment' : e.source === 'SHARED_RECEIPT' ? 'Shared receipt' : 'Commission receipt'}</div></td><td>{money(e.amountCents)}</td></tr>)}
+        </tbody></table></div>}
+        {!available.length && <p>No eligible, unallocated earnings through this cutoff.</p>}
+        {stale && <p role="alert" className="error-text">The employee or cutoff selection changed. Choose specific earnings again before saving.</p>}
+        {stale && <button type="button" className="secondary" onClick={() => setSelection([])}>Clear unavailable selection</button>}
+      </div>}
       <Input label="Off-cycle reason" value={reason} set={setReason} />
       <div className="form-grid">
         {(

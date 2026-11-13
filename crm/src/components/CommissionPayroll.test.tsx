@@ -377,3 +377,19 @@ it("shows the balance and removes replacement actions after a partial payment", 
   expect(screen.queryByText("Correct an unpaid report")).toBeNull();
   expect(screen.queryByText("Cancel this unpaid cycle")).toBeNull();
 });
+
+it("selects an adjustment without including other earnings for the same employee", async () => {
+  workspace.producers=[{id:"p",name:"Avery"}];
+  const row={producerId:"p",producerName:"Avery",policyId:"policy",policyNumber:"POL-1",accountName:"Cedar",entryId:"receipt",receivedOn:"2026-11-02",transaction:"NEW" as const,agencyCents:100000,producerBps:1000,amountCents:10000,earningId:undefined,source:undefined,shareBps:undefined};
+  workspace.availableEarnings=[row,{...row,entryId:"adjustment",earningId:"extra",source:"ADJUSTMENT",amountCents:5000}];
+  render(<CommissionPayroll owner refreshLedger={vi.fn()} />);
+  const heading=await screen.findByText("Add an off-cycle payment");fireEvent.click(heading);
+  const form=within(heading.closest("details")!);
+  fireEvent.click(form.getByRole("checkbox",{name:"Avery"}));
+  fireEvent.change(form.getByLabelText("Earnings to include"),{target:{value:"selected"}});
+  expect(form.getByRole("button",{name:"Create off-cycle draft"})).toBeDisabled();
+  fireEvent.click(form.getByRole("checkbox",{name:"Include Avery POL-1 2026-11-02 $50.00"}));
+  fireEvent.change(form.getByLabelText("Off-cycle reason"),{target:{value:"TEST extra earnings"}});
+  fireEvent.click(form.getByRole("button",{name:"Create off-cycle draft"}));
+  await waitFor(()=>expect(h.action).toHaveBeenCalledWith("savePayrollCycle",expect.objectContaining({selectedEarningKeys:[JSON.stringify(["earning","extra"])]})));
+});

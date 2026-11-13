@@ -2,10 +2,18 @@ import { cycleBatches, type PayrollCycle } from '../../../../shared/commissionPa
 import type { CommissionBatch } from '../../../../shared/commissions';
 import { CommissionPdf, reportDate, reportMoney, reportTimestamp, type ReportRenderOptions, type Tone } from './report-layout';
 
+export function reportReference(id: string) {
+  const receipt = id.match(/^[a-f0-9]{64}:(.+)$/i);
+  if (receipt) return receipt[1];
+  if (/^[a-f0-9-]{32,}$/i.test(id) || id.startsWith('adjustment:')) return 'Record '+id.replace(/^adjustment:/,'').slice(0,10);
+  return id;
+}
+
 /** Separate, deterministic approved records. An employee document never includes another employee. */
 export async function commissionReportFiles(cycle: PayrollCycle, batches: CommissionBatch[], documentId?: string, options: ReportRenderOptions = {}) {
   if (!['APPROVED', 'PAID'].includes(cycle.status) || cycle.reviewRequired) throw new Error('Review and approve the cycle before generating earnings records.');
   const selected = cycleBatches(cycle, batches);
+  const renderOptions = { ...options, isTest: options.isTest ?? (process.env.COMMISSION_PAYROLL_ENV !== undefined && process.env.COMMISSION_PAYROLL_ENV !== 'main') };
   if (documentId && documentId !== 'summary' && !selected.some(b => b.id === documentId)) throw new Error('Employee report is not part of this cycle.');
   const files: { filename: string; contentType: string; content: Uint8Array }[] = [];
   const approved = reportTimestamp(cycle.approvedAt ?? cycle.id.slice(0,7) + '-01T00:00:00Z');
@@ -13,7 +21,7 @@ export async function commissionReportFiles(cycle: PayrollCycle, batches: Commis
   for (const [index, employee] of [undefined, ...selected].entries()) {
     if (documentId && (employee?.id ?? 'summary') !== documentId) continue;
     const copy=employee?'Confidential employee copy':'Confidential HR copy';
-    const pdf=await CommissionPdf.create(cycle.id+' Commission earnings - '+(employee?.producerName??'HR summary'),approved.iso,copy,options);
+    const pdf=await CommissionPdf.create(cycle.id+' Commission earnings - '+(employee?.producerName??'HR summary'),approved.iso,copy,renderOptions);
     const offCycle=cycle.cycleType==='OFF_CYCLE';
     const adjustment=(employee?[employee]:selected).some(b=>b.lines.some(l=>l.source==='ADJUSTMENT'));
     const badges:{label:string;tone:Tone}[]=[];
@@ -37,28 +45,19 @@ export async function commissionReportFiles(cycle: PayrollCycle, batches: Commis
       employee?employee.producerName:selected.length+' '+(selected.length===1?'employee':'employees'),
       'Cycle '+cycle.id+' · Revision '+cycle.revision);
     if(employee) {
-      pdf.paragraph('Employee record: '+employee.producerId,8);
-      pdf.section('01','Approved earnings detail','Detail supporting the approved commission total.');
-      for(const [lineIndex,row] of employee.lines.entries()) {
-        pdf.ensure(105);
-        pdf.paragraph((lineIndex+1)+'. '+row.accountName,10,true);
-        pdf.table(['Policy / transaction','Receipt date','Agency commission','Policy share','Employee rate','Earnings'],
-          [128,82,90,68,68,88],
-          [[
-            {text:row.policyNumber+' · '+(row.transaction??'Receipt'),bold:true},
-            {text:row.receivedOn?reportDate(row.receivedOn).date:'See source ledger'},
-            {text:row.source==='ADJUSTMENT'?'—':reportMoney(row.agencyCents),align:'right'},
-            {text:row.shareBps===undefined?'—':(row.shareBps/100).toFixed(2)+'%',align:'right'},
-            {text:row.source==='ADJUSTMENT'?'—':(row.producerBps/100).toFixed(2)+'%',align:'right'},
-            {text:reportMoney(row.amountCents),bold:true,align:'right'},
-          ]]);
-        if(row.source==='ADJUSTMENT')pdf.paragraph('Approved compensation adjustment: '+reportMoney(row.amountCents),9,true);
-        pdf.paragraph((row.source==='ADJUSTMENT'?'Adjustment':'Receipt')+' record: '+row.entryId+(row.earningId?' | Earnings allocation: '+row.earningId:''),7);
-      }
+      pdf.section('01','Approved earnings detail','Only the earnings included in this report.');
+      pdf.table(['Account / policy','Receipt / reference','Calculation','Earnings'],[172,106,146,100],
+        employee.lines.map(row => [
+          {text:row.accountName+' · '+row.policyNumber+' · '+(row.transaction==='NEW'?'New business':row.transaction==='RENEWAL'?'Renewal':'Commission'),bold:true},
+          {text:(row.receivedOn?reportDate(row.receivedOn).date:'See source ledger')+' · '+reportReference(row.entryId)},
+          {text:row.source==='ADJUSTMENT'?'Approved compensation adjustment':reportMoney(row.agencyCents)+(row.shareBps===undefined?'':' × '+(row.shareBps/100).toFixed(2)+'% share')+' × '+(row.producerBps/100).toFixed(2)+'% rate'},
+          {text:reportMoney(row.amountCents),bold:true,align:'right'},
+        ]),
+        [{text:'Approved commission total',bold:true},{text:''},{text:''},{text:reportMoney(employee.totalCents),bold:true,align:'right'}]);
     } else {
-      pdf.section('01','Payroll entries','Enter these approved amounts when processing payroll.');
-      pdf.table(['Employee','Employee record','Commission amount'],[230,150,144],
-        selected.map(batch=>[{text:batch.producerName,bold:true},{text:batch.producerId},{text:reportMoney(batch.totalCents),bold:true,align:'right'}]),
+      pdf.section('01','Payroll entries','Enter one approved commission amount per employee.');
+      pdf.table(['Employee','Earnings included','Commission amount'],[260,110,154],
+        selected.map(batch=>[{text:batch.producerName,bold:true},{text:String(batch.lines.length)+' '+(batch.lines.length===1?'item':'items')},{text:reportMoney(batch.totalCents),bold:true,align:'right'}]),
         [{text:'Total for payroll',bold:true},{text:''},{text:reportMoney(cycle.totalCents),bold:true,align:'right'}]);
       if(!selected.length)pdf.paragraph('No payable employee commissions in this approved cycle.');
     }

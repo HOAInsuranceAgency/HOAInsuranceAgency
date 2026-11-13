@@ -7,6 +7,7 @@ import {
   integer,
   MONEY_MAX,
   batchPaidCents,
+  recoveryBalances,
   selectCommissionTerms,
   type CommissionPolicy,
   type CommissionPlan,
@@ -95,6 +96,7 @@ export async function exceptionAction(
         worklist: departureWorklist(c, policies, earnings, batches),
       })),
       adjustments,
+      carrierAdjustments: policies.map(p => ({ policyId: p.id, policyNumber: p.policyNumber, accountName: p.accountName, ...recoveryBalances(p, batches) })).filter(r => r.unpaidAdjustment || r.paidRecovery || r.partialAdjustment),
       producers: plans.map((p) => ({ id: p.producerId, name: p.name })),
     };
   }

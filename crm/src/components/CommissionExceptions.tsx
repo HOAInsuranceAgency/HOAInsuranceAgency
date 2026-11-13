@@ -30,6 +30,7 @@ type Workspace = {
   earnings: CommissionEarning[];
   departures: Departure[];
   adjustments: CommissionAdjustment[];
+  carrierAdjustments?: { policyId: string; policyNumber: string; accountName: string; unpaidAdjustment: number; paidRecovery: number; partialAdjustment?: number }[];
   producers: { id: string; name: string }[];
 };
 const money = (n: number) =>
@@ -227,6 +228,13 @@ export default function CommissionExceptions({
             <Panel title="Create a compensation adjustment">
               <AdjustmentForm data={data} refresh={refresh} />
             </Panel>
+            {!!data.carrierAdjustments?.length && <section className="card">
+              <h3>Carrier adjustments to review</h3>
+              <p className="small muted">Reversals and restorations are proposed adjustments. They do not automatically reduce earnings or create payroll deductions. Review the source receipt in Ledger, then record any agreed compensation correction.</p>
+              <div className="commission-scroll"><table><thead><tr><th>Account / policy</th><th>Unpaid earnings review</th><th>Partially paid review</th><th>Paid recovery review</th></tr></thead><tbody>
+                {data.carrierAdjustments.map(r => <tr key={r.policyId}><td>{r.accountName}<div className="small muted">{r.policyNumber}</div></td><td>{money(r.unpaidAdjustment)}</td><td>{money(r.partialAdjustment??0)}</td><td>{money(r.paidRecovery)}</td></tr>)}
+              </tbody></table></div>
+            </section>}
             <h3>Approved policy allocations</h3>
             {!data.policies.some((p) => p.allocations?.length) && (
               <div className="payroll-empty">
@@ -366,7 +374,7 @@ function AllocationForm({
           agreement,
           houseBps: decimal(house),
           participants: Object.entries(shares)
-            .filter(([, v]) => v !== "")
+            .filter(([, v]) => v !== "" && decimal(v) !== 0)
             .map(([producerId, share]) => ({
               producerId,
               shareBps: decimal(share),

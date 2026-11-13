@@ -1,6 +1,6 @@
 import type { CommissionEarning, CommissionDeparture, CommissionAdjustment } from '../../../../shared/commissionExceptions';
 import { createHash, randomUUID } from 'node:crypto';
-import { buildPayrollApproval, COMMISSION_START_MONTH, cycleBatches, defaultPayrollSettings, payrollBlockers, payrollDay, payrollPreview, suggestPayrollDates, validatePayrollCycle, validatePayrollSettings, type PayrollCycle, type PayrollDelivery, type PayrollSettings, type PayrollWorkspace } from '../../../../shared/commissionPayroll';
+import { buildPayrollApproval, COMMISSION_START_MONTH, cycleBatches, defaultPayrollSettings, payrollBlockers, payrollDay, payrollPreview, cyclePayrollRows, payrollRowKey, suggestPayrollDates, validatePayrollCycle, validatePayrollSettings, type PayrollCycle, type PayrollDelivery, type PayrollSettings, type PayrollWorkspace } from '../../../../shared/commissionPayroll';
 import { batchPaidCents, day, integer, required, sum, validateAllocationSnapshot, type CommissionBatch, type CommissionPolicy, type CommissionStatement } from '../../../../shared/commissions';
 import type { PayrollReport } from '../../../../shared/commissionPayroll';
 import { archiveReport, readReport, reportFiles } from './report-history';
@@ -24,7 +24,7 @@ export async function holdApprovedPayroll(policy: CommissionPolicy, dueOn: strin
 }
 const version = (input: store.Data, row?: { version: number }) => { if (input.version !== (row?.version ?? 0)) throw new Error('Payroll records changed. Refresh before saving.'); };
 function preview(cycle: PayrollCycle, policies: CommissionPolicy[], settings: PayrollSettings | undefined, statements: CommissionStatement[], earnings: CommissionEarning[] = [], departures: CommissionDeparture[] = [], adjustments: CommissionAdjustment[] = []) {
-  const rows = payrollPreview(policies, cycle.cutoff, cycle.producerIds, earnings, departures);
+  const rows = cyclePayrollRows(cycle, policies, earnings, departures);
   const token = createHash('sha256').update(JSON.stringify([cycle.version, settings?.version ?? 0, adjustments.map(a=>[a.id,a.version]).sort(), rows, earnings.map(e=>[e.id,e.version]).sort(), departures.map(c=>[c.id,c.version]).sort(), policies.filter(p => rows.some(r => r.policyId === p.id)).map(p => [p.id, p.version]).sort()])).digest('hex');
   return { token, blockers: [...payrollBlockers(cycle, policies, statements, earnings, departures), ...adjustments.filter(a=>a.status==='DRAFT'&&a.adjustmentType==='UNPAID_CORRECTION'&&a.effectiveOn<=cycle.payDate&&(!cycle.producerIds||cycle.producerIds.includes(a.producerId))).map(a=>'Resolve unpaid compensation correction '+a.id+' before payroll approval.')], totalCents: sum(rows.map(r => r.amountCents)), entryCount: rows.length, employees: [...new Set(rows.map(r => r.producerId))].map(producerId => ({ producerId, name: rows.find(r => r.producerId === producerId)!.producerName, amountCents: sum(rows.filter(r => r.producerId === producerId).map(r => r.amountCents)) })) };
 }
@@ -55,6 +55,7 @@ export async function payrollAction(_event: Event, actor: string, owner: boolean
     const reports = (await store.list<PayrollReport>('PAYROLL_REPORT')).map(r => ({ id: r.id, cycleId: r.cycle.id, revision: r.cycle.revision, totalCents: r.cycle.totalCents, createdAt: r.createdAt, createdBy: r.createdBy, contentHash: r.contentHash }));
     const workspace: PayrollWorkspace = { owner, settings: settings ?? defaultPayrollSettings(PRODUCTION_OWNER_MAILBOX), cycles: cycles.sort((a,b) => b.id.localeCompare(a.id)), deliveries: deliveries.sort((a,b) => b.createdAt.localeCompare(a.createdAt)), batches: batches.filter(b => ids.has(b.id)), reports, legacyBatches: batches.filter(b => !b.cycleId && b.status === 'APPROVED'), environment: payrollEnvironment() };
     workspace.producers = [...new Map([...policies.map(p => [p.producerId, { id: p.producerId, name: p.producerName }] as const),...earnings.map(e => [e.producerId,{id:e.producerId,name:e.producerName}] as const)]).values()].sort((a,b) => a.name.localeCompare(b.name));
+    workspace.availableEarnings = payrollPreview(policies, payrollDay(), undefined, earnings, departures);
     return { ok: true, ...workspace };
   }
   if (operation === 'savePayrollSettings') {
@@ -85,6 +86,11 @@ export async function payrollAction(_event: Event, actor: string, owner: boolean
     if (next.producerIds) {
       const known = new Set([...(await store.list<CommissionPolicy>('POLICY')).map(p => p.producerId),...(await store.list<CommissionEarning>('EARNING')).map(e=>e.producerId)]);
       if (next.producerIds.some(id => !known.has(id))) throw new Error('Choose employees with existing commission policy records.');
+    }
+    if (next.selectedEarningKeys) {
+      const [policies, earnings, departures] = await Promise.all([store.list<CommissionPolicy>('POLICY'), store.list<CommissionEarning>('EARNING'), store.list<CommissionDeparture>('DEPARTURE')]);
+      const available = new Set(payrollPreview(policies, next.cutoff, next.producerIds, earnings, departures).map(payrollRowKey));
+      if (next.selectedEarningKeys.some(key => !available.has(key))) throw new Error('Selected earnings are no longer available. Refresh and review the off-cycle selection.');
     }
     next.revision = cycle ? cycle.revision + (cycle.status === 'CANCELLED' ? 1 : 0) : 1;
     if (cycle?.replacesRevision) Object.assign(next, { replacesRevision: cycle.replacesRevision, correctionReason: cycle.correctionReason, hrHeldAt: cycle.hrHeldAt, hrHeldBy: cycle.hrHeldBy });

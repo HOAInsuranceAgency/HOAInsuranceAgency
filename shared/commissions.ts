@@ -191,7 +191,10 @@ export interface CommissionStatement {
   settlementType: 'DEPOSIT' | 'RETAINED' | 'NET_SETTLEMENT';
   totalCents: number;
   lines: StatementLine[];
-  status: 'DRAFT' | 'POSTED';
+  status: 'DRAFT' | 'POSTED' | 'VOID';
+  voidReason?: string;
+  voidedAt?: string;
+  voidedBy?: string;
   postedAt?: string;
   postedBy?: string;
 }
@@ -236,6 +239,7 @@ export interface CommissionBatch {
   }[];
 }
 export interface CommissionOverview {
+  isTest?: boolean;
   /** Owner-only saved account settings; never part of an employee projection. */
   accounts?: CommissionAccount[];
   earnings?: import('./commissionExceptions').CommissionEarning[];
@@ -261,8 +265,8 @@ export function day(value: unknown): string {
   return value;
 }
 export function required(value: unknown, label: string, max = 500): string {
-  if (typeof value !== 'string' || !value.trim() || value.trim().length > max)
-    throw new Error(`Enter ${label}.`);
+  if (typeof value !== 'string' || !value.trim()) throw new Error(`Enter ${label}.`);
+  if (value.trim().length > max) throw new Error(`Use ${max} characters or fewer for ${label}.`);
   return value.trim();
 }
 export function integer(value: unknown, min: number, max: number, label: string): number {
@@ -431,7 +435,7 @@ export function appendEntry(
   if (line.agencyCents === 0)
     throw new Error('A statement line must have a nonzero commission amount.');
   required(line.lineRef, 'a carrier transaction reference');
-  required(line.eligibilityNote, 'eligibility / variance review evidence');
+  required(line.eligibilityNote, 'eligibility / variance review evidence', 2000);
   if (typeof line.eligible !== 'boolean') throw new Error('Review commission eligibility.');
   if (line.reviewStatus && !['PENDING', 'ELIGIBLE', 'INELIGIBLE'].includes(line.reviewStatus)) throw new Error('Choose a valid eligibility decision.');
   if (line.reviewStatus === 'PENDING') throw new Error('Resolve pending eligibility before posting this receipt.');

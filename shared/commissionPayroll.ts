@@ -12,6 +12,8 @@ export interface PayrollSettings {
 }
 export interface PayrollCycle {
   cycleType?: 'MONTHLY' | 'OFF_CYCLE'; reason?: string; producerIds?: string[];
+  /** Absent means all eligible earnings; explicit keys freeze the off-cycle selection. */
+  selectedEarningKeys?: string[];
   correctionReason?: string; replacesRevision?: number; hrHeldAt?: string; hrHeldBy?: string;
   id: string; version: number; revision: number; cutoff: string; reviewOn: string; hrDueOn: string;
   processingOn: string; payDate: string; status: 'OPEN' | 'APPROVED' | 'PAID' | 'CANCELLED';
@@ -43,6 +45,7 @@ export interface PayrollWorkspace {
   reports?: { id: string; cycleId: string; revision: number; totalCents: number; createdAt: string; createdBy: string; contentHash: string }[];
   legacyBatches?: CommissionBatch[];
   producers?: { id: string; name: string }[];
+  availableEarnings?: ReturnType<typeof payrollPreview>;
 }
 export const defaultPayrollSettings = (reviewRecipient = ''): PayrollSettings => ({ id: 'payroll', version: 0, enabled: false, hrRecipient: 'hr@cobaltemployment.com', reviewRecipient });
 export const payrollDay = (date = new Date()) => new Intl.DateTimeFormat('en-CA', { timeZone: PAYROLL_TIME_ZONE, year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
@@ -73,10 +76,12 @@ export function validatePayrollCycle(input: PayrollCycle): PayrollCycle {
   const offCycle = id.includes('-OFF-');
   const producerIds = offCycle ? [...new Set((input.producerIds ?? []).map(id => required(id, 'an employee', 128)))].sort() : undefined;
   if (offCycle && (!producerIds?.length || producerIds.length > 50)) throw new Error('Choose the employees for this off-cycle payment.');
+  const selectedEarningKeys = input.selectedEarningKeys === undefined ? undefined : Array.isArray(input.selectedEarningKeys) ? [...new Set(input.selectedEarningKeys.map(key => required(key, 'an earnings selection', 1000)))].sort() : [];
+  if (selectedEarningKeys && (!offCycle || !selectedEarningKeys.length || selectedEarningKeys.length > 500)) throw new Error('Choose 1–500 earnings for an off-cycle payment.');
   const cutoff = day(input.cutoff), reviewOn = day(input.reviewOn), hrDueOn = day(input.hrDueOn), processingOn = day(input.processingOn), payDate = day(input.payDate);
   if (payDate.slice(0, 7) !== id.slice(0, 7)) throw new Error('The pay date must fall in the selected payroll month.');
   if (!(cutoff < reviewOn && reviewOn <= hrDueOn && hrDueOn <= processingOn && processingOn <= payDate)) throw new Error('Use cutoff < review date <= HR due date <= processing date <= pay date.');
-  return { id, version: integer(input.version, 0, Number.MAX_SAFE_INTEGER, 'cycle version'), revision: 1, cutoff, reviewOn, hrDueOn, processingOn, payDate, status: 'OPEN', batchIds: [], totalCents: 0, employees: [], ...(offCycle ? { cycleType: 'OFF_CYCLE', reason: required(input.reason, 'the off-cycle reason', 1000), producerIds } : { cycleType: 'MONTHLY' }) };
+  return { id, version: integer(input.version, 0, Number.MAX_SAFE_INTEGER, 'cycle version'), revision: 1, cutoff, reviewOn, hrDueOn, processingOn, payDate, status: 'OPEN', batchIds: [], totalCents: 0, employees: [], ...(offCycle ? { cycleType: 'OFF_CYCLE', reason: required(input.reason, 'the off-cycle reason', 1000), producerIds, ...(selectedEarningKeys ? { selectedEarningKeys } : {}) } : { cycleType: 'MONTHLY' }) };
 }
 export function payrollPreview(policies: CommissionPolicy[], cutoff: string, producerIds?: string[], earnings: CommissionEarning[] = [], departures: CommissionDeparture[] = []) {
   day(cutoff);
@@ -86,8 +91,18 @@ export function payrollPreview(policies: CommissionPolicy[], cutoff: string, pro
   ];
   return rows.filter(r => (!producerIds || producerIds.includes(r.producerId)) && !departures.some(c => c.producerId === r.producerId && departureDecision(c,r.policyId,r.entryId,r.receivedOn,r.transaction,r.earningId) === 'EXCLUDE')).sort((a,b) => a.producerId.localeCompare(b.producerId) || a.policyId.localeCompare(b.policyId) || (a.earningId ?? a.entryId).localeCompare(b.earningId ?? b.entryId));
 }
+export const payrollRowKey = (row: { earningId?: string; policyId: string; entryId: string }) =>
+  JSON.stringify(row.earningId ? ['earning', row.earningId] : ['receipt', row.policyId, row.entryId]);
+export function cyclePayrollRows(cycle: PayrollCycle, policies: CommissionPolicy[], earnings: CommissionEarning[] = [], departures: CommissionDeparture[] = []) {
+  const rows = payrollPreview(policies, cycle.cutoff, cycle.producerIds, earnings, departures);
+  return cycle.selectedEarningKeys ? rows.filter(row => cycle.selectedEarningKeys!.includes(payrollRowKey(row))) : rows;
+}
 export function payrollBlockers(cycle: PayrollCycle, policies: CommissionPolicy[], statements: CommissionStatement[], earnings: CommissionEarning[] = [], departures: CommissionDeparture[] = []) {
   const blockers: string[] = [];
+  if (cycle.selectedEarningKeys) {
+    const available = new Set(payrollPreview(policies, cycle.cutoff, cycle.producerIds, earnings, departures).map(payrollRowKey));
+    if (cycle.selectedEarningKeys.some(key => !available.has(key))) blockers.push('Selected off-cycle earnings changed or are no longer eligible. Review the selection before approval.');
+  }
   for (const s of statements) if (s.status === 'DRAFT' && s.receivedOn <= cycle.cutoff) blockers.push(`Reconcile draft statement ${s.reference} received ${s.receivedOn}.`);
   for (const p of policies) {
     if (cycle.producerIds && !cycle.producerIds.includes(p.producerId)) continue;
@@ -97,7 +112,7 @@ export function payrollBlockers(cycle: PayrollCycle, policies: CommissionPolicy[
   for (const c of departures) {
     if (cycle.producerIds && !cycle.producerIds.includes(c.producerId)) continue;
     if (c.status === 'DRAFT' && c.reviewOn <= cycle.payDate) blockers.push(c.producerName + ': departure terms need Owner approval.');
-    for (const r of payrollPreview(policies, cycle.cutoff, cycle.producerIds, earnings, departures).filter(r => r.producerId === c.producerId)) if (departureDecision(c,r.policyId,r.entryId,r.receivedOn,r.transaction,r.earningId) === 'REVIEW') blockers.push(c.producerName + ': review departure eligibility for ' + r.policyNumber + ' received ' + r.receivedOn + '.');
+    for (const r of cyclePayrollRows(cycle, policies, earnings, departures).filter(r => r.producerId === c.producerId)) if (departureDecision(c,r.policyId,r.entryId,r.receivedOn,r.transaction,r.earningId) === 'REVIEW') blockers.push(c.producerName + ': review departure eligibility for ' + r.policyNumber + ' received ' + r.receivedOn + '.');
   }
   for (const e of earnings.filter(e => e.status === 'PAYABLE' && !e.batchId && e.receivedOn <= cycle.cutoff && (!cycle.producerIds || cycle.producerIds.includes(e.producerId)))) {
     const p=policies.find(p=>p.id===e.policyId); if(!p) blockers.push('Missing policy for employee earnings.');
@@ -112,7 +127,7 @@ export function buildPayrollApproval(cycle: PayrollCycle, policies: CommissionPo
   validateAllocationSnapshot(policies, batches, earnings);
   const blockers = payrollBlockers(cycle,policies,[],earnings,departures);
   if(blockers.length) throw new Error(blockers.join(' '));
-  const rows = payrollPreview(policies, cycle.cutoff, cycle.producerIds, earnings, departures);
+  const rows = cyclePayrollRows(cycle, policies, earnings, departures);
   for (const policy of policies) if (rows.some(r => r.policyId === policy.id)) assertCommissionReviewed(policy);
   const producerIds = [...new Set(rows.map(r => r.producerId))];
   const created: CommissionBatch[] = producerIds.map(producerId => {

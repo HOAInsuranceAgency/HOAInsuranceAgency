@@ -11,7 +11,7 @@ import CommissionExceptions from '../components/CommissionExceptions';
 import CommissionPlanSettings from '../components/CommissionPlanSettings';
 import CommissionStatementImport from '../components/CommissionStatementImport';
 import CommissionPanel from '../components/CommissionPanel';
-import { useUnsavedChanges } from '../lib/editProtection';
+import { useEditProtection, useUnsavedChanges } from '../lib/editProtection';
 import { isAuthorizationError } from '../lib/authorizationError';
 import { ReportDownload } from '../components/ReportDownload';
 import {
@@ -54,6 +54,7 @@ export default function Commissions() {
   return <CommissionView key={owner ? 'owner' : 'self'} owner={owner} />;
 }
 function CommissionView({ owner }: { owner: boolean }) {
+  const { requestLeave } = useEditProtection();
   const resource = useAsyncResource(readCommissions, [], {
     errorMessage: 'Could not load commissions.',
     clearDataOnError: () => true,
@@ -67,7 +68,7 @@ function CommissionView({ owner }: { owner: boolean }) {
           {owner ? 'Owner · private commission management' : 'Your commission statements'}
         </p>
         <div className="commission-page-heading"><h1>Commissions</h1>
-        {owner && <button className="primary" onClick={() => setTab('settings')}>Commission setup</button>}</div>
+        {owner && <button className="primary" onClick={() => requestLeave(() => setTab('settings'))}>Commission setup</button>}</div>
         <p className="muted">
           Track expected revenue, carrier receipts, producer earnings, and confirmed payments.
         </p>
@@ -86,7 +87,7 @@ function CommissionView({ owner }: { owner: boolean }) {
               role="tab"
               aria-selected={tab === id}
               className={tab === id ? 'primary' : 'secondary'}
-              onClick={() => setTab(id)}
+              onClick={() => requestLeave(() => setTab(id))}
             >
               {label}
             </button>
@@ -166,6 +167,7 @@ function Ledger({
           title: 'Producer commission ledger',
           commissionLedger: {
             scope: owner ? 'All displayed employees' : 'Your displayed earnings',
+            isTest: data.isTest,
             agencyReceivedCents: sum(totals.map(t => t.receivedAgency)),
             earnedCents: earned, paidCents: paid,
             proposedPaidRecoveryCents: sum([...recoveries.map(t => t.paidRecovery), ...earningRows.filter(e => e.source === 'ADJUSTMENT' && e.status === 'REVIEW' && e.amountCents < 0).map(e => -e.amountCents)]),
@@ -188,6 +190,7 @@ function Ledger({
                 'Producer rate (%)',
                 'Producer amount (USD)',
                 'Payment batch',
+                'Carrier transaction reference',
               ],
               rows: data.policies.flatMap((p) =>
                 p.entries.map((e) => [
@@ -201,6 +204,7 @@ function Ledger({
                   e.allocationId ? '' : p.producerBps / 100,
                   e.allocationId ? '' : e.producerCents / 100,
                   e.batchId ?? '',
+                  e.lineRef,
                 ]),
               ),
             },
@@ -208,6 +212,11 @@ function Ledger({
               title: 'Employee earnings allocations (agency cash is recorded above)',
               columns: ['Employee', 'Account', 'Policy', 'Date', 'Source', 'Policy share (%)', 'Plan rate (%)', 'Employee amount (USD)', 'Status', 'Payment batch', 'Earning ID', 'Original receipt / adjustment ID'],
               rows: earningRows.map(e => [e.producerName, e.accountName, e.policyNumber, e.receivedOn, e.source, e.shareBps === undefined ? '' : e.shareBps / 100, e.source === 'ADJUSTMENT' ? '' : e.producerBps / 100, e.amountCents / 100, e.status, e.batchId ?? '', e.id, e.entryId]),
+            },
+            {
+              title: 'Recorded payments',
+              columns: ['Employee','Payroll cycle / batch','Payment date','Amount paid (USD)','Reference'],
+              rows: data.batches.filter(b=>b.status!=='CANCELLED').flatMap(b=>(b.payments?.length ? b.payments.map(p=>[b.producerName,b.cycleId??b.id,p.paidOn,p.amountCents/100,owner?p.reference:'Recorded payment']) : b.status==='PAID' ? [[b.producerName,b.cycleId??b.id,b.actualPaidOn??b.payDate,batchPaidCents(b)/100,owner?(b.reference??'Recorded payment'):'Recorded payment']] : [])),
             },
           ],
         }}
@@ -1229,20 +1238,26 @@ function ReceiptForecastEditor({
 }
 function Statements({ data, refresh }: { data: CommissionOverview; refresh: () => Promise<void> }) {
   const [editing, setEditing] = useState<CommissionStatement | null | undefined>(undefined);
+  const [query, setQuery] = useState('');
+  const { requestLeave } = useEditProtection();
+  const matches = data.statements.filter(s => [s.reference, s.settlementRef, ...s.lines.map(l => l.lineRef), ...s.lines.map(l => data.policies.find(p => p.id === l.policyId)?.policyNumber ?? '')].join(' ').toLowerCase().includes(query.trim().toLowerCase()));
+  const drafts = matches.filter(s => s.status === 'DRAFT');
+  const history = matches.filter(s => s.status !== 'DRAFT').sort((a,b) => b.receivedOn.localeCompare(a.receivedOn));
   return (
     <>
-      <p>
-        Only Owners can upload, match, review, and post carrier statements. Posting requires a
-        verified settlement and reviewed eligibility for every line.
-      </p>
-      <div className="card commission-reconciliation-guide">
+      <div className="commission-workflow-strip" aria-label="Reconciliation steps">
+        <span><b>1</b> Attach & match</span><span><b>2</b> Review eligibility</span><span><b>3</b> Post receipt</span>
+      </div>
+      <CommissionPanel title="Statement entry guide" hint="Amounts, settlement evidence, and supported files">
         <h2>Prepare a statement for reconciliation</h2>
         <p>Attach the original PDF as evidence and enter its commission rows manually. CSV and XLSX files also support column mapping. Use the agency commission paid for each row, not premium, full-term commission, or previously paid totals.</p>
         <p className="small muted">Record the actual settlement date. An invoice's due date is not proof of receipt; retained agency-bill commission needs collection and remittance evidence. Earlier receipts keep their original dates and remain subject to the employee's eligibility cutoffs.</p>
+      </CommissionPanel>
+      <div className="commission-section-heading">
+        <div><h2>Reconciliation</h2><p>{data.statements.filter(s => s.status === 'DRAFT').length} drafts need review. Posted and voided records remain in history.</p></div>
+        <button className="primary" onClick={() => requestLeave(() => setEditing(null))}>New reconciliation</button>
       </div>
-      <button className="primary" onClick={() => setEditing(null)}>
-        New reconciliation
-      </button>
+      <label className="field">Find a statement<input type="search" value={query} onChange={e => setQuery(e.target.value)} placeholder="Statement, settlement, transaction, or policy" /></label>
       {editing !== undefined && (
         <StatementEditor
           key={editing?.id ?? 'new'}
@@ -1255,15 +1270,19 @@ function Statements({ data, refresh }: { data: CommissionOverview; refresh: () =
         />
       )}
       {data.statements.length === 0 && <div className="commission-empty">No statements yet.</div>}
-      {data.statements.map((s) => (
+      {drafts.map((s) => (
         <StatementCard
           key={`${s.id}:${s.version}`}
           statement={s}
           policies={data.policies}
-          edit={() => setEditing(s)}
+          edit={() => requestLeave(() => setEditing(s))}
           refresh={refresh}
         />
       ))}
+      {!!history.length && <CommissionPanel title="Reconciliation history" hint={history.length + ' posted or voided statements'}>
+        {history.map(s => <StatementCard key={s.id + ':' + s.version} statement={s} policies={data.policies} edit={() => {}} refresh={refresh} />)}
+      </CommissionPanel>}
+      {!!query && !matches.length && <div className="commission-empty">No statements match this search.</div>}
     </>
   );
 }
@@ -1311,6 +1330,10 @@ function StatementEditor({
     [importFile, setImportFile] = useState<File | null>(null),
     [fileError, setFileError] = useState(''),
     [fileName, setFileName] = useState(statement ? 'Previously attached statement' : '');
+  const [saved, setSaved] = useState(false), [saving, setSaving] = useState(false);
+  const serialized = JSON.stringify({ carrierId, reference, source, receivedOn, settlementRef, total, settlementType, lines });
+  const initial = useRef(serialized);
+  useUnsavedChanges(!saved && serialized !== initial.current, { busy: uploading || saving });
   const update = (index: number, change: Partial<LineDraft>) =>
     setLines(lines.map((l, i) => (i === index ? { ...l, ...change } : l)));
   async function upload(file: File) {
@@ -1338,7 +1361,8 @@ function StatementEditor({
       onDone={done}
       submit={async () => {
         if (uploading || !source) throw new Error('Attach the original statement before saving.');
-        return commissionAction('saveStatement', {
+        setSaving(true);
+        try { const result = await commissionAction('saveStatement', {
           version: statement?.version ?? 0,
           carrierId,
           reference,
@@ -1362,9 +1386,10 @@ function StatementEditor({
               ...(reportedRate ? { reportedRateUnits: decimal(reportedRate, 4) } : {}),
             }),
           ),
-        });
+        }); setSaved(true); return result; } finally { setSaving(false); }
       }}
     >
+      <p className="small muted">Save the draft before leaving. Drafts never create earnings; posting requires a separate review.</p>
       <div className="form-grid">
         <label className="field">
           Carrier
@@ -1556,11 +1581,10 @@ function StatementEditor({
                 <option value="INELIGIBLE">{l.kind === 'RECEIPT' ? 'Not eligible - explain in review notes' : 'Adjustment - original allocation verified'}</option>
               </select>
             </label>
-            <Field
-              label={`Eligibility and variance review notes ${i + 1}`}
-              value={l.eligibilityNote}
-              change={(v) => update(i, { eligibilityNote: v })}
-            />
+            <label className="field">Eligibility and variance review notes {i + 1}
+              <textarea required maxLength={2000} value={l.eligibilityNote} onChange={e => update(i, { eligibilityNote: e.target.value })} />
+              <span className="small muted">{l.eligibilityNote.length}/2,000 characters · evidence, eligibility, and any differences</span>
+            </label>
             <button
               className="secondary"
               type="button"
@@ -1597,11 +1621,12 @@ function StatementCard({
   const invalidate = useContext(CommissionAccessContext);
   const [confirmed, setConfirmed] = useState(false),
     [fileError, setFileError] = useState('');
+  const [voidReason, setVoidReason] = useState(''), [voidConfirmed, setVoidConfirmed] = useState(false);
   const body = (
     <>
       <dl className="commission-facts">
         <div><dt>Receipt date</dt><dd>{s.receivedOn}</dd></div>
-        <div><dt>Status</dt><dd><span className={'badge ' + (s.status === 'POSTED' ? 'green' : 'amber')}>{s.status}</span></dd></div>
+        <div><dt>Status</dt><dd><span className={'badge ' + (s.status === 'POSTED' ? 'green' : s.status === 'VOID' ? 'gray' : 'amber')}>{s.status}</span></dd></div>
         <div><dt>Settlement reference</dt><dd>{s.settlementRef}</dd></div>
         <div><dt>Agency amount</dt><dd>{money(s.totalCents)}</dd></div>
       </dl>
@@ -1659,15 +1684,15 @@ function StatementCard({
       </div>
     </>
   );
-  if (s.status === 'POSTED')
+  if (s.status !== 'DRAFT')
     return (
-      <section className="card">
-        <h2>{s.reference}</h2>
+      <CommissionPanel title={s.reference} hint={s.status + ' · ' + s.receivedOn + ' · ' + money(s.totalCents)}>
+        {s.status === 'VOID' && <div className="commission-notice"><strong>Voided draft · excluded from payroll review</strong><p>{s.voidReason}</p><p className="small muted">Voided {s.voidedAt}. The original file, lines, and audit history are retained.</p></div>}
         {body}
-      </section>
+      </CommissionPanel>
     );
   return (
-    <ActionForm
+    <><ActionForm
       title={s.reference}
       disabled={!confirmed || s.lines.some(l => l.reviewStatus === 'PENDING')}
       button="Post reconciled statement"
@@ -1694,6 +1719,14 @@ function StatementCard({
         allocation total has not already been posted.
       </label>
     </ActionForm>
+    <CommissionPanel title={'Void draft · ' + s.reference} hint="Close a duplicate or incorrect draft without posting it" danger>
+      <ActionForm title="Void this draft" button="Void draft" disabled={!voidConfirmed || !voidReason.trim()} onDone={refresh}
+        submit={() => commissionAction('voidStatement', { id: s.id, version: s.version, reason: voidReason, confirmed: voidConfirmed })}>
+        <p>The original file and review history remain available. This draft will no longer block payroll. Posted receipts cannot be voided.</p>
+        <label className="field">Reason for voiding<textarea required maxLength={1000} value={voidReason} onChange={e => setVoidReason(e.target.value)} /></label>
+        <label className="commission-check"><input type="checkbox" checked={voidConfirmed} onChange={e => setVoidConfirmed(e.target.checked)} />This draft must not be posted.</label>
+      </ActionForm>
+    </CommissionPanel></>
   );
 }
 function Payroll({ data, refresh }: { data: CommissionOverview; refresh: () => Promise<void> }) {

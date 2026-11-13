@@ -50,12 +50,15 @@ if (mode === "check" && staging) {
   run("npx", ["ampx", "generate", "outputs", "--app-id", process.env.AWS_APP_ID, "--branch", "staging"]);
   run("npx", ["vitest", "run", "src/pages/Commissions.test.tsx",
     "src/test/commissionForecast.test.ts", "src/test/commissionService.test.ts",
+    "src/test/commissionWorkflow.test.ts", "src/components/CommissionPayroll.test.tsx",
+    "src/components/CommissionExceptions.test.tsx", "src/test/reportDownload.test.ts",
     "src/test/commissionBind.test.ts", "src/test/carrierPaymentPreview.test.ts",
     "src/test/commissions.test.ts", "src/test/commissionAccess.test.ts",
     "src/components/QuotesPanel.test.tsx",
     "src/test/sesMailInfrastructure.test.ts", "src/test/sesMailFeedback.test.ts",
     "src/test/sesTransactionalMail.test.ts", "src/test/transactionalMail.test.ts",
     "src/test/magicLinkRequest.test.ts", "src/test/resendCallerContracts.test.ts"]);
+  run("npm", ["run", "test:commission-payroll"]);
   run("npx", ["tsc", "-b"]);
 }
 if (mode === "build") {

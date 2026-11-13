@@ -11,7 +11,7 @@ function canonical(value: unknown): unknown {
 export async function departureStatement(c: CommissionDeparture, worklist: ReturnType<typeof departureWorklist>, at: string, options: ReportRenderOptions = {}) {
   const snapshot={case:c,worklist};
   const snapshotHash=createHash('sha256').update(JSON.stringify(canonical(snapshot))).digest('hex');
-  const pdf=await CommissionPdf.create(c.producerName+' departure commission review',at,'Confidential HR record',options);
+  const pdf=await CommissionPdf.create(c.producerName+' departure commission review',at,'Confidential HR record',{...options,isTest:options.isTest??(process.env.COMMISSION_PAYROLL_ENV!==undefined&&process.env.COMMISSION_PAYROLL_ENV!=='main')});
   const employment=reportDate(c.employmentEndOn),due=reportDate(c.paymentDueOn),approved=reportTimestamp(c.approvedAt),created=reportTimestamp(at);
   pdf.start('DEPARTURE REVIEW · CASE VERSION '+c.version,'Departure commission review statement',c.producerName,
     [{label:c.status,tone:statusTone(c.status)}]);
@@ -20,7 +20,7 @@ export async function departureStatement(c: CommissionDeparture, worklist: Retur
   pdf.facts([
     {label:'Employment end',value:employment.date,detail:employment.weekday},
     {label:'HR payment due',value:due.date,detail:due.weekday},
-    {label:'Terms approved · Owner',value:approved.date,detail:approved.time+(c.approvedBy?' · '+c.approvedBy:'')},
+    {label:'Terms approved · Owner',value:approved.date,detail:approved.time},
     {label:'Snapshot',value:created.date,detail:created.time},
     {label:'Agreement',value:longTerms?'See supporting terms below':c.agreement,strong:false},
     {label:'Evidence',value:longTerms?'See supporting terms below':c.evidence,strong:false},
@@ -37,9 +37,11 @@ export async function departureStatement(c: CommissionDeparture, worklist: Retur
       {text:row.decision,tone:statusTone(row.decision)},
       {text:row.paymentStatus,tone:statusTone(row.paymentStatus)},
     ]),
-    [{text:'Total under review',bold:true},{text:''},{text:reportMoney(total),bold:true,align:'right'},{text:''},{text:''}]);
+    [{text:'Total listed earnings',bold:true},{text:''},{text:reportMoney(total),bold:true,align:'right'},{text:''},{text:''}]);
   for(const row of worklist.rows)if(row.batchPaidCents!==undefined)
     pdf.paragraph(row.policyNumber+': Employee batch paid '+reportMoney(row.batchPaidCents)+' of '+reportMoney(row.batchTotalCents!)+'. A partial batch payment is not attributed to individual receipts.',8);
+  const reviewTotal=worklist.rows.filter(row=>row.decision==='REVIEW').reduce((sum,row)=>sum+row.amountCents,0);
+  pdf.paragraph('Awaiting eligibility decision: '+reportMoney(reviewTotal)+'. Approved earnings still require separate payroll approval.',8);
   pdf.section('02','Pending carrier receipts and reconciliation');
   pdf.table(['Policy','Expected agency','Received agency','Outstanding','Received to date'],[112,102,102,102,106],
     worklist.pending.map(p=>[
@@ -51,8 +53,10 @@ export async function departureStatement(c: CommissionDeparture, worklist: Retur
     ]));
   if(!worklist.pending.length)pdf.paragraph('No pending carrier balances in this snapshot.');
   pdf.section('03','Eligibility decisions',worklist.adjustments.length+' Proposed adjustments awaiting separate review');
+  if(!c.decisions.length)pdf.paragraph('No individual eligibility decisions recorded.');
   for(const decision of c.decisions){
-    pdf.paragraph(decision.entryId+' | '+decision.outcome+' | '+decision.reason,9,true);
+    const row=worklist.rows.find(row=>row.entryId===decision.entryId && (!decision.earningId || row.earningId===decision.earningId));
+    pdf.paragraph((row?.policyNumber??'Policy record')+' | '+decision.outcome+' | '+decision.reason,9,true);
     pdf.paragraph('Decision '+decision.at+' | '+decision.by+(decision.earningId?' | Earnings allocation '+decision.earningId:''),7);
   }
   for(const resolution of c.pendingResolutions??[]){

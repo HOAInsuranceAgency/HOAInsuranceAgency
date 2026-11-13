@@ -162,11 +162,13 @@ export async function handler(event: Event) {
         return {
           ok: true,
           asOf,
+          isTest: !!process.env.COMMISSION_PAYROLL_ENV && process.env.COMMISSION_PAYROLL_ENV !== 'main',
           policies,
           earnings: ownEarnings.map(e => ({id:e.id,version:e.version,producerId:e.producerId,producerName:e.producerName,policyId:e.policyId,policyNumber:e.policyNumber,accountName:e.accountName,transaction:e.transaction,entryId:e.entryId,receivedOn:e.receivedOn,agencyCents:e.shareBps===undefined?e.agencyCents:ratio(e.agencyCents,e.shareBps,10000),producerBps:e.producerBps,shareBps:e.shareBps,amountCents:e.amountCents,source:e.source,status:e.status,batchId:e.batchId})),
           batches: ownBatches.map(b => ({
             id: b.id, version: b.version, producerId: b.producerId, producerName: b.producerName,
             cutoff: b.cutoff, payDate: b.payDate, actualPaidOn: b.actualPaidOn, status: b.status, totalCents: b.totalCents, paidCents: batchPaidCents(b),
+            payments: b.payments?.map((p,i) => ({ id: String(i+1), amountCents: p.amountCents, paidOn: p.paidOn })),
             lines: b.lines.map(l => ({ earningId: l.earningId, source: l.source, shareBps: l.shareBps, policyId: l.policyId, entryId: l.entryId, accountName: l.accountName,
               policyNumber: l.policyNumber, receivedOn: l.receivedOn, transaction: l.transaction,
               agencyCents: l.agencyCents, producerBps: l.producerBps, amountCents: l.amountCents })),
@@ -187,6 +189,7 @@ export async function handler(event: Event) {
       return {
         ok: true,
         asOf,
+        isTest: !!process.env.COMMISSION_PAYROLL_ENV && process.env.COMMISSION_PAYROLL_ENV !== 'main',
         plans,
         planDefinitions,
         accounts,
@@ -591,8 +594,8 @@ export async function handler(event: Event) {
       const id = hash(`${carrierId}|${reference.toLowerCase()}`),
         old = await store.get<CommissionStatement>('STATEMENT', id);
       currentVersion(input, old);
-      if (old?.status === 'POSTED')
-        throw new Error('Posted statements are immutable. Record linked adjustments instead.');
+      if (old && old.status !== 'DRAFT')
+        throw new Error('Posted and voided statements are immutable. Use a new reference for a new reconciliation.');
       if (!(await store.get('CARRIER', carrierId)))
         throw new Error('Configure carrier terms first.');
       const source = required(input.source, 'the source statement file');
@@ -650,7 +653,7 @@ export async function handler(event: Event) {
           agencyCents: integer(l.agencyCents, -MONEY_MAX, MONEY_MAX, 'agency commission'),
           eligible: l.eligible,
           ...(l.reviewStatus ? { reviewStatus: l.reviewStatus } : {}),
-          eligibilityNote: required(l.eligibilityNote, 'eligibility and variance review notes'),
+          eligibilityNote: required(l.eligibilityNote, 'eligibility and variance review notes', 2000),
           ...(l.originalId ? { originalId: required(l.originalId, 'an original entry') } : {}),
         })),
         status: 'DRAFT',
@@ -683,6 +686,22 @@ export async function handler(event: Event) {
       await store.commit([change('STATEMENT', statement, old), change('PAYROLL_STATE', { id: 'reconciliation' }, reconciliation)], actor);
       return { ok: true };
     }
+    if (operation === 'voidStatement') {
+      const statement = await store.get<CommissionStatement>('STATEMENT', required(input.id, 'a statement'));
+      if (!statement) throw new Error('Statement not found.');
+      const reason = required(input.reason, 'a reason for voiding this draft', 1000);
+      if (input.confirmed !== true) throw new Error('Confirm that this draft must not be posted.');
+      // Only an identical retry may succeed after a lost response.
+      if (statement.status === 'VOID' && statement.voidReason === reason && statement.voidedBy === actor) return { ok: true };
+      currentVersion(input, statement);
+      if (statement.status !== 'DRAFT') throw new Error('Only a draft statement can be voided. Posted receipts require linked adjustments.');
+      const reconciliation = await store.get<{ id: string; version: number }>('PAYROLL_STATE', 'reconciliation');
+      await store.commit([
+        change('STATEMENT', { ...statement, status: 'VOID', voidReason: reason, voidedAt: new Date().toISOString(), voidedBy: actor }, statement),
+        change('PAYROLL_STATE', { id: 'reconciliation' }, reconciliation),
+      ], actor);
+      return { ok: true };
+    }
     if (operation === 'postStatement') {
       const statement = await store.get<CommissionStatement>(
         'STATEMENT',
@@ -691,6 +710,7 @@ export async function handler(event: Event) {
       if (!statement) throw new Error('Statement not found.');
       if (statement.status === 'POSTED') return { ok: true }; // Durable retry after lost response.
       currentVersion(input, statement);
+      if (statement.status !== 'DRAFT') throw new Error('Only a draft statement can be posted. Voided statements remain in history.');
       if (sum(statement.lines.map((l) => l.agencyCents)) !== statement.totalCents)
         throw new Error('Statement control totals do not balance.');
       if (input.confirmed !== true)

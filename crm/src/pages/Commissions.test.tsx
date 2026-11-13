@@ -29,7 +29,7 @@ vi.mock('../lib/client', () => ({
 vi.mock('../lib/communications', () => ({
   communicationRequest: h.communications,
 }));
-vi.mock('../lib/editProtection', () => ({ useUnsavedChanges: vi.fn() }));
+vi.mock('../lib/editProtection', () => ({ useUnsavedChanges: vi.fn(), useEditProtection: () => ({ requestLeave: (next: () => void) => next() }) }));
 vi.mock('../components/ReportDownload', () => ({ ReportDownload: ({ report }: { report: unknown }) => { h.report(report); return null; } }));
 import Commissions from './Commissions';
 const snapshot = () => ({
@@ -775,4 +775,19 @@ it('prefills the plan reference for an assignment without clearing an employee-s
   fireEvent.change(screen.getByLabelText('Employee agreement reference 1'), { target: { value: 'Signed individual agreement' } });
   fireEvent.change(screen.getByLabelText('Commission plan 1'), { target: { value: 'b:1' } });
   expect(screen.getByLabelText('Employee agreement reference 1')).toHaveValue('Signed individual agreement');
+});
+
+it('requires a reason and explicit confirmation before voiding a draft', async () => {
+  h.owner=true;
+  render(<Commissions />);
+  await screen.findByText('Producer earned');
+  fireEvent.click(screen.getByRole('tab',{name:'Reconciliation'}));
+  fireEvent.click(screen.getByText('Void draft · OCT-1'));
+  const button=screen.getByRole('button',{name:'Void draft'});
+  expect(button).toBeDisabled();
+  fireEvent.change(screen.getByLabelText('Reason for voiding'),{target:{value:'TEST duplicate statement'}});
+  expect(button).toBeDisabled();
+  fireEvent.click(screen.getByLabelText('This draft must not be posted.'));
+  fireEvent.click(button);
+  await waitFor(()=>expect(h.action).toHaveBeenCalledWith('voidStatement',{id:'s',version:1,reason:'TEST duplicate statement',confirmed:true}));
 });

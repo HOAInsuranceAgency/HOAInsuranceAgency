@@ -226,10 +226,15 @@ export class CommissionPdf {
       let x=44;headers.forEach((h,i)=>{this.text(h.toUpperCase(),this.y+8,x+padding,6.5,true,palette.muted,widths[i]-padding*2);x+=widths[i];});
       this.y+=headerHeight;
     };
+    const first = rows[0] ?? total;
+    if (first) this.ensure(Math.min(200, headerHeight + Math.max(...first.map((c,i) => this.wrap(c.text,c.tone?7:size,widths[i]-padding*2,!!c.bold).length))*13+16));
     drawHeader();
     const drawRow=(row:ReportCell[],isTotal=false)=>{
       const lines=row.map((c,i)=>this.wrap(c.text,c.tone?7:size,widths[i]-padding*2,c.bold||isTotal));
       let offset=0, remaining=Math.max(...lines.map(l=>l.length));
+      // Keep ordinary rows together; only exceptionally tall rows split.
+      const rowHeight=Math.max(29,remaining*13+16);
+      if(rowHeight<=350 && this.y+rowHeight>this.bottom){this.addPage(true);drawHeader();}
       while(remaining>0){
         if(this.y+30>this.bottom){this.addPage(true);drawHeader();}
         const capacity=Math.max(1,Math.floor((this.bottom-this.y-16)/13));
