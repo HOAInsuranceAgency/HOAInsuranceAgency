@@ -15,7 +15,7 @@ const h = vi.hoisted(() => ({
 vi.mock('../lib/auth', () => ({ useIsOwner: () => h.owner }));
 vi.mock('../lib/commissions', () => ({
   readCommissions: h.read,
-  commissionAction: h.action,
+  commissionAction: (op: string, input: unknown) => op === 'intakeWorkspace' ? Promise.resolve({intakes:[],settlements:[],templates:[]}) : h.action(op,input),
 }));
 vi.mock('../lib/client', () => ({
   client: {
@@ -67,6 +67,7 @@ it('allows the Owner to review and post only after explicit settlement confirmat
   render(<Commissions />);
   await screen.findByText('Producer earned');
   fireEvent.click(screen.getByRole('tab', { name: 'Reconciliation' }));
+  fireEvent.click(screen.getByText('Earlier reconciliation records'));
   expect(screen.getByRole('button', { name: 'Post reconciled statement' })).toBeDisabled();
   expect(h.action).not.toHaveBeenCalled();
   h.action.mockClear();
@@ -85,6 +86,7 @@ it('unmounts owner forms and clears old data immediately when switching roles', 
   const view = render(<Commissions />);
   await screen.findByText('Producer earned');
   fireEvent.click(screen.getByRole('tab', { name: 'Reconciliation' }));
+  fireEvent.click(screen.getByText('Earlier reconciliation records'));
   expect(screen.getByText('OCT-1')).toBeVisible();
   let finish!: (v: unknown) => void;
   h.read.mockImplementationOnce(
@@ -116,6 +118,7 @@ it('cannot post pending eligibility even after settlement confirmation', async (
   render(<Commissions />);
   await screen.findByText('Producer earned');
   fireEvent.click(screen.getByRole('tab', { name: 'Reconciliation' }));
+  fireEvent.click(screen.getByText('Earlier reconciliation records'));
   fireEvent.click(screen.getByLabelText(/I verified settlement evidence/));
   expect(screen.getByRole('button', { name: 'Post reconciled statement' })).toBeDisabled();
   expect(h.action).not.toHaveBeenCalled();
@@ -125,6 +128,7 @@ it('clears the parent commission view when a source-file request loses authoriza
   render(<Commissions />);
   await screen.findByText('Producer earned');
   fireEvent.click(screen.getByRole('tab', { name: 'Reconciliation' }));
+  fireEvent.click(screen.getByText('Earlier reconciliation records'));
   h.action.mockRejectedValue(new Error('Not authorized'));
   fireEvent.click(screen.getByRole('button', { name: 'Download original statement' }));
   expect(await screen.findByRole('alert')).toHaveTextContent('Not authorized');
@@ -782,6 +786,7 @@ it('requires a reason and explicit confirmation before voiding a draft', async (
   render(<Commissions />);
   await screen.findByText('Producer earned');
   fireEvent.click(screen.getByRole('tab',{name:'Reconciliation'}));
+  fireEvent.click(screen.getByText('Earlier reconciliation records'));
   fireEvent.click(screen.getByText('Void draft · OCT-1'));
   const button=screen.getByRole('button',{name:'Void draft'});
   expect(button).toBeDisabled();

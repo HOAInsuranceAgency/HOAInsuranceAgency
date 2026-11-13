@@ -1,3 +1,5 @@
+import CommissionIntake from '../components/CommissionIntake';
+import CommissionPolicyLink from '../components/CommissionPolicyLink';
 import { createContext, useContext, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { useIsOwner } from '../lib/auth';
 import { useAsyncResource } from '../lib/useAsyncResource';
@@ -113,10 +115,12 @@ function CommissionView({ owner }: { owner: boolean }) {
           {tab === 'ledger' && <Ledger data={snapshot} owner={owner} refresh={resource.refetch} />}
           {owner && tab === 'settings' && <Settings data={snapshot} refresh={resource.refetch} />}
           {owner && tab === 'statements' && (
-            <Statements data={snapshot} refresh={resource.refetch} />
+            <><CommissionIntake data={snapshot} refreshLedger={resource.refetch} onAccessDenied={resource.invalidate}
+              renderPolicySetup={(policyNumber, carrierId, adopted) => <CommissionPolicyLink policyNumber={policyNumber} carrierId={carrierId} data={snapshot} refresh={resource.refetch} adopted={adopted} denied={resource.invalidate} renderAccountSetup={(id, saved) => <AccountClassificationResource id={id} onSaved={saved} />} />} />
+            <CommissionPanel title="Earlier reconciliation records" hint="Review existing drafts and posted statement history"><Statements data={snapshot} refresh={resource.refetch} /></CommissionPanel></>
           )}
           {owner && tab === 'exceptions' && <CommissionExceptions refreshLedger={resource.refetch} onAccessDenied={resource.invalidate} />}
-          {owner && tab === 'payroll' && <Payroll data={snapshot} refresh={resource.refetch} />}
+          {owner && tab === 'payroll' && <Payroll data={snapshot} refresh={resource.refetch} reviewStatements={() => requestLeave(() => setTab('statements'))} />}
           {!owner && <BatchList batches={snapshot.batches} />}
         </>
       )}
@@ -1729,10 +1733,10 @@ function StatementCard({
     </CommissionPanel></>
   );
 }
-function Payroll({ data, refresh }: { data: CommissionOverview; refresh: () => Promise<void> }) {
+function Payroll({ data, refresh, reviewStatements }: { data: CommissionOverview; refresh: () => Promise<void>; reviewStatements: () => void }) {
   const invalidate = useContext(CommissionAccessContext);
   return <>
-    <CommissionPayroll owner refreshLedger={refresh} onAccessDenied={invalidate} />
+    <CommissionPayroll owner refreshLedger={refresh} onAccessDenied={invalidate} reviewStatements={reviewStatements} />
     <CommissionPanel title="Legacy payroll batch history">
       <p>New payments use monthly or off-cycle payroll above. Cancel an unpaid legacy batch to release its receipts before preparing a new approved report.</p>
       <BatchList batches={data.batches.filter(b => !b.cycleId)} refresh={refresh} />

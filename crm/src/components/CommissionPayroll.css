@@ -384,3 +384,10 @@
     padding: 10px 12px;
   }
 }
+
+.payroll-readiness-grid { display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:16px 0; }
+.payroll-readiness-grid > div { display:flex;flex-direction:column;gap:8px;border:1px solid var(--border,#dce3ec);border-radius:8px;padding:16px;background:var(--bg,#f5f7fa); }
+.payroll-readiness-grid span,.payroll-readiness-grid small { color:var(--muted,#64748b); }
+.payroll-readiness-grid strong { font-size:1.05rem; }
+@media(max-width:1000px){.payroll-readiness-grid{grid-template-columns:repeat(2,minmax(0,1fr));}}
+@media(max-width:600px){.payroll-readiness-grid{grid-template-columns:1fr;}}

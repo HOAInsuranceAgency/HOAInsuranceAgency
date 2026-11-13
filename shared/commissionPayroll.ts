@@ -46,6 +46,8 @@ export interface PayrollWorkspace {
   legacyBatches?: CommissionBatch[];
   producers?: { id: string; name: string }[];
   availableEarnings?: ReturnType<typeof payrollPreview>;
+  statementReadiness?: { activeStatements: number; statementsNeedingReview: number; unmatchedRows: number; pendingSettlements: { id: string; reference: string; receivedOn: string; status: string }[] };
+
 }
 export const defaultPayrollSettings = (reviewRecipient = ''): PayrollSettings => ({ id: 'payroll', version: 0, enabled: false, hrRecipient: 'hr@cobaltemployment.com', reviewRecipient });
 export const payrollDay = (date = new Date()) => new Intl.DateTimeFormat('en-CA', { timeZone: PAYROLL_TIME_ZONE, year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);

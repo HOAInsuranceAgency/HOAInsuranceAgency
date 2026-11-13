@@ -258,6 +258,8 @@ export const commissionAction = async (action: string, input: Record<string, unk
         },
       ],
     });
+  if (action === 'intakeWorkspace' && useIsOwner()) return structuredClone({intakes: [inboxSample], settlements: [], templates: []});
+  if (action === 'getStatementIntake' && useIsOwner()) return structuredClone({intake: inboxSample, rows: inboxRows, settlements: []});
   if (action === "payrollWorkspace" && useIsOwner())
     return structuredClone(payrollWorkspace);
   throw new Error(
@@ -396,3 +398,7 @@ export async function attachCommissionStatement(file: File) {
   if (file.size > 5_000_000) throw new Error('Use a file under 5 MB.');
   return { key: '', uploaded: false };
 }
+
+const inboxSample = {id:'demo-inbox',version:1,carrierId:'c',carrierName:'Harbor Mutual',reference:'TEST-HARBOR-OCT',source:'fictional-source',filename:'harbor-october.csv',fileHash:'fictional',documentReceivedOn:'2026-10-15',totalCents:100000,createdAt:'2026-10-15T12:00:00Z',createdBy:'preview',status:'OPEN',rowCount:2,rowTotalCents:100000,needsReview:1,unmatched:1,postedCents:0,completedRows:0};
+const inboxRows = [{id:'sample1',version:1,intakeId:'demo-inbox',policyNumber:'POL-1',effectiveDate:'2026-01-01',policyId:'p',lineRef:'TEST-TX-1',agencyCents:75000,transactionType:'RECEIPT',reviewStatus:'ELIGIBLE',note:'Fictional source review',postedCents:0},{id:'sample2',version:1,intakeId:'demo-inbox',policyNumber:'HARBOR-NEW',effectiveDate:'',policyId:'',lineRef:'TEST-TX-2',agencyCents:25000,transactionType:'RECEIPT',reviewStatus:'PENDING',note:'',postedCents:0}];
+payrollWorkspace.statementReadiness = {activeStatements:1,statementsNeedingReview:1,unmatchedRows:1,pendingSettlements:[]};

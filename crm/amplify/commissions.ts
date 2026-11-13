@@ -49,6 +49,8 @@ export function installCommissions(backend: typeof Backend, communicationTable: 
   fn.addEnvironment('COMMISSION_PAYROLL_ENV', businessBranch || 'local');
   fn.addEnvironment('COMMISSION_BUCKET', bucket.bucketName);
   bucket.grantReadWrite(fn.resources.lambda);
+  // Textract analysis APIs do not support resource-level IAM. Sources stay in the private bucket.
+  fn.resources.lambda.addToRolePolicy(new PolicyStatement({ actions: ['textract:StartDocumentAnalysis', 'textract:GetDocumentAnalysis'], resources: ['*'] }));
   fn.addEnvironment('ACCESS_API_ID', api.apiId);
   fn.addEnvironment('COMMUNICATION_TABLE', communicationTable.tableName);
   communicationTable.grantReadData(fn.resources.lambda);

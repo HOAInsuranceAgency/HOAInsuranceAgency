@@ -1,4 +1,4 @@
-import { receiptEarnings, type CommissionEarning } from '../../../../shared/commissionExceptions';
+import { type CommissionEarning } from '../../../../shared/commissionExceptions';
 import { exceptionAction, exceptionOperations } from './exceptions';
 import { assertPreviewRead } from "../migration-readonly";
 import { QueryCommand } from '@aws-sdk/lib-dynamodb';
@@ -50,6 +50,8 @@ import {
 import * as store from './store';
 import { holdApprovedPayroll, payrollAction, payrollOperations } from './payroll';
 import { planAction, planOperations } from './plans';
+import { statementPostingChanges } from './posting';
+import { intakeAction, intakeOperations } from './intake';
 
 const agencyToday = () =>
   new Intl.DateTimeFormat('en-CA', {
@@ -201,6 +203,7 @@ export async function handler(event: Event) {
       };
     }
     const operation = required(args.operation, 'an operation');
+    if (intakeOperations.has(operation)) return await intakeAction(event, actor, operation, input);
     if (exceptionOperations.has(operation)) return await exceptionAction(actor, operation, input);
     if (planOperations.has(operation)) return await planAction(event, actor, operation, input);
     if (payrollOperations.has(operation)) return await payrollAction(event, actor, role === 'OWNER', operation, input);
@@ -337,6 +340,7 @@ export async function handler(event: Event) {
         'Policy',
         required(input.policyId, 'an existing policy'),
       );
+      if (input.policyUpdatedAt !== undefined && input.policyUpdatedAt !== policy.updatedAt) throw new Error('CRM policy details changed. Reopen the policy setup before saving.');
       if (policy.commissionSnapshotId || (await store.get('POLICY', String(policy.id))))
         throw new Error('This policy already has a commission snapshot.');
       const account = await access.requireRecord(
@@ -715,60 +719,9 @@ export async function handler(event: Event) {
         throw new Error('Statement control totals do not balance.');
       if (input.confirmed !== true)
         throw new Error('Confirm settlement evidence and line eligibility before posting.');
-      const earnings = await store.list<CommissionEarning>('EARNING');
-      const changes: store.Change[] = [],
-        originals = new Map<string, CommissionPolicy>(),
-        updated = new Map<string, CommissionPolicy>();
-      for (const line of statement.lines) {
-        const original =
-          originals.get(line.policyId) ??
-          (await store.get<CommissionPolicy>('POLICY', line.policyId));
-        if (!original || original.carrierId !== statement.carrierId)
-          throw new Error('A policy match is no longer available.');
-        originals.set(original.id, original);
-        updated.set(
-          original.id,
-          appendEntry(
-            updated.get(original.id) ?? original,
-            line,
-            statement,
-            `${statement.id}:${line.lineRef}`,
-          ),
-        );
-        const postedPolicy = updated.get(original.id)!;
-        const postedEntry = postedPolicy.entries.at(-1)!;
-        const allocations = receiptEarnings(postedPolicy, postedEntry, earnings);
-        earnings.push(...allocations);
-        changes.push(...allocations.map(e=>change('EARNING',e)));
-        changes.push(
-          change('CARRIER_TRANSACTION', {
-            id: hash(`${statement.carrierId}|${line.lineRef.toLowerCase()}`),
-            statementId: statement.id,
-          }),
-        );
-      }
-      for (const [id, value] of updated) changes.push(change('POLICY', value, originals.get(id)));
-      changes.push(
-        change('SETTLEMENT', {
-          id: hash(`${statement.carrierId}|${statement.settlementRef.toLowerCase()}`),
-          statementId: statement.id,
-          amount: statement.totalCents,
-        }),
-      );
-      changes.push(
-        change(
-          'STATEMENT',
-          {
-            ...statement,
-            status: 'POSTED',
-            postedAt: new Date().toISOString(),
-            postedBy: actor,
-          },
-          statement,
-        ),
-      );
+      const changes = await statementPostingChanges(statement, actor, statement);
       const reconciliation = await store.get<{ id: string; version: number }>('PAYROLL_STATE', 'reconciliation');
-      await store.commit([...changes, change('PAYROLL_STATE', { id: 'reconciliation' }, reconciliation)], actor);
+      await store.commit([...changes, change('PAYROLL_STATE', { id: 'reconciliation' }, reconciliation)], actor, statement.lines.map(line => ({ ConditionCheck: { TableName: store.table(), Key: { kind: 'INTAKE_TRANSACTION', id: hash(statement.carrierId + '|' + line.lineRef.toLowerCase()) }, ConditionExpression: 'attribute_not_exists(id)' } })));
       return { ok: true };
     }
     if (operation === 'preparePayroll') throw new Error('Use the payroll workspace to create an off-cycle run, review its preview, and approve its HR report.');

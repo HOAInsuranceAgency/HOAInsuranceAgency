@@ -89,10 +89,12 @@ export default function CommissionPayroll({
   owner,
   refreshLedger,
   onAccessDenied,
+  reviewStatements,
 }: {
   owner: boolean;
   refreshLedger: () => Promise<void>;
   onAccessDenied?: (error: unknown) => void;
+  reviewStatements?: () => void;
 }) {
   const [auditOpen, setAuditOpen] = useState(false);
   const resource = useAsyncResource(
@@ -152,6 +154,7 @@ export default function CommissionPayroll({
           !resource.error && <p>Loading payroll…</p>
         ) : (
           <>
+            {owner && <PayrollReadiness workspace={data.workspace} reviewStatements={reviewStatements} />}
             <div className="payroll-tools">
               {owner && data.workspace.settings && (
                 <Panel
@@ -323,6 +326,33 @@ export default function CommissionPayroll({
     </PayrollAccessContext.Provider>
   );
 }
+function PayrollReadiness({ workspace, reviewStatements }: { workspace: PayrollWorkspace; reviewStatements?: () => void }) {
+  const monthly = workspace.cycles.filter(c => c.status !== 'CANCELLED' && c.cycleType !== 'OFF_CYCLE');
+  const initial = monthly.filter(c => c.status === 'OPEN').sort((a,b) => a.cutoff.localeCompare(b.cutoff))[0] ?? monthly[0];
+  const [selected, setSelected] = useState(initial?.id ?? '');
+  const cycle = workspace.cycles.find(c => c.id === selected) ?? initial;
+  const readiness = workspace.statementReadiness;
+  if (!cycle || !readiness) return null;
+  const pending = readiness.pendingSettlements.filter(s => s.receivedOn <= cycle.cutoff);
+  const batches = workspace.batches.filter(b => cycle.batchIds.includes(b.id));
+  const paid = sum(batches.map(batchPaidCents));
+  const deliveries = workspace.deliveries.filter(d => d.cycleId === cycle.id && d.cycleRevision === cycle.revision && d.reportType === 'PAYROLL');
+  const failures = deliveries.filter(d => d.status === 'FAILED' || d.status === 'UNKNOWN' || !!d.failureState);
+  const delivery = failures.length ? 'Needs delivery review' : deliveries.some(d => d.status === 'SENT') ? 'Accepted by email service' : deliveries.some(d => d.status === 'SENDING') ? 'Sending' : 'Not sent';
+  return <section className="card payroll-readiness" aria-label="Payroll readiness">
+    <div className="payroll-heading"><div><h3>Payroll readiness</h3><p className="muted">Receipts through {displayDate(cycle.cutoff)} · HR due {displayDate(cycle.hrDueOn)} · pay date {displayDate(cycle.payDate)}</p></div><label className="field">Payroll cycle<select value={cycle.id} onChange={e => setSelected(e.target.value)}>{workspace.cycles.filter(c => c.status !== 'CANCELLED').map(c => <option key={c.id}>{c.id}</option>)}</select></label></div>
+    <div className="payroll-readiness-grid">
+      <div><span>Statement preparation</span><strong>{readiness.statementsNeedingReview} to review</strong><small>{readiness.unmatchedRows} unmatched rows · {readiness.activeStatements} active statements</small></div>
+      <div><span>Received by cutoff</span><strong>{pending.length} settlements to post</strong><small>Unpaid statements do not block payroll</small></div>
+      <div><span>{cycle.status === 'OPEN' ? 'Eligible earnings in preview' : 'Approved commission'}</span><strong>{money(cycle.preview?.totalCents ?? cycle.totalCents)}</strong><small>{cycle.preview?.blockers.length ? cycle.preview.blockers.length + ' approval issues to resolve' : cycle.status === 'OPEN' ? 'Ready for Owner review' : 'Revision ' + cycle.revision}</small></div>
+      <div><span>HR delivery & payment</span><strong>{delivery}</strong><small>{money(paid)} paid · {money(Math.max(0, cycle.totalCents - paid))} approved balance</small></div>
+    </div>
+    {!!pending.length && <p className="commission-notice">Finish posting: {pending.slice(0, 3).map(s => s.reference).join('; ')}{pending.length > 3 ? ' and ' + (pending.length - 3) + ' more' : ''}.</p>}
+    {reviewStatements && <button className="secondary" onClick={reviewStatements}>Review statement inbox</button>}
+    <p className="small muted">Review each cycle below for eligibility exceptions, approval, report versions, delivery evidence and payment confirmation.</p>
+  </section>;
+}
+
 function Action({
   label,
   action,
