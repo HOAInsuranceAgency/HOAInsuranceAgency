@@ -37,4 +37,7 @@ amplify_outputs*
 amplifyconfiguration*
 *.tsbuildinfo
 
+# Offline email review output can contain recipient details and rendered messages.
+docs/previews/california-email/
+
 .npm/

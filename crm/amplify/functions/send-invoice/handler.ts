@@ -24,6 +24,7 @@ import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtim
 import type { Schema } from "../../data/resource";
 import { listAllPages } from "../../../src/lib/pagination";
 import { isOpenQuoteStatus } from "../../../src/lib/quoteStatus";
+import { customerEmailIdentity } from "../../../../shared/customerEmailIdentity";
 import { AGENCY, AGENCY_FMT } from "../../../../shared/agency";
 import Stripe from "stripe";
 import { invoiceTotals, remittanceSplit, financeableInvoiceTotal, type RemittanceSplit } from "../../../src/lib/invoiceTotals";
@@ -1024,6 +1025,7 @@ export const handler = async (event: {
     const view = {
       number: invoice.number,
       associationName: account.data.name,
+      propertyState: account.data.state,
       contactFirstName: primary?.name?.trim().split(/\s+/)[0] ?? null,
       billToLines,
       policyNumber: policy?.policyNumber ?? null,
@@ -1049,6 +1051,8 @@ export const handler = async (event: {
       lines: [...lines].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)),
     };
     const { subject, text, html } = renderInvoice(view);
+    const from = customerEmailIdentity(view.propertyState).california
+      ? `${customerEmailIdentity(view.propertyState).name} <${MAILBOX}>` : FROM;
 
     /**
      * The PDF, which is the document they will actually forward.
@@ -1081,7 +1085,7 @@ export const handler = async (event: {
      * with the message and is visible to everyone who receives it.
      */
     const raw = buildMimeMessage({
-      from: FROM,
+      from,
       // Everyone in the To header, so each recipient can see the others were
       // sent it too — an invoice is not correspondence to keep private from
       // the board members copied on it.
@@ -1094,7 +1098,7 @@ export const handler = async (event: {
     });
     const accepted = await ses.send(
       new SendEmailCommand({
-        FromEmailAddress: FROM,
+        FromEmailAddress: from,
         Destination: {
           ToAddresses: to,
           ...(selfAddressed ? {} : { BccAddresses: [MAILBOX] }),

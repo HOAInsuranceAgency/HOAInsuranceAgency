@@ -1,4 +1,6 @@
 import { AGENCY, AGENCY_FMT } from "../../../../shared/agency";
+import { customerAgencyCopy, customerEmailIdentity } from "../../../../shared/customerEmailIdentity";
+import { californiaSignature } from "./californiaSignature";
 
 /**
  * The auto-reply's prompt and its wrapper. Pure: no SDK calls, no SES.
@@ -62,10 +64,10 @@ export interface LeadContext {
 }
 
 /** A function, not a constant: the producer's real name goes in the prompt. */
-export const systemPrompt = (producerName: string) =>
+export const systemPrompt = (producerName: string, propertyState?: string | null) =>
   `You write the first reply from an insurance agency to someone who has just asked for a review of their community association's insurance.
 
-You are writing as ${producerName}, a licensed producer at ${AGENCY.name}. Write in first person, plainly, the way a competent broker writes a short email. British-isms out; this is a US agency.
+You are writing as ${producerName}, a licensed producer at ${customerEmailIdentity(propertyState).name}. Write in first person, plainly, the way a competent broker writes a short email. British-isms out; this is a US agency.
 
 WHAT YOU MUST NOT DO. These are regulated statements and you are not authorised to make them:
 - Never quote, estimate, or imply a premium, rate, or price.
@@ -89,7 +91,7 @@ You are a working broker typing a quick reply between calls. Not a support desk,
 
 DO NOT WRITE A GREETING OR A SIGN-OFF. Both are added around your text, using the reader's real name. Your first word is the first word of the first paragraph.
 
-THE OPENING IS ALREADY WRITTEN. After the personalized greeting, the template starts with "Thank you for contacting HOA Insurance Agency." Your text follows that sentence. Start with a specific detail about their enquiry, using their association name when known. Do not add another thank-you, "Glad you got in touch", or another acknowledgement.
+THE OPENING IS ALREADY WRITTEN. After the personalized greeting, the template starts with "Thank you for contacting ${customerEmailIdentity(propertyState).displayName}." Your text follows that sentence. Start with a specific detail about their enquiry, using their association name when known. Do not add another thank-you, "Glad you got in touch", or another acknowledgement.
 
 STRUCTURE, and this is where generated email gives itself away:
 - Do NOT enumerate. No "Two things would help", no "First... Second...", no lists in prose.
@@ -453,8 +455,10 @@ export function renderReply(opts: {
   generated: { subject: string; body: string };
   lead: LeadContext;
   producerName: string;
-  /** Front appends the assigned producer's configured signature at send time. */
+  /** Non-California mail uses Front's signature; California embeds its branded text. */
   signatureMode?: "FRONT";
+  /** Verified personal Front signature, restyled as text for California only. */
+  producerSignatureHtml?: string;
   /**
    * The lead's document-upload page, if one was minted for them.
    *
@@ -465,15 +469,21 @@ export function renderReply(opts: {
   uploadUrl?: string | null;
 }): RenderedReply {
   const { lead, producerName } = opts;
-  const frontSignature = opts.signatureMode === "FRONT";
+  const identity = customerEmailIdentity(lead.state);
+  const frontSignature = opts.signatureMode === "FRONT" && !identity.california;
+  if (identity.california && opts.signatureMode === "FRONT" && !opts.producerSignatureHtml) {
+    throw new Error("A verified personal signature is required for California correspondence.");
+  }
+  const californiaPersonal = identity.california && opts.producerSignatureHtml
+    ? californiaSignature(opts.producerSignatureHtml, producerName) : undefined;
   /**
    * The generated text is cleaned here rather than trusted from the model.
    * `renderReply` is the single point every send goes through, so this is the
    * one place that can guarantee no dash reaches a lead.
    */
   const generated = {
-    subject: stripDashes(opts.generated.subject),
-    body: stripDashes(opts.generated.body),
+    subject: stripDashes(customerAgencyCopy(opts.generated.subject, lead.state)),
+    body: stripDashes(customerAgencyCopy(opts.generated.body, lead.state)),
   };
   const tells = findAiTells(`${generated.subject}\n${generated.body}`);
   if (tells.length) {
@@ -509,7 +519,7 @@ export function renderReply(opts: {
     .split(/\n{2,}/)
     .map((p) => p.trim())
     .filter(Boolean);
-  paragraphs[0] = `Thank you for contacting HOA Insurance Agency.${paragraphs[0] ? ` ${paragraphs[0]}` : ""}`;
+  paragraphs[0] = `Thank you for contacting ${identity.displayName}.${paragraphs[0] ? ` ${paragraphs[0]}` : ""}`;
 
   /**
    * One sentence and the link, in our words.
@@ -544,7 +554,11 @@ export function renderReply(opts: {
     "",
     ...paragraphs.flatMap((p) => [p, ""]),
     ...(uploadLine ? [uploadLine, "", uploadUrl as string, ""] : []),
-    ...(!frontSignature ? ["Thanks,", producerName, "", ...signatureText()] : []),
+    ...(!frontSignature ? ["Thanks,", ...(californiaPersonal
+      ? [californiaPersonal.text]
+      : [producerName, "", ...(identity.california
+        ? signatureText().map(line => customerAgencyCopy(line, lead.state)) : signatureText())])] : []),
+    ...(identity.disclosure ? ["", identity.disclosure] : []),
   ].join("\n").trimEnd();
 
   /**
@@ -587,9 +601,11 @@ ${[
         ),
       ]
     : []),
-  ...(!frontSignature ? [para(`Thanks,<br>${escapeHtml(producerName)}`, "0 0 22px")] : []),
+  ...(!frontSignature ? [para(californiaPersonal ? "Thanks," : `Thanks,<br>${escapeHtml(producerName)}`, "0 0 22px")] : []),
 ].join("\n")}
-${frontSignature ? "" : signatureHtml()}
+${frontSignature ? "" : californiaPersonal ? californiaPersonal.html : identity.california
+  ? para(signatureText().map(line => escapeHtml(customerAgencyCopy(line, lead.state))).join("<br>"), "0") : signatureHtml()}
+${identity.disclosure ? para(escapeHtml(identity.disclosure), "14px 0 0") : ""}
 </body></html>`;
 
   return { subject: generated.subject, text, html };

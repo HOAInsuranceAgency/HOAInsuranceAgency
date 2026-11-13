@@ -1,3 +1,4 @@
+import { customerEmailIdentity } from "../../../../shared/customerEmailIdentity";
 import { migrationPendingCutoff, migrationPendingHeld } from "../migration-pending";
 import { currentContacts } from "../../../src/lib/contacts";
 import { randomBytes } from "node:crypto";
@@ -276,19 +277,24 @@ export const handler = async () => {
           `[lead-reply] association name looks off: "${account.data.name}" (${lead.nameProblem})`
         );
       }
+      if (customerEmailIdentity(lead.state).california) {
+        producer = await assignedEmailProducer(workflow.data.salespersonId, { includeVerifiedSignatureHtml: true });
+      }
       const generated = await generate(lead, producer!.producerName);
       const { subject, text, html } = renderReply({
         generated,
         lead,
         producerName: producer!.producerName,
         signatureMode: "FRONT",
+        producerSignatureHtml: producer!.emailIdentity.verifiedSignatureHtml,
         uploadUrl,
       });
 
       await enqueueOperation(`op:ai:${reply.id}`, {
         type: "EMAIL", accountId: reply.accountId, replyId: reply.id,
         recipient: reply.contactEmail, subject, text, html,
-        producerId: producer!.producerId, producerName: producer!.producerName, emailIdentity: producer!.emailIdentity,
+        producerId: producer!.producerId, producerName: producer!.producerName, emailIdentity: { ...producer!.emailIdentity, verifiedSignatureHtml: undefined },
+        ...(customerEmailIdentity(lead.state).california ? { customerEmailState: "CA" } : {}),
       });
       queued = true;
 
@@ -479,7 +485,7 @@ async function callModel(lead: LeadContext, producerName: string, extraTurns: An
   const response = await anthropic.messages.create({
     model: CLAUDE_MODEL,
     max_tokens: 2000,
-    system: systemPrompt(producerName),
+    system: systemPrompt(producerName, lead.state),
     tools: [
       {
         name: "write_reply",

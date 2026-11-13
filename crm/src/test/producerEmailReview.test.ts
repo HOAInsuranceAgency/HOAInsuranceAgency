@@ -95,3 +95,10 @@ describe("manual confirmation of legacy email operations", () => {
     expect(matchesQueuedEmail(delivered({ text: legacy.text.replace(/\n/g, "\r\n") }), legacy)).toBe(false);
   });
 });
+
+it("matches the entire frozen California body and rejects an appended legacy signature", () => {
+  const california = { ...queued, customerEmailState: "CA" as const };
+  expect(matchesQueuedEmail(delivered({ text: queued.text }), california)).toBe(true);
+  expect(matchesQueuedEmail(delivered(), california)).toBe(false);
+  expect(matchesQueuedEmail(delivered({ text: queued.text + "\nHOA Insurance Agency LLC" }), california)).toBe(false);
+});

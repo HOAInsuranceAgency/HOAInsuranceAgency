@@ -1,4 +1,5 @@
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
+import { customerEmailIdentity } from "../../../../shared/customerEmailIdentity";
 import { AGENCY, AGENCY_FMT } from "../../../../shared/agency";
 import { formatMoney, invoiceTotals } from "../../../src/lib/invoiceTotals";
 import { formatDay, invoiceTerms, type InvoiceView } from "./invoice";
@@ -99,6 +100,7 @@ async function loadLogo(): Promise<Uint8Array | null> {
 
 export async function renderInvoicePdf(inv: InvoiceView): Promise<Uint8Array> {
   const total = invoiceTotals(inv.lines).retail;
+  const identity = customerEmailIdentity(inv.propertyState);
   const doc = await PDFDocument.create();
   if (process.env.HOA_MIGRATION_APP_ID === "d1nuh9rw1hcuxo") {
     // A safe retry of the same invoice must reproduce the saved PDF byte-for-byte.
@@ -107,9 +109,9 @@ export async function renderInvoicePdf(inv: InvoiceView): Promise<Uint8Array> {
     doc.setCreationDate(stamp); doc.setModificationDate(stamp);
   }
   doc.setTitle(inv.number ? `Invoice ${inv.number}` : "Invoice");
-  doc.setAuthor(AGENCY.name);
+  doc.setAuthor(identity.name);
   doc.setSubject(`Insurance premium for ${inv.associationName}`);
-  doc.setProducer(AGENCY.name);
+  doc.setProducer(identity.name);
 
   const fonts: Fonts = {
     regular: await doc.embedFont(StandardFonts.Helvetica),
@@ -120,7 +122,7 @@ export async function renderInvoicePdf(inv: InvoiceView): Promise<Uint8Array> {
   let y: number = M.top;
 
   /* ── Letterhead ────────────────────────────────────────────────────── */
-  const logo = await loadLogo();
+  const logo = identity.california ? null : await loadLogo();
   if (logo) {
     try {
       const png = await doc.embedPng(logo);
@@ -130,12 +132,12 @@ export async function renderInvoicePdf(inv: InvoiceView): Promise<Uint8Array> {
       page.drawImage(png, { x: M.left, y: y - h + 10, width: w, height: h });
     } catch {
       // A corrupt image must not cost the invoice. Fall through to text.
-      page.drawText(AGENCY_FMT.displayName.toUpperCase(), {
+      page.drawText(identity.displayName.toUpperCase(), {
         x: M.left, y: y - 4, size: 16, font: fonts.bold, color: NAVY,
       });
     }
   } else {
-    page.drawText(AGENCY_FMT.displayName.toUpperCase(), {
+    page.drawText(identity.displayName.toUpperCase(), {
       x: M.left, y: y - 4, size: 16, font: fonts.bold, color: NAVY,
     });
   }
@@ -415,8 +417,11 @@ export async function renderInvoicePdf(inv: InvoiceView): Promise<Uint8Array> {
       start: { x: M.left, y: M.bottom + 24 }, end: { x: M.right, y: M.bottom + 24 },
       thickness: 0.5, color: RULE,
     });
+    if (identity.disclosure) p.drawText(identity.disclosure, {
+      x: M.left, y: M.bottom - 10, size: 8, font: fonts.regular, color: MUTED,
+    });
     p.drawText(
-      `${AGENCY.name} · ${AGENCY.addressLine1}, ${AGENCY_FMT.addressLine2}`,
+      `${identity.name} · ${AGENCY.addressLine1}, ${AGENCY_FMT.addressLine2}`,
       { x: M.left, y: M.bottom + 12, size: 8, font: fonts.regular, color: MUTED }
     );
     p.drawText(`${AGENCY.phone} · ${AGENCY.email}`, {
