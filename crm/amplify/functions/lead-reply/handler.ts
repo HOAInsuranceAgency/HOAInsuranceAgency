@@ -1,3 +1,5 @@
+import { californiaSignature } from "./californiaSignature";
+import { customerEmailIdentity } from "../../../../shared/customerEmailIdentity";
 import { createDataClientGetter, type LambdaDataClient as DataClient } from "../data-client";
 import { sendCrmWrite } from '../live-write';
 import { migrationPendingCutoff, migrationPendingHeld } from "../migration-pending";
@@ -138,7 +140,7 @@ export const handler = async () => {
       try {
         workflow = await get<LeadWorkflow>(`workflow:${reply.accountId}`);
         if (!workflow) throw new Error("Assign an active salesperson before the initial email can be prepared");
-        if (!workflow.data.humanTakeover && workflow.data.disposition === "ACTIVE") producer = await assignedEmailProducer(workflow.data.salespersonId);
+        if (!workflow.data.humanTakeover && workflow.data.disposition === "ACTIVE") producer = await assignedEmailProducer(workflow.data.salespersonId, { includeVerifiedSignatureHtml: true });
         await resolveIssue(`generation-assignment:${reply.id}`);
       } catch (error) {
         const message = error instanceof Error ? error.message : "The assigned salesperson could not be verified";
@@ -235,6 +237,26 @@ export const handler = async () => {
         continue;
       }
 
+      // Validate California's text signature before claiming generation. Setup failures stay retryable.
+      if (customerEmailIdentity(account.data.state).california) {
+        try {
+          californiaSignature(producer!.emailIdentity.verifiedSignatureHtml ?? "", producer!.producerName);
+          await resolveIssue(`generation-signature:${reply.id}`);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "The California signature could not be verified";
+          try {
+            await sendCrmWrite(db.send(new UpdateCommand({ TableName: process.env.LEAD_REPLY_TABLE, Key: { id: reply.id },
+              UpdateExpression: "SET dueAt = :retry, note = :note, updatedAt = :now", ConditionExpression: "#s = :waiting",
+              ExpressionAttributeNames: { "#s": "status" }, ExpressionAttributeValues: { ":waiting": "WAITING", ":retry": new Date(Date.now() + 60_000).toISOString(), ":note": message.slice(0, 500), ":now": now },
+            })));
+            await issue(`generation-signature:${reply.id}`, message, reply.accountId);
+          } catch (recordError) {
+            console.warn("lead-reply signature waiting", reply.id, recordError instanceof Error ? recordError.message : "Could not record signature wait");
+          }
+          continue;
+        }
+      }
+
       await sendCrmWrite(db.send(new UpdateCommand({
         TableName: process.env.LEAD_REPLY_TABLE, Key: { id: reply.id },
         UpdateExpression: "SET #s = :sending, updatedAt = :now, frontGenerationClaimedAt = :now",
@@ -270,13 +292,15 @@ export const handler = async () => {
         lead,
         producerName: producer!.producerName,
         signatureMode: "FRONT",
+        producerSignatureHtml: producer!.emailIdentity.verifiedSignatureHtml,
         uploadUrl,
       });
 
       await enqueueOperation(`op:ai:${reply.id}`, {
         type: "EMAIL", accountId: reply.accountId, replyId: reply.id,
         recipient: reply.contactEmail, subject, text, html,
-        producerId: producer!.producerId, producerName: producer!.producerName, emailIdentity: producer!.emailIdentity,
+        producerId: producer!.producerId, producerName: producer!.producerName, emailIdentity: { ...producer!.emailIdentity, verifiedSignatureHtml: undefined },
+        ...(customerEmailIdentity(lead.state).california ? { customerEmailState: "CA" } : {}),
       });
       queued = true;
 
@@ -467,7 +491,7 @@ async function callModel(lead: LeadContext, producerName: string, extraTurns: An
   const response = await anthropic.messages.create({
     model: CLAUDE_MODEL,
     max_tokens: 2000,
-    system: systemPrompt(producerName),
+    system: systemPrompt(producerName, lead.state),
     tools: [
       {
         name: "write_reply",
