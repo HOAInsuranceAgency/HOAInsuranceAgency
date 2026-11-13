@@ -1131,6 +1131,7 @@ function OffCycleForm({
           ...(selection ? { selectedEarningKeys: selection } : {}),
         });
         if (!cycle) {
+          initialState.current = JSON.stringify({ dates, reason: "", producerIds: [], selection: undefined });
           setReason("");
           setProducers([]);
           setSelection(undefined);
