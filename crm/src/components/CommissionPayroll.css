@@ -391,3 +391,14 @@
 .payroll-readiness-grid strong { font-size:1.05rem; }
 @media(max-width:1000px){.payroll-readiness-grid{grid-template-columns:repeat(2,minmax(0,1fr));}}
 @media(max-width:600px){.payroll-readiness-grid{grid-template-columns:1fr;}}
+
+.payroll-workspace .payroll-cycle-picker { display:grid;gap:.5rem;margin:0 0 1rem;max-width:560px; }
+.payroll-cycle-picker select { width:100%;padding:.65rem;border:1px solid var(--border);border-radius:6px;font:inherit;background:var(--card,#fff);color:inherit; }
+.payroll-cycle-actions { display:flex;flex-wrap:wrap;align-items:start;gap:1rem; }
+.payroll-cycle-actions > .payroll-action { flex:1 1 480px;margin:0; }
+.payroll-cycle-actions > .commission-panel { flex:0 1 270px;margin:0; }
+.payroll-cycle-actions > .commission-panel:has(.payroll-form-body .form-grid) { flex-basis:100%; }
+.payroll-cycle-actions .payroll-check { padding:.65rem .8rem; }
+.payroll-cycle-actions .payroll-form-body { gap:.5rem; }
+.payroll-cycle-actions .payroll-form-footer { margin-top:.65rem; }
+@media(max-width:650px) { .payroll-cycle-actions { display:grid;grid-template-columns:minmax(0,1fr); } }

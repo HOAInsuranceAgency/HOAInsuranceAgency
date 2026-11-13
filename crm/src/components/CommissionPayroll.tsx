@@ -8,7 +8,7 @@ import {
 } from "react";
 import { commissionAction } from "../lib/commissions";
 import { useAsyncResource } from "../lib/useAsyncResource";
-import { useUnsavedChanges } from "../lib/editProtection";
+import { useEditProtection, useUnsavedChanges } from "../lib/editProtection";
 import { isAuthorizationError } from "../lib/authorizationError";
 import {
   batchPaidCents,
@@ -96,7 +96,8 @@ export default function CommissionPayroll({
   onAccessDenied?: (error: unknown) => void;
   reviewStatements?: () => void;
 }) {
-  const [auditOpen, setAuditOpen] = useState(false);
+  const [auditOpen, setAuditOpen] = useState(false), [selectedCycle, setSelectedCycle] = useState("");
+  const { requestLeave } = useEditProtection();
   const resource = useAsyncResource(
     async () => {
       try {
@@ -118,6 +119,10 @@ export default function CommissionPayroll({
     await refreshLedger();
   };
   const data = resource.data;
+  const cycles = data?.workspace.cycles ?? [];
+  const focused = cycles.find(c => c.id === selectedCycle) ??
+    cycles.filter(c => c.status === "OPEN").sort((a,b) => a.cutoff.localeCompare(b.cutoff))[0] ??
+    cycles.find(c => c.status === "APPROVED") ?? cycles[0];
   return (
     <PayrollAccessContext.Provider
       value={(error) => {
@@ -154,7 +159,14 @@ export default function CommissionPayroll({
           !resource.error && <p>Loading payroll…</p>
         ) : (
           <>
-            {owner && <PayrollReadiness workspace={data.workspace} reviewStatements={reviewStatements} />}
+            {owner && !!cycles.length && <label className="field payroll-cycle-picker">
+              <span>Review payroll cycle</span>
+              <select value={focused?.id ?? ""} onChange={e => requestLeave(() => setSelectedCycle(e.target.value))}>
+                {cycles.map(c => <option key={c.id} value={c.id}>{displayMonth(c.id)} · {c.cycleType === "OFF_CYCLE" ? "Off-cycle" : "Monthly"} · {c.status.toLowerCase()}</option>)}
+              </select>
+              <small className="muted">One cycle at a time. Earlier reports and payment history remain available.</small>
+            </label>}
+            {owner && <PayrollReadiness workspace={data.workspace} cycle={focused} reviewStatements={reviewStatements} />}
             <div className="payroll-tools">
               {owner && data.workspace.settings && (
                 <Panel
@@ -236,7 +248,7 @@ export default function CommissionPayroll({
                 the report.
               </p>
             )}
-            {data.workspace.cycles.map((c) => (
+            {(owner ? (focused ? [focused] : []) : cycles).map((c) => (
               <CycleCard
                 key={`${c.id}:${c.version}`}
                 cycle={c}
@@ -326,11 +338,7 @@ export default function CommissionPayroll({
     </PayrollAccessContext.Provider>
   );
 }
-function PayrollReadiness({ workspace, reviewStatements }: { workspace: PayrollWorkspace; reviewStatements?: () => void }) {
-  const monthly = workspace.cycles.filter(c => c.status !== 'CANCELLED' && c.cycleType !== 'OFF_CYCLE');
-  const initial = monthly.filter(c => c.status === 'OPEN').sort((a,b) => a.cutoff.localeCompare(b.cutoff))[0] ?? monthly[0];
-  const [selected, setSelected] = useState(initial?.id ?? '');
-  const cycle = workspace.cycles.find(c => c.id === selected) ?? initial;
+function PayrollReadiness({ workspace, cycle, reviewStatements }: { workspace: PayrollWorkspace; cycle?: PayrollCycle; reviewStatements?: () => void }) {
   const readiness = workspace.statementReadiness;
   if (!cycle || !readiness) return null;
   const pending = readiness.pendingSettlements.filter(s => s.receivedOn <= cycle.cutoff);
@@ -340,7 +348,7 @@ function PayrollReadiness({ workspace, reviewStatements }: { workspace: PayrollW
   const failures = deliveries.filter(d => d.status === 'FAILED' || d.status === 'UNKNOWN' || !!d.failureState);
   const delivery = failures.length ? 'Needs delivery review' : deliveries.some(d => d.status === 'SENT') ? 'Accepted by email service' : deliveries.some(d => d.status === 'SENDING') ? 'Sending' : 'Not sent';
   return <section className="card payroll-readiness" aria-label="Payroll readiness">
-    <div className="payroll-heading"><div><h3>Payroll readiness</h3><p className="muted">Receipts through {displayDate(cycle.cutoff)} · HR due {displayDate(cycle.hrDueOn)} · pay date {displayDate(cycle.payDate)}</p></div><label className="field">Payroll cycle<select value={cycle.id} onChange={e => setSelected(e.target.value)}>{workspace.cycles.filter(c => c.status !== 'CANCELLED').map(c => <option key={c.id}>{c.id}</option>)}</select></label></div>
+    <div className="payroll-heading"><div><h3>Payroll readiness</h3><p className="muted">Receipts through {displayDate(cycle.cutoff)} · HR due {displayDate(cycle.hrDueOn)} · pay date {displayDate(cycle.payDate)}</p></div></div>
     <div className="payroll-readiness-grid">
       <div><span>Statement preparation</span><strong>{readiness.statementsNeedingReview} to review</strong><small>{readiness.unmatchedRows} unmatched rows · {readiness.activeStatements} active statements</small></div>
       <div><span>Received by cutoff</span><strong>{pending.length} settlements to post</strong><small>Unpaid statements do not block payroll</small></div>
@@ -349,7 +357,7 @@ function PayrollReadiness({ workspace, reviewStatements }: { workspace: PayrollW
     </div>
     {!!pending.length && <p className="commission-notice">Finish posting: {pending.slice(0, 3).map(s => s.reference).join('; ')}{pending.length > 3 ? ' and ' + (pending.length - 3) + ' more' : ''}.</p>}
     {reviewStatements && <button className="secondary" onClick={reviewStatements}>Review statement inbox</button>}
-    <p className="small muted">Review each cycle below for eligibility exceptions, approval, report versions, delivery evidence and payment confirmation.</p>
+    <p className="small muted">Review this selected cycle for eligibility exceptions, approval, report versions, delivery evidence and payment confirmation.</p>
   </section>;
 }
 
@@ -794,6 +802,7 @@ function CycleCard({
           </tfoot>
         </table>
       </div>
+      <div className="payroll-cycle-actions">
       {owner && c.status === "OPEN" && (
         <>
           <Panel title={c.cycleType === 'OFF_CYCLE' ? 'Edit off-cycle dates and earnings' : 'Edit payroll dates'}>
@@ -826,6 +835,36 @@ function CycleCard({
           </Action>
         </>
       )}
+      {owner &&
+        ["OPEN", "APPROVED"].includes(c.status) &&
+        paidCents === 0 &&
+        !workspace.deliveries.some(
+          (d) =>
+            d.cycleId === c.id &&
+            d.cycleRevision === c.revision &&
+            d.reportType === "PAYROLL",
+        ) && (
+          <Panel title="Cancel this unpaid cycle" danger>
+            <Action
+              label="Cancel payroll cycle"
+              refresh={refresh}
+              action={() =>
+                commissionAction("cancelPayrollCycle", {
+                  id: c.id,
+                  version: c.version,
+                  reason,
+                })
+              }
+            >
+              <Input
+                label="Cancellation reason"
+                value={reason}
+                set={setReason}
+              />
+            </Action>
+          </Panel>
+        )}
+      </div>
       {["APPROVED", "PAID"].includes(c.status) && (
         <Action
           label="Download HR summary PDF"
@@ -974,35 +1013,6 @@ function CycleCard({
           supplemental cycle.
         </p>
       )}
-      {owner &&
-        ["OPEN", "APPROVED"].includes(c.status) &&
-        paidCents === 0 &&
-        !workspace.deliveries.some(
-          (d) =>
-            d.cycleId === c.id &&
-            d.cycleRevision === c.revision &&
-            d.reportType === "PAYROLL",
-        ) && (
-          <Panel title="Cancel this unpaid cycle" danger>
-            <Action
-              label="Cancel payroll cycle"
-              refresh={refresh}
-              action={() =>
-                commissionAction("cancelPayrollCycle", {
-                  id: c.id,
-                  version: c.version,
-                  reason,
-                })
-              }
-            >
-              <Input
-                label="Cancellation reason"
-                value={reason}
-                set={setReason}
-              />
-            </Action>
-          </Panel>
-        )}
     </section>
   );
 }

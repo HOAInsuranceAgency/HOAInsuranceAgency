@@ -89,6 +89,14 @@ export interface IntakeWorkspace {
   settlements: IntakeSettlement[];
   templates: CarrierImportTemplate[];
 }
+/** Private working copies never participate in reconciliation or payroll. */
+export interface IntakeWorkingDraft<T = Record<string, unknown>> {
+  id: string;
+  version: number;
+  baseVersion: number;
+  savedAt: string;
+  data: T | null;
+}
 export const intakeRowsKind = (id: string) => "INTAKE_ROWS#" + id;
 export const normalizePolicyNumber = (value: string) =>
   value.trim().toUpperCase();

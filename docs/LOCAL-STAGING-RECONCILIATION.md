@@ -39,19 +39,51 @@ broker-fee accounting, payroll, report, and monitoring fixes.
 
 ## Publication status
 
-This document records a local reconciliation, not a successful deployment.
-GitHub branch creation and AWS deployment-status inspection were rejected by this
-session's approval policy. The deployed staging revision therefore remains unverified.
+On November 13, 2026, the remote staging branch was re-read and still matched
+the baseline `764d200c0f9976218d779d33a2583a3a34812ba1`. There were no newer
+staging changes to reconcile. Local commit
+`cbb40bdb4aaf587907f8095652c8b790d0be25f2` was fast-forwarded to
+`codex-hoa-staging-migration`.
 
-Before publishing, re-read the staging branch head, incorporate concurrent changes,
-run the affected checks, publish the reconciled source, and verify the successful
-Amplify job's commit matches the local revision. Do not change production or enable
-commission report emails as part of this synchronization.
+CRM Amplify app `d1nuh9rw1hcuxo`, staging deployment **48**, completed with
+BUILD, DEPLOY and VERIFY all **SUCCEED**. Its reported commit matches the local
+reconciliation commit exactly. Automatic builds remain off; this was an explicit
+staging release. The original working copy remains separate and untouched.
 
-## Approved commission work still to implement
+Before the release, the staging payroll schedule was verified **DISABLED** and
+the saved payroll report setting was `enabled: false`. No production branch,
+production deployment, payroll report setting or email schedule was changed.
 
-The further visual/workflow pass is not part of this reconciliation: compact
-approval/cancellation actions, the prioritized work queue, guided statement progress,
-automatic source loading and extraction polling, consolidated settlement posting,
-focused payroll review, and recoverable server-saved working drafts remain the
-next implementation work. Existing staging functionality is retained in full.
+## Approved commission workflow implementation
+
+The subsequent workflow pass adds:
+
+- A statement work queue that prioritizes received, unfinished settlements before
+  matching/review and awaiting-payment work, with oldest arrivals first.
+- A five-step statement guide and automatically opened next-work panels.
+- Automatic reading of saved spreadsheets, automatic PDF/image extraction for new
+  statements, and bounded extraction polling that stops on errors or when closed.
+- One explicit allocation-and-post action, retaining server review, amount,
+  evidence, eligibility, version and idempotency checks. Interrupted posting remains
+  resumable and continues to block affected payroll cutoffs.
+- One selected payroll cycle shared by readiness and review, defaulting to the
+  oldest open cutoff, with compact approval and unpaid-cancellation controls.
+- Explicit server-saved working copies for statement details, import mapping,
+  source rows, payment details and settlement allocations. Each Owner's copies
+  are private, versioned and separate from reviewed financial records. Recovery
+  resets confirmations; stale copies remain available for comparison without
+  directly restoring them over changed statements. Conflicts can reload the saved
+  copy. Saves are bounded to 100 KB; ordinary pending-row saves remain available.
+- Desktop and 390-pixel mobile preview checks. Wide source tables scroll within
+  their container; the mobile statement document width was verified at 390 pixels.
+
+Local validation includes 1,045 regression/recovery tests, 134 financial payroll
+checks, backend/frontend type checks and a CRM build. One infrastructure test exceeded its five-second timeout
+during the parallel regression run; its complete file passed when rerun with one
+worker. Additional recovery tests verify interrupted posting and conflicting draft
+reloads. Local infrastructure synthesis passed. The final workflow staging release
+must also complete successfully at its exact source commit.
+
+Live authenticated file extraction, cross-session draft recovery, and financial
+posting acceptance still require controlled staging records. Fictional browser
+previews and service tests do not establish that business-data acceptance.

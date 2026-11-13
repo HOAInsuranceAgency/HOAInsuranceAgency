@@ -1,5 +1,5 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { CommissionOverview } from "../../../shared/commissions";
 import { commissionPolicy } from "../test/commissionFixtures";
 const h = vi.hoisted(() => ({
@@ -150,4 +150,84 @@ it("does not reset an unsaved amount while opening inline policy setup", async (
     screen.getByRole("button", { name: "Find in CRM / add tracking" }),
   );
   expect(screen.getByLabelText("Agency amount r1")).toHaveValue("123.45");
+});
+
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
+
+it("prioritizes received settlements before older statements awaiting review", async () => {
+  const paid={...intake,id:"paid",reference:"TEST-PAID",documentReceivedOn:"2026-11-01",needsReview:0};
+  h.action.mockImplementation(async(op)=>op==="intakeWorkspace"?{intakes:[intake,paid],settlements:[{id:"settlement",intakeId:"paid",status:"RECORDED"}],templates:[]}:detail);
+  renderInbox();
+  const queue=await screen.findByRole("region",{name:"Prioritized commission work"});
+  expect(within(queue).getAllByRole("button").map(b=>b.textContent)).toEqual(["Review settlement","Review statement"]);
+});
+it("loads the saved spreadsheet automatically without approving or importing it",async()=>{
+  const source={...intake,filename:"sample.csv",rowCount:0};
+  const fetcher=vi.fn().mockResolvedValue({ok:true,text:async()=>"Policy,Reference,Amount\nPOL-1,T1,100.00"});
+  vi.stubGlobal("fetch",fetcher);
+  h.action.mockImplementation(async(op)=>op==="intakeWorkspace"?{intakes:[source],settlements:[],templates:[]}:op==="getStatementIntake"?{...detail,intake:source,rows:[]}:op==="file"?{url:"https://example.test/private-source"}:{draft:null});
+  renderInbox();
+  fireEvent.click(await screen.findByRole("button",{name:"Open"}));
+  await screen.findByLabelText("Table / worksheet");
+  expect(fetcher).toHaveBeenCalledTimes(1);
+  expect(h.action.mock.calls.some(([op])=>["saveIntakeRows","postIntakeSettlement"].includes(op))).toBe(false);
+});
+it("polls extraction automatically and cancels polling when the statement is closed",async()=>{
+  const source={...intake,rowCount:0,extractionJobId:"existing-job"};
+  h.action.mockImplementation(async(op)=>op==="intakeWorkspace"?{intakes:[source],settlements:[],templates:[]}:op==="getStatementIntake"?{...detail,intake:source,rows:[]}:op==="extractIntakeDocument"?{status:"PROCESSING"}:{draft:null});
+  vi.useFakeTimers();
+  let view: ReturnType<typeof renderInbox>;
+  await act(async()=>{ view=renderInbox(); });
+  await act(async()=>{ fireEvent.click(screen.getByRole("button",{name:"Open"})); });
+  expect(h.action.mock.calls.filter(([op])=>op==="extractIntakeDocument")).toHaveLength(1);
+  await act(async()=>{await vi.advanceTimersByTimeAsync(3100)});
+  expect(h.action.mock.calls.filter(([op])=>op==="extractIntakeDocument")).toHaveLength(2);
+  view!.unmount();
+  const count=h.action.mock.calls.length;
+  await act(async()=>{await vi.advanceTimersByTimeAsync(10_000)});
+  expect(h.action.mock.calls).toHaveLength(count);
+});
+it("confirms allocation and posts the verified settlement in one reviewed action",async()=>{
+  let settlement={id:"s1",version:1,intakeId:"inbox",reference:"TEST-BANK",receivedOn:"2026-10-03",totalCents:10000,status:"RECORDED",allocations:[] as {rowId:string;amountCents:number}[],postedRows:[],evidence:"TEST bank receipt"};
+  const source={...intake,needsReview:0};
+  h.action.mockImplementation(async(op,input)=>{
+    if(op==="intakeWorkspace")return{intakes:[source],settlements:[settlement],templates:[]};
+    if(op==="getStatementIntake")return{intake:source,rows:[{...row,reviewStatus:"ELIGIBLE"}],settlements:[settlement]};
+    if(op==="allocateIntakeSettlement"){settlement={...settlement,status:"POSTING",version:2,allocations:input.allocations};return{ok:true}}
+    if(op==="postIntakeSettlement")return{complete:true,postedRows:1,totalRows:1};
+    return{draft:null};
+  });
+  renderInbox();
+  fireEvent.click(await screen.findByRole("button",{name:"Open"}));
+  fireEvent.click(await screen.findByRole("button",{name:"Fill remaining reviewed amounts"}));
+  const button=screen.getByRole("button",{name:"Confirm allocation & post settlement"});
+  expect(button).toBeDisabled();
+  fireEvent.click(screen.getByLabelText(/I reviewed the source matches/));
+  fireEvent.click(button);
+  await waitFor(()=>expect(h.action).toHaveBeenCalledWith("postIntakeSettlement",expect.objectContaining({settlementId:"s1",version:2,confirmed:true})));
+  const operations=h.action.mock.calls.map(([op])=>op);
+  expect(operations.indexOf("allocateIntakeSettlement")).toBeLessThan(operations.indexOf("postIntakeSettlement"));
+});
+
+it("retains a resumable allocation when posting is interrupted instead of allocating twice",async()=>{
+  let settlement={id:"s1",version:1,intakeId:"inbox",reference:"TEST-BANK",receivedOn:"2026-10-03",totalCents:10000,status:"RECORDED",allocations:[] as {rowId:string;amountCents:number}[],postedRows:[],evidence:"TEST bank receipt"};
+  let interrupted=true;
+  const source={...intake,needsReview:0};
+  h.action.mockImplementation(async(op,input)=>{
+    if(op==="intakeWorkspace")return{intakes:[source],settlements:[settlement],templates:[]};
+    if(op==="getStatementIntake")return{intake:source,rows:[{...row,reviewStatus:"ELIGIBLE"}],settlements:[settlement]};
+    if(op==="allocateIntakeSettlement"){settlement={...settlement,status:"POSTING",version:2,allocations:input.allocations};return{ok:true}}
+    if(op==="postIntakeSettlement"){if(interrupted){interrupted=false;throw new Error("Connection lost")}return{complete:true,postedRows:1,totalRows:1}}
+    return{draft:null};
+  });
+  renderInbox();
+  fireEvent.click(await screen.findByRole("button",{name:"Open"}));
+  fireEvent.click(await screen.findByRole("button",{name:"Fill remaining reviewed amounts"}));
+  fireEvent.click(screen.getByLabelText(/I reviewed the source matches/));
+  fireEvent.click(screen.getByRole("button",{name:"Confirm allocation & post settlement"}));
+  await screen.findByText(/Allocation saved. Posting stopped/);
+  fireEvent.click(screen.getByRole("button",{name:"Refresh statement"}));
+  fireEvent.click(await screen.findByRole("button",{name:"Post verified settlement"}));
+  await waitFor(()=>expect(h.action.mock.calls.filter(([op])=>op==="postIntakeSettlement")).toHaveLength(2));
+  expect(h.action.mock.calls.filter(([op])=>op==="allocateIntakeSettlement")).toHaveLength(1);
 });

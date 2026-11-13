@@ -47,6 +47,8 @@ export const intakeOperations = new Set([
   "saveCarrierImportTemplate",
   "extractIntakeDocument",
   "policyIntakeContext",
+  "getIntakeWorkingDraft",
+  "saveIntakeWorkingDraft",
 ]);
 const hash = (s: string) => createHash("sha256").update(s).digest("hex");
 const change = (
@@ -351,6 +353,29 @@ export async function intakeAction(
   if (operation === "getStatementIntake")
     return { ok: true, intake, ...(await children(intake)) };
   open(intake);
+  if (operation === "getIntakeWorkingDraft" || operation === "saveIntakeWorkingDraft") {
+    const scope = required(input.scope, "a draft section", 128);
+    if (!/^(header|rows|import|settlement|allocation-[A-Za-z0-9_-]+)$/.test(scope))
+      throw new Error("Unknown statement draft section.");
+    // A caller cannot read or overwrite another Owner's private working copy.
+    const id = hash(actor + "|" + intake.id + "|" + scope);
+    const old = await store.get<store.Data & { version: number }>("INTAKE_WORKING_DRAFT", id);
+    if (operation === "getIntakeWorkingDraft") return { ok: true, draft: old ?? null };
+    version(input, old as { version: number } | undefined);
+    if (input.baseVersion !== intake.version)
+      throw new Error("This statement changed. Refresh and compare your working draft before saving.");
+    const draftData = input.data === null ? null : object(input.data);
+    if (Buffer.byteLength(JSON.stringify(draftData), "utf8") > 100_000)
+      throw new Error("This working draft is too large. Save smaller groups of source rows.");
+    const value = { id, intakeId: intake.id, ownerId: actor, scope,
+      baseVersion: intake.version, savedAt: new Date().toISOString(), data: draftData };
+    await store.commit([change("INTAKE_WORKING_DRAFT", value, old)], actor, [{
+      ConditionCheck: { TableName: store.table(), Key: { kind: "STATEMENT_INTAKE", id: intake.id },
+        ConditionExpression: "#v = :v", ExpressionAttributeNames: { "#v": "version" },
+        ExpressionAttributeValues: { ":v": intake.version } },
+    }]);
+    return { ok: true, draft: { ...value, version: Number(old?.version ?? 0) + 1 } };
+  }
   if (operation === "extractIntakeDocument") {
     const { extractIntakeDocument } = await import("./intake-extraction");
     return extractIntakeDocument(intake, actor, input);

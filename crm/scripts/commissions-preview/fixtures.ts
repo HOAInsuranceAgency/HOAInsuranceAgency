@@ -258,7 +258,9 @@ export const commissionAction = async (action: string, input: Record<string, unk
         },
       ],
     });
+  if (action === 'getIntakeWorkingDraft' && useIsOwner()) return { draft: null };
   if (action === 'intakeWorkspace' && useIsOwner()) return structuredClone({intakes: [inboxSample], settlements: [], templates: []});
+  if (action === 'file' && useIsOwner() && input.key === 'fictional-source') return {url:'data:text/csv;charset=utf-8,' + encodeURIComponent('Policy,Reference,Agency commission\nPOL-1,TEST-TX-1,750.00\nHARBOR-NEW,TEST-TX-2,250.00')};
   if (action === 'getStatementIntake' && useIsOwner()) return structuredClone({intake: inboxSample, rows: inboxRows, settlements: []});
   if (action === "payrollWorkspace" && useIsOwner())
     return structuredClone(payrollWorkspace);

@@ -595,3 +595,38 @@ it("handles zero-net partial settlements without unlocking the original statemen
     await call("saveStatementIntake", { ...parent, totalCents: 100 }),
   ).toMatchObject({ ok: false });
 });
+
+it("saves and recovers a private working draft without creating payroll or receipt records", async () => {
+  const result = await call("saveIntakeWorkingDraft", { id:"inbox", scope:"rows", version:0, baseVersion:version(), data:{amount:"12.50"} });
+  expect(result).toMatchObject({ok:true, draft:{version:1,baseVersion:1,data:{amount:"12.50"}}});
+  expect(await call("getIntakeWorkingDraft",{id:"inbox",scope:"rows"})).toMatchObject({ok:true,draft:{data:{amount:"12.50"}}});
+  expect(all("INTAKE_ROWS#inbox")).toHaveLength(0);
+  expect(all("INTAKE_SETTLEMENT")).toHaveLength(0);
+  expect(all("PAYROLL_STATE")).toHaveLength(0);
+  expect(get<CommissionPolicy>("POLICY","p").entries).toHaveLength(0);
+  const other = request("getIntakeWorkingDraft",{id:"inbox",scope:"rows"});
+  other.identity = {...other.identity,sub:"another-owner"};
+  expect(await handler(other)).toMatchObject({ok:true,draft:null});
+});
+it("rejects stale draft saves and changed statement versions without overwriting recovery data", async () => {
+  const input = {id:"inbox",scope:"settlement",version:0,baseVersion:version(),data:{reference:"TEST"}};
+  expect(await call("saveIntakeWorkingDraft",input)).toMatchObject({ok:true});
+  expect(await call("saveIntakeWorkingDraft",input)).toMatchObject({ok:false});
+  seed("STATEMENT_INTAKE",intake({version:2}));
+  expect(await call("saveIntakeWorkingDraft",{...input,version:1})).toMatchObject({ok:false});
+  expect(await call("getIntakeWorkingDraft",{id:"inbox",scope:"settlement"})).toMatchObject({draft:{baseVersion:1,data:{reference:"TEST"}}});
+});
+it("rejects unauthorized, unknown and oversized draft saves", async () => {
+  const input={id:"inbox",scope:"rows",version:0,baseVersion:1,data:{}};
+  expect(await handler(request("saveIntakeWorkingDraft",input,"ADMIN",["OWNER","ADMIN"]))).toMatchObject({ok:false});
+  expect(await handler(request("getIntakeWorkingDraft",input,"ADMIN",["OWNER","ADMIN"]))).toMatchObject({ok:false});
+  expect(await call("saveIntakeWorkingDraft",{...input,scope:"payroll"})).toMatchObject({ok:false});
+  expect(await call("saveIntakeWorkingDraft",{...input,data:{text:"x".repeat(100_001)}})).toMatchObject({ok:false});
+  expect(all("INTAKE_WORKING_DRAFT")).toHaveLength(0);
+});
+it("discards working values with a versioned tombstone and leaves the statement intact",async()=>{
+  const input={id:"inbox",scope:"rows",version:0,baseVersion:1,data:{amount:"TEST"}};
+  await call("saveIntakeWorkingDraft",input);
+  expect(await call("saveIntakeWorkingDraft",{...input,version:1,data:null})).toMatchObject({ok:true,draft:{version:2,data:null}});
+  expect(version()).toBe(1);
+});

@@ -43,3 +43,30 @@ For large-statement interruption testing, use seven or more distinct transaction
 - An incorrectly recorded, entirely unposted settlement can be voided with a reason and confirmation. References and audit history are retained. Posted corrections require the established linked reversal/restoration workflow.
 - A recorded but unfinished settlement blocks payroll when its actual receipt date is on/before cutoff. Merely awaiting payment does not. Previously posted earnings continue to use the existing cent-rounding, agreement, shared-commission, departure and approval rules.
 - Staging is required to verify actual private-file upload, AWS PDF extraction, authenticated CRM lookup and end-to-end persistence. The isolated fictional preview is read-only and cannot establish those integration results.
+
+## Guided review and working-copy recovery
+
+The next-work list puts received, unfinished settlements ahead of source review
+and statements awaiting payment. Open a statement to follow Read source, Match &
+review, Confirm payment, Post settlement and Complete. Source loading and
+extraction checks run automatically; an extraction error or timeout retains the
+source and allows a deliberate retry.
+
+Use **Save working draft** within a section to keep a private server copy before
+leaving. Reopen the statement and choose **Restore saved draft** to resume. This
+does not approve eligibility, record payment or create earnings. Review
+confirmations must be made again. If the statement changed, inspect the saved
+values and compare them with current records; direct restore is disabled. Use
+**Reload saved draft** after a conflict or uncertain save response. Each Owner has
+their own working copies, limited to 100 KB per section; use normal pending-row
+saves to retain large, valid row sets.
+
+After actual payment is recorded and the allocation balances, **Confirm allocation
+& post settlement** validates and posts in resumable groups. If interrupted, use
+**Refresh statement**, then **Resume posting** (or **Post verified settlement** if
+the first group never posted). The recorded allocation remains; do not record the
+same deposit again.
+
+Payroll uses one cycle selector for both readiness and employee totals. The oldest
+open cutoff is shown first. Earlier cycles remain selectable, and approval,
+cancellation, report history and payment safeguards retain their existing rules.

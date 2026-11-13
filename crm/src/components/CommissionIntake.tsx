@@ -1,4 +1,4 @@
-import { useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { commissionAction } from "../lib/commissions";
 import { attachCommissionStatement } from "../lib/commissionStatementAttachment";
 import { readCommissionWorkbook } from "../lib/commissionWorkbook";
@@ -24,6 +24,7 @@ import {
 } from "../../../shared/commissionIntake";
 import { sum, type CommissionOverview } from "../../../shared/commissions";
 import CommissionPanel from "./CommissionPanel";
+import CommissionDraftRecovery from "./CommissionDraftRecovery";
 import "./CommissionIntake.css";
 
 const money = (cents: number) =>
@@ -116,19 +117,33 @@ function Field({
 const phase = (s: StatementIntake, settlements: IntakeSettlement[]) =>
   s.status === "VOID"
     ? "Voided"
-    : s.rowCount > 0 && s.completedRows === s.rowCount
-      ? "Posted"
-      : settlements.some(
-            (x) =>
-              x.intakeId === s.id && ["RECORDED", "POSTING"].includes(x.status),
-          )
-        ? "Settlement needs review"
+    : settlements.some(x => x.intakeId === s.id && ["RECORDED", "POSTING"].includes(x.status))
+      ? "Settlement needs review"
+      : s.rowCount > 0 && s.completedRows === s.rowCount
+        ? "Posted"
         : s.needsReview ||
             !s.rowCount ||
             s.totalCents === undefined ||
             s.totalCents !== s.rowTotalCents
           ? "Needs matching / review"
           : "Awaiting payment";
+
+const priority = (s: StatementIntake, settlements: IntakeSettlement[]) => {
+  const label = phase(s, settlements);
+  return label === "Settlement needs review" ? 0 : label === "Needs matching / review" ? 1 : label === "Awaiting payment" ? 2 : 3;
+};
+function StatementProgress({ intake, settlements }: { intake: StatementIntake; settlements: IntakeSettlement[] }) {
+  const label = phase(intake, settlements);
+  const step = label === "Posted" ? 4 : !intake.rowCount ? 0 :
+    intake.needsReview || intake.unmatched || intake.totalCents === undefined || intake.totalCents !== intake.rowTotalCents ? 1 :
+    label === "Settlement needs review" ? 3 : 2;
+  return <nav aria-label="Statement progress"><ol className="intake-progress">
+    {["Read source", "Match & review", "Confirm payment", "Post settlement", "Complete"].map((title, i) =>
+      <li key={title} aria-current={step === i ? "step" : undefined} className={i < step ? "complete" : ""}>
+        <span>{i < step ? "✓" : i + 1}</span>{title}
+      </li>)}
+  </ol><p className="small muted">Save working copies as you go. Only reviewed, actually received settlements create earnings.</p></nav>;
+}
 
 export default function CommissionIntake({
   data,
@@ -175,7 +190,8 @@ export default function CommissionIntake({
         )}
       </div>
     );
-  const items = workspace.intakes.filter(
+  const queue = [...workspace.intakes].sort((a, b) => priority(a, workspace.settlements) - priority(b, workspace.settlements) || a.documentReceivedOn.localeCompare(b.documentReceivedOn) || a.reference.localeCompare(b.reference));
+  const items = queue.filter(
     (s) =>
       (filter === "all" ||
         (filter === "active"
@@ -207,6 +223,18 @@ export default function CommissionIntake({
           Log carrier statement
         </button>
       </div>
+      <section className="intake-work-queue" aria-label="Prioritized commission work">
+        <h3>Next work</h3>
+        <p className="small muted">Received settlements first, then statement review, then statements awaiting payment. Oldest arrivals come first within each group.</p>
+        {queue.filter(s => priority(s, workspace.settlements) < 3).slice(0, 5).map(s =>
+          <div className="intake-queue-item" key={s.id}>
+            <div><strong>{s.reference}</strong><span className="small muted">{s.carrierName} · {phase(s, workspace.settlements)}</span></div>
+            <button className="secondary" onClick={() => requestLeave(() => { setSelected(s.id); setAdding(false); })}>
+              {priority(s, workspace.settlements) === 0 ? "Review settlement" : priority(s, workspace.settlements) === 1 ? "Review statement" : "Review payment"}
+            </button>
+          </div>)}
+        {!queue.some(s => priority(s, workspace.settlements) < 3) && <p>No unfinished statements.</p>}
+      </section>
       <div className="intake-stats">
         <div>
           <strong>
@@ -562,6 +590,7 @@ function IntakeDetail({
           >
             Original statement
           </button>
+          <button className="secondary" disabled={task.busy} onClick={() => void task.run(reload)}>Refresh statement</button>
           <button className="secondary" onClick={close}>
             Close statement
           </button>
@@ -572,6 +601,7 @@ function IntakeDetail({
         <p className="commission-notice">Voided: {intake.voidReason}</p>
       ) : (
         <>
+          <StatementProgress intake={intake} settlements={settlements} />
           <HeaderEditor
             key={
               "header-" + intake.totalCents + ":" + (intake.statementDate ?? "")
@@ -582,6 +612,7 @@ function IntakeDetail({
           />
           <CommissionPanel
             title="Import statement rows"
+            open={!rows.length}
             hint="Reuse a carrier format or extract a PDF"
           >
             <IntakeImport
@@ -614,6 +645,7 @@ function IntakeDetail({
             </div>
             <CommissionPanel
               title="Record a settlement"
+              open={!!rows.length && !intake.needsReview && !settlements.length}
               hint="Supports partial payments and net offsets"
             >
               <SettlementForm
@@ -731,6 +763,8 @@ function HeaderEditor({
         </div>
         <button className="secondary">Save statement details</button>
       </fieldset>
+      <CommissionDraftRecovery intake={intake} scope="header" value={{ total, date }}
+        restore={d => { setTotal(d.total); setDate(d.date); }} disabled={task.busy} onError={onError} />
       <Feedback task={task} />
     </form>
   );
@@ -758,7 +792,10 @@ function IntakeImport({
     [header, setHeader] = useState(0),
     [mapping, setMapping] = useState(emptyImportMapping),
     [reviewed, setReviewed] = useState(false),
-    [text, setText] = useState("");
+    [text, setText] = useState(""),
+    [processing, setProcessing] = useState(false),
+    [pollCount, setPollCount] = useState(0);
+  const alive = useRef(true);
   const task = useTask(onError),
     table = tables[sheet]?.rows.slice(header);
   let preview: IntakeRow[] = [],
@@ -780,6 +817,7 @@ function IntakeImport({
       issue = (e as Error).message;
     }
   const choose = (next: SourceTable[], index = 0, head = 0) => {
+    if (!alive.current) return;
     setTables(next);
     setSheet(index);
     setHeader(head);
@@ -811,12 +849,15 @@ function IntakeImport({
         tables?: SourceTable[];
         text?: string;
       }>("extractIntakeDocument", { id: intake.id, version: intake.version });
+      if (!alive.current) return;
       if (result.status === "PROCESSING") {
+        setProcessing(true);
         task.setMessage(
-          "Extraction is processing. Check again shortly; your source file is saved.",
+          "Extracting the source. Progress checks continue automatically; your file is saved.",
         );
-        await refresh();
+        if (!intake.extractionJobId) await refresh();
       } else {
+        setProcessing(false);
         choose(result.tables ?? []);
         setText(result.text ?? "");
         task.setMessage(
@@ -825,6 +866,29 @@ function IntakeImport({
       }
     }
   };
+  const readRef = useRef(read);
+  readRef.current = read;
+  useEffect(() => {
+    alive.current = true;
+    if (!rows.length || !!intake.extractionJobId || /\.(csv|xlsx)$/i.test(intake.filename)) void task.run(() => readRef.current());
+    return () => { alive.current = false; };
+  }, [intake.id, intake.source]);
+  useEffect(() => {
+    if (!processing || task.busy) return;
+    if (pollCount >= 60) {
+      setProcessing(false);
+      task.setMessage("Extraction is taking longer than expected. Your source is saved; check again when ready.");
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      void task.run(() => readRef.current()).then(ok => {
+        if (!alive.current) return;
+        if (!ok) setProcessing(false);
+        setPollCount(n => n + 1);
+      });
+    }, 3000);
+    return () => window.clearTimeout(timer);
+  }, [processing, pollCount, task.busy]);
   return (
     <div>
       <p className="small muted">
@@ -835,7 +899,7 @@ function IntakeImport({
         <button
           className="secondary"
           disabled={task.busy}
-          onClick={() => void task.run(read)}
+          onClick={() => { setPollCount(0); void task.run(read); }}
         >
           {task.busy
             ? "Reading…"
@@ -858,7 +922,9 @@ function IntakeImport({
                   requestId: crypto.randomUUID(),
                 });
                 await refresh();
-                task.setMessage("New extraction started. Check again shortly.");
+                setTables([]); setText(""); setReviewed(false);
+                setPollCount(0); setProcessing(true);
+                task.setMessage("New extraction started. Progress checks continue automatically.");
               })
             }
           >
@@ -867,6 +933,9 @@ function IntakeImport({
         )}
       </div>
       <Feedback task={task} />
+      {!!tables.length && <CommissionDraftRecovery intake={intake} scope="import" value={{ sheet, header, mapping }}
+        restore={d => { if (tables[d.sheet]) { setSheet(d.sheet); setHeader(d.header); setMapping(d.mapping); setReviewed(false); } }}
+        disabled={task.busy || processing} onError={onError} />}
       {!!tables.length && (
         <>
           <div className="form-grid">
@@ -1507,6 +1576,9 @@ function RowsEditor({
           </div>
         </fieldset>
       </form>
+      <CommissionDraftRecovery intake={detail.intake} scope="rows" value={{ drafts, amounts }}
+        restore={d => { setDrafts(d.drafts); setAmounts(d.amounts); setConfirmed(false); setSelected([]); setPage(0); }}
+        disabled={task.busy} onError={onError} />
       <Feedback task={task} />
       {setup && (
         <CommissionPanel
@@ -1627,6 +1699,9 @@ function SettlementForm({
           Save settlement for allocation
         </button>
       </fieldset>
+      <CommissionDraftRecovery intake={intake} scope="settlement" value={{ reference, date, amount, evidence, type }}
+        restore={d => { setReference(d.reference); setDate(d.date); setAmount(d.amount); setEvidence(d.evidence); setType(d.type); setConfirmed(false); }}
+        disabled={task.busy} onError={onError} />
       <Feedback task={task} />
     </form>
   );
@@ -1672,13 +1747,12 @@ function SettlementCard({
   } catch {
     amountError = "Correct the allocated amounts.";
   }
-  const post = () =>
-    task.run(async () => {
+  const post = async () => {
       const fresh = await commissionAction<Detail>("getStatementIntake", {
         id: detail.intake.id,
       });
       let current = fresh.settlements.find((x) => x.id === s.id);
-      if (!current)
+      if (!current || !["POSTING", "POSTED"].includes(current.status))
         throw new Error(
           "Settlement no longer available. Refresh the statement.",
         );
@@ -1711,7 +1785,7 @@ function SettlementCard({
       }
       markClean();
       await refresh();
-    });
+    };
   return (
     <CommissionPanel
       title={
@@ -1726,6 +1800,7 @@ function SettlementCard({
                 : "Voided"}
         </>
       }
+      open={["RECORDED", "POSTING"].includes(s.status)}
       hint={
         "Actual receipt " +
         s.receivedOn +
@@ -1753,8 +1828,10 @@ function SettlementCard({
                     amountCents: importedMoney(value),
                   })),
               });
-              markClean();
-              await refresh();
+              try { await post(); }
+              catch (error) {
+                throw new Error("Allocation saved. Posting stopped; refresh this statement and resume posting. " + (error instanceof Error ? error.message : ""));
+              }
             });
           }}
         >
@@ -1860,13 +1937,13 @@ function SettlementCard({
                 checked={confirmed}
                 onChange={(e) => setConfirmed(e.target.checked)}
               />{" "}
-              I reviewed the source matches, eligibility and payment allocation.
+              I reviewed the source matches, eligibility and payment allocation. Post this verified settlement to earnings.
             </label>
             <button
               className="primary"
               disabled={!confirmed || !!amountError || total !== s.totalCents}
             >
-              Confirm allocation
+              Confirm allocation & post settlement
             </button>
           </fieldset>
         </form>
@@ -1881,7 +1958,7 @@ function SettlementCard({
           <button
             className="primary"
             disabled={task.busy}
-            onClick={() => void post()}
+            onClick={() => void task.run(post)}
           >
             {task.busy
               ? "Posting reviewed rows…"
@@ -1909,6 +1986,8 @@ function SettlementCard({
           />
         </CommissionPanel>
       )}
+      {s.status === "RECORDED" && <CommissionDraftRecovery intake={detail.intake} scope={"allocation-" + s.id} value={{ amounts }}
+        restore={d => { setAmounts(d.amounts); setConfirmed(false); }} disabled={task.busy} onError={onError} />}
       <Feedback task={task} />
     </CommissionPanel>
   );

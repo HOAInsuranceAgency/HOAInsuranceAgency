@@ -13,7 +13,7 @@ vi.mock("../lib/communications", () => ({ communicationRequest: h.team }));
 vi.mock("../lib/client", () => ({
   friendlyError: (e: unknown) => (e instanceof Error ? e.message : String(e)),
 }));
-vi.mock("../lib/editProtection", () => ({ useUnsavedChanges: vi.fn() }));
+vi.mock("../lib/editProtection", () => ({ useUnsavedChanges: vi.fn(), useEditProtection: () => ({ requestLeave: (fn: () => void) => fn() }) }));
 import CommissionPayroll from "./CommissionPayroll";
 
 let workspace: PayrollWorkspace;
@@ -392,4 +392,27 @@ it("selects an adjustment without including other earnings for the same employee
   fireEvent.change(form.getByLabelText("Off-cycle reason"),{target:{value:"TEST extra earnings"}});
   fireEvent.click(form.getByRole("button",{name:"Create off-cycle draft"}));
   await waitFor(()=>expect(h.action).toHaveBeenCalledWith("savePayrollCycle",expect.objectContaining({selectedEarningKeys:[JSON.stringify(["earning","extra"])]})));
+});
+
+it("focuses on one payroll cycle while preserving access to older cycles", async () => {
+  workspace.cycles.push({...workspace.cycles[0],id:"2026-10",status:"PAID"});
+  render(<CommissionPayroll owner refreshLedger={vi.fn()} />);
+  const picker=await screen.findByRole("combobox",{name:/Review payroll cycle/});
+  expect(screen.getAllByRole("table",{name:/Employee totals/})).toHaveLength(1);
+  expect(screen.getByRole("table",{name:"Employee totals for 2026-11"})).toBeInTheDocument();
+  fireEvent.change(picker,{target:{value:"2026-10"}});
+  expect(screen.getByRole("table",{name:"Employee totals for 2026-10"})).toBeInTheDocument();
+  expect(screen.queryByRole("button",{name:"Approve payroll cycle"})).toBeNull();
+});
+
+it("keeps readiness dates and employee totals on the same selected cycle", async () => {
+  workspace.statementReadiness={activeStatements:0,statementsNeedingReview:0,unmatchedRows:0,pendingSettlements:[]};
+  workspace.cycles.push({...workspace.cycles[0],id:"2026-10",cutoff:"2026-10-23",hrDueOn:"2026-10-26",payDate:"2026-10-30"});
+  render(<CommissionPayroll owner refreshLedger={vi.fn()} />);
+  const picker=await screen.findByRole("combobox",{name:/Review payroll cycle/});
+  expect(screen.getByRole("table",{name:"Employee totals for 2026-10"})).toBeInTheDocument();
+  expect(screen.getByRole("region",{name:"Payroll readiness"})).toHaveTextContent("Oct 23, 2026");
+  fireEvent.change(picker,{target:{value:"2026-11"}});
+  expect(screen.getByRole("table",{name:"Employee totals for 2026-11"})).toBeInTheDocument();
+  expect(screen.getByRole("region",{name:"Payroll readiness"})).toHaveTextContent("Nov 16, 2026");
 });
