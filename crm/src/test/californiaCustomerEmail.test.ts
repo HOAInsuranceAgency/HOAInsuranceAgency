@@ -6,7 +6,7 @@ import { renderInvoice, type InvoiceView } from "../../amplify/functions/send-in
 import { renderInvoicePdf } from "../../amplify/functions/send-invoice/pdf";
 import { PDFDocument, PDFArray, PDFRawStream, decodePDFRawStream } from "pdf-lib";
 
-const signature = '<div>Sample Producer<br>California License No. SAMPLE<br><span>HOA</span> Insurance Agency LLC<br><a href="mailto:sample@protectmyhoa.com">sample@protectmyhoa.com</a><br>508-233-2261<img src="https://www.protectmyhoa.com/logo.png"></div>';
+const signature = '<div>Sample Producer<br>California License No. TEST123<br><span>HOA</span> Insurance Agency LLC<br><a href="mailto:sample@protectmyhoa.com">sample@protectmyhoa.com</a><br>508-233-2261<img src="https://www.protectmyhoa.com/logo.png"></div>';
 const invoice: InvoiceView = {
   associationName: "Seaside Condominium Association", number: "TEST-CA-001", propertyState: "CA",
   billToLines: ["Manager", "Boston, MA 02110"], riskLocation: ["San Diego, CA 92101"],
@@ -31,7 +31,7 @@ describe("shared California customer email identity", () => {
     expect(reply.subject).toContain("Condo Insurance Agency");
     for (const part of [reply.text, reply.html]) {
       expect(part).toContain("Thank you for contacting Condo Insurance Agency.");
-      expect(part).toContain("California License No. SAMPLE");
+      expect(part).toContain("California License No. TEST123");
       expect(part).toContain("sample@protectmyhoa.com");
       expect(part.split(disclosure)).toHaveLength(2);
       expect(part.replace(disclosure, "")).not.toMatch(/HOA\s+Insurance\s+Agency/i);
@@ -93,4 +93,23 @@ it("keeps the plain California wordmark on combined financing invoices", async (
   expect(rendered.html).not.toContain("condo-logo");
   const pdf = await PDFDocument.load(await renderInvoicePdf(combined));
   expect(pdf.getAuthor()).toBe("Condo Insurance Agency");
+});
+
+it.each([
+  '<div>Sample Producer</div><img src="https://example.invalid/contact-and-license.png">',
+  '<div>Sample Producer<br>sample@protectmyhoa.com<br>508-233-2261</div><img src="https://example.invalid/license.png">',
+  '<div>Sample Producer<br>CA License No. TEST123<br>508-233-2261</div><img src="https://example.invalid/email.png">',
+  '<div>Sample Producer<br>CA License No. TEST123<br>sample@protectmyhoa.com</div><img src="https://example.invalid/phone.png">',
+])("holds mixed signatures whose essential details exist only in images", signatureHtml => {
+  expect(() => renderReply({ generated, lead, producerName: "Sample Producer", signatureMode: "FRONT", producerSignatureHtml: signatureHtml })).toThrow("text signature");
+});
+
+it("retains phone and email destinations when their link labels differ", () => {
+  const linked = '<div>Sample Producer<br>CA License No. TEST123<br>HOA Insurance Agency LLC<br><a href="mailto:sample@protectmyhoa.com">Email me</a><br><a href="tel:5082332261">Call me</a></div>';
+  const reply = renderReply({ generated, lead, producerName: "Sample Producer", signatureMode: "FRONT", producerSignatureHtml: linked });
+  for (const part of [reply.text, reply.html]) {
+    expect(part).toContain("sample@protectmyhoa.com");
+    expect(part).toContain("5082332261");
+    expect(part).toContain("CA License No. TEST123");
+  }
 });
