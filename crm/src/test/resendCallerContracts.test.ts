@@ -4,6 +4,8 @@ import { INVOICE_SEND_GENERATION } from "../../amplify/functions/send-invoice/se
 
 // These are offline caller contracts. AWS, Stripe, and the sending boundary are
 // mocked; the actual five callers still assemble their own production messages.
+// Hosting supplies a live backend DSN; optional error cases must remain local.
+vi.mock("../../amplify/functions/monitoring", () => ({ captureHandledFailure: vi.fn() }));
 const h = vi.hoisted(() => ({
   mail: vi.fn(), cognito: vi.fn(), db: vi.fn(), models: {} as Record<string, any>,
   order: [] as string[], run: undefined as any, reportUpdates: [] as any[],
