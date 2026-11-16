@@ -13,10 +13,11 @@ function SavedValues({ value }: { value: unknown }): ReactNode {
     </dd></div>)}</dl>;
 }
 export default function CommissionDraftRecovery<T extends object>({
-  intake, scope, value, restore, disabled, onError,
+  intake, scope, value, restore, disabled, onError, renderSaved,
 }: {
   intake: StatementIntake; scope: string; value: T; restore: (data: T) => void;
   disabled?: boolean; onError: (error: unknown) => void;
+  renderSaved?: (data: T) => ReactNode;
 }) {
   const resource = useAsyncResource(
     async () => {
@@ -73,7 +74,7 @@ export default function CommissionDraftRecovery<T extends object>({
       </>}
     </div>
     {stale && <p role="alert">The statement changed after this draft was saved. Compare the saved values before entering changes again.</p>}
-    {draft?.data && <details><summary>View saved working values</summary><div className="intake-source-text"><SavedValues value={draft.data} /></div></details>}
+    {draft?.data && <details><summary>View saved working values</summary><div className="intake-source-text">{renderSaved ? renderSaved(draft.data) : <SavedValues value={draft.data} />}</div></details>}
     {(error || resource.error) && <p role="alert" className="error-text">{error || resource.error}</p>}
     {(error || resource.error) && <button type="button" className="secondary" disabled={busy || resource.loading} onClick={() => { handled.current = current; accepted.current = false; setError(""); setState("Ready"); void resource.refetch(); }}>Reload saved draft</button>}
     {message && <p role="status" className="small">{message}</p>}

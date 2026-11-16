@@ -216,3 +216,14 @@
  .intake-source-values { max-width:none; }
 }
 @media(max-width:700px) { .intake-summary { position:static; }.intake-totals { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+
+.intake-next-action { margin:.65rem 0;line-height:1.5;font-size:.9rem; }
+.intake-import-guide,.intake-import-confirm { padding:1rem;border:1px solid var(--border);border-radius:8px;background:var(--bg);margin-bottom:1rem; }
+.intake-import-guide h3,.intake-import-confirm h4 { margin:0 0 .5rem; }
+.intake-import-guide ol { padding-left:1.3rem;margin:.5rem 0;line-height:1.45;font-size:.9rem; }
+.intake-import-guide li + li { margin-top:.25rem; }
+.intake-import-confirm { margin-top:1rem;border-color:var(--accent); }
+.intake-detail #intake-import,.intake-detail #intake-rows { scroll-margin-top:230px; }
+@media(max-width:700px) { .intake-detail #intake-import,.intake-detail #intake-rows { scroll-margin-top:1rem; } }
+
+.intake-source-options { margin:1rem 0; }.intake-source-options summary { font-size:.85rem;cursor:pointer;color:var(--muted); }.intake-source-options .form-grid { margin-top:.75rem; }

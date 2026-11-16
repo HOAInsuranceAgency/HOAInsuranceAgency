@@ -46,6 +46,7 @@ createRoot(document.getElementById('root')!).render(
               <option value="shared">Shared commissions</option>
               <option value="exceptions">Payment &amp; report history</option>
               <option value="basic">Basic ledger</option>
+              <option value="import">Statement import guidance</option>
             </select>
           </label>
           <label className="field" style={{minWidth:200,flex:1}}>

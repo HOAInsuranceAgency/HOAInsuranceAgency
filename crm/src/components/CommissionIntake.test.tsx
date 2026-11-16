@@ -233,3 +233,58 @@ it("retains a resumable allocation when posting is interrupted instead of alloca
   await waitFor(()=>expect(h.action.mock.calls.filter(([op])=>op==="postIntakeSettlement")).toHaveLength(2));
   expect(h.action.mock.calls.filter(([op])=>op==="allocateIntakeSettlement")).toHaveLength(1);
 });
+
+
+it("suggests all recognizable source columns but imports only after confirmation, then focuses review", async () => {
+  let current = {...detail, intake:{...intake,filename:"main.csv",rowCount:0,rowTotalCents:0,totalCents:150000,needsReview:0},rows:[] as typeof row[]};
+  vi.stubGlobal("fetch",vi.fn().mockResolvedValue({ok:true,text:async()=>"Policy,Reference,Amount,Effective,Transaction\nPOL-1,T1,1000.00,2026-01-01,RECEIPT\nPOL-1,T2,500.00,2026-01-01,RECEIPT"}));
+  h.action.mockImplementation(async(op,input)=>{
+    if(op==="intakeWorkspace") return {intakes:[current.intake],settlements:[],templates:[]};
+    if(op==="getStatementIntake") return current;
+    if(op==="file") return {url:"https://example.test/private-source"};
+    if(op==="saveIntakeRows") { current={...current,intake:{...current.intake,version:2,rowCount:2,rowTotalCents:150000,needsReview:2},rows:input.rows}; return {ok:true}; }
+    return {draft:null};
+  });
+  renderInbox();
+  fireEvent.click(await screen.findByRole("button",{name:"Open"}));
+  await screen.findByRole("heading",{name:"Next: check columns, then import"});
+  await screen.findByLabelText("Policy effective date");
+  expect(screen.getByLabelText("Policy number")).toHaveValue("0");
+  expect(screen.getByLabelText("Transaction reference")).toHaveValue("1");
+  expect(screen.getByLabelText("Agency commission amount")).toHaveValue("2");
+  expect(screen.getByLabelText("Policy effective date")).toHaveValue("3");
+  expect(screen.getByLabelText("Transaction type")).toHaveValue("4");
+  expect(screen.queryByText(/difference to resolve/)).toBeNull();
+  const button=screen.getByRole("button",{name:"Import rows & remember format"});
+  expect(button).toBeDisabled();
+  expect(h.action.mock.calls.some(([op])=>op==="saveIntakeRows")).toBe(false);
+  const confirmation=screen.getByRole("checkbox",{name:/I checked the mapping/});
+  fireEvent.click(confirmation);
+  expect(button).toBeEnabled();
+  fireEvent.change(screen.getByLabelText("Policy effective date"),{target:{value:"-1"}});
+  expect(confirmation).not.toBeChecked();
+  expect(button).toBeDisabled();
+  fireEvent.change(screen.getByLabelText("Policy effective date"),{target:{value:"3"}});
+  fireEvent.click(confirmation);
+  fireEvent.click(button);
+  await waitFor(()=>expect(h.action).toHaveBeenCalledWith("saveIntakeRows",expect.objectContaining({confirmed:false,extractionReviewed:false,rows:expect.arrayContaining([expect.objectContaining({agencyCents:100000,reviewStatus:"PENDING"}),expect.objectContaining({agencyCents:50000,reviewStatus:"PENDING"})])})));
+  await waitFor(()=>expect(screen.getByRole("heading",{name:"Policy matches & eligibility"})).toHaveFocus());
+  expect(h.action.mock.calls.some(([op])=>["recordIntakeSettlement","postIntakeSettlement"].includes(op))).toBe(false);
+});
+
+it("formats the total and saved draft as currency without changing signed cents or invalid input", async()=>{
+  const source={...intake,totalCents:150000,rowCount:0,rowTotalCents:0};
+  h.action.mockImplementation(async(op,input)=>op==="intakeWorkspace"?{intakes:[source],settlements:[],templates:[]}:op==="getStatementIntake"?{...detail,intake:source,rows:[]}:op==="getIntakeWorkingDraft" && input.scope==="header"?{draft:{version:1,baseVersion:0,savedAt:"2026-11-16T14:59:00Z",data:{total:"1500",date:""}}}:{draft:null});
+  renderInbox();fireEvent.click(await screen.findByRole("button",{name:"Open"}));
+  const input=await screen.findByLabelText("Statement agency commission total ($)");
+  expect(input).toHaveValue("$1,500.00");
+  const draft=await screen.findByLabelText("Statement details working draft");
+  await waitFor(()=>expect(within(draft).getByText("$1,500.00")).toBeInTheDocument());
+  fireEvent.focus(input);expect(input).toHaveValue("1500.00");
+  fireEvent.change(input,{target:{value:"-25.25"}});fireEvent.blur(input);
+  expect(input).toHaveValue("($25.25)");
+  fireEvent.submit(input.closest("form")!);
+  await waitFor(()=>expect(h.action).toHaveBeenCalledWith("saveStatementIntake",expect.objectContaining({totalCents:-2525})));
+  fireEvent.focus(input);fireEvent.change(input,{target:{value:"12.345"}});fireEvent.blur(input);
+  expect(input).toHaveValue("12.345");
+});

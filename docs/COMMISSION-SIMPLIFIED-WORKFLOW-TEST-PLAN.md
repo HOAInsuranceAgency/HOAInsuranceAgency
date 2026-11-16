@@ -1,4 +1,27 @@
 # HOA commission workflow — staging acceptance plan
+
+Updated November 16, 2026: clearer upload-to-import guidance and currency display. The release information below describes the November 13 baseline; the November 16 staging release must be checked against its own exact deployed commit.
+
+### After uploading the main test file
+
+The uploaded file is saved before its rows are imported. For `01-Main-Statement.csv`, select **Review source columns** and follow **Next: check columns, then import**.
+
+| Screen field | Source column |
+| --- | --- |
+| Policy number | Policy |
+| Transaction reference | Reference |
+| Agency commission amount | Amount |
+| Policy effective date | Effective |
+| Transaction type | Transaction |
+
+Recognizable headings are suggested for a new carrier. A saved carrier format takes priority; check every choice. Duplicate or unfamiliar headings require a manual selection. Compare the two preview rows ($1,000 and $500, totaling $1,500) against the original, check **I checked the mapping against the original…**, then click **Import rows & remember format**. The page moves to **Policy matches & eligibility**. Importing leaves both rows Pending and creates no earnings or payment.
+
+For this run, the carrier is **TEST Harbor Mutual 0B7609**, policy **TEST-0B7609-MAIN**, and employee **Brian Cole** with a saved **10%** rate. These main prerequisites are already configured in staging. Preserve the uploaded statement and saved working copies; do not restart the test or duplicate the upload. Select only this policy's earnings for test payroll because Brian has other staging activity.
+
+Verify the statement total and its saved-draft comparison display **$1,500.00**. While editing, the amount may show raw digits; leaving the field restores currency formatting. Negative amounts retain their sign; invalid precision remains visible for correction. Before import, the total panel explains that rows must be imported instead of displaying a misleading difference error. Saved import drafts show column names and a one-based header row, and still require explicit restoration and fresh confirmation.
+
+Continue with the source review and simulated payment steps below. Report emails must remain disabled. These new live acceptance checks are pending the tester's continuation.
+
 Updated November 13, 2026 for the completed workflow simplifications. Use the release commit and staging deployment identified in the release message. This plan supersedes the earlier November 13 plan's pending-feature list and the older acceptance plan's navigation/deployment instructions.
 
 Staging: https://migration-staging.d1nuh9rw1hcuxo.amplifyapp.com

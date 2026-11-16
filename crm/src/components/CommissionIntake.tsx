@@ -1,4 +1,5 @@
 import CommissionSourcePreview from './CommissionSourcePreview';
+import { displayCommissionAmount, importColumnLabels, suggestImportMapping } from '../lib/commissionSourceGuidance';
 import { useCommissionPreference, useCommissionWorkflow, CommissionBadge } from '../lib/commissionWorkflow';
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { commissionAction } from "../lib/commissions";
@@ -16,7 +17,6 @@ import {
   exactPolicyMatches,
   prepareIntakeRows,
   reservedCents,
-  reuseImportMapping,
   rowIssues,
   type StatementIntake,
   type IntakeRow,
@@ -99,19 +99,25 @@ function Field({
   set,
   type = "text",
   required = false,
+  currency = false,
 }: {
   label: string;
   value: string;
   set: (v: string) => void;
   type?: string;
   required?: boolean;
+  currency?: boolean;
 }) {
+  const [focused, setFocused] = useState(false);
   return (
     <label className="field">
       <span>{label}</span>
       <input
         type={type}
-        value={value}
+        value={currency && !focused ? displayCommissionAmount(value) : value}
+        inputMode={currency ? "decimal" : undefined}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
         required={required}
         onChange={(e) => set(e.target.value)}
       />
@@ -142,11 +148,11 @@ function StatementProgress({ intake, settlements }: { intake: StatementIntake; s
     intake.needsReview || intake.unmatched || intake.totalCents === undefined || intake.totalCents !== intake.rowTotalCents ? 1 :
     label === "Settlement needs review" ? 3 : 2;
   return <nav aria-label="Statement progress"><ol className="intake-progress">
-    {["Read source", "Match & review", "Confirm payment", "Post settlement", "Complete"].map((title, i) =>
+    {["Import source", "Match & review", "Confirm payment", "Post settlement", "Complete"].map((title, i) =>
       <li key={title} aria-current={step === i ? "step" : undefined} className={i < step ? "complete" : ""}>
         <span>{i < step ? "✓" : i + 1}</span>{title}
       </li>)}
-  </ol><p className="small muted">Save working copies as you go. Only reviewed, actually received settlements create earnings.</p></nav>;
+  </ol><p className="small muted">Working changes save automatically. Follow the next action below; importing rows does not create earnings.</p></nav>;
 }
 
 
@@ -161,17 +167,21 @@ function StatementSummary({ detail, data }: { detail: Detail; data: CommissionOv
   const recorded = sum(settlements.filter(s=>s.status!=='VOID').map(s=>s.totalCents));
   const allocated = sum(settlements.filter(s=>s.status!=='VOID').flatMap(s=>s.allocations.map(a=>a.amountCents)));
   const complete = phase(intake,settlements)==='Posted';
-  const preparation = intake.needsReview || intake.unmatched || !intake.rowCount || intake.totalCents===undefined || intake.totalCents!==intake.rowTotalCents ? 'Review needed' : 'Matches complete';
+  const preparation = !intake.rowCount ? 'Ready to import' : intake.needsReview || intake.unmatched || intake.totalCents===undefined || intake.totalCents!==intake.rowTotalCents ? 'Review needed' : 'Matches complete';
   const payment = !settlements.some(s=>s.status!=='VOID') ? 'Awaiting payment' : settlements.some(s=>['RECORDED','POSTING'].includes(s.status)) ? 'Received · posting needed' : complete ? 'Fully posted' : 'Partially paid';
-  const next = !intake.rowCount ? 'Read and import source' : preparation==='Review needed' ? 'Review unresolved rows' : settlements.some(s=>['RECORDED','POSTING'].includes(s.status)) ? 'Review and post payment' : complete ? 'Continue to payroll' : 'Confirm carrier payment';
+  const next = !intake.rowCount ? 'Review source columns' : preparation==='Review needed' ? 'Review unresolved rows' : settlements.some(s=>['RECORDED','POSTING'].includes(s.status)) ? 'Review and post payment' : complete ? 'Continue to payroll' : 'Confirm carrier payment';
   const move = () => {
     if (complete) { navigate({tab:'payroll',intakeId:intake.id}); return; }
     const node = document.getElementById(!intake.rowCount ? 'intake-import' : preparation==='Review needed' ? 'intake-rows' : 'intake-payment');
-    node?.querySelectorAll('details').forEach(d=>d.open=true);
-    node?.scrollIntoView?.({block:'start'}); node?.querySelector<HTMLElement>('button,input,select')?.focus({preventScroll:true});
+    const panel = node?.querySelector('details');
+    if (panel) panel.open = true;
+    node?.scrollIntoView?.({block:'start'});
+    const control = !intake.rowCount ? document.getElementById('intake-column-mapping')?.querySelector<HTMLElement>('select') : node?.querySelector<HTMLElement>('button,input,select');
+    control?.focus({preventScroll:true});
   };
   return <section className="intake-summary" aria-label="Statement totals and next action">
     <div className="commission-action-bar"><CommissionBadge>{preparation}</CommissionBadge><CommissionBadge tone={complete?'green':'amber'}>{payment}</CommissionBadge><button className="primary" onClick={move}>{next}</button></div>
+    <p className="intake-next-action">{!intake.rowCount ? "Your file is saved. Next, check the suggested columns and source preview, then confirm and import the rows for review." : preparation === "Review needed" ? "Next, check each policy match and eligibility, then save the reviewed rows. Employee earnings are calculated only after payment is confirmed and posted." : complete ? "This statement is posted. Continue to payroll to review employee earnings." : settlements.some(s => ["RECORDED", "POSTING"].includes(s.status)) ? "Next, review the recorded payment and its allocation, then confirm posting. Resume any interrupted posting before payroll." : "Next, record the carrier payment received, then review its allocation before posting earnings."}</p>
     <div className="intake-totals"><span>Source <strong>{intake.totalCents===undefined?'Not entered':money(intake.totalCents)}</strong></span><span>Recorded receipts <strong>{money(recorded)}</strong></span><span>Allocated <strong>{money(allocated)}</strong></span><span>Posted agency receipts <strong>{money(intake.postedCents)}</strong></span><span>Employee earnings <strong>{money(earned)}</strong></span><span>Source remaining <strong>{intake.totalCents===undefined?'Not entered':money(intake.totalCents-intake.postedCents)}</strong></span></div>
     {!!entries.length && <p className="small">Posted earnings: {entries.some(e=>e.batchId)||shared.some(e=>e.batchId)?'Some or all are included in payroll; inspect the selected cycle for approval and payment status.':'Awaiting payroll review.'}</p>}
   </section>;
@@ -556,6 +566,14 @@ function IntakeDetail({
   );
   const task = useTask(onError),
     detail = resource.data;
+  const [focusReview, setFocusReview] = useState(false);
+  useEffect(() => {
+    if (!focusReview || !detail?.rows.length) return;
+    const section = document.getElementById("intake-rows");
+    section?.scrollIntoView?.({ block: "start" });
+    section?.querySelector<HTMLElement>("h3")?.focus({ preventScroll: true });
+    setFocusReview(false);
+  }, [focusReview, detail?.rows.length]);
   const reload = async () => {
     await resource.refetch();
     await refresh();
@@ -587,6 +605,7 @@ function IntakeDetail({
       version++;
     }
     await reload();
+    if (!confirmed && current.intake.rowCount === 0) setFocusReview(true);
   };
   if (!detail)
     return (
@@ -637,7 +656,7 @@ function IntakeDetail({
         <>
           <StatementProgress intake={intake} settlements={settlements} />
           <StatementSummary detail={detail} data={data} />
-          <CommissionPanel title="Statement details & control total" open={intake.totalCents===undefined} remember={'header-panel:'+intake.id}>
+          <CommissionPanel title="Statement details & control total" hint={intake.totalCents === undefined ? "Enter the statement total" : money(intake.totalCents) + " saved"} open={intake.totalCents===undefined} remember={'header-panel:'+intake.id}>
           <HeaderEditor
             key={
               "header-" + intake.totalCents + ":" + (intake.statementDate ?? "")
@@ -652,7 +671,7 @@ function IntakeDetail({
             remember={'import-panel:' + intake.id}
             title="Import statement rows"
             open={!rows.length}
-            hint="Reuse a carrier format or extract a PDF"
+            hint="Check columns, compare the preview, then import for review"
           >
             <IntakeImport
               intake={intake}
@@ -781,6 +800,7 @@ function HeaderEditor({
         <div className="form-grid">
           <Field
             label="Statement agency commission total ($)"
+            currency
             value={total}
             set={setTotal}
           />
@@ -793,8 +813,8 @@ function HeaderEditor({
           <div className="field">
             <span>Imported / entered rows</span>
             <strong>{money(intake.rowTotalCents)}</strong>
-            <span className={difference ? "error-text small" : "small muted"}>
-              {difference === undefined
+            <span className={intake.rowCount && difference ? "error-text small" : "small muted"}>
+              {!intake.rowCount ? "Import the source rows to compare them with this total." : difference === undefined
                 ? "Enter the source total before posting."
                 : difference
                   ? money(difference) + " difference to resolve"
@@ -805,7 +825,8 @@ function HeaderEditor({
         <button className="secondary">Save statement details</button>
       </fieldset>
       <CommissionDraftRecovery intake={intake} scope="header" value={{ total, date }}
-        restore={d => { setTotal(d.total); setDate(d.date); }} disabled={task.busy} onError={onError} />
+        restore={d => { setTotal(d.total); setDate(d.date); }} disabled={task.busy} onError={onError}
+        renderSaved={d => <dl className="intake-saved-values"><div><dt>Date</dt><dd>{d.date || "Not entered"}</dd></div><div><dt>Total</dt><dd>{displayCommissionAmount(d.total) || "Not entered"}</dd></div></dl>} />
       <Feedback task={task} />
     </form>
   );
@@ -862,7 +883,7 @@ function IntakeImport({
     setTables(next);
     setSheet(index);
     setHeader(head);
-    setMapping(reuseImportMapping(next[index]?.rows[head] ?? [], template));
+    setMapping(suggestImportMapping(next[index]?.rows[head] ?? [], template));
     setReviewed(false);
   };
   useUnsavedChanges(reviewed, { busy: task.busy });
@@ -932,10 +953,15 @@ function IntakeImport({
   }, [processing, pollCount, task.busy]);
   return (
     <div>
-      <p className="small muted">
-        Saved carrier formats match columns by heading. Imports preserve
-        unmatched and invalid rows for review; they never create earnings.
-      </p>
+      <section className="intake-import-guide" aria-label="Source import instructions">
+        <h3>{rows.length ? "Source import options" : "Next: check columns, then import"}</h3>
+        <ol>
+          <li><strong>Check the column choices.</strong> {template ? "The saved carrier format is selected." : "Recognizable headings are suggested automatically."} Correct any missing or incorrect choice.</li>
+          <li><strong>Compare the preview with the original.</strong> Check policy numbers, references, amounts, dates and transaction types.</li>
+          <li><strong>Confirm and import.</strong> Tick the confirmation below the preview, then choose <strong>Import rows &amp; remember format</strong>. You will continue to policy and eligibility review.</li>
+        </ol>
+        <p className="small">{rows.length ? "Rows have already been imported. Reimport only when you intend to replace editable rows from this table." : "The file is saved; its rows still need to be imported."} This step creates no earnings and records no payment.</p>
+      </section>
       <div className="intake-actions">
         <button
           className="secondary"
@@ -945,7 +971,7 @@ function IntakeImport({
           {task.busy
             ? "Reading…"
             : /\.(csv|xlsx)$/i.test(intake.filename)
-              ? "Read saved spreadsheet"
+              ? tables.length ? "Reload source file" : "Read saved spreadsheet"
               : intake.extractionJobId
                 ? "Check PDF extraction"
                 : "Extract PDF / image"}
@@ -974,11 +1000,9 @@ function IntakeImport({
         )}
       </div>
       <Feedback task={task} />
-      {!!tables.length && <CommissionDraftRecovery intake={intake} scope="import" value={{ sheet, header, mapping }}
-        restore={d => { if (tables[d.sheet]) { setSheet(d.sheet); setHeader(d.header); setMapping(d.mapping); setReviewed(false); } }}
-        disabled={task.busy || processing} onError={onError} />}
       {!!tables.length && (
         <>
+          <details className="intake-source-options"><summary>Worksheet &amp; header options · {tables[sheet].name} · row {header + 1}</summary>
           <div className="form-grid">
             <label className="field">
               Table / worksheet
@@ -1006,13 +1030,14 @@ function IntakeImport({
               />
             </label>
           </div>
+          </details>
           {tables[sheet].confidence !== undefined && (
             <p className="small muted">
               Extraction confidence {tables[sheet].confidence!.toFixed(1)}%.
               Verify policy numbers, dates, signs and totals.
             </p>
           )}
-          <div className="form-grid">
+          <div className="form-grid" id="intake-column-mapping">
             {(
               [
                 ["policy", "Policy number"],
@@ -1083,6 +1108,7 @@ function IntakeImport({
                             (r.policyId
                               ? "Suggested exact match"
                               : "Needs policy match")}
+                          <span className="small muted">{r.effectiveDate || "No effective date"} · {r.transactionType}</span>
                         </td>
                       </tr>
                     ))}
@@ -1095,6 +1121,9 @@ function IntakeImport({
                   the statement for review.
                 </p>
               )}
+              <div className="intake-import-confirm">
+              <h4>Confirm the preview to continue</h4>
+              <p className="small">{reviewed ? "Ready to import. The next screen section is policy and eligibility review." : "The import button becomes available after you check the confirmation below."}</p>
               <label className="commission-check">
                 <input
                   type="checkbox"
@@ -1122,12 +1151,19 @@ function IntakeImport({
                 >
                   Import rows & remember format
                 </button>
-
-              </div>
+              </div></div>
             </>
           )}
         </>
       )}
+      {!!tables.length && <CommissionDraftRecovery intake={intake} scope="import" value={{ sheet, header, mapping }}
+        restore={d => { if (tables[d.sheet]) { setSheet(d.sheet); setHeader(d.header); setMapping(d.mapping); setReviewed(false); } }}
+        disabled={task.busy || processing} onError={onError}
+        renderSaved={d => <dl className="intake-saved-values">
+          <div><dt>Worksheet</dt><dd>{tables[d.sheet]?.name || "Worksheet unavailable"}</dd></div>
+          <div><dt>Header row</dt><dd>{d.header + 1}</dd></div>
+          {(Object.keys(importColumnLabels) as (keyof typeof importColumnLabels)[]).map(key => <div key={key}><dt>{importColumnLabels[key]}</dt><dd>{d.mapping[key] < 0 ? "Not selected" : tables[d.sheet]?.rows[d.header]?.[d.mapping[key]] || "Column unavailable"}</dd></div>)}
+        </dl>} />}
       {text && (
         <CommissionPanel
           title="Extracted source text"
@@ -1253,7 +1289,7 @@ function RowsEditor({
     <section className="card intake-rows" id="intake-rows">
       <div className="commission-section-heading">
         <div>
-          <h3>Policy matches & eligibility</h3>
+          <h3 tabIndex={-1}>Policy matches & eligibility</h3>
           <p>
             Use agency commission paid on the statement. Rates and earnings come
             from the policy’s saved agreement.

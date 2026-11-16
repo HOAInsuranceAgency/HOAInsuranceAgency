@@ -261,7 +261,7 @@ export const commissionAction = async (action: string, input: Record<string, unk
     });
   if (action === 'getIntakeWorkingDraft' && useIsOwner()) return { draft: null };
   if (action === 'intakeWorkspace' && useIsOwner()) return structuredClone({intakes: [inboxSample], settlements: [], templates: []});
-  if (action === 'file' && useIsOwner() && input.key === 'fictional-source') return {url:'data:text/csv;charset=utf-8,' + encodeURIComponent('Policy,Reference,Agency commission\nPOL-1,TEST-TX-1,750.00\nHARBOR-NEW,TEST-TX-2,250.00')};
+  if (action === 'file' && useIsOwner() && input.key === 'fictional-source') return {url:'data:text/csv;charset=utf-8,' + encodeURIComponent(previewQuery.get('scenario') === 'import' ? 'Policy,Reference,Amount,Effective,Transaction\nPOL-1,TEST-IMPORT-1,1000.00,2026-01-01,RECEIPT\nPOL-1,TEST-IMPORT-2,500.00,2026-01-01,RECEIPT' : 'Policy,Reference,Agency commission\nPOL-1,TEST-TX-1,750.00\nHARBOR-NEW,TEST-TX-2,250.00')};
   if (action === 'getStatementIntake' && useIsOwner()) return structuredClone({intake: inboxSample, rows: inboxRows, settlements: []});
   if (action === "payrollWorkspace" && useIsOwner())
     return structuredClone(payrollWorkspace);
@@ -406,3 +406,8 @@ export async function attachCommissionStatement(file: File) {
 const inboxSample = {id:'demo-inbox',version:1,carrierId:'c',carrierName:'Harbor Mutual',reference:'TEST-HARBOR-OCT',source:'fictional-source',filename:'harbor-october.csv',fileHash:'fictional',documentReceivedOn:'2026-10-15',totalCents:100000,createdAt:'2026-10-15T12:00:00Z',createdBy:'preview',status:'OPEN',rowCount:2,rowTotalCents:100000,needsReview:1,unmatched:1,postedCents:0,completedRows:0};
 const inboxRows = [{id:'sample1',version:1,intakeId:'demo-inbox',policyNumber:'POL-1',effectiveDate:'2026-01-01',policyId:'p',lineRef:'TEST-TX-1',agencyCents:75000,transactionType:'RECEIPT',reviewStatus:'ELIGIBLE',note:'Fictional source review',postedCents:0},{id:'sample2',version:1,intakeId:'demo-inbox',policyNumber:'HARBOR-NEW',effectiveDate:'',policyId:'',lineRef:'TEST-TX-2',agencyCents:25000,transactionType:'RECEIPT',reviewStatus:'PENDING',note:'',postedCents:0}];
 payrollWorkspace.statementReadiness = {activeStatements:1,statementsNeedingReview:1,unmatchedRows:1,pendingSettlements:[]};
+
+if (previewQuery.get('scenario') === 'import') {
+  Object.assign(inboxSample, {reference:'TEST-IMPORT-GUIDANCE',totalCents:150000,rowCount:0,rowTotalCents:0,needsReview:0,unmatched:0});
+  inboxRows.splice(0);
+}
