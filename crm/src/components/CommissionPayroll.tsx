@@ -1,3 +1,5 @@
+import CommissionJourney from "./CommissionJourney";
+import { sourcePayrollHandoff } from "../lib/commissionPayrollHandoff";
 import Modal from './Modal';
 import { useCommissionWorkflow, useCommissionPreference } from '../lib/commissionWorkflow';
 import {
@@ -107,7 +109,7 @@ export default function CommissionPayroll({
   const [auditOpen, setAuditOpen] = useState(false), [historyQuery,setHistoryQuery]=useState('');
   const { target, navigate, remember } = useCommissionWorkflow();
   const [selectedCycle, saveSelectedCycle] = useCommissionPreference('payroll-cycle','');
-  const setSelectedCycle=(id:string)=>{saveSelectedCycle(id);remember?.({cycleId:id,intakeId:undefined});};
+  const setSelectedCycle=(id:string)=>{saveSelectedCycle(id);remember?.({cycleId:id,intakeId:undefined,intakeReference:undefined,intakeStep:undefined});};
   const { requestLeave } = useEditProtection();
   const resource = useAsyncResource(
     async () => {
@@ -133,17 +135,22 @@ export default function CommissionPayroll({
   const cycles = data?.workspace.cycles ?? [];
   useEffect(()=>{
     if (target.cycleId) saveSelectedCycle(target.cycleId);
-    else if (target.intakeId && data) {
-      const links=data.workspace.sourceLinks?.filter(l=>l.intakeId===target.intakeId) ?? [];
-      const batch=data.workspace.batches.find(b=>b.lines.some(l=>links.some(s=>s.policyId===l.policyId&&s.entryId===l.entryId)));
-      const dates=(data.workspace.availableEarnings??[]).filter(r=>links.some(s=>s.policyId===r.policyId&&s.entryId===r.entryId)).map(r=>r.receivedOn).sort();
-      const next=batch?.cycleId ?? cycles.filter(c=>c.status==='OPEN'&&(!dates.length||c.cutoff>=dates.at(-1)!)).sort((a,b)=>a.cutoff.localeCompare(b.cutoff))[0]?.id;
-      if(next)saveSelectedCycle(next);
-    }
   },[target.cycleId,target.intakeId,data]);
-  const focused = cycles.find(c => c.id === selectedCycle) ??
+  const source = data && target.intakeId ? sourcePayrollHandoff(data.workspace, target.intakeId) : undefined;
+  const handoff = !!source && (!target.cycleId || !cycles.some(c => c.id === target.cycleId));
+  const focused = target.cycleId ? cycles.find(c => c.id === target.cycleId) : cycles.find(c => c.id === selectedCycle) ??
     cycles.filter(c => c.status === "OPEN").sort((a,b) => a.cutoff.localeCompare(b.cutoff))[0] ??
     cycles.find(c => c.status === "APPROVED") ?? cycles[0];
+  const journeyStep = handoff ? 4 : focused?.status === "PAID" ? 6 : focused?.status === "APPROVED" ? 5 : 4;
+  const [inspectedStep, inspectStep] = useState<number | null>(null);
+  useEffect(() => inspectStep(null), [journeyStep, focused?.id]);
+  const chooseJourneyStep = (step: number) => {
+    if (step < 4) { navigate({tab:"statements",intakeId:target.intakeId,intakeReference:target.intakeReference,intakeStep:step,cycleId:target.cycleId}); return; }
+    inspectStep(step);
+    const root = document.getElementById((step === 4 ? "payroll-cycle-" : "payroll-payments-") + focused?.id);
+    if (root?.tagName === "DETAILS") (root as HTMLDetailsElement).open = true;
+    root?.scrollIntoView?.({block:"start"});
+  };
   const selectedDeliveries = data?.workspace.deliveries.filter(d=>!focused||d.cycleId===focused.id) ?? [];
   return (
     <PayrollAccessContext.Provider
@@ -158,7 +165,7 @@ export default function CommissionPayroll({
       >
         <div className="payroll-heading">
           <div>
-            <h2>Monthly payroll & HR delivery</h2>
+            <h2>{target.intakeId ? target.intakeReference ?? "Selected statement" : "Payroll cycles & history"}</h2>
             <p className="muted">
               Review commissions, approve payroll, and track delivery through
               payment.
@@ -181,7 +188,10 @@ export default function CommissionPayroll({
           !resource.error && <p>Loading payroll…</p>
         ) : (
           <>
-            {owner && !!cycles.length && <label className="field payroll-cycle-picker">
+            {owner && target.intakeId && <><CommissionJourney nextStep={journeyStep} activeStep={inspectedStep ?? journeyStep} choose={chooseJourneyStep} /><p className="commission-notice">Statement and carrier payment complete. {journeyStep === 4 ? "Next: review the earnings and payroll dates before approving." : journeyStep === 5 ? "Payroll approved. Next: inspect the reports and record actual employee payment." : "Employee payment complete. The payment history remains available below."}</p>{!handoff && <button className="secondary" onClick={() => navigate({...target,cycleId:undefined})}>Review this statement’s payroll selection</button>}</>}
+            {owner && handoff && source && <SourcePayrollSelection source={source} workspace={data.workspace} refresh={refresh} />}
+            {!handoff && <>
+            {owner && !source && !!cycles.length && <label className="field payroll-cycle-picker">
               <span>Review payroll cycle</span>
               <select value={focused?.id ?? ""} onChange={e => requestLeave(() => setSelectedCycle(e.target.value))}>
                 {cycles.map(c => <option key={c.id} value={c.id}>{displayMonth(c.id)} · {c.cycleType === "OFF_CYCLE" ? "Off-cycle" : "Monthly"} · {c.status.toLowerCase()}</option>)}
@@ -189,6 +199,7 @@ export default function CommissionPayroll({
               <small className="muted">One cycle at a time. Earlier reports and payment history remain available.</small>
             </label>}
             {owner && <PayrollReadiness workspace={data.workspace} cycle={focused} reviewStatements={reviewStatements} />}
+            <details open={source ? undefined : true}><summary>Other payroll cycles, history & settings</summary>
             <Panel title="Search payroll history" hint="Find completed cycles by date, employee, reference or status">
               <label className="field">Find a payroll cycle<input type="search" value={historyQuery} onChange={e=>setHistoryQuery(e.target.value)} /></label>
               {cycles.filter(c=>c.status!=='OPEN' && (c.id+' '+c.status+' '+c.payDate+' '+(c.paymentReference??'')+' '+data.workspace.batches.filter(b=>c.batchIds.includes(b.id)).map(b=>b.producerName).join(' ')).toLowerCase().includes(historyQuery.toLowerCase())).map(c=><div className="commission-work-item" key={c.id}><span>{c.id} · {c.status.toLowerCase()} · {money(c.totalCents)}</span><button className="secondary" onClick={()=>requestLeave(()=>setSelectedCycle(c.id))}>Review {c.id}</button></div>)}
@@ -236,7 +247,7 @@ export default function CommissionPayroll({
                   />
                 </Panel>
               )}
-            </div>
+            </div></details>
             {owner &&
               !data.workspace.cycles.some(
                 (c) => c.id === COMMISSION_START_MONTH,
@@ -286,6 +297,7 @@ export default function CommissionPayroll({
                 workspace={data.workspace}
                 owner={owner}
                 refresh={refresh}
+                guided={!!target.intakeId}
               />
             ))}
             <CommissionPanel title="Report delivery history" hint="Delivery evidence for the selected cycle" open={selectedDeliveries.some(d=>d.status==='FAILED'||d.status==='UNKNOWN'||!!d.failureState)}>
@@ -365,12 +377,37 @@ export default function CommissionPayroll({
                 {auditOpen && <AuditHistory />}
               </>
             )}
+            </>}
           </>
         )}
       </section>
     </PayrollAccessContext.Provider>
   );
 }
+function SourcePayrollSelection({ source, workspace, refresh }: { source: ReturnType<typeof sourcePayrollHandoff>; workspace: PayrollWorkspace; refresh: () => Promise<void> }) {
+  const { target, navigate } = useCommissionWorkflow();
+  const [prepare, setPrepare] = useState(false);
+  const total = sum(source.available.map(e => e.amountCents));
+  const month = [payrollDay().slice(0,7), source.latestReceipt?.slice(0,7) ?? ""].sort().at(-1)!;
+  const suggested = source.monthly ?? suggestPayrollDates(month);
+  const dates = { id: suggested.id.slice(0,7), cutoff: suggested.cutoff, reviewOn: suggested.reviewOn, hrDueOn: suggested.hrDueOn, processingOn: suggested.processingOn, payDate: suggested.payDate };
+  return <section className="card" aria-label="Statement payroll selection">
+    <h3>Review payroll for this statement</h3>
+    <p>Policy matches, employee rates and receipt dates carry forward from the posted statement. Review the proposed earnings and schedule; creating a draft does not approve or pay them.</p>
+    {!!source.available.length && <>
+      <strong>{source.available.length} available earnings · {money(total)}</strong>
+      {!prepare && <div className="commission-scroll"><table><thead><tr><th>Employee / policy</th><th>Actual carrier receipt</th><th>Employee commission</th></tr></thead><tbody>{source.available.map(e => <tr key={payrollRowKey(e)}><td>{e.producerName}<div className="small muted">{e.policyNumber} · {e.producerBps / 100}%{e.shareBps !== undefined ? ` · ${e.shareBps / 100}% share` : ""}</div></td><td>{displayDate(e.receivedOn)}</td><td>{money(e.amountCents)}</td></tr>)}</tbody></table></div>}
+    </>}
+    {source.linkedCycles.map(c => <div className="commission-work-item" key={c.id}><span>{c.id} · {c.status.toLowerCase()} · full cycle {money(c.preview?.totalCents ?? c.totalCents)}</span><button className="secondary" onClick={() => navigate({...target,cycleId:c.id})}>Review linked payroll {c.id}</button></div>)}
+    {!source.available.length && <p>{source.linkedCycles.length ? "These earnings are already assigned. Continue with a linked payroll cycle above." : "No available earnings are linked to this statement. Review eligibility and the ledger before preparing payroll."}</p>}
+    {!!source.keys.length && <>
+      {!prepare && <button className="primary" onClick={() => setPrepare(true)}>{source.linkedCycles.length ? "Prepare another draft for these earnings" : "Prepare payroll for these earnings"}</button>}
+      {prepare && <><h4>Confirm the suggested payroll draft</h4><p>Only this statement’s {source.keys.length} earnings are preselected. Dates come from {source.monthly ? "the next matching monthly calendar" : "the standard monthly schedule"}; check them before saving. You can change the selection for a different payroll scope.</p><OffCycleForm key={JSON.stringify(source.keys)} initialKeys={source.keys} initialReason={"Statement " + (target.intakeReference ?? target.intakeId)} initialDates={dates} producers={workspace.producers ?? []} earnings={workspace.availableEarnings ?? []} refresh={refresh} onCreated={id => navigate({...target,cycleId:id})} /></>}
+      {source.monthly && <details><summary>Include in the regular monthly payroll instead</summary><p>The monthly cycle includes other eligible earnings. Review its full amount of {money(source.monthly.preview?.totalCents ?? source.monthly.totalCents)} and all employees before approval.</p><button className="secondary" onClick={() => navigate({...target,cycleId:source.monthly!.id})}>Review monthly payroll {source.monthly.id}</button></details>}
+    </>}
+  </section>;
+}
+
 function PayrollReadiness({ workspace, cycle, reviewStatements }: { workspace: PayrollWorkspace; cycle?: PayrollCycle; reviewStatements?: () => void }) {
   const readiness = workspace.statementReadiness;
   if (!cycle || !readiness) return null;
@@ -685,9 +722,11 @@ function CycleCard({
   workspace,
   owner,
   refresh,
+  guided = false,
 }: {
   cycle: PayrollCycle;
   workspace: PayrollWorkspace;
+  guided?: boolean;
   owner: boolean;
   refresh: () => Promise<void>;
 }) {
@@ -930,7 +969,7 @@ function CycleCard({
       )}
       {c.status === "APPROVED" && (
         <>
-          <Panel id={"payroll-payments-"+c.id} title="Record individual employee payments">
+          <Panel id={"payroll-payments-"+c.id} title="Record individual employee payments" open={guided}>
             <p>
               Record the amount actually paid, including partial payments. The
               remaining balance stays open until every employee is fully paid.
@@ -1177,30 +1216,31 @@ function OffCycleForm({
   producers,
   earnings,
   refresh,
-  initialKeys, initialProducer, onCreated,
+  initialKeys, initialProducer, initialReason, initialDates, onCreated,
 }: {
   producers: { id: string; name: string }[];
-  initialKeys?: string[]; initialProducer?: string; onCreated?: (id: string) => void;
+  initialKeys?: string[]; initialProducer?: string; initialReason?: string; initialDates?: ReturnType<typeof suggestPayrollDates>; onCreated?: (id: string) => void;
   cycle?: PayrollCycle;
   earnings: NonNullable<PayrollWorkspace['availableEarnings']>;
   refresh: () => Promise<void>;
 }) {
   const [dates, setDates] = useState(
-      cycle ? { id: cycle.id, cutoff: cycle.cutoff, reviewOn: cycle.reviewOn, hrDueOn: cycle.hrDueOn, processingOn: cycle.processingOn, payDate: cycle.payDate } : suggestPayrollDates(payrollDay().slice(0, 7)),
+      cycle ? { id: cycle.id, cutoff: cycle.cutoff, reviewOn: cycle.reviewOn, hrDueOn: cycle.hrDueOn, processingOn: cycle.processingOn, payDate: cycle.payDate } : initialDates ?? suggestPayrollDates(payrollDay().slice(0, 7)),
     ),
-    [reason, setReason] = useState(cycle?.reason ?? ""),
+    [reason, setReason] = useState(cycle?.reason ?? initialReason ?? ""),
     [producerIds, setProducers] = useState<string[]>(cycle?.producerIds ?? (initialProducer ? [initialProducer] : [...new Set(earnings.filter(e=>initialKeys?.includes(payrollRowKey(e))).map(e=>e.producerId))])),
     [requestId, setRequestId] = useState(() => crypto.randomUUID().slice(0, 8));
   const [selection, setSelection] = useState<string[] | undefined>(cycle?.selectedEarningKeys ?? initialKeys);
+  const [changeSelection, setChangeSelection] = useState(!initialReason);
   const available = earnings.filter(e => producerIds.includes(e.producerId) && e.receivedOn <= dates.cutoff);
   const selected = available.filter(e => !selection || selection.includes(payrollRowKey(e)));
   const stale = !!selection?.some(key => !available.some(e => payrollRowKey(e) === key));
   const draftState=JSON.stringify({ dates, reason, producerIds, selection });
   const initialState=useRef(draftState);
-  useUnsavedChanges(draftState !== initialState.current);
+  const protection = useUnsavedChanges(draftState !== initialState.current);
   return (
     <Action
-      label={cycle ? "Save off-cycle draft" : "Create off-cycle draft"}
+      label={cycle ? "Save off-cycle draft" : initialReason ? "Create payroll draft" : "Create off-cycle draft"}
       disabled={!producerIds.length || (selection !== undefined && (!selection.length || stale))}
       refresh={refresh}
       action={async () => {
@@ -1212,6 +1252,7 @@ function OffCycleForm({
           producerIds,
           ...(selection ? { selectedEarningKeys: selection } : {}),
         });
+        protection?.markClean();
         if (!cycle) {
           initialState.current = JSON.stringify({ dates, reason: "", producerIds: [], selection: undefined });
           setReason("");
@@ -1222,20 +1263,15 @@ function OffCycleForm({
         }
       }}
     >
-      <p>Choose employees, then include all available earnings or select specific receipts and adjustments. Earnings reserved by another approved cycle are excluded.</p>
+      {initialReason && !changeSelection && <button type="button" className="secondary" onClick={() => setChangeSelection(true)}>Change employees or earnings</button>}
+      {changeSelection && <><p>Choose employees, then include all available earnings or select specific receipts and adjustments. Earnings reserved by another approved cycle are excluded.</p>
       <div className="payroll-people">
         {producers.map((p) => (
           <label className="payroll-check payroll-person" key={p.id}>
             <input
               type="checkbox"
               checked={producerIds.includes(p.id)}
-              onChange={(e) =>
-                setProducers((ids) =>
-                  e.target.checked
-                    ? [...ids, p.id]
-                    : ids.filter((id) => id !== p.id),
-                )
-              }
+              onChange={(e) => { const checked = e.target.checked; setProducers(ids => checked ? [...ids, p.id] : ids.filter(id => id !== p.id)); }}
             />{" "}
             {p.name}
           </label>
@@ -1250,11 +1286,12 @@ function OffCycleForm({
           <option value="selected">Choose specific earnings</option>
         </select>
       </label>
+      </>}
       {!!producerIds.length && <div className="payroll-selection">
         <div className="commission-section-heading"><div><strong>{selected.length} earnings · {money(sum(selected.map(e => e.amountCents)))}</strong><p className="small muted">Current preview. Eligibility is checked again at approval.</p></div></div>
         {selection !== undefined && <div className="commission-scroll"><table><thead><tr><th>Include</th><th>Employee / policy</th><th>Receipt / source</th><th>Amount</th></tr></thead><tbody>
-          {available.map(e => <tr key={payrollRowKey(e)}><td><input type="checkbox" aria-label={'Include ' + e.producerName + ' ' + e.policyNumber + ' ' + e.receivedOn + ' ' + money(e.amountCents)}
-            checked={selection.includes(payrollRowKey(e))} onChange={event => setSelection(keys => event.target.checked ? [...(keys ?? []), payrollRowKey(e)] : (keys ?? []).filter(key => key !== payrollRowKey(e)))} /></td>
+          {(changeSelection ? available : selected).map(e => <tr key={payrollRowKey(e)}><td><input type="checkbox" aria-label={'Include ' + e.producerName + ' ' + e.policyNumber + ' ' + e.receivedOn + ' ' + money(e.amountCents)}
+            checked={selection.includes(payrollRowKey(e))} onChange={event => { const checked = event.target.checked; setSelection(keys => checked ? [...(keys ?? []), payrollRowKey(e)] : (keys ?? []).filter(key => key !== payrollRowKey(e))); }} /></td>
             <td>{e.producerName}<div className="small muted">{e.accountName} · {e.policyNumber}</div></td><td>{e.receivedOn}<div className="small muted">{e.source === 'ADJUSTMENT' ? 'Approved adjustment' : e.source === 'SHARED_RECEIPT' ? 'Shared receipt' : 'Commission receipt'}</div></td><td>{money(e.amountCents)}</td></tr>)}
         </tbody></table></div>}
         {!available.length && <p>No eligible, unallocated earnings through this cutoff.</p>}

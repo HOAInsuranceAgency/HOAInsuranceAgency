@@ -1,3 +1,4 @@
+import { CommissionWorkflowContext } from "../lib/commissionWorkflow";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { CommissionOverview } from "../../../shared/commissions";
@@ -6,13 +7,14 @@ const h = vi.hoisted(() => ({
   action: vi.fn(),
   attach: vi.fn(),
   markClean: vi.fn(),
+  dirty: vi.fn(),
 }));
 vi.mock("../lib/commissions", () => ({ commissionAction: h.action }));
 vi.mock("../lib/commissionStatementAttachment", () => ({
   attachCommissionStatement: h.attach,
 }));
 vi.mock("../lib/editProtection", () => ({
-  useUnsavedChanges: () => ({ markClean: h.markClean }),
+  useUnsavedChanges: (dirty: boolean) => { h.dirty(dirty); return { markClean: h.markClean }; },
   useEditProtection: () => ({ requestLeave: (fn: () => void) => fn() }),
 }));
 import CommissionIntake from "./CommissionIntake";
@@ -348,10 +350,10 @@ it("reopens a completed source review at the payment step and preserves payment 
   expect(amount).toHaveValue("$1,000.00");
   fireEvent.click(screen.getByRole("button",{name:"Step 1: Import source, complete"}));
   expect(amount).not.toBeVisible();
-  fireEvent.click(screen.getByRole("button",{name:"Step 3: Confirm payment, current"}));
+  fireEvent.click(screen.getByRole("button",{name:"Step 3: Carrier payment, current"}));
   expect(amount).toHaveValue("$1,000.00");
   expect(amount).toBeVisible();
-  expect(screen.getByRole("button",{name:"Step 4: Post settlement, up next"})).toBeDisabled();
+  expect(screen.getByRole("button",{name:"Step 4: Post earnings, up next"})).toBeDisabled();
 });
 
 it("requires the statement total to reconcile before advancing even when every row is reviewed",async()=>{
@@ -360,7 +362,7 @@ it("requires the statement total to reconcile before advancing even when every r
   renderInbox();fireEvent.click(await screen.findByRole("button",{name:"Open"}));
   expect(await screen.findByText(/Check the statement control total above/)).toBeVisible();
   expect(screen.getByLabelText("Statement agency commission total ($)")).toBeVisible();
-  expect(screen.getByRole("button",{name:"Step 3: Confirm payment, up next"})).toBeDisabled();
+  expect(screen.getByRole("button",{name:"Step 3: Carrier payment, up next"})).toBeDisabled();
 });
 
 
@@ -399,6 +401,37 @@ it("allows an early carrier receipt while keeping source review and posting inco
   fireEvent.click(screen.getByRole("button",{name:"Record received payment"}));
   expect(screen.getByLabelText("Agency commission received / retained ($)")).toBeVisible();
   expect(screen.getByText(/source review is still required before posting/)).toBeVisible();
-  expect(screen.getByRole("button",{name:"Step 4: Post settlement, up next"})).toBeDisabled();
+  expect(screen.getByRole("button",{name:"Step 4: Post earnings, up next"})).toBeDisabled();
   expect(h.action.mock.calls.some(([op])=>["recordIntakeSettlement","postIntakeSettlement"].includes(op))).toBe(false);
+});
+
+it("opens posted work cleanly, carries its identity to payroll and shows saved receipts on an earlier step",async()=>{
+  const source={...intake,needsReview:0,postedCents:10000,completedRows:1};
+  const payment={id:"paid",version:2,reference:"TEST-RECEIPT",receivedOn:"2026-10-03",totalCents:10000,status:"POSTED",allocations:[{rowId:row.id,amountCents:10000}],statementIds:[],postedRows:[row.id]};
+  h.action.mockImplementation(async op=>op==="intakeWorkspace"?{intakes:[source],settlements:[payment],templates:[]}:op==="getStatementIntake"?{intake:source,rows:[{...row,reviewStatus:"ELIGIBLE",postedCents:10000}],settlements:[payment]}:{draft:null});
+  const navigate=vi.fn();
+  render(<CommissionWorkflowContext.Provider value={{target:{tab:"statements",intakeId:"inbox"},navigate}}><CommissionIntake data={data} refreshLedger={vi.fn()} renderPolicySetup={()=>null} onAccessDenied={vi.fn()}/></CommissionWorkflowContext.Provider>);
+  fireEvent.click(await screen.findByRole("button",{name:"Continue to payroll"}));
+  expect(navigate).toHaveBeenCalledWith({tab:"payroll",intakeId:"inbox",intakeReference:"TEST-SOURCE"});
+  expect(h.action.mock.calls.some(([op])=>op==="extractIntakeDocument")).toBe(false);
+  expect(h.dirty.mock.calls.some(([dirty])=>dirty)).toBe(false);
+  fireEvent.click(screen.getByRole("button",{name:"Step 4: Post earnings, complete"}));
+  await waitFor(()=>expect(h.dirty.mock.calls.some(([dirty])=>dirty)).toBe(false));
+  fireEvent.click(screen.getByRole("button",{name:"Step 3: Carrier payment, complete"}));
+  expect(screen.getByText("Saved carrier receipts")).toBeVisible();
+  expect(screen.queryByLabelText("Actual commission receipt date")).toBeNull();
+  expect(screen.getByRole("button",{name:"Record another receipt"})).toBeVisible();
+});
+it("suggests only the unrecorded receipt balance and leaves date, evidence and approval to the user",async()=>{
+  const source={...intake,needsReview:0,postedCents:4000};
+  const payment={id:"partial",version:2,reference:"PARTIAL",receivedOn:"2026-10-03",totalCents:4000,status:"POSTED",allocations:[{rowId:row.id,amountCents:4000}],statementIds:[],postedRows:[row.id]};
+  h.action.mockImplementation(async op=>op==="intakeWorkspace"?{intakes:[source],settlements:[payment],templates:[]}:op==="getStatementIntake"?{intake:source,rows:[{...row,reviewStatus:"ELIGIBLE",postedCents:4000}],settlements:[payment]}:{draft:null});
+  renderInbox();fireEvent.click(await screen.findByRole("button",{name:"Open"}));
+  expect(await screen.findByLabelText("Agency commission received / retained ($)")).toHaveValue("$60.00");
+  expect(screen.getByLabelText("Actual commission receipt date")).toHaveValue("");
+  expect(screen.getByLabelText("Payment evidence")).toHaveValue("");
+  expect(screen.getByRole("button",{name:"Save payment & continue"})).toBeDisabled();
+  expect(h.dirty.mock.calls.some(([dirty])=>dirty)).toBe(false);
+  fireEvent.change(screen.getByLabelText("Agency commission received / retained ($)"),{target:{value:"50"}});
+  expect(h.dirty).toHaveBeenLastCalledWith(true);
 });

@@ -113,8 +113,7 @@ function CommissionView({ owner }: { owner: boolean }) {
         <div className="commission-tabs" role="tablist" aria-label="Commission views">
           {[
             ['queue', 'Work queue'],
-            ['statements', 'Statements'],
-            ['payroll', 'Payroll'],
+            ['statements', 'Guided workflow'],
             ['ledger', 'Ledger'],
             ['exceptions', 'Reviews & exceptions'],
             ['settings', 'Setup'],
@@ -122,9 +121,9 @@ function CommissionView({ owner }: { owner: boolean }) {
             <button
               key={id}
               role="tab"
-              aria-selected={tab === id}
-              className={tab === id ? 'primary' : 'secondary'}
-              onClick={() => navigate({ tab: id })}
+              aria-selected={tab === id || (id === 'statements' && tab === 'payroll')}
+              className={tab === id || (id === 'statements' && tab === 'payroll') ? 'primary' : 'secondary'}
+              onClick={() => navigate(id === 'statements' && ['statements', 'payroll'].includes(tab) ? target : { tab: id })}
             >
               {label}
             </button>
@@ -150,6 +149,7 @@ function CommissionView({ owner }: { owner: boolean }) {
           {owner && tab === 'queue' && <CommissionWorkQueue data={snapshot} onAccessDenied={resource.invalidate} />}
           {tab === 'ledger' && <Ledger data={snapshot} owner={owner} refresh={resource.refetch} />}
           {owner && tab === 'settings' && <Settings data={snapshot} refresh={resource.refetch} />}
+          {owner && ['statements', 'payroll'].includes(tab) && <div className="commission-action-bar"><button className="secondary" onClick={() => navigate({tab:'statements',intakeId:''})}>Statement inbox</button><button className="secondary" onClick={() => navigate({tab:'payroll'})}>All payroll cycles & history</button></div>}
           {owner && tab === 'statements' && (
             <><CommissionIntake data={snapshot} refreshLedger={resource.refetch} onAccessDenied={resource.invalidate}
               renderPolicySetup={(policyNumber, carrierId, adopted) => <CommissionPolicyLink policyNumber={policyNumber} carrierId={carrierId} data={snapshot} refresh={resource.refetch} adopted={adopted} denied={resource.invalidate} renderAccountSetup={(id, saved) => <AccountClassificationResource id={id} onSaved={saved} />} />} />

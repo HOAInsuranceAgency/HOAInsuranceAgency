@@ -461,3 +461,33 @@ it("opens the exact review destination supplied by payroll validation",async()=>
   fireEvent.click(await screen.findByRole('button',{name:'Resolve'}));
   expect(navigate).toHaveBeenCalledWith({tab:'statements',intakeId:'source-123'});
 });
+
+it("keeps statement payroll separate from an older employee-wide run and prepares only its exact earnings after a click",async()=>{
+  workspace.producers=[{id:"p",name:"Avery"}];
+  const earnings=[{producerId:"p",producerName:"Avery",policyId:"policy",entryId:"receipt-1",accountName:"Test HOA",policyNumber:"TEST-MAIN",receivedOn:"2026-11-11",transaction:"NEW_BUSINESS",agencyCents:100000,producerBps:1000,amountCents:10000},{producerId:"p",producerName:"Avery",policyId:"policy",entryId:"receipt-2",accountName:"Test HOA",policyNumber:"TEST-MAIN",receivedOn:"2026-11-11",transaction:"NEW_BUSINESS",agencyCents:50000,producerBps:1000,amountCents:5000}];
+  workspace.availableEarnings=[...earnings,{...earnings[0],entryId:"other",amountCents:34541}] as PayrollWorkspace['availableEarnings'];
+  workspace.sourceLinks=earnings.map(e=>({intakeId:"source",statementId:"s",policyId:e.policyId,entryId:e.entryId}));
+  workspace.cycles.unshift({...workspace.cycles[0],id:"2026-11-OFF-old",cycleType:"OFF_CYCLE",cutoff:"2026-11-12",producerIds:["p"]});
+  const navigate=vi.fn();
+  render(<CommissionWorkflowContext.Provider value={{target:{tab:"payroll",intakeId:"source",intakeReference:"TEST-MAIN"},navigate}}><CommissionPayroll owner refreshLedger={vi.fn()}/></CommissionWorkflowContext.Provider>);
+  expect(await screen.findByText("2 available earnings · $150.00")).toBeVisible();
+  expect(screen.queryByRole("combobox",{name:"Review payroll cycle"})).toBeNull();
+  expect(screen.queryByRole("button",{name:"Approve payroll cycle"})).toBeNull();
+  expect(h.action.mock.calls.every(([op])=>op==="payrollWorkspace")).toBe(true);
+  fireEvent.click(screen.getByRole("button",{name:"Prepare payroll for these earnings"}));
+  expect(screen.getByLabelText("Off-cycle reason")).toHaveValue("Statement TEST-MAIN");
+  expect(screen.getByLabelText("Off-cycle receipt cutoff")).toHaveValue("2026-11-16");
+  expect(screen.getAllByRole("checkbox",{name:/Include Avery/})).toHaveLength(2);
+  fireEvent.click(screen.getByRole("button",{name:"Change employees or earnings"}));
+  const rows=screen.getAllByRole("checkbox",{name:/Include Avery/});expect(rows).toHaveLength(3);expect(rows[0]).toBeChecked();expect(rows[1]).toBeChecked();expect(rows[2]).not.toBeChecked();
+  fireEvent.click(screen.getByRole("button",{name:"Create payroll draft"}));
+  await waitFor(()=>expect(h.action).toHaveBeenCalledWith("savePayrollCycle",expect.objectContaining({producerIds:["p"],reason:"Statement TEST-MAIN",selectedEarningKeys:earnings.map(e=>JSON.stringify(["receipt",e.policyId,e.entryId]))})));
+  expect(navigate).toHaveBeenCalledWith(expect.objectContaining({tab:"payroll",intakeId:"source",intakeReference:"TEST-MAIN",cycleId:expect.stringMatching(/^2026-11-OFF-/)}));
+  expect(h.action.mock.calls.some(([op])=>op==="approvePayrollCycle")).toBe(false);
+});
+
+it("retains the selected payroll cycle when reviewing an earlier source step",async()=>{
+ const navigate=vi.fn();render(<CommissionWorkflowContext.Provider value={{target:{tab:"payroll",intakeId:"source",intakeReference:"TEST-MAIN",cycleId:"2026-11"},navigate}}><CommissionPayroll owner refreshLedger={vi.fn()}/></CommissionWorkflowContext.Provider>);
+ fireEvent.click(await screen.findByRole("button",{name:"Step 3: Carrier payment, complete"}));
+ expect(navigate).toHaveBeenCalledWith({tab:"statements",intakeId:"source",intakeReference:"TEST-MAIN",cycleId:"2026-11",intakeStep:2});
+});

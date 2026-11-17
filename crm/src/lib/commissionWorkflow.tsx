@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
-export type CommissionDestination = { tab: string; intakeId?: string; statementId?: string; policyId?: string; departureId?: string; adjustmentId?: string; earningId?: string; cycleId?: string; earningKeys?: string[]; producerId?: string };
+export type CommissionDestination = { tab: string; intakeId?: string; intakeReference?: string; intakeStep?: number; statementId?: string; policyId?: string; departureId?: string; adjustmentId?: string; earningId?: string; cycleId?: string; earningKeys?: string[]; producerId?: string };
 export const CommissionWorkflowContext = createContext<{ target: CommissionDestination; navigate: (target: CommissionDestination) => void; storageKey?: string; remember?: (target: Partial<CommissionDestination>) => void }>({ target: { tab: 'queue' }, navigate: () => {} });
 export const useCommissionWorkflow = () => useContext(CommissionWorkflowContext);
 /** Only navigation preferences belong in browser storage. Working values stay private on the server. */

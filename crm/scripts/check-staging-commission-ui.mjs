@@ -49,7 +49,7 @@ if (diagnostics) execFileSync("aws", ["logs", "create-log-stream", "--region", "
 if (mode === "check" && staging) {
   run("npx", ["ampx", "generate", "outputs", "--app-id", process.env.AWS_APP_ID, "--branch", "staging"]);
   run("npx", ["vitest", "run", "src/pages/Commissions.test.tsx",
-    "src/components/CommissionDraftRecovery.test.tsx", "src/lib/commissionSourceGuidance.test.ts", "src/components/CommissionWorkQueue.test.tsx", "src/lib/commissionWorkflow.test.tsx",
+    "src/components/CommissionDraftRecovery.test.tsx", "src/lib/commissionSourceGuidance.test.ts", "src/lib/commissionPayrollHandoff.test.ts", "src/components/CommissionWorkQueue.test.tsx", "src/lib/commissionWorkflow.test.tsx",
     "src/test/commissionIntake.test.ts", "src/test/commissionIntakeImport.test.ts", "src/components/CommissionIntake.test.tsx", "src/components/CommissionSourcePreview.test.tsx", "src/test/commissionForecast.test.ts", "src/test/commissionService.test.ts",
     "src/test/commissionWorkflow.test.ts", "src/components/CommissionPayroll.test.tsx",
     "src/components/CommissionExceptions.test.tsx", "src/test/reportDownload.test.ts",

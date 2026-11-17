@@ -1,18 +1,25 @@
 # HOA commission workflow — staging acceptance plan
 
-Updated November 17, 2026: one active statement step, compact source review, automatic transitions after a successful save, and consistent money displays.
+Updated November 17, 2026: one Guided workflow from source import through employee payment, with statement-specific payroll suggestions and explicit human approval.
 
-### Current main test: upload and review are complete
+### Resume the main test at payroll review
 
-The authenticated staging statement **TEST-20261116-0B7609-01** was checked on November 17. Both source rows are imported and reviewed, the **$1,500.00** control total reconciles, and no carrier payment or employee earnings have been recorded. You have completed test-pack steps 4 and 5. Do not upload or import the main file again.
+Read-only staging inspection confirmed **TEST-20261116-0B7609-01** is fully posted: **$1,500.00** received and posted, **$150.00** employee earnings for **Brian Cole at 10%**, and **$0.00** source remaining. The saved receipt is **TEST-20261116-0B7609-MAIN-PAY**, dated **November 11, 2026**. Do not upload, reimport or record that carrier payment again.
 
-Open the existing statement. **Confirm carrier payment** is now the active app step. Use the fictional settlement reference **TEST-20261116-0B7609-MAIN-PAY**, receipt date **November 11, 2026**, amount **$1,500.00**, type **Carrier deposit**, and evidence **SIMULATED STAGING RECEIPT - NO REAL PAYMENT**. Check the receipt confirmation and choose **Save payment & continue**. This saves the receipt and opens the separate posting review; it does not automatically post earnings.
+Open **Commissions → Guided workflow**, then the existing statement (use **Statement inbox → All statements** if needed). Choose **Review payroll** in the step guide or **Continue to payroll**. The same Guided workflow remains selected. Expect **2 available earnings · $150.00** with $100.00 and $50.00 for Brian Cole.
 
-The screen itself guides the remaining actions. Check the proposed **$1,000.00 + $500.00** allocations and **$150.00** employee total, then acknowledge and choose **Confirm allocation & post earnings**. After posting, continue to payroll. Keep report emails disabled.
+Choose **Prepare payroll for these earnings**. The employee, exact earnings, statement reason and suggested calendar dates are already filled. For this historical fictional exercise, review/change the cutoff to **November 11**, review/HR/processing dates to **November 12**, and pay date to **November 13, 2026**. Choose **Create payroll draft**. The draft must total **$150.00**. This does not approve or pay it. Broader earnings are available only through **Change employees or earnings**; keep the original two selected.
+
+If linked payroll already exists, review that run instead of creating another. A regular monthly run can include other employees and earnings; its full amount is displayed before you choose it. For this isolated test, use the exact two-earning draft.
+
+Review any blockers before approving. The initial audit found a separate staging blocker, **TEST-PH-4175414-DUP-SETTLEMENT**. If it still appears, mark approval **Blocked**, retain your $150 draft and leave unrelated records unchanged. An authorized reviewer must resolve that record through its normal workflow. No UI improvement bypasses cutoff, eligibility or reconciliation checks.
+
+After explicit payroll approval, **Employee payment** becomes the current step. Inspect the reports, then record the fictional $60 and $90 payments with separate TEST references and November 13 dates. Keep report emails disabled. The guide reaches **Complete** only when the selected payroll is paid.
 
 ### Guided-workspace acceptance checks
 
-- Only the selected step's work is shown. Earlier steps show Complete and can be reopened. Returning to an earlier step preserves unsaved inputs in the other step.
+- **Guided workflow** replaces the separate Statements and Payroll tabs. One seven-stage guide continues through Import source, Match & review, Carrier payment, Post earnings, Review payroll, Employee payment and Complete. **Statement inbox** and **All payroll cycles & history** are secondary navigation.
+- Only the selected statement step's work is shown. Earlier steps show Complete and can be reopened. Returning to an earlier step preserves unsaved inputs in the other step.
 - Source rows display policy/reference, amount, employee/rate and review decision together. **Edit details** opens corrections and exception notes for a selected row. **Group review tools** contains optional selection/matching actions.
 - A row stays visible after choosing Eligible or Ineligible until its decision is saved. **Needs review or saving** includes these unsaved decisions. A successful, fully reconciled save opens payment; a failed save retains the decisions and the current step.
 - Finished review shows **Source review complete** and opens the payment form. Revisiting review shows **All row decisions are saved** with **View reviewed rows** and a continuation action, rather than an empty form with disabled save controls.
@@ -21,7 +28,7 @@ The screen itself guides the remaining actions. Check the proposed **$1,000.00 +
 - The exception **Carrier payment already received?** still allows recording actual received money before matching is finished. Source review remains required before allocation/posting, and the workflow returns to unfinished review.
 - Desktop uses compact rows beside the original. Phone layouts use readable cards without page-wide horizontal overflow. Long source tables can scroll within their own container.
 
-Earlier November 16 import guidance follows for new test statements. Historical release details below describe earlier baselines; verify this release against its own deployed commit.
+The following import guidance applies to new test statements only. Historical release details below describe earlier baselines; verify this release against its own deployed commit.
 
 ### After uploading the main test file
 
@@ -41,7 +48,7 @@ For this run, the carrier is **TEST Harbor Mutual 0B7609**, policy **TEST-0B7609
 
 Verify the statement total and its saved-draft comparison display **$1,500.00**. While editing, the amount may show raw digits; leaving the field restores currency formatting. Negative amounts retain their sign; invalid precision remains visible for correction. Before import, the total panel explains that rows must be imported instead of displaying a misleading difference error. Saved import drafts show column names and a one-based header row, and still require explicit restoration and fresh confirmation.
 
-Continue with the source review and simulated payment steps below. Report emails must remain disabled. The main upload and row review are complete; live payment/posting acceptance remains for the tester.
+The main test is already posted; resume at payroll review above. For a new fictional run, follow the walkthrough below. Report emails must remain disabled.
 
 Updated November 13, 2026 for the completed workflow simplifications. Use the release commit and staging deployment identified in the release message. This plan supersedes the earlier November 13 plan's pending-feature list and the older acceptance plan's navigation/deployment instructions.
 
@@ -50,14 +57,15 @@ Staging: https://migration-staging.d1nuh9rw1hcuxo.amplifyapp.com
 Use authenticated staging accounts and fictional records with unique TEST references. Keep report emails disabled. Do not change production or initiate actual HR/bank payments. The fictional local preview proves presentation only; live upload, extraction, cross-session recovery, posting and archived reports require the controlled staging exercise below.
 
 ## Current workflow
-**Work queue → Statements → source and eligibility review → carrier payment → Confirm allocation & post earnings → selected payroll review → reports → recorded employee payment.**
+**Work queue → Guided workflow: import → review → carrier payment → post earnings → review payroll → employee payment → complete.**
 
 - Work queue is the default for a first visit. Reopening restores the last workspace in the same browser for the same Owner. Received money affecting payroll comes first, followed by cutoff/review work. Use direct review links to open the relevant record.
-- Tabs are Work queue, Statements, Payroll, Ledger, Reviews & exceptions, and Setup. Employees retain their restricted personal view.
+- Tabs are Work queue, Guided workflow, Ledger, Reviews & exceptions, and Setup. Employees retain their restricted personal view.
 - Opening a statement focuses on its workspace. The guide provides the next action; preparation and payment have separate badges. Source, recorded, allocated, posted, employee and remaining totals appear above the active step. Completed work is summarized; the current form opens automatically.
 - CSV/XLSX reading and PDF/image extraction checks run automatically. The original document appears beside review on larger screens. Import rows & remember format combines the reviewed mapping actions.
 - Rows needing review or saving are shown first; All rows remains available. Repeated missing-policy issues are grouped. Optional Group review tools selects routine rows. Compact review cards show every visible row, with detailed corrections opened on demand.
 - Working edits save privately after a short pause, with Saving, Saved and Needs retry feedback. Save working draft remains available. Recovered values require Restore saved draft; review confirmations are reset. Navigation preferences are browser-specific; working drafts are server-saved and Owner-private.
+- A suggested receipt amount uses the unrecorded source balance, including earlier partial receipts. Date, reference and evidence remain blank for the user; suggestions are not unsaved edits or proof of payment. Revisited completed payment shows saved receipts with Record another receipt as a secondary action.
 - A full verified payment matching all remaining reviewed amounts receives a proposed allocation. Partial payments require evidence-supported allocations. The final action displays server-calculated employee amounts and posts in resumable groups.
 - Payroll shows one cycle with matching readiness and approval checks, including the inclusive cutoff. Employee calculations link to sources. Review issues link to the relevant statement, policy or exception case.
 - Payroll history is searchable; report versions and delivery evidence follow the selected cycle. Approval, delivery and employee payment remain separate. Cancel cycle… opens a reason/confirmation dialog.
@@ -85,12 +93,12 @@ Check pre-existing staging blockers before payroll. Resolve only identified test
 ## Main walkthrough
 
 ### 1. Start with the work queue and log the statement
-Open Commissions. On a first visit, Work queue should be selected. Open Statements and choose Log carrier statement. Select the carrier and original CSV; enter the run reference and November 12 arrival date; Save to inbox.
+Open Commissions. On a first visit, Work queue should be selected. Open Guided workflow, then Statement inbox, and choose Log carrier statement. Select the carrier and original CSV; enter the run reference and November 12 arrival date; Save to inbox.
 
 **Pass:** The original and inbox record survive refresh. Matching and payment were not required to log it. The focused workspace opens, with a next action and separate preparation/payment badges. No employee earnings exist, and an unpaid statement alone does not block payroll.
 
 ### 2. Read, compare and import once
-Confirm the spreadsheet loads automatically. Expand Statement details & control total; enter $1,500 and Save statement details. On desktop, compare the original beside the review. Verify the table/header and map every source column. Check the mapping acknowledgement, then Import rows & remember format.
+Confirm the spreadsheet loads automatically. Expand Statement details & control total; enter $1,500 and Save statement details. On desktop, compare the original beside the review. Verify the proposed worksheet, header and source columns. A unique recognizable header is selected automatically, including after cover rows; competing candidates remain for review. Saved carrier mappings take priority. Check the mapping acknowledgement, then Import rows & remember format.
 
 **Pass:** Two rows totaling $1,500 are saved for review. The carrier format is remembered. Import does not approve eligibility or create money. A second fictional source with reordered headings reuses the mapping correctly. A failed row import explains what was saved; retry after checking retained rows.
 
@@ -100,7 +108,7 @@ Confirm Rows to review starts with Needs review or saving. Switch to All rows an
 **Pass:** Incomplete rows can be saved. Reviewed financial changes require renewed acknowledgement. Routine grouping does not approve reversals, ambiguous renewals, unreadable amounts or missing historical facts. Once complete, the screen says Source review complete and opens Confirm carrier payment. Import and review show Complete. Earnings remain $0. A failed or stale save must not advance.
 
 ### 4. Record the actual payment and review the complete posting summary
-The Confirm carrier payment form is already open. Enter the unique TEST payment reference, November 11 actual receipt date, $1,500, Carrier deposit, and evidence SIMULATED STAGING RECEIPT — NO REAL PAYMENT. Confirm and choose Save payment & continue. The next screen opens Review & post settlement.
+The Confirm carrier payment form is already open. Enter the unique TEST payment reference, November 11 actual receipt date, the suggested $1,500 amount (adjust it to the actual receipt if different), Carrier deposit, and evidence SIMULATED STAGING RECEIPT — NO REAL PAYMENT. Confirm and choose Save payment & continue. The next screen opens Review & post settlement.
 
 The full payment should propose A $1,000 and B $500. Check allocated/received totals, source remaining, saved employee rate and server-calculated earnings. Temporarily reduce an allocation by $1; the difference must prevent submission. Restore the amounts and wait for the current financial review. Acknowledge and choose Confirm allocation & post earnings once.
 
@@ -112,11 +120,9 @@ Refresh/reopen the statement and ledger. Try the same source file, carrier state
 **Pass:** No retry or duplicate creates additional receipts/earnings. Posted source values stay locked; corrections use the established linked workflow. The original source and audit history remain.
 
 ### 6. Carry only selected earnings into payroll
-Continue to payroll should open a relevant cycle. In Ledger, use Prepare off-cycle payment for the $100 earning. Verify only that earning is preselected. Add the other test $50 earning deliberately, or create a separate off-cycle draft from Payroll using Choose specific earnings.
+Continue to payroll or choose Review payroll in the shared guide. Confirm exactly two available earnings for the statement, $100 and $50. Choose Prepare payroll for these earnings. The employee, both earnings, statement reference in the reason, and suitable calendar dates are proposed. Review/change the historical test dates listed above; Create payroll draft.
 
-Use the test employee, dates above and a TEST reason. Save the draft. Review payroll cycle must show that selected cycle, matching readiness dates and totals.
-
-**Pass:** The draft totals $150 only after both test earnings are selected. Other staging earnings remain excluded. Creating it does not approve or pay it. Changing employees/cutoff invalidates unavailable selections instead of silently broadening them.
+**Pass:** The draft starts at $150 without selecting each earning manually. Other earnings for the same employee are excluded. Change employees or earnings explicitly reveals broader choices. Creating the draft does not approve or pay it. The same statement identity and shared step guide continue into the draft's approval screen. Revisiting an earlier source step opens that same statement. Unavailable earnings, changed cutoffs, existing reservations and approval blockers remain enforced. A matching saved draft or approved/paid run appears as a linked payroll option; an unrelated employee-wide draft is never selected automatically.
 
 ### 7. Resolve, approve and inspect reports
 Expand Employee calculations & source statements. Verify $100 and $50 and open their source. Any Resolve control should open the exact linked record. Return to the same payroll cycle. Confirm the cutoff has ended, resolve applicable blockers, review dates/totals, acknowledge and Approve payroll cycle.

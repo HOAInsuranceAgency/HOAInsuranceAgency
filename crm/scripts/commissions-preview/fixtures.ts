@@ -260,9 +260,9 @@ export const commissionAction = async (action: string, input: Record<string, unk
       ],
     });
   if (action === 'getIntakeWorkingDraft' && useIsOwner()) return { draft: null };
-  if (action === 'intakeWorkspace' && useIsOwner()) return structuredClone({intakes: [inboxSample], settlements: [], templates: []});
+  if (action === 'intakeWorkspace' && useIsOwner()) return structuredClone({intakes: [inboxSample], settlements: inboxSettlements, templates: []});
   if (action === 'file' && useIsOwner() && input.key === 'fictional-source') return {url:'data:text/csv;charset=utf-8,' + encodeURIComponent(['import','review','payment'].includes(previewQuery.get('scenario') ?? '') ? 'Policy,Reference,Amount,Effective,Transaction\nPOL-1,TEST-IMPORT-1,1000.00,2026-01-01,RECEIPT\nPOL-1,TEST-IMPORT-2,500.00,2026-01-01,RECEIPT' : 'Policy,Reference,Agency commission\nPOL-1,TEST-TX-1,750.00\nHARBOR-NEW,TEST-TX-2,250.00')};
-  if (action === 'getStatementIntake' && useIsOwner()) return structuredClone({intake: inboxSample, rows: inboxRows, settlements: []});
+  if (action === 'getStatementIntake' && useIsOwner()) return structuredClone({intake: inboxSample, rows: inboxRows, settlements: inboxSettlements});
   if (action === "payrollWorkspace" && useIsOwner())
     return structuredClone(payrollWorkspace);
   throw new Error(
@@ -403,6 +403,7 @@ export async function attachCommissionStatement(file: File) {
   return { key: '', uploaded: false };
 }
 
+const inboxSettlements: unknown[] = [];
 const inboxSample = {id:'demo-inbox',version:1,carrierId:'c',carrierName:'Harbor Mutual',reference:'TEST-HARBOR-OCT',source:'fictional-source',filename:'harbor-october.csv',fileHash:'fictional',documentReceivedOn:'2026-10-15',totalCents:100000,createdAt:'2026-10-15T12:00:00Z',createdBy:'preview',status:'OPEN',rowCount:2,rowTotalCents:100000,needsReview:1,unmatched:1,postedCents:0,completedRows:0};
 const inboxRows = [{id:'sample1',version:1,intakeId:'demo-inbox',policyNumber:'POL-1',effectiveDate:'2026-01-01',policyId:'p',lineRef:'TEST-TX-1',agencyCents:75000,transactionType:'RECEIPT',reviewStatus:'ELIGIBLE',note:'Fictional source review',postedCents:0},{id:'sample2',version:1,intakeId:'demo-inbox',policyNumber:'HARBOR-NEW',effectiveDate:'',policyId:'',lineRef:'TEST-TX-2',agencyCents:25000,transactionType:'RECEIPT',reviewStatus:'PENDING',note:'',postedCents:0}];
 payrollWorkspace.statementReadiness = {activeStatements:1,statementsNeedingReview:1,unmatchedRows:1,pendingSettlements:[]};
@@ -416,4 +417,16 @@ if (['review', 'payment'].includes(previewQuery.get('scenario') ?? '')) {
   const ready = previewQuery.get('scenario') === 'payment';
   Object.assign(inboxSample, {reference:'TEST-GUIDED-STEPS',totalCents:150000,rowCount:2,rowTotalCents:150000,needsReview:ready ? 0 : 2,unmatched:0});
   inboxRows.splice(0, inboxRows.length, ...[100000,50000].map((amount,i) => ({id:'sample'+(i+1),version:1,intakeId:'demo-inbox',policyNumber:'POL-1',effectiveDate:'2026-01-01',policyId:'p',lineRef:'TEST-IMPORT-'+(i+1),agencyCents:amount,transactionType:'RECEIPT',reviewStatus:ready ? 'ELIGIBLE' : 'PENDING',note:'',postedCents:0})));
+}
+
+if (previewQuery.get('scenario') === 'posted') {
+  Object.assign(inboxSample,{reference:'TEST-GUIDED-PAYROLL',totalCents:150000,rowCount:2,rowTotalCents:150000,needsReview:0,unmatched:0,postedCents:150000,completedRows:2});
+  inboxRows.splice(0,inboxRows.length,...[100000,50000].map((amount,i)=>({id:'sample'+(i+1),version:2,intakeId:'demo-inbox',policyNumber:'POL-1',effectiveDate:'2026-01-01',policyId:'p',lineRef:'TEST-IMPORT-'+(i+1),agencyCents:amount,transactionType:'RECEIPT',reviewStatus:'ELIGIBLE',note:'',postedCents:amount})));
+  inboxSettlements.push({id:'demo-payment',version:2,intakeId:'demo-inbox',reference:'TEST-CARRIER-RECEIPT',receivedOn:'2026-11-11',totalCents:150000,settlementType:'DEPOSIT',evidence:'SIMULATED RECEIPT',status:'POSTED',allocations:inboxRows.map(r=>({rowId:r.id,amountCents:r.agencyCents})),postedRows:inboxRows.map(r=>r.id),statementIds:['demo-posted']});
+  let posted={...base,entries:[],producerBps:1000} as CommissionPolicy;
+  [100000,50000].forEach((amount,i)=>{posted=appendEntry(posted,line({agencyCents:amount,lineRef:'TEST-IMPORT-'+(i+1)}),{...statement(),id:'demo-posted',receivedOn:'2026-11-11'},'demo-entry-'+i);});
+  data.policies=[posted];
+  payrollWorkspace.availableEarnings=payrollPreview(data.policies,'2026-11-20');
+  payrollWorkspace.sourceLinks=posted.entries.map(e=>({policyId:posted.id,entryId:e.id,statementId:e.statementId,intakeId:'demo-inbox'}));
+  payrollWorkspace.statementReadiness={activeStatements:0,statementsNeedingReview:0,unmatchedRows:0,pendingSettlements:[]};
 }

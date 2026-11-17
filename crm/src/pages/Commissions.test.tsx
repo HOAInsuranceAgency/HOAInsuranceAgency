@@ -60,7 +60,7 @@ beforeEach(() => {
 it('shows producer earnings without any reconciliation or payroll controls', async () => {
   render(<Commissions />);
   await screen.findByText('Producer earned');
-  expect(screen.queryByRole('tab', { name: 'Statements' })).toBeNull();
+  expect(screen.queryByRole('tab', { name: 'Guided workflow' })).toBeNull();
   expect(screen.queryByRole('tab', { name: 'Payroll' })).toBeNull();
   expect(screen.queryByRole('button', { name: 'New reconciliation' })).toBeNull();
   expect(h.action).not.toHaveBeenCalled();
@@ -69,7 +69,7 @@ it('allows the Owner to review and post only after explicit settlement confirmat
   h.owner = true;
   render(<Commissions />);
   await screen.findByText('Producer earned');
-  fireEvent.click(screen.getByRole('tab', { name: 'Statements' }));
+  fireEvent.click(screen.getByRole('tab', { name: 'Guided workflow' }));
   fireEvent.click(screen.getByText('Earlier reconciliation records'));
   expect(screen.getByRole('button', { name: 'Post reconciled statement' })).toBeDisabled();
   expect(h.action).not.toHaveBeenCalled();
@@ -88,7 +88,7 @@ it('unmounts owner forms and clears old data immediately when switching roles', 
   h.owner = true;
   const view = render(<Commissions />);
   await screen.findByText('Producer earned');
-  fireEvent.click(screen.getByRole('tab', { name: 'Statements' }));
+  fireEvent.click(screen.getByRole('tab', { name: 'Guided workflow' }));
   fireEvent.click(screen.getByText('Earlier reconciliation records'));
   expect(screen.getByText('OCT-1')).toBeVisible();
   let finish!: (v: unknown) => void;
@@ -120,7 +120,7 @@ it('cannot post pending eligibility even after settlement confirmation', async (
   h.read.mockResolvedValue(data);
   render(<Commissions />);
   await screen.findByText('Producer earned');
-  fireEvent.click(screen.getByRole('tab', { name: 'Statements' }));
+  fireEvent.click(screen.getByRole('tab', { name: 'Guided workflow' }));
   fireEvent.click(screen.getByText('Earlier reconciliation records'));
   fireEvent.click(screen.getByLabelText(/I verified settlement evidence/));
   expect(screen.getByRole('button', { name: 'Post reconciled statement' })).toBeDisabled();
@@ -130,7 +130,7 @@ it('clears the parent commission view when a source-file request loses authoriza
   h.owner = true;
   render(<Commissions />);
   await screen.findByText('Producer earned');
-  fireEvent.click(screen.getByRole('tab', { name: 'Statements' }));
+  fireEvent.click(screen.getByRole('tab', { name: 'Guided workflow' }));
   fireEvent.click(screen.getByText('Earlier reconciliation records'));
   h.action.mockRejectedValue(new Error('Not authorized'));
   fireEvent.click(screen.getByRole('button', { name: 'Download original statement' }));
@@ -144,7 +144,8 @@ it('clears the parent commission view when the payroll workspace loses authoriza
   render(<Commissions />);
   await screen.findByText('Producer earned');
   h.action.mockRejectedValue(new Error('Not authorized'));
-  fireEvent.click(screen.getByRole('tab', { name: 'Payroll' }));
+  fireEvent.click(screen.getByRole('tab', { name: 'Guided workflow' }));
+  fireEvent.click(screen.getByRole('button', { name: 'All payroll cycles & history' }));
   expect(await screen.findByRole('alert')).toHaveTextContent('Not authorized');
   expect(screen.queryByText('Individual payroll batches (manual exceptions)')).toBeNull();
   fireEvent.click(screen.getByRole('tab', { name: 'Ledger' }));
@@ -788,7 +789,7 @@ it('requires a reason and explicit confirmation before voiding a draft', async (
   h.owner=true;
   render(<Commissions />);
   await screen.findByText('Producer earned');
-  fireEvent.click(screen.getByRole('tab',{name:'Statements'}));
+  fireEvent.click(screen.getByRole('tab',{name:'Guided workflow'}));
   fireEvent.click(screen.getByText('Earlier reconciliation records'));
   fireEvent.click(screen.getByText('Void draft · OCT-1'));
   const button=screen.getByRole('button',{name:'Void draft'});

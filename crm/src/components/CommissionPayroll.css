@@ -187,6 +187,8 @@
 }
 .payroll-workspace .payroll-form-body {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
   gap: 14px;
 }
 .payroll-workspace .payroll-form-body > p {
@@ -402,3 +404,5 @@
 .payroll-cycle-actions .payroll-form-body { gap:.5rem; }
 .payroll-cycle-actions .payroll-form-footer { margin-top:.65rem; }
 @media(max-width:650px) { .payroll-cycle-actions { display:grid;grid-template-columns:minmax(0,1fr); } }
+
+.payroll-workspace .payroll-form-body > * { min-width: 0; }

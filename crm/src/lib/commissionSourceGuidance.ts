@@ -31,3 +31,13 @@ export function displayCommissionAmount(value: string): string {
     return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", currencySign: "accounting" }).format(importedMoney(value) / 100);
   } catch { return value; }
 }
+
+/** Choose a worksheet/header only when exactly one candidate has every required column. */
+export function suggestImportTable(tables: { rows: string[][] }[], template?: CarrierImportTemplate) {
+  const candidates: { sheet: number; header: number }[] = [];
+  tables.forEach((table, sheet) => table.rows.slice(0, 20).forEach((row, header) => {
+    const mapping = suggestImportMapping(row, template);
+    if (mapping.policy >= 0 && mapping.reference >= 0 && mapping.amount >= 0 && header < table.rows.length - 1) candidates.push({sheet, header});
+  }));
+  return candidates.length === 1 ? candidates[0] : undefined;
+}

@@ -1,5 +1,6 @@
+import CommissionJourney, { commissionSteps } from "./CommissionJourney";
 import CommissionSourcePreview from './CommissionSourcePreview';
-import { displayCommissionAmount, importColumnLabels, suggestImportMapping } from '../lib/commissionSourceGuidance';
+import { displayCommissionAmount, importColumnLabels, suggestImportTable, suggestImportMapping } from '../lib/commissionSourceGuidance';
 import { useCommissionPreference, useCommissionWorkflow, CommissionBadge } from '../lib/commissionWorkflow';
 import { useEffect, useRef, useState, type FormEvent, type ReactNode, type InputHTMLAttributes, type ChangeEvent } from "react";
 import { commissionAction } from "../lib/commissions";
@@ -126,26 +127,17 @@ const priority = (s: StatementIntake, settlements: IntakeSettlement[]) => {
   const label = phase(s, settlements);
   return label === "Settlement needs review" ? 0 : label === "Needs matching / review" ? 1 : label === "Awaiting payment" ? 2 : 3;
 };
-const stepTitles = ["Import source", "Match & review", "Confirm payment", "Post settlement", "Complete"];
+
 function statementStep(intake: StatementIntake, settlements: IntakeSettlement[]) {
   if (phase(intake, settlements) === "Posted") return 4;
   if (!intake.rowCount) return 0;
   if (intake.needsReview || intake.unmatched || intake.totalCents === undefined || intake.totalCents !== intake.rowTotalCents) return 1;
   return settlements.some(s => s.status === "RECORDED" || s.status === "POSTING") ? 3 : 2;
 }
-function StatementProgress({ nextStep, activeStep, choose }: { nextStep: number; activeStep: number; choose: (step: number) => void }) {
-  return <nav aria-label="Statement progress"><ol className="intake-progress">
-    {stepTitles.map((title, i) => <li key={title} className={i < nextStep ? "complete" : ""}>
-      <button type="button" disabled={i > nextStep && i !== activeStep} aria-label={`Step ${i + 1}: ${title}${i < nextStep ? ", complete" : i === nextStep ? ", current" : ", up next"}`} aria-current={activeStep === i ? "step" : undefined} onClick={() => choose(i)}>
-        <span>{i < nextStep ? "✓" : i + 1}</span><span>{title}<small>{i < nextStep ? "Complete" : i === nextStep ? "Current step" : "Up next"}</small></span>
-      </button>
-    </li>)}
-  </ol></nav>;
-}
 
 function StatementSummary({ detail, data, choose }: { detail: Detail; data: CommissionOverview; choose: (step: number) => void }) {
   const { intake, settlements } = detail;
-  const { navigate } = useCommissionWorkflow();
+  const { navigate, target } = useCommissionWorkflow();
   const postedStatements = new Set(settlements.flatMap(s=>s.statementIds));
   const entries = data.policies.flatMap(p=>p.entries.filter(e=>postedStatements.has(e.statementId)));
   const entryIds = new Set(entries.map(e=>e.id));
@@ -158,7 +150,7 @@ function StatementSummary({ detail, data, choose }: { detail: Detail; data: Comm
   const payment = !settlements.some(s=>s.status!=='VOID') ? 'Awaiting payment' : settlements.some(s=>['RECORDED','POSTING'].includes(s.status)) ? 'Received · posting needed' : complete ? 'Fully posted' : 'Partially paid';
   const next = !intake.rowCount ? 'Review source columns' : preparation==='Review needed' ? 'Review unresolved rows' : settlements.some(s=>['RECORDED','POSTING'].includes(s.status)) ? 'Review and post payment' : complete ? 'Continue to payroll' : 'Confirm carrier payment';
   const move = () => {
-    if (complete) { navigate({tab:'payroll',intakeId:intake.id}); return; }
+    if (complete) { navigate({tab:'payroll',intakeId:intake.id,intakeReference:intake.reference,...(target.cycleId ? {cycleId:target.cycleId} : {})}); return; }
     choose(statementStep(intake, settlements));
   };
   return <section className="intake-summary" aria-label="Statement totals and next action">
@@ -188,7 +180,7 @@ export default function CommissionIntake({
   const { requestLeave } = useEditProtection();
   const { target, remember } = useCommissionWorkflow();
   const [selected, saveSelected] = useCommissionPreference('selected-statement', '');
-  const setSelected = (id:string) => { saveSelected(id); remember?.({intakeId:id,statementId:undefined}); };
+  const setSelected = (id:string) => { saveSelected(id); remember?.({intakeId:id,statementId:undefined,cycleId:undefined,intakeStep:undefined,intakeReference:undefined}); };
   const [adding, setAdding] = useState(false);
   const [query, setQuery] = useCommissionPreference('statement-search', '');
   const [filter, setFilter] = useCommissionPreference('statement-filter', 'active');
@@ -548,17 +540,27 @@ function IntakeDetail({
   );
   const task = useTask(onError),
     detail = resource.data;
-  const [chosenStep, setChosenStep] = useState<number | null>(null);
+  const { target, navigate } = useCommissionWorkflow();
+  const [chosenStep, setChosenStep] = useState<number | null>(target.intakeStep ?? null);
+  const [visited, setVisited] = useState<number[]>([]);
+  const [anotherReceipt, setAnotherReceipt] = useState(false);
   const [focusStep, setFocusStep] = useState(false);
   const nextStep = detail ? statementStep(detail.intake, detail.settlements) : 0;
   const activeStep = chosenStep === null ? nextStep : chosenStep;
-  const chooseStep = (step: number) => { setChosenStep(step); setFocusStep(true); };
-  const previousStep = useRef(nextStep);
+  const chooseStep = (step: number) => {
+    if (step === 4 && detail && nextStep === 4) { navigate({tab:"payroll",intakeId:id,intakeReference:detail.intake.reference,...(target.cycleId ? {cycleId:target.cycleId} : {})}); return; }
+    setChosenStep(step); setFocusStep(true);
+  };
+  useEffect(() => { if (detail) setVisited(old => old.includes(activeStep) ? old : [...old, activeStep]); }, [activeStep, !!detail]);
+  const shown = (step: number) => activeStep === step || visited.includes(step);
+  const previousStep = useRef<number | null>(null);
   useEffect(() => {
-    if (previousStep.current !== nextStep) {
-      setChosenStep(null); setFocusStep(true); previousStep.current = nextStep;
+    if (!detail) return;
+    if (previousStep.current !== null && previousStep.current !== nextStep) {
+      setChosenStep(null); setFocusStep(true);
     }
-  }, [nextStep]);
+    previousStep.current = nextStep;
+  }, [nextStep, !!detail]);
   useEffect(() => {
     if (!focusStep || !detail) return;
     const section = document.getElementById(activeStep === 0 ? "intake-import" : activeStep === 1 ? "intake-rows" : activeStep === 4 ? "intake-complete" : "intake-payment");
@@ -646,11 +648,11 @@ function IntakeDetail({
         <p className="commission-notice">Voided: {intake.voidReason}</p>
       ) : (
         <>
-          <StatementProgress nextStep={nextStep} activeStep={activeStep} choose={chooseStep} />
+          <CommissionJourney nextStep={nextStep} activeStep={activeStep} choose={chooseStep} />
           <StatementSummary detail={detail} data={data} choose={chooseStep} />
           {nextStep < 2 && settlements.some(s => s.status === "RECORDED" || s.status === "POSTING") && <p role="status" className="commission-notice">Payment recorded. Complete the source review before allocating or posting this settlement.</p>}
           {nextStep >= 2 && <div className="intake-completion-note" role="status"><strong>Source review complete</strong><span>{intake.rowCount} rows saved · {money(intake.rowTotalCents)} reconciled. {nextStep === 2 ? "Next: confirm the carrier payment below." : nextStep === 3 ? "Payment recorded. Review and post the settlement below." : "Settlement posted."}</span></div>}
-          {activeStep !== nextStep && <div className="intake-completion-note"><span>{activeStep > nextStep ? "Record received money now; source review is still required before posting." : "You are viewing an earlier step. Its saved work is complete."}</span><button className="secondary" onClick={() => chooseStep(nextStep)}>Return to {stepTitles[nextStep].toLowerCase()}</button></div>}
+          {activeStep !== nextStep && <div className="intake-completion-note"><span>{activeStep > nextStep ? "Record received money now; source review is still required before posting." : "You are viewing an earlier step. Its saved work is complete."}</span><button className="secondary" onClick={() => chooseStep(nextStep)}>Return to {commissionSteps[nextStep].toLowerCase()}</button></div>}
           <CommissionPanel title="Statement details & control total" hint={intake.totalCents === undefined ? "Enter the statement total" : money(intake.totalCents) + " saved"} open={intake.totalCents===undefined || (!!rows.length && intake.totalCents!==intake.rowTotalCents)} >
           <HeaderEditor
             key={
@@ -663,7 +665,7 @@ function IntakeDetail({
           </CommissionPanel>
           <div className={activeStep < 2 ? "intake-review-layout" : "intake-current-work"}>
           <div className="intake-review-main">
-          <div id="intake-import" hidden={activeStep !== 0}>
+          {shown(0) && <div id="intake-import" hidden={activeStep !== 0}>
           <h3 tabIndex={-1}>Import source</h3>
           <CommissionPanel
             title="Import statement rows"
@@ -680,7 +682,7 @@ function IntakeDetail({
               onError={onError}
             />
           </CommissionPanel>
-          </div><div hidden={activeStep !== 1}><RowsEditor
+          </div>}{shown(1) && <div hidden={activeStep !== 1}><RowsEditor
             key={"rows-" + rows.map((r) => r.id + ":" + r.version).join(",")}
             detail={detail}
             data={data}
@@ -689,8 +691,8 @@ function IntakeDetail({
             renderPolicySetup={renderPolicySetup}
             onError={onError}
           />
-          </div>
-          <section className="card" id="intake-payment" hidden={activeStep < 2 || activeStep === 4}>
+          </div>}
+          {(shown(2) || shown(3)) && <section className="card" id="intake-payment" hidden={activeStep < 2 || activeStep === 4}>
             <div className="commission-section-heading">
               <div>
                 <h3 tabIndex={-1}>{activeStep === 3 ? "Review & post settlement" : "Confirm carrier payment"}</h3>
@@ -700,11 +702,14 @@ function IntakeDetail({
                 </p>
               </div>
             </div>
-            <div hidden={activeStep !== 2}>
+            {shown(2) && <div hidden={activeStep !== 2}>
+              {!!settlements.length && <div className="intake-completion-note"><strong>Saved carrier receipts</strong>{settlements.filter(s => s.status !== "VOID").map(s => <p key={s.id}>{s.reference} · {s.receivedOn} · {money(s.totalCents)} · {s.status.toLowerCase()}</p>)}</div>}
+              {(nextStep < 4 || anotherReceipt) ? <>
               <p className="intake-step-help">Enter the payment reference, actual receipt date, amount and evidence. Then confirm to continue to the posting review. If payment has not arrived, leave this step for later; your source review is saved.</p>
-              <SettlementForm intake={intake} refresh={async () => { await reload(); setChosenStep(null); setFocusStep(true); }} onError={onError} />
-            </div>
-            <div hidden={activeStep !== 3}>
+              <SettlementForm key={settlements.map(s => s.id + ":" + s.version).join(",")} intake={intake} settlements={settlements} refresh={async () => { await reload(); setChosenStep(null); setFocusStep(true); }} onError={onError} />
+              </> : <><p>Carrier payment is complete. Continue to payroll to review the posted earnings.</p><button type="button" className="secondary" onClick={() => setAnotherReceipt(true)}>Record another receipt</button></>}
+            </div>}
+            {shown(3) && <div hidden={activeStep !== 3}>
             {settlements.map((s) => (
               <SettlementCard
                 key={s.id + ":" + s.version}
@@ -715,16 +720,16 @@ function IntakeDetail({
                 onError={onError}
               />
             ))}
-            </div>
+            </div>}
             {!settlements.length && (
               <p className="small muted">
                 No payment recorded. This statement does not create earnings or
                 block payroll while awaiting payment.
               </p>
             )}
-          </section>
+          </section>}
           <section id="intake-complete" className="card" hidden={activeStep !== 4}>
-            <h3 tabIndex={-1}>Statement complete</h3><p>The settlement has been posted. Use Continue to payroll above to review employee earnings.</p>
+            <h3 tabIndex={-1}>Earnings ready for payroll review</h3><p>The statement and carrier payment steps are complete. Continue to payroll above to carry these earnings into the next step.</p>
             {settlements.map(s => <p key={s.id}>{s.reference} · {money(s.totalCents)} · {s.status}</p>)}
           </section>
           </div>
@@ -881,8 +886,11 @@ function IntakeImport({
     } catch (e) {
       issue = (e as Error).message;
     }
-  const choose = (next: SourceTable[], index = 0, head = 0) => {
+  const choose = (next: SourceTable[], requestedSheet?: number, requestedHeader?: number) => {
     if (!alive.current) return;
+    const suggested = suggestImportTable(requestedSheet === undefined ? next : [next[requestedSheet]], template);
+    const index = requestedSheet ?? suggested?.sheet ?? 0;
+    const head = requestedHeader ?? suggested?.header ?? 0;
     setTables(next);
     setSheet(index);
     setHeader(head);
@@ -959,7 +967,7 @@ function IntakeImport({
       <section className="intake-import-guide" aria-label="Source import instructions">
         <h3>{rows.length ? "Source import options" : "Next: check columns, then import"}</h3>
         <ol>
-          <li><strong>Check the column choices.</strong> {template ? "The saved carrier format is selected." : "Recognizable headings are suggested automatically."} Correct any missing or incorrect choice.</li>
+          <li><strong>Check the column choices.</strong> {template ? "The saved carrier format is selected." : "Recognizable headings are suggested automatically. A worksheet and header are selected when only one matches the required columns."} Correct any missing or incorrect choice.</li>
           <li><strong>Compare the preview with the original.</strong> Check policy numbers, references, amounts, dates and transaction types.</li>
           <li><strong>Confirm and import.</strong> Tick the confirmation below the preview, then choose <strong>Import rows &amp; remember format</strong>. You will continue to policy and eligibility review.</li>
         </ol>
@@ -1705,22 +1713,26 @@ function RowsEditor({
 }
 function SettlementForm({
   intake,
+  settlements,
   refresh,
   onError,
 }: {
   intake: StatementIntake;
+  settlements: IntakeSettlement[];
   refresh: () => Promise<void>;
   onError: (e: unknown) => void;
 }) {
+  const remaining = (intake.totalCents ?? 0) - sum(settlements.filter(s => s.status !== "VOID").map(s => s.totalCents));
+  const suggestedAmount = useRef(remaining > 0 ? (remaining / 100).toFixed(2) : "").current;
   const [reference, setReference] = useState(""),
     [date, setDate] = useState(""),
-    [amount, setAmount] = useState(""),
+    [amount, setAmount] = useState(suggestedAmount),
     [evidence, setEvidence] = useState(""),
     [type, setType] = useState("DEPOSIT"),
     [confirmed, setConfirmed] = useState(false);
   const task = useTask(onError);
   const { markClean } = useUnsavedChanges(
-    !!reference || !!date || !!amount || !!evidence,
+    !!reference || !!date || amount !== suggestedAmount || !!evidence || type !== "DEPOSIT" || confirmed,
     { busy: task.busy },
   );
   return (
@@ -1779,6 +1791,7 @@ function SettlementForm({
             </select>
           </label>
         </div>
+        {!!suggestedAmount && <p className="small muted">Amount suggested from the unrecorded source balance: {displayCommissionAmount(suggestedAmount)}. Change it for a partial or different receipt; confirm against actual payment evidence.</p>}
         <label className="field">
           Payment evidence
           <textarea
@@ -1824,14 +1837,15 @@ function SettlementCard({
 }) {
   const reviewedAvailable = detail.rows.filter(r=>!r.deleted && r.agencyCents!==undefined && !rowIssues(r,detail.intake.carrierId,data.policies,detail.rows).length);
   const proposed: Record<string,string> = Object.fromEntries(reviewedAvailable.map(r=>[r.id, ((r.agencyCents! - reservedCents(r.id,detail.settlements,s.id))/100).toFixed(2)]).filter(([,v])=>Number(v)!==0));
-  const fullPayment = sum(Object.values(proposed).map(importedMoney)) === s.totalCents && s.totalCents > 0 && Object.keys(proposed).length > 0;
+  const fullPayment = s.status === "RECORDED" && sum(Object.values(proposed).map(importedMoney)) === s.totalCents && s.totalCents > 0 && Object.keys(proposed).length > 0;
   const [amounts, setAmounts] = useState<Record<string, string>>(() => fullPayment ? proposed : {}),
     [confirmed, setConfirmed] = useState(false),
     [page, setPage] = useState(0);
   const task = useTask(onError);
   const request = useRef<string | null>(null);
+  const initialAmounts = useRef(JSON.stringify(amounts));
   const { markClean } = useUnsavedChanges(
-    Object.values(amounts).some(Boolean) || confirmed,
+    s.status === "RECORDED" && (JSON.stringify(amounts) !== initialAmounts.current || confirmed),
     { busy: task.busy },
   );
   const available = detail.rows.filter(
