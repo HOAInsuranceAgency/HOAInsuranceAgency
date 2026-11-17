@@ -13,11 +13,12 @@ function SavedValues({ value }: { value: unknown }): ReactNode {
     </dd></div>)}</dl>;
 }
 export default function CommissionDraftRecovery<T extends object>({
-  intake, scope, value, restore, disabled, onError, renderSaved,
+  intake, scope, value, restore, disabled, onError, renderSaved, compact = false,
 }: {
   intake: StatementIntake; scope: string; value: T; restore: (data: T) => void;
   disabled?: boolean; onError: (error: unknown) => void;
   renderSaved?: (data: T) => ReactNode;
+  compact?: boolean;
 }) {
   const resource = useAsyncResource(
     async () => {
@@ -61,6 +62,7 @@ export default function CommissionDraftRecovery<T extends object>({
     return () => window.clearTimeout(timer);
   }, [current, disabled, busy, resource.loading, resource.loaded, resource.error, error, stale, recoveryPending, intake.version]);
   return <div className="intake-draft-recovery" aria-label={(scope.startsWith("allocation-") ? "Settlement allocation" : ({header:"Statement details",rows:"Source rows",import:"Import mapping",settlement:"Payment details"} as Record<string,string>)[scope] ?? scope) + " working draft"}>
+    <details open={compact ? undefined : true}><summary>Saved working copy{stale ? " · earlier version available" : recoveryPending ? " · available to restore" : error || resource.error ? " · needs attention" : " · automatic recovery"}</summary>
     <p role="status" className="small"><strong>{busy ? 'Saving…' : error || resource.error ? 'Needs retry' : stale ? 'Compare saved draft' : recoveryPending ? 'Saved draft available' : state}</strong> · Changes save privately after you pause. Review confirmations are never saved.</p>
     <div className="intake-actions">
       <button type="button" className="secondary" disabled={disabled || busy || resource.loading || !!resource.error}
@@ -78,5 +80,7 @@ export default function CommissionDraftRecovery<T extends object>({
     {(error || resource.error) && <p role="alert" className="error-text">{error || resource.error}</p>}
     {(error || resource.error) && <button type="button" className="secondary" disabled={busy || resource.loading} onClick={() => { handled.current = current; accepted.current = false; setError(""); setState("Ready"); void resource.refetch(); }}>Reload saved draft</button>}
     {message && <p role="status" className="small">{message}</p>}
+    </details>
+    {compact && (error || resource.error) && <p role="alert" className="error-text">Your working copy could not be saved. Open Saved working copy for details and retry.</p>}
   </div>;
 }

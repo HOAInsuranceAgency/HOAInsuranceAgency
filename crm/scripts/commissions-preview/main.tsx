@@ -47,6 +47,8 @@ createRoot(document.getElementById('root')!).render(
               <option value="exceptions">Payment &amp; report history</option>
               <option value="basic">Basic ledger</option>
               <option value="import">Statement import guidance</option>
+              <option value="review">Compact row review</option>
+              <option value="payment">Reviewed - confirm payment</option>
             </select>
           </label>
           <label className="field" style={{minWidth:200,flex:1}}>

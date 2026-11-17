@@ -118,11 +118,14 @@ it("requires review confirmation to save routine rows as eligible", async () => 
   renderInbox();
   fireEvent.click(await screen.findByRole("button", { name: "Open" }));
   await screen.findByText("Policy matches & eligibility");
+  fireEvent.click(screen.getByText("Group review tools"));
   fireEvent.click(screen.getByLabelText("Select source row r1"));
+  expect(screen.getByLabelText("Select source row r1")).toBeChecked();
+  expect(screen.getByRole("button", {name:"Mark selected routine rows eligible"})).toBeEnabled();
   fireEvent.click(
     screen.getByRole("button", { name: "Mark selected routine rows eligible" }),
   );
-  fireEvent.click(screen.getByRole("button", { name: "Save source rows" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save review & continue" }));
   await screen.findByText(
     "Confirm the changed source values and eligibility decisions before saving reviewed rows.",
   );
@@ -131,7 +134,7 @@ it("requires review confirmation to save routine rows as eligible", async () => 
   );
   // The UI stops unconfirmed review; explicit confirmation is then carried to the server.
   fireEvent.click(screen.getByLabelText(/I checked changed source values/));
-  fireEvent.click(screen.getByRole("button", { name: "Save source rows" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save review & continue" }));
   await waitFor(() =>
     expect(h.action).toHaveBeenCalledWith(
       "saveIntakeRows",
@@ -143,13 +146,14 @@ it("does not reset an unsaved amount while opening inline policy setup", async (
   renderInbox();
   fireEvent.click(await screen.findByRole("button", { name: "Open" }));
   await screen.findByText("Policy matches & eligibility");
+  fireEvent.click(screen.getByRole("button", {name:"Edit details T1"}));
   fireEvent.change(screen.getByLabelText("Agency amount r1"), {
     target: { value: "123.45" },
   });
   fireEvent.click(
     screen.getByRole("button", { name: "Find in CRM / add tracking" }),
   );
-  expect(screen.getByLabelText("Agency amount r1")).toHaveValue("123.45");
+  expect(screen.getByLabelText("Agency amount r1")).toHaveValue("$123.45");
 });
 
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
@@ -276,6 +280,7 @@ it("formats the total and saved draft as currency without changing signed cents 
   const source={...intake,totalCents:150000,rowCount:0,rowTotalCents:0};
   h.action.mockImplementation(async(op,input)=>op==="intakeWorkspace"?{intakes:[source],settlements:[],templates:[]}:op==="getStatementIntake"?{...detail,intake:source,rows:[]}:op==="getIntakeWorkingDraft" && input.scope==="header"?{draft:{version:1,baseVersion:0,savedAt:"2026-11-16T14:59:00Z",data:{total:"1500",date:""}}}:{draft:null});
   renderInbox();fireEvent.click(await screen.findByRole("button",{name:"Open"}));
+  fireEvent.click(await screen.findByText("Statement details & control total"));
   const input=await screen.findByLabelText("Statement agency commission total ($)");
   expect(input).toHaveValue("$1,500.00");
   const draft=await screen.findByLabelText("Statement details working draft");
@@ -287,4 +292,113 @@ it("formats the total and saved draft as currency without changing signed cents 
   await waitFor(()=>expect(h.action).toHaveBeenCalledWith("saveStatementIntake",expect.objectContaining({totalCents:-2525})));
   fireEvent.focus(input);fireEvent.change(input,{target:{value:"12.345"}});fireEvent.blur(input);
   expect(input).toHaveValue("12.345");
+});
+
+
+it("keeps reviewed decisions visible until saved, then advances to payment without recording one", async () => {
+  let current = structuredClone(detail);
+  h.action.mockImplementation(async (op,input) => {
+    if (op === "intakeWorkspace") return {intakes:[current.intake],settlements:[],templates:[]};
+    if (op === "getStatementIntake") return current;
+    if (op === "saveIntakeRows") {
+      current={...current,intake:{...current.intake,version:2,needsReview:0},rows:input.rows.map((r:typeof row) => ({...r,version:2}))};
+      return {ok:true};
+    }
+    return {draft:null};
+  });
+  renderInbox(); fireEvent.click(await screen.findByRole("button",{name:"Open"}));
+  const choice=await screen.findByLabelText("Review decision r1");
+  fireEvent.change(choice,{target:{value:"ELIGIBLE"}});
+  expect(choice).toBeVisible();
+  expect(screen.getByRole("table",{name:"Source row review"})).toHaveTextContent("$100.00");
+  expect(screen.queryByRole("button",{name:"Save payment & continue"})).toBeNull();
+  fireEvent.click(screen.getByLabelText(/I checked changed source values/));
+  fireEvent.click(screen.getByRole("button",{name:"Save review & continue"}));
+  await waitFor(()=>expect(screen.getByRole("heading",{name:"Confirm carrier payment"})).toHaveFocus());
+  expect(screen.getByText("Source review complete")).toBeVisible();
+  expect(screen.queryByRole("table",{name:"Source row review"})).toBeNull();
+  expect(screen.queryByRole("button",{name:"Import rows & remember format"})).toBeNull();
+  expect(screen.getByRole("button",{name:"Save payment & continue"})).toBeDisabled();
+  expect(h.action.mock.calls.some(([op])=>["recordIntakeSettlement","postIntakeSettlement"].includes(op))).toBe(false);
+  fireEvent.click(screen.getByRole("button",{name:"Step 2: Match & review, complete"}));
+  expect(screen.getByText("All row decisions are saved.")).toBeVisible();
+  expect(screen.queryByRole("button",{name:"Save source rows"})).toBeNull();
+  fireEvent.click(screen.getByRole("button",{name:"View reviewed rows"}));
+  expect(screen.getByRole("table",{name:"Source row review"})).toHaveTextContent("$100.00");
+});
+
+it("keeps a failed review save on the current step with the decisions still available", async () => {
+  h.action.mockImplementation(async op => op==="intakeWorkspace"?{intakes:[intake],settlements:[],templates:[]}:op==="getStatementIntake"?detail:op==="saveIntakeRows"?Promise.reject(new Error("A newer row version was saved. Refresh before retrying.")):{draft:null});
+  renderInbox(); fireEvent.click(await screen.findByRole("button",{name:"Open"}));
+  fireEvent.change(await screen.findByLabelText("Review decision r1"),{target:{value:"ELIGIBLE"}});
+  fireEvent.click(screen.getByLabelText(/I checked changed source values/));
+  fireEvent.click(screen.getByRole("button",{name:"Save review & continue"}));
+  await screen.findByText(/A newer row version was saved/);
+  expect(screen.getByLabelText("Review decision r1")).toHaveValue("ELIGIBLE");
+  expect(screen.queryByRole("button",{name:"Save payment & continue"})).toBeNull();
+});
+
+it("reopens a completed source review at the payment step and preserves payment input while viewing prior steps",async()=>{
+  const source={...intake,needsReview:0};
+  h.action.mockImplementation(async op=>op==="intakeWorkspace"?{intakes:[source],settlements:[],templates:[]}:op==="getStatementIntake"?{...detail,intake:source,rows:[{...row,reviewStatus:"ELIGIBLE"}]}:{draft:null});
+  renderInbox();fireEvent.click(await screen.findByRole("button",{name:"Open"}));
+  const amount=await screen.findByLabelText("Agency commission received / retained ($)");
+  expect(amount).toBeVisible();
+  fireEvent.change(amount,{target:{value:"1000.00"}});fireEvent.blur(amount);
+  expect(amount).toHaveValue("$1,000.00");
+  fireEvent.click(screen.getByRole("button",{name:"Step 1: Import source, complete"}));
+  expect(amount).not.toBeVisible();
+  fireEvent.click(screen.getByRole("button",{name:"Step 3: Confirm payment, current"}));
+  expect(amount).toHaveValue("$1,000.00");
+  expect(amount).toBeVisible();
+  expect(screen.getByRole("button",{name:"Step 4: Post settlement, up next"})).toBeDisabled();
+});
+
+it("requires the statement total to reconcile before advancing even when every row is reviewed",async()=>{
+  const source={...intake,totalCents:20000,needsReview:0};
+  h.action.mockImplementation(async op=>op==="intakeWorkspace"?{intakes:[source],settlements:[],templates:[]}:op==="getStatementIntake"?{...detail,intake:source,rows:[{...row,reviewStatus:"ELIGIBLE"}]}:{draft:null});
+  renderInbox();fireEvent.click(await screen.findByRole("button",{name:"Open"}));
+  expect(await screen.findByText(/Check the statement control total above/)).toBeVisible();
+  expect(screen.getByLabelText("Statement agency commission total ($)")).toBeVisible();
+  expect(screen.getByRole("button",{name:"Step 3: Confirm payment, up next"})).toBeDisabled();
+});
+
+
+it("saves only a confirmed payment and advances to the settlement review",async()=>{
+  let settlement: Record<string,unknown> | undefined;
+  const source={...intake,needsReview:0};
+  h.action.mockImplementation(async(op,input)=>{
+    if(op==="intakeWorkspace")return {intakes:[source],settlements:settlement?[settlement]:[],templates:[]};
+    if(op==="getStatementIntake")return {intake:source,rows:[{...row,reviewStatus:"ELIGIBLE"}],settlements:settlement?[settlement]:[]};
+    if(op==="recordIntakeSettlement"){settlement={id:"s1",version:1,intakeId:intake.id,reference:input.reference,receivedOn:input.receivedOn,totalCents:input.totalCents,settlementType:"DEPOSIT",evidence:input.evidence,status:"RECORDED",allocations:[],statementIds:[],postedRows:[]};return {ok:true};}
+    if(op==="previewIntakeSettlement")return {calculations:[],employeeCents:1000};
+    return {draft:null};
+  });
+  renderInbox();fireEvent.click(await screen.findByRole("button",{name:"Open"}));
+  fireEvent.change(await screen.findByLabelText("Deposit / settlement reference"),{target:{value:"TEST-PAYMENT"}});
+  fireEvent.change(screen.getByLabelText("Actual commission receipt date"),{target:{value:"2026-10-03"}});
+  const amount=screen.getByLabelText("Agency commission received / retained ($)");
+  fireEvent.change(amount,{target:{value:"100"}});
+  fireEvent.change(screen.getByLabelText("Payment evidence"),{target:{value:"Fictional bank receipt"}});
+  const confirmation=screen.getByLabelText(/I verified that this settlement occurred/);
+  fireEvent.click(confirmation);
+  fireEvent.change(amount,{target:{value:"100.00"}});
+  expect(confirmation).not.toBeChecked();
+  expect(screen.getByRole("button",{name:"Save payment & continue"})).toBeDisabled();
+  fireEvent.click(confirmation);fireEvent.click(screen.getByRole("button",{name:"Save payment & continue"}));
+  await waitFor(()=>expect(h.action).toHaveBeenCalledWith("recordIntakeSettlement",expect.objectContaining({totalCents:10000,confirmed:true,receivedOn:"2026-10-03"})));
+  await waitFor(()=>expect(screen.getByRole("heading",{name:"Review & post settlement"})).toHaveFocus());
+  expect(screen.queryByRole("button",{name:"Save payment & continue"})).toBeNull();
+  expect(h.action.mock.calls.some(([op])=>op==="postIntakeSettlement")).toBe(false);
+});
+
+
+it("allows an early carrier receipt while keeping source review and posting incomplete",async()=>{
+  renderInbox();fireEvent.click(await screen.findByRole("button",{name:"Open"}));
+  fireEvent.click(await screen.findByText("Carrier payment already received?"));
+  fireEvent.click(screen.getByRole("button",{name:"Record received payment"}));
+  expect(screen.getByLabelText("Agency commission received / retained ($)")).toBeVisible();
+  expect(screen.getByText(/source review is still required before posting/)).toBeVisible();
+  expect(screen.getByRole("button",{name:"Step 4: Post settlement, up next"})).toBeDisabled();
+  expect(h.action.mock.calls.some(([op])=>["recordIntakeSettlement","postIntakeSettlement"].includes(op))).toBe(false);
 });

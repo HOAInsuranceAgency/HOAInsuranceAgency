@@ -1,7 +1,7 @@
 import CommissionSourcePreview from './CommissionSourcePreview';
 import { displayCommissionAmount, importColumnLabels, suggestImportMapping } from '../lib/commissionSourceGuidance';
 import { useCommissionPreference, useCommissionWorkflow, CommissionBadge } from '../lib/commissionWorkflow';
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode, type InputHTMLAttributes, type ChangeEvent } from "react";
 import { commissionAction } from "../lib/commissions";
 import { attachCommissionStatement } from "../lib/commissionStatementAttachment";
 import { readCommissionWorkbook } from "../lib/commissionWorkbook";
@@ -93,36 +93,20 @@ function Feedback({ task }: { task: ReturnType<typeof useTask> }) {
     </>
   );
 }
-function Field({
-  label,
-  value,
-  set,
-  type = "text",
-  required = false,
-  currency = false,
-}: {
-  label: string;
-  value: string;
-  set: (v: string) => void;
-  type?: string;
-  required?: boolean;
-  currency?: boolean;
-}) {
+function CurrencyInput(props: InputHTMLAttributes<HTMLInputElement>) {
   const [focused, setFocused] = useState(false);
-  return (
-    <label className="field">
-      <span>{label}</span>
-      <input
-        type={type}
-        value={currency && !focused ? displayCommissionAmount(value) : value}
-        inputMode={currency ? "decimal" : undefined}
-        onFocus={() => setFocused(true)}
-        onBlur={() => setFocused(false)}
-        required={required}
-        onChange={(e) => set(e.target.value)}
-      />
-    </label>
-  );
+  return <input {...props} type="text" inputMode="decimal"
+    value={!focused ? displayCommissionAmount(String(props.value ?? "")) : props.value}
+    onFocus={e => { setFocused(true); props.onFocus?.(e); }}
+    onBlur={e => { setFocused(false); props.onBlur?.(e); }} />;
+}
+function Field({ label, value, set, type = "text", required = false, currency = false }: {
+  label: string; value: string; set: (v: string) => void; type?: string; required?: boolean; currency?: boolean;
+}) {
+  const props = { value, required, onChange: (e: ChangeEvent<HTMLInputElement>) => set(e.target.value) };
+  return <label className="field"><span>{label}</span>
+    {currency ? <CurrencyInput {...props} /> : <input {...props} type={type} />}
+  </label>;
 }
 const phase = (s: StatementIntake, settlements: IntakeSettlement[]) =>
   s.status === "VOID"
@@ -142,21 +126,24 @@ const priority = (s: StatementIntake, settlements: IntakeSettlement[]) => {
   const label = phase(s, settlements);
   return label === "Settlement needs review" ? 0 : label === "Needs matching / review" ? 1 : label === "Awaiting payment" ? 2 : 3;
 };
-function StatementProgress({ intake, settlements }: { intake: StatementIntake; settlements: IntakeSettlement[] }) {
-  const label = phase(intake, settlements);
-  const step = label === "Posted" ? 4 : !intake.rowCount ? 0 :
-    intake.needsReview || intake.unmatched || intake.totalCents === undefined || intake.totalCents !== intake.rowTotalCents ? 1 :
-    label === "Settlement needs review" ? 3 : 2;
+const stepTitles = ["Import source", "Match & review", "Confirm payment", "Post settlement", "Complete"];
+function statementStep(intake: StatementIntake, settlements: IntakeSettlement[]) {
+  if (phase(intake, settlements) === "Posted") return 4;
+  if (!intake.rowCount) return 0;
+  if (intake.needsReview || intake.unmatched || intake.totalCents === undefined || intake.totalCents !== intake.rowTotalCents) return 1;
+  return settlements.some(s => s.status === "RECORDED" || s.status === "POSTING") ? 3 : 2;
+}
+function StatementProgress({ nextStep, activeStep, choose }: { nextStep: number; activeStep: number; choose: (step: number) => void }) {
   return <nav aria-label="Statement progress"><ol className="intake-progress">
-    {["Import source", "Match & review", "Confirm payment", "Post settlement", "Complete"].map((title, i) =>
-      <li key={title} aria-current={step === i ? "step" : undefined} className={i < step ? "complete" : ""}>
-        <span>{i < step ? "✓" : i + 1}</span>{title}
-      </li>)}
-  </ol><p className="small muted">Working changes save automatically. Follow the next action below; importing rows does not create earnings.</p></nav>;
+    {stepTitles.map((title, i) => <li key={title} className={i < nextStep ? "complete" : ""}>
+      <button type="button" disabled={i > nextStep && i !== activeStep} aria-label={`Step ${i + 1}: ${title}${i < nextStep ? ", complete" : i === nextStep ? ", current" : ", up next"}`} aria-current={activeStep === i ? "step" : undefined} onClick={() => choose(i)}>
+        <span>{i < nextStep ? "✓" : i + 1}</span><span>{title}<small>{i < nextStep ? "Complete" : i === nextStep ? "Current step" : "Up next"}</small></span>
+      </button>
+    </li>)}
+  </ol></nav>;
 }
 
-
-function StatementSummary({ detail, data }: { detail: Detail; data: CommissionOverview }) {
+function StatementSummary({ detail, data, choose }: { detail: Detail; data: CommissionOverview; choose: (step: number) => void }) {
   const { intake, settlements } = detail;
   const { navigate } = useCommissionWorkflow();
   const postedStatements = new Set(settlements.flatMap(s=>s.statementIds));
@@ -172,12 +159,7 @@ function StatementSummary({ detail, data }: { detail: Detail; data: CommissionOv
   const next = !intake.rowCount ? 'Review source columns' : preparation==='Review needed' ? 'Review unresolved rows' : settlements.some(s=>['RECORDED','POSTING'].includes(s.status)) ? 'Review and post payment' : complete ? 'Continue to payroll' : 'Confirm carrier payment';
   const move = () => {
     if (complete) { navigate({tab:'payroll',intakeId:intake.id}); return; }
-    const node = document.getElementById(!intake.rowCount ? 'intake-import' : preparation==='Review needed' ? 'intake-rows' : 'intake-payment');
-    const panel = node?.querySelector('details');
-    if (panel) panel.open = true;
-    node?.scrollIntoView?.({block:'start'});
-    const control = !intake.rowCount ? document.getElementById('intake-column-mapping')?.querySelector<HTMLElement>('select') : node?.querySelector<HTMLElement>('button,input,select');
-    control?.focus({preventScroll:true});
+    choose(statementStep(intake, settlements));
   };
   return <section className="intake-summary" aria-label="Statement totals and next action">
     <div className="commission-action-bar"><CommissionBadge>{preparation}</CommissionBadge><CommissionBadge tone={complete?'green':'amber'}>{payment}</CommissionBadge><button className="primary" onClick={move}>{next}</button></div>
@@ -566,14 +548,24 @@ function IntakeDetail({
   );
   const task = useTask(onError),
     detail = resource.data;
-  const [focusReview, setFocusReview] = useState(false);
+  const [chosenStep, setChosenStep] = useState<number | null>(null);
+  const [focusStep, setFocusStep] = useState(false);
+  const nextStep = detail ? statementStep(detail.intake, detail.settlements) : 0;
+  const activeStep = chosenStep === null ? nextStep : chosenStep;
+  const chooseStep = (step: number) => { setChosenStep(step); setFocusStep(true); };
+  const previousStep = useRef(nextStep);
   useEffect(() => {
-    if (!focusReview || !detail?.rows.length) return;
-    const section = document.getElementById("intake-rows");
+    if (previousStep.current !== nextStep) {
+      setChosenStep(null); setFocusStep(true); previousStep.current = nextStep;
+    }
+  }, [nextStep]);
+  useEffect(() => {
+    if (!focusStep || !detail) return;
+    const section = document.getElementById(activeStep === 0 ? "intake-import" : activeStep === 1 ? "intake-rows" : activeStep === 4 ? "intake-complete" : "intake-payment");
     section?.scrollIntoView?.({ block: "start" });
     section?.querySelector<HTMLElement>("h3")?.focus({ preventScroll: true });
-    setFocusReview(false);
-  }, [focusReview, detail?.rows.length]);
+    setFocusStep(false);
+  }, [focusStep, activeStep, detail]);
   const reload = async () => {
     await resource.refetch();
     await refresh();
@@ -605,7 +597,7 @@ function IntakeDetail({
       version++;
     }
     await reload();
-    if (!confirmed && current.intake.rowCount === 0) setFocusReview(true);
+    setChosenStep(null); setFocusStep(true);
   };
   if (!detail)
     return (
@@ -654,9 +646,12 @@ function IntakeDetail({
         <p className="commission-notice">Voided: {intake.voidReason}</p>
       ) : (
         <>
-          <StatementProgress intake={intake} settlements={settlements} />
-          <StatementSummary detail={detail} data={data} />
-          <CommissionPanel title="Statement details & control total" hint={intake.totalCents === undefined ? "Enter the statement total" : money(intake.totalCents) + " saved"} open={intake.totalCents===undefined} remember={'header-panel:'+intake.id}>
+          <StatementProgress nextStep={nextStep} activeStep={activeStep} choose={chooseStep} />
+          <StatementSummary detail={detail} data={data} choose={chooseStep} />
+          {nextStep < 2 && settlements.some(s => s.status === "RECORDED" || s.status === "POSTING") && <p role="status" className="commission-notice">Payment recorded. Complete the source review before allocating or posting this settlement.</p>}
+          {nextStep >= 2 && <div className="intake-completion-note" role="status"><strong>Source review complete</strong><span>{intake.rowCount} rows saved · {money(intake.rowTotalCents)} reconciled. {nextStep === 2 ? "Next: confirm the carrier payment below." : nextStep === 3 ? "Payment recorded. Review and post the settlement below." : "Settlement posted."}</span></div>}
+          {activeStep !== nextStep && <div className="intake-completion-note"><span>{activeStep > nextStep ? "Record received money now; source review is still required before posting." : "You are viewing an earlier step. Its saved work is complete."}</span><button className="secondary" onClick={() => chooseStep(nextStep)}>Return to {stepTitles[nextStep].toLowerCase()}</button></div>}
+          <CommissionPanel title="Statement details & control total" hint={intake.totalCents === undefined ? "Enter the statement total" : money(intake.totalCents) + " saved"} open={intake.totalCents===undefined || (!!rows.length && intake.totalCents!==intake.rowTotalCents)} >
           <HeaderEditor
             key={
               "header-" + intake.totalCents + ":" + (intake.statementDate ?? "")
@@ -666,9 +661,11 @@ function IntakeDetail({
             onError={onError}
           />
           </CommissionPanel>
-          <div className="intake-review-layout"><div className="intake-review-main"><div id="intake-import">
+          <div className={activeStep < 2 ? "intake-review-layout" : "intake-current-work"}>
+          <div className="intake-review-main">
+          <div id="intake-import" hidden={activeStep !== 0}>
+          <h3 tabIndex={-1}>Import source</h3>
           <CommissionPanel
-            remember={'import-panel:' + intake.id}
             title="Import statement rows"
             open={!rows.length}
             hint="Check columns, compare the preview, then import for review"
@@ -683,37 +680,31 @@ function IntakeDetail({
               onError={onError}
             />
           </CommissionPanel>
-          </div><RowsEditor
+          </div><div hidden={activeStep !== 1}><RowsEditor
             key={"rows-" + rows.map((r) => r.id + ":" + r.version).join(",")}
             detail={detail}
             data={data}
             saveRows={saveRows}
+            onContinue={() => chooseStep(nextStep)}
             renderPolicySetup={renderPolicySetup}
             onError={onError}
           />
-          </div><CommissionSourcePreview intake={intake} onError={onError} /></div>
-          <section className="card" id="intake-payment">
+          </div>
+          <section className="card" id="intake-payment" hidden={activeStep < 2 || activeStep === 4}>
             <div className="commission-section-heading">
               <div>
-                <h3>Payment & settlement</h3>
+                <h3 tabIndex={-1}>{activeStep === 3 ? "Review & post settlement" : "Confirm carrier payment"}</h3>
                 <p>
                   Record actual agency commission received or retained. The
                   statement received date does not establish payment.
                 </p>
               </div>
             </div>
-            <CommissionPanel
-              remember={"payment-panel:" + intake.id}
-              title="Record a settlement"
-              open={!!rows.length && !intake.needsReview && !settlements.length}
-              hint="Supports partial payments and net offsets"
-            >
-              <SettlementForm
-                intake={intake}
-                refresh={reload}
-                onError={onError}
-              />
-            </CommissionPanel>
+            <div hidden={activeStep !== 2}>
+              <p className="intake-step-help">Enter the payment reference, actual receipt date, amount and evidence. Then confirm to continue to the posting review. If payment has not arrived, leave this step for later; your source review is saved.</p>
+              <SettlementForm intake={intake} refresh={async () => { await reload(); setChosenStep(null); setFocusStep(true); }} onError={onError} />
+            </div>
+            <div hidden={activeStep !== 3}>
             {settlements.map((s) => (
               <SettlementCard
                 key={s.id + ":" + s.version}
@@ -724,6 +715,7 @@ function IntakeDetail({
                 onError={onError}
               />
             ))}
+            </div>
             {!settlements.length && (
               <p className="small muted">
                 No payment recorded. This statement does not create earnings or
@@ -731,6 +723,17 @@ function IntakeDetail({
               </p>
             )}
           </section>
+          <section id="intake-complete" className="card" hidden={activeStep !== 4}>
+            <h3 tabIndex={-1}>Statement complete</h3><p>The settlement has been posted. Use Continue to payroll above to review employee earnings.</p>
+            {settlements.map(s => <p key={s.id}>{s.reference} · {money(s.totalCents)} · {s.status}</p>)}
+          </section>
+          </div>
+          {activeStep < 2 && <CommissionSourcePreview intake={intake} onError={onError} />}
+          </div>
+          {nextStep < 2 && activeStep < 2 && <details className="intake-source-options"><summary>Carrier payment already received?</summary><p>You can record the receipt now. Matching and eligibility review must still finish before allocation and posting.</p><button type="button" className="secondary" onClick={() => chooseStep(2)}>Record received payment</button></details>}
+          <CommissionPanel title="Payment history" hint={settlements.length ? `${settlements.length} recorded settlements` : "No payments recorded"}>
+            {settlements.map(s => <p key={s.id}>{s.reference} · {s.receivedOn} · {money(s.totalCents)} · {s.status}</p>)}
+          </CommissionPanel>
           <CommissionPanel
             title="Void this intake"
             danger
@@ -824,7 +827,7 @@ function HeaderEditor({
         </div>
         <button className="secondary">Save statement details</button>
       </fieldset>
-      <CommissionDraftRecovery intake={intake} scope="header" value={{ total, date }}
+      <CommissionDraftRecovery compact intake={intake} scope="header" value={{ total, date }}
         restore={d => { setTotal(d.total); setDate(d.date); }} disabled={task.busy} onError={onError}
         renderSaved={d => <dl className="intake-saved-values"><div><dt>Date</dt><dd>{d.date || "Not entered"}</dd></div><div><dt>Total</dt><dd>{displayCommissionAmount(d.total) || "Not entered"}</dd></div></dl>} />
       <Feedback task={task} />
@@ -1156,7 +1159,7 @@ function IntakeImport({
           )}
         </>
       )}
-      {!!tables.length && <CommissionDraftRecovery intake={intake} scope="import" value={{ sheet, header, mapping }}
+      {!!tables.length && <CommissionDraftRecovery compact intake={intake} scope="import" value={{ sheet, header, mapping }}
         restore={d => { if (tables[d.sheet]) { setSheet(d.sheet); setHeader(d.header); setMapping(d.mapping); setReviewed(false); } }}
         disabled={task.busy || processing} onError={onError}
         renderSaved={d => <dl className="intake-saved-values">
@@ -1181,18 +1184,21 @@ function RowsEditor({
   saveRows,
   renderPolicySetup,
   onError,
+  onContinue,
 }: {
   detail: Detail;
   data: CommissionOverview;
   saveRows: (rows: IntakeRow[], reviewed: boolean) => Promise<void>;
   renderPolicySetup: PolicySetup;
   onError: (e: unknown) => void;
+  onContinue: () => void;
 }) {
   const [drafts, setDrafts] = useState(detail.rows),
     [page, setPage] = useState(0),
     [selected, setSelected] = useState<string[]>([]),
     [confirmed, setConfirmed] = useState(false),
-    [setupRow, setSetupRow] = useState("");
+    [setupRow, setSetupRow] = useState(""),
+    [showDetails, setShowDetails] = useState(false);
   const [amounts, setAmounts] = useState<Record<string, string>>(() =>
     Object.fromEntries(
       detail.rows.map((r) => [
@@ -1221,7 +1227,12 @@ function RowsEditor({
   const [rowFilter, setRowFilter] = useCommissionPreference('rows-filter:' + detail.intake.id, 'unresolved');
   const [focusedRow, setFocusedRow] = useCommissionPreference('focused-row:' + detail.intake.id, '');
   const unresolved = (r: IntakeRow) => !locked(r) && (!r.deleted && (r.reviewStatus === 'PENDING' || !!rowIssues(r, detail.intake.carrierId, data.policies, drafts).length));
-  const filtered = rowFilter === 'all' ? drafts : drafts.filter(unresolved);
+  const rowChanged = (r: IntakeRow) => JSON.stringify(r) !== JSON.stringify(detail.rows.find(old => old.id === r.id)) ||
+    (amounts[r.id] ?? "") !== (r.agencyCents === undefined ? "" : (r.agencyCents / 100).toFixed(2));
+  // Keep edited decisions on screen until saved, even when they no longer need review.
+  const filtered = rowFilter === 'all' ? drafts : drafts.filter(r => unresolved(r) || rowChanged(r));
+  const reviewed = statementStep(detail.intake, detail.settlements) >= 2;
+  const reviewReady = drafts.length > 0 && !drafts.some(unresolved);
   const currentPage = Math.min(page, Math.max(0, Math.ceil(filtered.length / 10) - 1));
   const visible = filtered.slice(currentPage * 10, currentPage * 10 + 10);
   const focus = filtered.find(r => r.id === focusedRow)?.id ?? filtered[0]?.id;
@@ -1255,7 +1266,7 @@ function RowsEditor({
         postedCents: 0,
       },
     ]);
-    setRowFilter("all"); setFocusedRow(id); setPage(Math.floor(drafts.length / 10));
+    setRowFilter("all"); setFocusedRow(id); setShowDetails(true); setPage(Math.floor(drafts.length / 10));
   };
   const setup = drafts.find((r) => r.id === setupRow);
   const submit = async (e: FormEvent) => {
@@ -1303,14 +1314,19 @@ function RowsEditor({
           Add source row
         </button>
       </div>
-      <div className="intake-filters"><label className="field">Rows to review<select value={rowFilter} onChange={e=>{setRowFilter(e.target.value);setPage(0);}}><option value="unresolved">Unresolved rows ({drafts.filter(unresolved).length})</option><option value="all">All rows ({drafts.length})</option></select></label>
-      <label className="field intake-mobile-picker">Focused source row<select value={focus ?? ''} onChange={e=>setFocusedRow(e.target.value)}>{filtered.map(r=><option key={r.id} value={r.id}>{r.lineRef || r.policyNumber || 'New row'}</option>)}</select></label></div>
+      {reviewed && !dirty && <div className="intake-completion-note"><strong>All row decisions are saved.</strong><button type="button" className="primary" onClick={onContinue}>Continue to payment</button><button type="button" className="secondary" onClick={() => setRowFilter("all")}>View reviewed rows</button></div>}
+      {!!drafts.length && detail.intake.totalCents !== detail.intake.rowTotalCents && <p role="alert" className="commission-notice">Check the statement control total above. It must equal the imported rows before continuing to payment.</p>}
+      {!reviewed && <p className="intake-step-help">Check each policy, amount and employee rate below. Choose Eligible or Ineligible for each row, confirm your review, then save to continue. Open Edit details only to correct a row or explain an exception.</p>}
+      <div className="intake-filters"><label className="field">Rows to review<select value={rowFilter} onChange={e=>{setRowFilter(e.target.value);setPage(0);}}><option value="unresolved">Needs review or saving ({drafts.filter(r => unresolved(r) || rowChanged(r)).length})</option><option value="all">All rows ({drafts.length})</option></select></label>
+      <label className="field intake-mobile-picker" hidden={!showDetails || !filtered.length}>Focused source row<select value={focus ?? ''} onChange={e=>setFocusedRow(e.target.value)}>{filtered.map(r=><option key={r.id} value={r.id}>{r.lineRef || r.policyNumber || 'New row'}</option>)}</select></label></div>
       {!!missingGroups.length && <CommissionPanel title="Resolve missing policy groups" hint="Complete tracking once, then recheck every matching row">
         {missingGroups.map(r=><p key={r.id}>{r.policyNumber || 'Missing policy number'} · {r.effectiveDate || 'Term required if ambiguous'} · {drafts.filter(x=>x.policyNumber===r.policyNumber&&x.effectiveDate===r.effectiveDate&&!x.policyId).length} rows <button className="secondary" onClick={()=>setSetupRow(r.id)}>Find policy / complete tracking</button></p>)}
       </CommissionPanel>}
-      {!!routine.length && <div className="commission-notice"><strong>{routine.length} routine rows ready for your review</strong><p>Exact policy-term match, positive receipt, readable amount and no source issues. Confirm the original and eligibility before approval.</p><button className="secondary" onClick={()=>setSelected(routine.map(r=>r.id))}>Select routine review group</button></div>}
-      <form onSubmit={(e) => void submit(e)}>
+
+      <form onSubmit={(e) => void submit(e)} hidden={!filtered.length && !dirty}>
         <fieldset disabled={task.busy}>
+          <details className="intake-source-options"><summary>Group review tools</summary>
+            {!!routine.length && <p className="small">{routine.length} routine rows have exact matches and no source issues. <button type="button" className="secondary" onClick={() => setSelected(routine.map(r => r.id))}>Select routine review group</button></p>}
           <div className="intake-actions">
             <button
               type="button"
@@ -1359,11 +1375,29 @@ function RowsEditor({
               Mark selected routine rows eligible
             </button>
           </div>
+          </details>
+          <div className="commission-scroll">
+            <table className="intake-review-overview" aria-label="Source row review">
+              <thead><tr><th>Select</th><th>Policy / reference</th><th>Amount / employee</th><th>Review decision</th><th>Details</th></tr></thead>
+              <tbody>{visible.map(r => {
+                const policy = data.policies.find(p => p.id === r.policyId);
+                const issues = rowIssues(r, detail.intake.carrierId, data.policies, drafts);
+                return <tr key={r.id}>
+                  <td><input type="checkbox" aria-label={"Select source row " + (r.sourceRow ?? r.id)} disabled={locked(r) || r.deleted} checked={selected.includes(r.id)} onChange={e => { const checked = e.currentTarget.checked; setSelected(ids => checked ? [...ids, r.id] : ids.filter(id => id !== r.id)); }} /></td>
+                  <td><strong>{r.policyNumber || "Policy needed"}</strong><span className="small muted">{r.lineRef || "Reference needed"}</span><span className="small muted">{r.effectiveDate || "Term not supplied"}</span>{!policy && <span className="error-text small">Match a policy in Edit details</span>}</td>
+                  <td><strong>{displayCommissionAmount(amounts[r.id] ?? "") || "Amount needed"}</strong><span className="small muted">{policy ? `${policy.producerName} · ${policy.producerBps / 100}%` : "Employee not matched"}</span></td>
+                  <td><select aria-label={"Review decision " + r.id} disabled={locked(r) || r.deleted} value={r.reviewStatus} onChange={e => update(r.id, {reviewStatus:e.target.value as IntakeRow["reviewStatus"]})}><option value="PENDING">Needs review</option><option value="ELIGIBLE">Eligible</option><option value="INELIGIBLE">Ineligible</option></select>{r.deleted ? <span className="small">Excluded</span> : issues.filter(issue => issue !== "Eligibility review required").map(issue => <span className="error-text small" key={issue}>{issue}</span>)}</td>
+                  <td><button type="button" className="secondary" aria-label={"Edit details " + r.lineRef} onClick={() => {setFocusedRow(r.id); setShowDetails(true);}}>Edit details</button></td>
+                </tr>;
+              })}</tbody>
+            </table>
+          </div>
+          <div hidden={!showDetails} className="intake-expanded-row">
+            <div className="commission-section-heading"><h4>Row details</h4><button type="button" className="secondary" onClick={() => setShowDetails(false)}>Close row details</button></div>
           <div className="commission-scroll">
             <table className="intake-row-table">
               <thead>
                 <tr>
-                  <th>Select</th>
                   <th>Source policy / reference</th>
                   <th>Policy match</th>
                   <th>Agency commission</th>
@@ -1393,26 +1427,6 @@ function RowsEditor({
                       key={r.id}
                       className={(r.deleted ? "intake-excluded " : "") + (r.id === focus ? "intake-focused-row " : "") + (!visible.some(v=>v.id===r.id) ? "intake-mobile-only" : "")}
                     >
-                      <td data-label="Select row">
-                        <input
-                          type="checkbox"
-                          aria-label={
-                            "Select source row " + (r.sourceRow ?? r.id)
-                          }
-                          disabled={frozen || r.deleted}
-                          checked={selected.includes(r.id)}
-                          onChange={(e) =>
-                            setSelected((ids) =>
-                              e.target.checked
-                                ? [...ids, r.id]
-                                : ids.filter((id) => id !== r.id),
-                            )
-                          }
-                        />
-                        <div className="small muted">
-                          {r.sourceRow ? "Row " + r.sourceRow : "Manual"}
-                        </div>
-                      </td>
                       <td data-label="Source policy / reference">
                         <input
                           aria-label={"Source policy " + r.id}
@@ -1451,9 +1465,7 @@ function RowsEditor({
                           }
                         />
                         {r.raw && (
-                          <span className="small muted intake-source-values">
-                            Source: {r.raw.filter(Boolean).join(" · ")}
-                          </span>
+                          <details className="small muted intake-source-values"><summary>Source values as supplied</summary>{r.raw.filter(Boolean).join(" · ")}</details>
                         )}
                       </td>
                       <td data-label="Policy match">
@@ -1524,7 +1536,7 @@ function RowsEditor({
                         )}
                       </td>
                       <td data-label="Agency commission">
-                        <input
+                        <CurrencyInput
                           aria-label={"Agency amount " + r.id}
                           disabled={frozen}
                           placeholder="0.00"
@@ -1615,14 +1627,14 @@ function RowsEditor({
               </tbody>
             </table>
           </div>
-          {!!drafts.length && !filtered.length && <p>No unresolved rows. Choose All rows to inspect completed review decisions.</p>}
+          </div>
           {!drafts.length && (
             <p className="commission-compact-empty">
               Import the original statement or add a source row. Incomplete rows
               can be saved.
             </p>
           )}
-          <div className="intake-actions">
+          <div className="intake-actions" hidden={filtered.length <= 10}>
             <button
               type="button"
               className="secondary"
@@ -1654,15 +1666,16 @@ function RowsEditor({
           </label>
           <div className="intake-actions">
             <button className="primary" disabled={!dirty}>
-              {task.busy ? "Saving…" : "Save source rows"}
+              {task.busy ? "Saving…" : reviewReady ? "Save review & continue" : "Save source rows"}
             </button>
             <span className="small muted">
-              Pending rows can be saved without completing review.
+              {reviewReady ? "Save these decisions to move to carrier payment." : "Choose a review decision for every row. Pending rows can be saved for later."}
             </span>
           </div>
         </fieldset>
       </form>
-      <CommissionDraftRecovery intake={detail.intake} scope="rows" value={{ drafts, amounts }}
+      <CommissionDraftRecovery compact intake={detail.intake} scope="rows" value={{ drafts, amounts }}
+        renderSaved={d => <ul>{d.drafts.map(r => <li key={r.id}>{r.policyNumber} · {r.lineRef} · {displayCommissionAmount(d.amounts[r.id] ?? "")} · {r.reviewStatus}</li>)}</ul>}
         restore={d => { setDrafts(d.drafts); setAmounts(d.amounts); setConfirmed(false); setSelected([]); setPage(0); }}
         disabled={task.busy} onError={onError} />
       <Feedback task={task} />
@@ -1741,24 +1754,25 @@ function SettlementForm({
             label="Deposit / settlement reference"
             required
             value={reference}
-            set={setReference}
+            set={value => { setReference(value); setConfirmed(false); }}
           />
           <Field
             label="Actual commission receipt date"
             required
             type="date"
             value={date}
-            set={setDate}
+            set={value => { setDate(value); setConfirmed(false); }}
           />
           <Field
             label="Agency commission received / retained ($)"
+            currency
             required
             value={amount}
-            set={setAmount}
+            set={value => { setAmount(value); setConfirmed(false); }}
           />
           <label className="field">
             Settlement type
-            <select value={type} onChange={(e) => setType(e.target.value)}>
+            <select value={type} onChange={(e) => {setType(e.target.value); setConfirmed(false);}}>
               <option value="DEPOSIT">Carrier deposit</option>
               <option value="RETAINED">Agency-bill retained commission</option>
               <option value="NET_SETTLEMENT">Net settlement / offset</option>
@@ -1771,7 +1785,7 @@ function SettlementForm({
             required
             maxLength={2000}
             value={evidence}
-            onChange={(e) => setEvidence(e.target.value)}
+            onChange={(e) => {setEvidence(e.target.value); setConfirmed(false);}}
             placeholder="Bank receipt, or collection and remittance evidence for retained commission"
           />
         </label>
@@ -1784,10 +1798,11 @@ function SettlementForm({
           I verified that this settlement occurred on the date entered.
         </label>
         <button className="primary" disabled={!confirmed}>
-          Save settlement for allocation
+          Save payment & continue
         </button>
       </fieldset>
-      <CommissionDraftRecovery intake={intake} scope="settlement" value={{ reference, date, amount, evidence, type }}
+      <CommissionDraftRecovery compact intake={intake} scope="settlement" value={{ reference, date, amount, evidence, type }}
+        renderSaved={d => <dl className="intake-saved-values">{Object.entries({...d,amount:displayCommissionAmount(d.amount)}).map(([key,value]) => <div key={key}><dt>{key}</dt><dd>{value || "Not entered"}</dd></div>)}</dl>}
         restore={d => { setReference(d.reference); setDate(d.date); setAmount(d.amount); setEvidence(d.evidence); setType(d.type); setConfirmed(false); }}
         disabled={task.busy} onError={onError} />
       <Feedback task={task} />
@@ -1993,7 +2008,7 @@ function SettlementCard({
                       </td>
                       <td>{money(balance(r))}</td>
                       <td>
-                        <input
+                        <CurrencyInput
                           aria-label={"Allocate " + r.lineRef}
                           value={amounts[r.id] ?? ""}
                           onChange={(e) => {
@@ -2094,7 +2109,8 @@ function SettlementCard({
           />
         </CommissionPanel>
       )}
-      {s.status === "RECORDED" && <CommissionDraftRecovery intake={detail.intake} scope={"allocation-" + s.id} value={{ amounts }}
+      {s.status === "RECORDED" && <CommissionDraftRecovery compact intake={detail.intake} scope={"allocation-" + s.id} value={{ amounts }}
+        renderSaved={d => <ul>{Object.entries(d.amounts).map(([id,amount]) => <li key={id}>{detail.rows.find(r => r.id === id)?.lineRef || id} · {displayCommissionAmount(amount) || "Not entered"}</li>)}</ul>}
         restore={d => { setAmounts(d.amounts); setConfirmed(false); }} disabled={task.busy} onError={onError} />}
       <Feedback task={task} />
     </CommissionPanel>

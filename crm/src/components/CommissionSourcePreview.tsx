@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { displayCommissionAmount, suggestImportMapping } from '../lib/commissionSourceGuidance';
 import { commissionAction } from '../lib/commissions';
 import { useAsyncResource } from '../lib/useAsyncResource';
 import { readCommissionWorkbook } from '../lib/commissionWorkbook';
@@ -29,10 +30,10 @@ export default function CommissionSourcePreview({ intake, onError }: { intake: S
   }, [intake.id, shown], { clearDataOnError: () => true });
   return <aside className="intake-original">
     <div className="commission-section-heading"><h3>Original document</h3><button className="secondary" onClick={() => setShown(v=>!v)}>{shown ? 'Hide original' : 'Show original'}</button></div>
-    {shown && <><p className="small">Compare source values before confirming. {intake.filename}</p>
+    {shown && <><p className="small">Compare with the source before confirming. Recognized amount columns display as currency; the original file is unchanged. {intake.filename}</p>
       {source.error && <p role="alert">{source.error}<button className="secondary" onClick={() => void source.refetch()}>Reload original</button></p>}
       {source.loading && <p role="status">Loading original…</p>}
-      {source.data && (source.data.tables ? source.data.tables.map((table,i) => <details key={i} open={i===0}><summary>{table.name}</summary><div className="commission-scroll"><table><tbody>{table.rows.slice(0,200).map((r,j)=><tr key={j}>{r.map((cell,k)=><td key={k}>{cell}</td>)}</tr>)}</tbody></table></div>{table.rows.length>200 && <p>First 200 source rows shown. Open the original for the complete document.</p>}</details>) :
+      {source.data && (source.data.tables ? source.data.tables.map((table,i) => <details key={i} open={i===0}><summary>{table.name}</summary><div className="commission-scroll"><table><tbody>{table.rows.slice(0,200).map((r,j)=><tr key={j}>{r.map((cell,k)=><td key={k}>{j > 0 && k === suggestImportMapping(table.rows[0] ?? []).amount ? displayCommissionAmount(cell) : cell}</td>)}</tr>)}</tbody></table></div>{table.rows.length>200 && <p>First 200 source rows shown. Open the original for the complete document.</p>}</details>) :
         source.data.ext === 'pdf' ? <iframe title="Original carrier statement" src={source.data.url} /> : <img src={source.data.url} alt="Original carrier statement" />)}
       {source.data && <a href={source.data.url} target="_blank" rel="noreferrer">Open complete original</a>}
     </>}

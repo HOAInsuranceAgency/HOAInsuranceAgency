@@ -1,6 +1,27 @@
 # HOA commission workflow — staging acceptance plan
 
-Updated November 16, 2026: clearer upload-to-import guidance and currency display. The release information below describes the November 13 baseline; the November 16 staging release must be checked against its own exact deployed commit.
+Updated November 17, 2026: one active statement step, compact source review, automatic transitions after a successful save, and consistent money displays.
+
+### Current main test: upload and review are complete
+
+The authenticated staging statement **TEST-20261116-0B7609-01** was checked on November 17. Both source rows are imported and reviewed, the **$1,500.00** control total reconciles, and no carrier payment or employee earnings have been recorded. You have completed test-pack steps 4 and 5. Do not upload or import the main file again.
+
+Open the existing statement. **Confirm carrier payment** is now the active app step. Use the fictional settlement reference **TEST-20261116-0B7609-MAIN-PAY**, receipt date **November 11, 2026**, amount **$1,500.00**, type **Carrier deposit**, and evidence **SIMULATED STAGING RECEIPT - NO REAL PAYMENT**. Check the receipt confirmation and choose **Save payment & continue**. This saves the receipt and opens the separate posting review; it does not automatically post earnings.
+
+The screen itself guides the remaining actions. Check the proposed **$1,000.00 + $500.00** allocations and **$150.00** employee total, then acknowledge and choose **Confirm allocation & post earnings**. After posting, continue to payroll. Keep report emails disabled.
+
+### Guided-workspace acceptance checks
+
+- Only the selected step's work is shown. Earlier steps show Complete and can be reopened. Returning to an earlier step preserves unsaved inputs in the other step.
+- Source rows display policy/reference, amount, employee/rate and review decision together. **Edit details** opens corrections and exception notes for a selected row. **Group review tools** contains optional selection/matching actions.
+- A row stays visible after choosing Eligible or Ineligible until its decision is saved. **Needs review or saving** includes these unsaved decisions. A successful, fully reconciled save opens payment; a failed save retains the decisions and the current step.
+- Finished review shows **Source review complete** and opens the payment form. Revisiting review shows **All row decisions are saved** with **View reviewed rows** and a continuation action, rather than an empty form with disabled save controls.
+- Row amounts, payment inputs, allocation inputs, recognized source-preview amount columns and saved amount comparisons display currency outside editing. Negative amounts retain their sign, invalid precision remains visible, numeric policy identifiers remain unchanged, and the original file bytes remain unchanged.
+- **Saved working copy** is a secondary disclosure. Version conflicts, stale comparisons, explicit restoration and confirmation resets remain enforced; autosave failures stay visible outside the disclosure.
+- The exception **Carrier payment already received?** still allows recording actual received money before matching is finished. Source review remains required before allocation/posting, and the workflow returns to unfinished review.
+- Desktop uses compact rows beside the original. Phone layouts use readable cards without page-wide horizontal overflow. Long source tables can scroll within their own container.
+
+Earlier November 16 import guidance follows for new test statements. Historical release details below describe earlier baselines; verify this release against its own deployed commit.
 
 ### After uploading the main test file
 
@@ -20,7 +41,7 @@ For this run, the carrier is **TEST Harbor Mutual 0B7609**, policy **TEST-0B7609
 
 Verify the statement total and its saved-draft comparison display **$1,500.00**. While editing, the amount may show raw digits; leaving the field restores currency formatting. Negative amounts retain their sign; invalid precision remains visible for correction. Before import, the total panel explains that rows must be imported instead of displaying a misleading difference error. Saved import drafts show column names and a one-based header row, and still require explicit restoration and fresh confirmation.
 
-Continue with the source review and simulated payment steps below. Report emails must remain disabled. These new live acceptance checks are pending the tester's continuation.
+Continue with the source review and simulated payment steps below. Report emails must remain disabled. The main upload and row review are complete; live payment/posting acceptance remains for the tester.
 
 Updated November 13, 2026 for the completed workflow simplifications. Use the release commit and staging deployment identified in the release message. This plan supersedes the earlier November 13 plan's pending-feature list and the older acceptance plan's navigation/deployment instructions.
 
@@ -33,9 +54,9 @@ Use authenticated staging accounts and fictional records with unique TEST refere
 
 - Work queue is the default for a first visit. Reopening restores the last workspace in the same browser for the same Owner. Received money affecting payroll comes first, followed by cutoff/review work. Use direct review links to open the relevant record.
 - Tabs are Work queue, Statements, Payroll, Ledger, Reviews & exceptions, and Setup. Employees retain their restricted personal view.
-- Opening a statement focuses on its workspace. The guide provides the next action; preparation and payment have separate badges. Source, recorded, allocated, posted, employee and remaining totals stay visible; desktop totals remain pinned during review.
+- Opening a statement focuses on its workspace. The guide provides the next action; preparation and payment have separate badges. Source, recorded, allocated, posted, employee and remaining totals appear above the active step. Completed work is summarized; the current form opens automatically.
 - CSV/XLSX reading and PDF/image extraction checks run automatically. The original document appears beside review on larger screens. Import rows & remember format combines the reviewed mapping actions.
-- Unresolved rows are shown first. All rows remains available. Repeated missing-policy issues are grouped; routine rows can be selected as a review group. Mobile and narrow review columns show one focused source row.
+- Rows needing review or saving are shown first; All rows remains available. Repeated missing-policy issues are grouped. Optional Group review tools selects routine rows. Compact review cards show every visible row, with detailed corrections opened on demand.
 - Working edits save privately after a short pause, with Saving, Saved and Needs retry feedback. Save working draft remains available. Recovered values require Restore saved draft; review confirmations are reset. Navigation preferences are browser-specific; working drafts are server-saved and Owner-private.
 - A full verified payment matching all remaining reviewed amounts receives a proposed allocation. Partial payments require evidence-supported allocations. The final action displays server-calculated employee amounts and posts in resumable groups.
 - Payroll shows one cycle with matching readiness and approval checks, including the inclusive cutoff. Employee calculations link to sources. Review issues link to the relevant statement, policy or exception case.
@@ -74,12 +95,12 @@ Confirm the spreadsheet loads automatically. Expand Statement details & control 
 **Pass:** Two rows totaling $1,500 are saved for review. The carrier format is remembered. Import does not approve eligibility or create money. A second fictional source with reordered headings reuses the mapping correctly. A failed row import explains what was saved; retry after checking retained rows.
 
 ### 3. Review only the work that needs attention
-Confirm Rows to review starts with Unresolved rows. Switch to All rows and back. Check the policy terms, amounts and eligibility. For eligible routine receipts, Select routine review group, inspect the reason they qualify, and Mark selected routine rows eligible. Check the source-review acknowledgement and Save source rows.
+Confirm Rows to review starts with Needs review or saving. Switch to All rows and back. Check the policy terms, currency amounts and employee rates in the compact list. Choose the review decision on each row. Use Edit details for corrections or exception notes. Optional Group review tools allows selecting routine rows and marking them eligible together. Check the source-review acknowledgement and Save review & continue. Incomplete work uses Save source rows and stays in review.
 
-**Pass:** Incomplete rows can be saved. Reviewed financial changes require renewed acknowledgement. Routine grouping does not approve reversals, ambiguous renewals, unreadable amounts or missing historical facts. Once complete, preparation says Matches complete; payment still says Awaiting payment. Earnings remain $0.
+**Pass:** Incomplete rows can be saved. Reviewed financial changes require renewed acknowledgement. Routine grouping does not approve reversals, ambiguous renewals, unreadable amounts or missing historical facts. Once complete, the screen says Source review complete and opens Confirm carrier payment. Import and review show Complete. Earnings remain $0. A failed or stale save must not advance.
 
 ### 4. Record the actual payment and review the complete posting summary
-Record a settlement: unique TEST payment reference, November 11 actual receipt date, $1,500, Carrier deposit, evidence SIMULATED STAGING RECEIPT — NO REAL PAYMENT. Confirm and Save settlement for allocation.
+The Confirm carrier payment form is already open. Enter the unique TEST payment reference, November 11 actual receipt date, $1,500, Carrier deposit, and evidence SIMULATED STAGING RECEIPT — NO REAL PAYMENT. Confirm and choose Save payment & continue. The next screen opens Review & post settlement.
 
 The full payment should propose A $1,000 and B $500. Check allocated/received totals, source remaining, saved employee rate and server-calculated earnings. Temporarily reduce an allocation by $1; the difference must prevent submission. Restore the amounts and wait for the current financial review. Acknowledge and choose Confirm allocation & post earnings once.
 

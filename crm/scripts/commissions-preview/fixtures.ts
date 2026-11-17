@@ -261,7 +261,7 @@ export const commissionAction = async (action: string, input: Record<string, unk
     });
   if (action === 'getIntakeWorkingDraft' && useIsOwner()) return { draft: null };
   if (action === 'intakeWorkspace' && useIsOwner()) return structuredClone({intakes: [inboxSample], settlements: [], templates: []});
-  if (action === 'file' && useIsOwner() && input.key === 'fictional-source') return {url:'data:text/csv;charset=utf-8,' + encodeURIComponent(previewQuery.get('scenario') === 'import' ? 'Policy,Reference,Amount,Effective,Transaction\nPOL-1,TEST-IMPORT-1,1000.00,2026-01-01,RECEIPT\nPOL-1,TEST-IMPORT-2,500.00,2026-01-01,RECEIPT' : 'Policy,Reference,Agency commission\nPOL-1,TEST-TX-1,750.00\nHARBOR-NEW,TEST-TX-2,250.00')};
+  if (action === 'file' && useIsOwner() && input.key === 'fictional-source') return {url:'data:text/csv;charset=utf-8,' + encodeURIComponent(['import','review','payment'].includes(previewQuery.get('scenario') ?? '') ? 'Policy,Reference,Amount,Effective,Transaction\nPOL-1,TEST-IMPORT-1,1000.00,2026-01-01,RECEIPT\nPOL-1,TEST-IMPORT-2,500.00,2026-01-01,RECEIPT' : 'Policy,Reference,Agency commission\nPOL-1,TEST-TX-1,750.00\nHARBOR-NEW,TEST-TX-2,250.00')};
   if (action === 'getStatementIntake' && useIsOwner()) return structuredClone({intake: inboxSample, rows: inboxRows, settlements: []});
   if (action === "payrollWorkspace" && useIsOwner())
     return structuredClone(payrollWorkspace);
@@ -410,4 +410,10 @@ payrollWorkspace.statementReadiness = {activeStatements:1,statementsNeedingRevie
 if (previewQuery.get('scenario') === 'import') {
   Object.assign(inboxSample, {reference:'TEST-IMPORT-GUIDANCE',totalCents:150000,rowCount:0,rowTotalCents:0,needsReview:0,unmatched:0});
   inboxRows.splice(0);
+}
+
+if (['review', 'payment'].includes(previewQuery.get('scenario') ?? '')) {
+  const ready = previewQuery.get('scenario') === 'payment';
+  Object.assign(inboxSample, {reference:'TEST-GUIDED-STEPS',totalCents:150000,rowCount:2,rowTotalCents:150000,needsReview:ready ? 0 : 2,unmatched:0});
+  inboxRows.splice(0, inboxRows.length, ...[100000,50000].map((amount,i) => ({id:'sample'+(i+1),version:1,intakeId:'demo-inbox',policyNumber:'POL-1',effectiveDate:'2026-01-01',policyId:'p',lineRef:'TEST-IMPORT-'+(i+1),agencyCents:amount,transactionType:'RECEIPT',reviewStatus:ready ? 'ELIGIBLE' : 'PENDING',note:'',postedCents:0})));
 }
