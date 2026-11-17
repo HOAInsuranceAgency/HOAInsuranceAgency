@@ -50,6 +50,7 @@ createRoot(document.getElementById('root')!).render(
               <option value="review">Compact row review</option>
               <option value="payment">Reviewed - confirm payment</option>
               <option value="posted">Posted - review payroll</option>
+              <option value="payroll-wait">Payroll - scheduled cutoff wait</option>
             </select>
           </label>
           <label className="field" style={{minWidth:200,flex:1}}>

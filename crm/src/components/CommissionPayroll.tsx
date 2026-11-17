@@ -28,6 +28,7 @@ import {
   COMMISSION_START_MONTH,
   payrollDay,
   payrollApprovalIssues,
+  payrollCutoffIssue,
   payrollRowKey,
   suggestPayrollDates,
   type PayrollCycle,
@@ -52,6 +53,26 @@ const displayMonth = (value: string) =>
     year: "numeric",
     timeZone: "UTC",
   }).format(new Date(value.slice(0, 7) + "-01T12:00:00Z"));
+function approvalOpensOn(cutoff: string) {
+  const date = new Date(cutoff + "T12:00:00Z");
+  date.setUTCDate(date.getUTCDate() + 1);
+  return displayDate(date.toISOString().slice(0, 10));
+}
+function PayrollScheduleNotice({ cutoff }: { cutoff: string }) {
+  if (!payrollCutoffIssue({ cutoff })) return null;
+  return <div className="payroll-notice" role="status" aria-label="Payroll schedule">
+    <strong>Approval opens {approvalOpensOn(cutoff)}</strong>
+    <p>The inclusive receipt cutoff ends on {displayDate(cutoff)} (Eastern time). You can save a draft now; approval waits until the next day.</p>
+    <p>This is a scheduled wait. For an earlier payroll, review the cutoff and remaining dates before saving.</p>
+  </div>;
+}
+function openPayrollDates(id: string) {
+  const panel = document.getElementById("payroll-edit-" + id) as HTMLDetailsElement | null;
+  if (!panel) return;
+  panel.open = true;
+  panel.scrollIntoView?.({ block: "start" });
+  (panel.querySelector('input[type="date"]') as HTMLInputElement | null)?.focus({ preventScroll: true });
+}
 function StatusBadge({ status }: { status: string }) {
   const tone = ["PAID", "SENT"].includes(status)
     ? "green"
@@ -402,7 +423,7 @@ function SourcePayrollSelection({ source, workspace, refresh }: { source: Return
     {!source.available.length && <p>{source.linkedCycles.length ? "These earnings are already assigned. Continue with a linked payroll cycle above." : "No available earnings are linked to this statement. Review eligibility and the ledger before preparing payroll."}</p>}
     {!!source.keys.length && <>
       {!prepare && <button className="primary" onClick={() => setPrepare(true)}>{source.linkedCycles.length ? "Prepare another draft for these earnings" : "Prepare payroll for these earnings"}</button>}
-      {prepare && <><h4>Confirm the suggested payroll draft</h4><p>Only this statement’s {source.keys.length} earnings are preselected. Dates come from {source.monthly ? "the next matching monthly calendar" : "the standard monthly schedule"}; check them before saving. You can change the selection for a different payroll scope.</p><OffCycleForm key={JSON.stringify(source.keys)} initialKeys={source.keys} initialReason={"Statement " + (target.intakeReference ?? target.intakeId)} initialDates={dates} producers={workspace.producers ?? []} earnings={workspace.availableEarnings ?? []} refresh={refresh} onCreated={id => navigate({...target,cycleId:id})} /></>}
+      {prepare && <><h4>Confirm the suggested payroll draft</h4><p>Only this statement’s {source.keys.length} earnings are preselected. Dates come from {source.monthly ? "the next matching monthly calendar" : "the standard monthly schedule"}; the proposed schedule below shows when approval opens. You can use the last selected receipt date for an earlier cutoff, then review the remaining dates before saving.</p><OffCycleForm key={JSON.stringify(source.keys)} initialKeys={source.keys} initialReason={"Statement " + (target.intakeReference ?? target.intakeId)} initialDates={dates} producers={workspace.producers ?? []} earnings={workspace.availableEarnings ?? []} refresh={refresh} onCreated={id => navigate({...target,cycleId:id})} /></>}
       {source.monthly && <details><summary>Include in the regular monthly payroll instead</summary><p>The monthly cycle includes other eligible earnings. Review its full amount of {money(source.monthly.preview?.totalCents ?? source.monthly.totalCents)} and all employees before approval.</p><button className="secondary" onClick={() => navigate({...target,cycleId:source.monthly!.id})}>Review monthly payroll {source.monthly.id}</button></details>}
     </>}
   </section>;
@@ -412,6 +433,8 @@ function PayrollReadiness({ workspace, cycle, reviewStatements }: { workspace: P
   const readiness = workspace.statementReadiness;
   if (!cycle || !readiness) return null;
   const approvalIssues = payrollApprovalIssues(cycle);
+  const cutoffWait = cycle.status === 'OPEN' ? payrollCutoffIssue(cycle) : '';
+  const reviewIssues = approvalIssues.filter(issue => issue !== cutoffWait);
   const pending = readiness.pendingSettlements.filter(s => s.receivedOn <= cycle.cutoff);
   const batches = workspace.batches.filter(b => cycle.batchIds.includes(b.id));
   const paid = sum(batches.map(batchPaidCents));
@@ -423,13 +446,13 @@ function PayrollReadiness({ workspace, cycle, reviewStatements }: { workspace: P
     <div className="payroll-readiness-grid">
       <div><span>Statement preparation</span><strong>{readiness.statementsNeedingReview} to review</strong><small>{readiness.unmatchedRows} unmatched rows · {readiness.activeStatements} active statements</small></div>
       <div><span>Received by cutoff</span><strong>{pending.length} settlements to post</strong><small>Unpaid statements do not block payroll</small></div>
-      <div><span>{cycle.status === 'OPEN' ? 'Eligible earnings in preview' : 'Approved commission'}</span><strong>{money(cycle.preview?.totalCents ?? cycle.totalCents)}</strong><small>{approvalIssues.length ? approvalIssues.length + ' approval issues to resolve' : cycle.status === 'OPEN' ? 'Ready for Owner review' : 'Revision ' + cycle.revision}</small></div>
-      <div><span>Approval</span><strong>{cycle.status.toLowerCase()}</strong><small>{approvalIssues[0] ?? 'Review the selected cycle'}</small></div>
+      <div><span>{cycle.status === 'OPEN' ? 'Eligible earnings in preview' : 'Approved commission'}</span><strong>{money(cycle.preview?.totalCents ?? cycle.totalCents)}</strong><small>{reviewIssues.length ? reviewIssues.length + ' review item' + (reviewIssues.length === 1 ? '' : 's') + ' to resolve' : cutoffWait ? 'No reconciliation issues' : cycle.status === 'OPEN' ? 'Ready for Owner review' : 'Revision ' + cycle.revision}</small></div>
+      <div><span>Approval</span><strong>{cycle.status === 'OPEN' ? reviewIssues.length ? 'Needs review' : cutoffWait ? 'Waiting for cutoff' : 'Ready for your approval' : cycle.status.toLowerCase()}</strong><small>{reviewIssues[0] ?? (cutoffWait ? 'Approval opens ' + approvalOpensOn(cycle.cutoff) + ' after the inclusive receipt cutoff ends.' : 'Review the selected cycle')}</small></div>
       <div><span>Report delivery</span><strong>{delivery}</strong><small>Delivery is separate from approval and payment</small></div>
       <div><span>Employee payment</span><strong>{money(paid)} paid</strong><small>{money(Math.max(0,cycle.totalCents-paid))} approved balance</small></div>
     </div>
     {!!pending.length && <p className="commission-notice">Finish posting: {pending.slice(0, 3).map(s => s.reference).join('; ')}{pending.length > 3 ? ' and ' + (pending.length - 3) + ' more' : ''}.</p>}
-    {reviewStatements && <button className="secondary" onClick={reviewStatements}>Review statement inbox</button>}
+    {reviewStatements && !!pending.length && <button className="secondary" onClick={reviewStatements}>Review statements awaiting posting</button>}
     <p className="small muted">Review this selected cycle for eligibility exceptions, approval, report versions, delivery evidence and payment confirmation.</p>
   </section>;
 }
@@ -732,6 +755,8 @@ function CycleCard({
 }) {
   const { navigate } = useCommissionWorkflow();
   const issues = payrollApprovalIssues(c);
+  const cutoffWait = c.status === 'OPEN' ? payrollCutoffIssue(c) : '';
+  const reviewIssues = issues.filter(issue => issue !== cutoffWait);
   const [cancelOpen,setCancelOpen]=useState(false),[cancelConfirmed,setCancelConfirmed]=useState(false);
   const [confirmed, setConfirmed] = useState(false),
     [paidOn, setPaidOn] = useState(payrollDay()),
@@ -744,10 +769,21 @@ function CycleCard({
       .map(batchPaidCents),
   );
   const deliveryIssue=workspace.deliveries.some(d=>d.cycleId===c.id&&d.cycleRevision===c.revision&&(d.status==='FAILED'||d.status==='UNKNOWN'||!!d.failureState));
-  const nextLabel=issues.length?'Resolve review items':c.status==='OPEN'?'Review approval':deliveryIssue?'Review delivery issue':c.status==='APPROVED'&&paidCents>0?'Record remaining payment':c.status==='APPROVED'?'Inspect approved reports':c.status==='CANCELLED'?'Prepare replacement cycle':'Review payment history';
+  const nextLabel=reviewIssues.length?'Resolve next review item':cutoffWait?'Review payroll dates':c.status==='OPEN'?'Review approval':deliveryIssue?'Review delivery issue':c.status==='APPROVED'&&paidCents>0?'Record remaining payment':c.status==='APPROVED'?'Inspect approved reports':c.status==='CANCELLED'?'Prepare replacement cycle':'Review payment history';
+  const resolveIssue = (message: string) => {
+    const destination = c.preview?.issues?.find(issue => issue.message === message)?.target;
+    if (message.startsWith('Selected off-cycle') || destination?.tab === 'payroll' && destination.cycleId === c.id) {
+      openPayrollDates(c.id);
+      return true;
+    }
+    if (destination) { navigate(destination); return true; }
+    return false;
+  };
   const nextReview=()=>{
+    if (reviewIssues.length && resolveIssue(reviewIssues[0])) return;
+    if (!reviewIssues.length && cutoffWait) { openPayrollDates(c.id); return; }
     const root=document.getElementById('payroll-cycle-'+c.id);
-    const node=issues.length?root?.querySelector('[role=alert]'):deliveryIssue?document.getElementById('payroll-delivery-history'):c.status==='OPEN'?root?.querySelector('.payroll-cycle-actions'):document.getElementById((c.status==='CANCELLED'?'payroll-replace-':c.status==='PAID'||paidCents>0?'payroll-payments-':'payroll-reports-')+c.id);
+    const node=reviewIssues.length?root?.querySelector('[role=alert]'):deliveryIssue?document.getElementById('payroll-delivery-history'):c.status==='OPEN'?root?.querySelector('.payroll-cycle-actions'):document.getElementById((c.status==='CANCELLED'?'payroll-replace-':c.status==='PAID'||paidCents>0?'payroll-payments-':'payroll-reports-')+c.id);
     let parent=node; while(parent){if(parent.tagName==='DETAILS')(parent as HTMLDetailsElement).open=true;parent=parent.parentElement;}
     node?.scrollIntoView?.({block:'start'}); (node?.querySelector('button,input,summary') as HTMLElement|null)?.focus({preventScroll:true});
   };
@@ -845,13 +881,14 @@ function CycleCard({
           </span>
         </div>
       )}
-      {c.status === "OPEN" && !!issues.length && (
+      {c.status === "OPEN" && !!cutoffWait && <PayrollScheduleNotice cutoff={c.cutoff} />}
+      {c.status === "OPEN" && !!reviewIssues.length && (
         <div className="payroll-notice" role="alert">
           <strong>Resolve before approval</strong>
           <ul>
-            {issues.map((b) => {
+            {reviewIssues.map((b) => {
               const issue=c.preview?.issues?.find(i=>i.message===b);
-              return <li key={b}>{b} {issue?.target && <button className="secondary" onClick={()=>navigate(issue.target!)}>Resolve</button>}</li>;
+              return <li key={b}>{b} {(issue?.target || b.startsWith("Selected off-cycle")) && <button className="secondary" onClick={()=>resolveIssue(b)}>{issue?.target?.tab === "statements" ? "Open statement to resolve" : issue?.target?.tab === "payroll" || b.startsWith("Selected off-cycle") ? "Review selected earnings" : "Open review item"}</button>}</li>;
             })}
           </ul>
         </div>
@@ -863,7 +900,7 @@ function CycleCard({
         </p>
       )}
       <div className="commission-action-bar"><button className="secondary" onClick={nextReview}>{nextLabel}</button></div>
-      <p className="commission-notice">Next: {issues.length?'resolve the listed review items':c.status==='OPEN'?'review calculations and approve this cycle':c.status==='APPROVED'?'inspect approved reports, review delivery, then record actual employee payments':c.status==='PAID'?'review payment history':'select another cycle or prepare a replacement'}.</p>
+      <p className="commission-notice">Next: {reviewIssues.length?'open and resolve the listed review items':cutoffWait?'review the payroll dates, or return on ' + approvalOpensOn(c.cutoff):c.status==='OPEN'?'review calculations and approve this cycle':c.status==='APPROVED'?'inspect approved reports, review delivery, then record actual employee payments':c.status==='PAID'?'review payment history':'select another cycle or prepare a replacement'}.</p>
       <div className="commission-scroll payroll-totals">
         <table aria-label={"Employee totals for " + c.id}>
           <thead>
@@ -903,7 +940,7 @@ function CycleCard({
       <div className="payroll-cycle-actions">
       {owner && c.status === "OPEN" && (
         <>
-          <Panel title={c.cycleType === 'OFF_CYCLE' ? 'Edit off-cycle dates and earnings' : 'Edit payroll dates'}>
+          <Panel id={'payroll-edit-' + c.id} title={c.cycleType === 'OFF_CYCLE' ? 'Edit off-cycle dates and earnings' : 'Edit payroll dates'}>
             {c.cycleType === 'OFF_CYCLE'
               ? <OffCycleForm cycle={c} producers={workspace.producers??[]} earnings={workspace.availableEarnings??[]} refresh={refresh} />
               : <CycleForm cycle={c} refresh={refresh} />}
@@ -911,7 +948,7 @@ function CycleCard({
           <Action
             label="Approve payroll cycle"
             disabled={!confirmed || !c.preview || !!issues.length}
-            disabledReason={issues.length ? 'Resolve ' + issues.length + ' item' + (issues.length===1?'':'s') + ' before approval.' : !confirmed ? 'Confirm the review above before approval.' : 'Refresh the payroll preview.'}
+            disabledReason={reviewIssues.length ? 'Resolve ' + reviewIssues.length + ' review item' + (reviewIssues.length===1?'':'s') + ' before approval.' : cutoffWait ? 'Approval opens ' + approvalOpensOn(c.cutoff) + '. Review payroll dates above to make a correction.' : !confirmed ? 'Confirm the review above before approval.' : 'Refresh the payroll preview.'}
             secondaryAction={canCancel && <button type="button" className="secondary payroll-danger-button" onClick={()=>setCancelOpen(true)}>Cancel cycle…</button>}
             refresh={refresh}
             action={() =>
@@ -1231,10 +1268,11 @@ function OffCycleForm({
     [producerIds, setProducers] = useState<string[]>(cycle?.producerIds ?? (initialProducer ? [initialProducer] : [...new Set(earnings.filter(e=>initialKeys?.includes(payrollRowKey(e))).map(e=>e.producerId))])),
     [requestId, setRequestId] = useState(() => crypto.randomUUID().slice(0, 8));
   const [selection, setSelection] = useState<string[] | undefined>(cycle?.selectedEarningKeys ?? initialKeys);
-  const [changeSelection, setChangeSelection] = useState(!initialReason);
+  const [changeSelection, setChangeSelection] = useState(!initialReason && !cycle?.selectedEarningKeys);
   const available = earnings.filter(e => producerIds.includes(e.producerId) && e.receivedOn <= dates.cutoff);
   const selected = available.filter(e => !selection || selection.includes(payrollRowKey(e)));
   const stale = !!selection?.some(key => !available.some(e => payrollRowKey(e) === key));
+  const latestReceipt = selected.map(row => row.receivedOn).sort().at(-1);
   const draftState=JSON.stringify({ dates, reason, producerIds, selection });
   const initialState=useRef(draftState);
   const protection = useUnsavedChanges(draftState !== initialState.current);
@@ -1263,7 +1301,7 @@ function OffCycleForm({
         }
       }}
     >
-      {initialReason && !changeSelection && <button type="button" className="secondary" onClick={() => setChangeSelection(true)}>Change employees or earnings</button>}
+      {!changeSelection && <button type="button" className="secondary" onClick={() => setChangeSelection(true)}>Change employees or earnings</button>}
       {changeSelection && <><p>Choose employees, then include all available earnings or select specific receipts and adjustments. Earnings reserved by another approved cycle are excluded.</p>
       <div className="payroll-people">
         {producers.map((p) => (
@@ -1297,6 +1335,12 @@ function OffCycleForm({
         {!available.length && <p>No eligible, unallocated earnings through this cutoff.</p>}
         {stale && <p role="alert" className="error-text">The employee or cutoff selection changed. Choose specific earnings again before saving.</p>}
         {stale && <button type="button" className="secondary" onClick={() => setSelection([])}>Clear unavailable selection</button>}
+      </div>}
+      {cycle && draftState !== initialState.current && <p role="status" className="commission-notice">Changes are not saved yet. Choose Save off-cycle draft to update payroll readiness.</p>}
+      <PayrollScheduleNotice cutoff={dates.cutoff} />
+      {!!selection?.length && !stale && latestReceipt && latestReceipt !== dates.cutoff && latestReceipt < dates.reviewOn && <div className="payroll-selection">
+        <button type="button" className="secondary" onClick={() => setDates(d => ({ ...d, cutoff: latestReceipt }))}>Use selected receipts through {displayDate(latestReceipt)}</button>
+        <p className="small muted">Use the last selected receipt date as the cutoff. The selected earnings and other payroll dates stay as shown; review them before saving.</p>
       </div>}
       <Input label="Off-cycle reason" value={reason} set={setReason} />
       <div className="form-grid">

@@ -458,7 +458,7 @@ it("opens the exact review destination supplied by payroll validation",async()=>
   workspace.cycles[0].preview!.issues=[{message:'Finish received settlement TEST',target:{tab:'statements',intakeId:'source-123'}}];
   const navigate=vi.fn();
   render(<CommissionWorkflowContext.Provider value={{target:{tab:'payroll'},navigate}}><CommissionPayroll owner refreshLedger={vi.fn()}/></CommissionWorkflowContext.Provider>);
-  fireEvent.click(await screen.findByRole('button',{name:'Resolve'}));
+  fireEvent.click(await screen.findByRole('button',{name:'Open statement to resolve'}));
   expect(navigate).toHaveBeenCalledWith({tab:'statements',intakeId:'source-123'});
 });
 
@@ -490,4 +490,63 @@ it("retains the selected payroll cycle when reviewing an earlier source step",as
  const navigate=vi.fn();render(<CommissionWorkflowContext.Provider value={{target:{tab:"payroll",intakeId:"source",intakeReference:"TEST-MAIN",cycleId:"2026-11"},navigate}}><CommissionPayroll owner refreshLedger={vi.fn()}/></CommissionWorkflowContext.Provider>);
  fireEvent.click(await screen.findByRole("button",{name:"Step 3: Carrier payment, complete"}));
  expect(navigate).toHaveBeenCalledWith({tab:"statements",intakeId:"source",intakeReference:"TEST-MAIN",cycleId:"2026-11",intakeStep:2});
+});
+
+it("explains a date hold and opens the editor without saving or approving", async () => {
+  vi.setSystemTime(new Date("2026-11-16T22:00:00Z"));
+  workspace.statementReadiness={activeStatements:0,statementsNeedingReview:0,unmatchedRows:0,pendingSettlements:[]};
+  render(<CommissionPayroll owner refreshLedger={vi.fn()} reviewStatements={vi.fn()}/>);
+  fireEvent.click(await screen.findByRole("button",{name:"Review payroll dates"}));
+  expect(screen.getByRole("region",{name:"Payroll readiness"})).toHaveTextContent("Waiting for cutoff");
+  expect(screen.getByRole("region",{name:"Payroll readiness"})).toHaveTextContent("No reconciliation issues");
+  expect(within(screen.getByRole("region",{name:"November 2026 monthly payroll"})).getByRole("status",{name:"Payroll schedule"})).toHaveTextContent("Approval opens Nov 17, 2026");
+  expect(screen.queryByRole("button",{name:"Review statements awaiting posting"})).toBeNull();
+  const cutoff=within(screen.getByRole("region",{name:"November 2026 monthly payroll"})).getByLabelText("Receipts included through");
+  expect(cutoff.closest("details")).toHaveAttribute("open");
+  expect(cutoff).toHaveFocus();
+  expect(h.action.mock.calls.every(([op])=>op==="payrollWorkspace")).toBe(true);
+});
+it("prioritizes a real reconciliation issue over a scheduled wait", async () => {
+  vi.setSystemTime(new Date("2026-11-16T22:00:00Z"));
+  workspace.statementReadiness={activeStatements:1,statementsNeedingReview:0,unmatchedRows:0,pendingSettlements:[]};
+  workspace.cycles[0].preview!.blockers=["Reconcile draft statement TEST received 2026-11-11."];
+  workspace.cycles[0].preview!.issues=[{message:workspace.cycles[0].preview!.blockers[0],target:{tab:"statements",intakeId:"source-123"}}];
+  const navigate=vi.fn();
+  render(<CommissionWorkflowContext.Provider value={{target:{tab:"payroll"},navigate}}><CommissionPayroll owner refreshLedger={vi.fn()}/></CommissionWorkflowContext.Provider>);
+  fireEvent.click(await screen.findByRole("button",{name:"Resolve next review item"}));
+  expect(navigate).toHaveBeenCalledWith({tab:"statements",intakeId:"source-123"});
+  expect(screen.getByRole("region",{name:"Payroll readiness"})).toHaveTextContent("1 review item to resolve");
+  expect(screen.getByRole("button",{name:"Approve payroll cycle"})).toBeDisabled();
+});
+it("suggests a receipt cutoff only on request and preserves exact earnings and remaining dates", async () => {
+  vi.setSystemTime(new Date("2026-11-17T15:00:00Z"));
+  const row={producerId:"p",producerName:"Avery",policyId:"policy",policyNumber:"TEST-MAIN",accountName:"Test HOA",entryId:"receipt",receivedOn:"2026-11-11",transaction:"NEW" as const,agencyCents:100000,producerBps:1000,amountCents:10000,earningId:undefined,source:undefined,shareBps:undefined};
+  const key=JSON.stringify(["receipt","policy","receipt"]);
+  workspace.producers=[{id:"p",name:"Avery"}];
+  workspace.availableEarnings=[row,{...row,entryId:"unrelated",amountCents:5000}];
+  workspace.cycles[0]={...workspace.cycles[0],id:"2026-11-OFF-12345678",cycleType:"OFF_CYCLE",cutoff:"2026-11-20",reviewOn:"2026-11-21",hrDueOn:"2026-11-23",processingOn:"2026-11-23",reason:"Statement TEST",producerIds:["p"],selectedEarningKeys:[key]};
+  render(<CommissionPayroll owner refreshLedger={vi.fn()}/>);
+  fireEvent.click(await screen.findByRole("button",{name:"Review payroll dates"}));
+  const form=within(screen.getByText("Edit off-cycle dates and earnings").closest("details")!);
+  expect(form.getByRole("status",{name:"Payroll schedule"})).toHaveTextContent("Approval opens Nov 21, 2026");
+  expect(form.getAllByRole("checkbox",{name:/Include Avery/})).toHaveLength(1);
+  expect(form.getByLabelText("Off-cycle receipt cutoff")).toHaveValue("2026-11-20");
+  fireEvent.click(form.getByRole("button",{name:"Use selected receipts through Nov 11, 2026"}));
+  expect(form.getByLabelText("Off-cycle receipt cutoff")).toHaveValue("2026-11-11");
+  expect(form.getByLabelText("Off-cycle pay date")).toHaveValue("2026-11-27");
+  expect(form.queryByRole("status",{name:"Payroll schedule"})).toBeNull();
+  expect(h.action.mock.calls.every(([op])=>op==="payrollWorkspace")).toBe(true);
+  fireEvent.click(form.getByRole("button",{name:"Save off-cycle draft"}));
+  await waitFor(()=>expect(h.action).toHaveBeenCalledWith("savePayrollCycle",expect.objectContaining({id:"2026-11-OFF-12345678",cutoff:"2026-11-11",reviewOn:"2026-11-21",payDate:"2026-11-27",selectedEarningKeys:[key]})));
+  expect(h.action.mock.calls.some(([op])=>op==="approvePayrollCycle")).toBe(false);
+});
+it("opens stale off-cycle selection in its editor instead of navigating in a loop", async () => {
+  const message="Selected off-cycle earnings changed or are no longer eligible. Review the selection before approval.";
+  workspace.cycles[0]={...workspace.cycles[0],id:"2026-11-OFF-12345678",cycleType:"OFF_CYCLE",producerIds:["p"],reason:"TEST",preview:{...workspace.cycles[0].preview!,blockers:[message],issues:[{message,target:{tab:"payroll",cycleId:"2026-11-OFF-12345678"}}]}};
+  const navigate=vi.fn();
+  render(<CommissionWorkflowContext.Provider value={{target:{tab:"payroll"},navigate}}><CommissionPayroll owner refreshLedger={vi.fn()}/></CommissionWorkflowContext.Provider>);
+  fireEvent.click(await screen.findByRole("button",{name:"Resolve next review item"}));
+  expect(screen.getByText("Edit off-cycle dates and earnings").closest("details")).toHaveAttribute("open");
+  expect(navigate).not.toHaveBeenCalled();
+  expect(h.action.mock.calls.every(([op])=>op==="payrollWorkspace")).toBe(true);
 });

@@ -140,3 +140,17 @@ Unique recognizable worksheet/header candidates are suggested before mapping con
 Financial server-side approval, eligibility, cutoff, version, idempotency and posting rules are unchanged. The audit's unrelated TEST-PH-4175414-DUP-SETTLEMENT blocker is not modified. Live approval and employee-payment acceptance remain with the tester. Report settings remain enabled=false (version 1), the scheduler DISABLED, and staging automatic builds off. Publish only to codex-hoa-staging-migration with an explicit commitId, then verify the successful deployment and served asset against the local commit.
 
 Validation: all 544 tests in the 27-file staging gate and all 134 financial payroll checks passed. Frontend/backend type checks and the CRM/sidebar build passed. Desktop and 390-pixel phone fictional previews verified the merged navigation, carried $150 selection and exact source return; phone document width is 375 pixels with table scrolling contained inside the form. Local synthesis requires Node preserve-symlinks because this isolated checkout shares dependencies through a directory junction. The deployment repeats synthesis with its own installed dependencies.
+
+## November 17 payroll blocker guidance
+
+Started from deployed/local 25c5de0ba070cfd5aad2e14a3ef218463b0a0d34 (job 55); remote staging still matched. Production main remained 0bf1db926dcd77fbdf1346eea4590904d696a445. Work is isolated in C:/workspace/hoa-guided-workflow-20261113 on codex/commission-payroll-guidance-20261117; original worktree head, 93 status entries and status digest are unchanged.
+
+The live current draft 2026-11-OFF-551ecc73 had only the future November 20 cutoff blocker. Its dates were corrected through the authenticated staging UI to the fictional guide's November 11 cutoff, November 12 review/HR/processing and November 13 pay date. The two Brian Cole earnings remain $100 + $50. Readiness now has no blockers. No payroll approval, employee payment or report delivery was performed; no unrelated settlement was changed.
+
+UI changes distinguish a scheduled cutoff wait from reconciliation issues, show the exact Eastern-time approval opening date before draft creation, open the date editor directly, and open the relevant record for other review issues. An explicit last-selected-receipt cutoff suggestion preserves earnings and other dates. Editing an exact selection initially shows only its selected earnings. Financial backend rules are unchanged.
+
+Publish only to staging and verify the hosted source commit. Report emails remain disabled; scheduler verification and final release evidence accompany the test pack.
+
+During implementation, the tester approved the corrected draft and recorded one fictional $150 payment dated November 17, 2026. Read-only verification observed cycle version 5 PAID and its batch version 2 PAID with a single 15000-cent payment. This agent did not approve or record payment. The guide now marks the main run complete and preserves partial-payment testing as a separate optional exercise.
+
+Local validation: 549 staging tests passed across the initial run and focused reruns; one existing infrastructure synthesis test required a longer local timeout. All 134 financial checks passed. A final work-queue test brings the hosted gate to 550 tests. The CRM/sidebar build and fictional date-editor/receipt-cutoff navigation checks passed; the final queue and notice changes receive a focused rerun and build before publication.

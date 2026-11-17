@@ -419,7 +419,7 @@ if (['review', 'payment'].includes(previewQuery.get('scenario') ?? '')) {
   inboxRows.splice(0, inboxRows.length, ...[100000,50000].map((amount,i) => ({id:'sample'+(i+1),version:1,intakeId:'demo-inbox',policyNumber:'POL-1',effectiveDate:'2026-01-01',policyId:'p',lineRef:'TEST-IMPORT-'+(i+1),agencyCents:amount,transactionType:'RECEIPT',reviewStatus:ready ? 'ELIGIBLE' : 'PENDING',note:'',postedCents:0})));
 }
 
-if (previewQuery.get('scenario') === 'posted') {
+if (['posted','payroll-wait'].includes(previewQuery.get('scenario') ?? '')) {
   Object.assign(inboxSample,{reference:'TEST-GUIDED-PAYROLL',totalCents:150000,rowCount:2,rowTotalCents:150000,needsReview:0,unmatched:0,postedCents:150000,completedRows:2});
   inboxRows.splice(0,inboxRows.length,...[100000,50000].map((amount,i)=>({id:'sample'+(i+1),version:2,intakeId:'demo-inbox',policyNumber:'POL-1',effectiveDate:'2026-01-01',policyId:'p',lineRef:'TEST-IMPORT-'+(i+1),agencyCents:amount,transactionType:'RECEIPT',reviewStatus:'ELIGIBLE',note:'',postedCents:amount})));
   inboxSettlements.push({id:'demo-payment',version:2,intakeId:'demo-inbox',reference:'TEST-CARRIER-RECEIPT',receivedOn:'2026-11-11',totalCents:150000,settlementType:'DEPOSIT',evidence:'SIMULATED RECEIPT',status:'POSTED',allocations:inboxRows.map(r=>({rowId:r.id,amountCents:r.agencyCents})),postedRows:inboxRows.map(r=>r.id),statementIds:['demo-posted']});
@@ -429,4 +429,9 @@ if (previewQuery.get('scenario') === 'posted') {
   payrollWorkspace.availableEarnings=payrollPreview(data.policies,'2026-11-20');
   payrollWorkspace.sourceLinks=posted.entries.map(e=>({policyId:posted.id,entryId:e.id,statementId:e.statementId,intakeId:'demo-inbox'}));
   payrollWorkspace.statementReadiness={activeStatements:0,statementsNeedingReview:0,unmatchedRows:0,pendingSettlements:[]};
+}
+
+if (previewQuery.get('scenario') === 'payroll-wait') {
+  const rows = payrollWorkspace.availableEarnings!;
+  payrollWorkspace.cycles = [{...suggestPayrollDates('2026-11'),id:'2026-11-OFF-11223344',version:1,revision:1,cycleType:'OFF_CYCLE',reason:'Statement TEST-GUIDED-PAYROLL',producerIds:[...new Set(rows.map(r=>r.producerId))],selectedEarningKeys:rows.map(r=>JSON.stringify(['receipt',r.policyId,r.entryId])),status:'OPEN',batchIds:[],totalCents:0,preview:{token:'fictional-preview',rows,blockers:[],entryCount:rows.length,totalCents:15000,employees:[{producerId:rows[0].producerId,name:rows[0].producerName,amountCents:15000}]}}];
 }

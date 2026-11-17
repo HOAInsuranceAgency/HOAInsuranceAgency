@@ -37,3 +37,13 @@ it('keeps earlier reconciliation and approved unpaid payroll in the queue with e
  fireEvent.click(screen.getByRole('button',{name:'Review approved payroll'}));
  expect(navigate).toHaveBeenLastCalledWith({tab:'payroll',cycleId:'approved'});
 });
+
+it('labels a future cutoff as a scheduled wait instead of a reconciliation issue', async () => {
+ h.action.mockImplementation(async op=>op==='intakeWorkspace'?{intakes:[],settlements:[]}:op==='payrollWorkspace'?{cycles:[{id:'future',status:'OPEN',cutoff:'2099-11-20',preview:{blockers:[]}}]}:{departures:[],adjustments:[],earnings:[]});
+ const navigate=vi.fn();
+ render(<CommissionWorkflowContext.Provider value={{target:{tab:'queue'},navigate}}><CommissionWorkQueue data={data} onAccessDenied={vi.fn()}/></CommissionWorkflowContext.Provider>);
+ fireEvent.click(await screen.findByRole('button',{name:'Review payroll schedule'}));
+ expect(screen.getByText('Waiting for the 2099-11-20 receipt cutoff to end')).toBeInTheDocument();
+ expect(screen.queryByText(/approval issues/)).toBeNull();
+ expect(navigate).toHaveBeenCalledWith({tab:'payroll',cycleId:'future'});
+});

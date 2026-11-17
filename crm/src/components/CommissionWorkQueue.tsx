@@ -5,7 +5,7 @@ import { isAuthorizationError } from '../lib/authorizationError';
 import { useCommissionWorkflow, type CommissionDestination } from '../lib/commissionWorkflow';
 import { batchPaidCents, type CommissionOverview } from '../../../shared/commissions';
 import type { IntakeWorkspace } from '../../../shared/commissionIntake';
-import { payrollApprovalIssues, type PayrollWorkspace } from '../../../shared/commissionPayroll';
+import { payrollApprovalIssues, payrollCutoffIssue, type PayrollWorkspace } from '../../../shared/commissionPayroll';
 import type { CommissionExceptionWorkspace } from './CommissionExceptions';
 
 export default function CommissionWorkQueue({ data, onAccessDenied }: { data: CommissionOverview; onAccessDenied: (error: unknown) => void }) {
@@ -42,7 +42,12 @@ export default function CommissionWorkQueue({ data, onAccessDenied }: { data: Co
     const paid=(payroll.batches??[]).filter(b=>c.batchIds.includes(b.id)).reduce((n,b)=>n+batchPaidCents(b),0);
     items.push({id:'approved:'+c.id,priority:2,due:c.payDate,title:'Approved payroll · '+c.id,detail:issue?'Review report delivery evidence':new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format((c.totalCents-paid)/100)+' employee payment remaining',action:issue?'Review delivery':'Review approved payroll',target:{tab:'payroll',cycleId:c.id}});
   }
-  for (const c of cycles) items.push({ id:'cycle:'+c.id, priority:2, due:c.cutoff, title:'Payroll · '+c.id, detail:'Cutoff '+c.cutoff+' · '+payrollApprovalIssues(c).length+' approval issues', action:'Review cycle',target:{tab:'payroll',cycleId:c.id}});
+  for (const c of cycles) {
+    const cutoffWait = payrollCutoffIssue(c);
+    const reviewCount = payrollApprovalIssues(c).filter(issue => issue !== cutoffWait).length;
+    const detail = reviewCount ? reviewCount + ' review item' + (reviewCount === 1 ? '' : 's') + ' to resolve' : cutoffWait ? 'Waiting for the ' + c.cutoff + ' receipt cutoff to end' : 'Ready for your approval';
+    items.push({ id:'cycle:'+c.id, priority:2, due:c.cutoff, title:'Payroll · '+c.id, detail, action:!reviewCount && cutoffWait ? 'Review payroll schedule' : 'Review cycle',target:{tab:'payroll',cycleId:c.id}});
+  }
   for (const c of reviews.departures.filter(c => c.status !== 'CLOSED')) items.push({ id:'departure:'+c.id,priority:2,due:c.reviewOn,title:c.producerName+' · departure review',detail:'Review terms, held earnings and payment decisions',action:'Resolve departure',target:{tab:'exceptions',departureId:c.id}});
   for (const a of reviews.adjustments.filter(a => a.status === 'DRAFT')) items.push({id:'adjustment:'+a.id,priority:2,due:a.effectiveOn,title:'Compensation adjustment',detail:a.reason,action:'Review adjustment',target:{tab:'exceptions',adjustmentId:a.id}});
   for (const p of data.policies) for (const hold of p.reviewHolds ?? []) if (hold.status === 'OPEN') items.push({id:'hold:'+p.id+':'+hold.id,priority:2,due:hold.dueOn,title:p.policyNumber+' · '+hold.category.toLowerCase(),detail:hold.note,action:'Resolve policy review',target:{tab:'ledger',policyId:p.id}});

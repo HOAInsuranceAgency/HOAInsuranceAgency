@@ -6,15 +6,17 @@ Updated November 17, 2026: one Guided workflow from source import through employ
 
 Read-only staging inspection confirmed **TEST-20261116-0B7609-01** is fully posted: **$1,500.00** received and posted, **$150.00** employee earnings for **Brian Cole at 10%**, and **$0.00** source remaining. The saved receipt is **TEST-20261116-0B7609-MAIN-PAY**, dated **November 11, 2026**. Do not upload, reimport or record that carrier payment again.
 
-Open **Commissions → Guided workflow**, then the existing statement (use **Statement inbox → All statements** if needed). Choose **Review payroll** in the step guide or **Continue to payroll**. The same Guided workflow remains selected. Expect **2 available earnings · $150.00** with $100.00 and $50.00 for Brian Cole.
+**The main test is now complete.** Payroll **2026-11-OFF-551ecc73** is **Paid**: **$150.00** was recorded in one fictional employee payment dated **November 17, 2026**, with reference **Submitted with fake payroll 11.17.2026 - Ref:SE7DFCA98212LH823S**. Do not record the earlier suggested $60/$90 payments against this completed run.
 
-Choose **Prepare payroll for these earnings**. The employee, exact earnings, statement reason and suggested calendar dates are already filled. For this historical fictional exercise, review/change the cutoff to **November 11**, review/HR/processing dates to **November 12**, and pay date to **November 13, 2026**. Choose **Create payroll draft**. The draft must total **$150.00**. This does not approve or pay it. Broader earnings are available only through **Change employees or earnings**; keep the original two selected.
+On November 17, the unapproved draft's only blocker was a future November 20 cutoff. Its dates were corrected through the staging UI to cutoff **November 11**, review/HR/processing **November 12**, and scheduled pay date **November 13, 2026**. The $100 and $50 selected earnings were preserved. The tester then approved and recorded the single $150 payment while the guidance update was in progress. This correction did not perform approval or payment.
 
-If linked payroll already exists, review that run instead of creating another. A regular monthly run can include other employees and earnings; its full amount is displayed before you choose it. For this isolated test, use the exact two-earning draft.
+Open **Commissions -> Guided workflow**, then the existing statement's **Review payroll** or linked payroll. Expect **Complete**, **$150.00 paid**, and **$0.00 outstanding**. Review the recorded payment and archived report. Partial-payment acceptance remains a separate, unrun optional exercise and needs a different unpaid test cycle.
 
-Review any blockers before approving. The initial audit found a separate staging blocker, **TEST-PH-4175414-DUP-SETTLEMENT**. If it still appears, mark approval **Blocked**, retain your $150 draft and leave unrelated records unchanged. An authorized reviewer must resolve that record through its normal workflow. No UI improvement bypasses cutoff, eligibility or reconciliation checks.
+The previously observed **TEST-PH-4175414-DUP-SETTLEMENT** issue no longer blocks this draft; no unrelated settlement was edited in this correction. If a new review issue appears, use its **Open statement to resolve** or **Open review item** action. **Resolve next review item** opens the relevant record directly. Changed off-cycle earnings open the existing selection editor.
 
-After explicit payroll approval, **Employee payment** becomes the current step. Inspect the reports, then record the fictional $60 and $90 payments with separate TEST references and November 13 dates. Keep report emails disabled. The guide reaches **Complete** only when the selected payroll is paid.
+For new drafts, a future cutoff displays **Approval opens [date]** before saving and in readiness. **Review payroll dates** opens the date editor directly. For a specifically selected set of earnings, **Use selected receipts through [date]** proposes the last selected receipt date as the cutoff only after a click; it preserves the earnings and other dates for review. It does not save or approve. Real reconciliation checks and the inclusive Eastern-time cutoff remain enforced.
+
+For a new, separate partial-payment exercise only: after explicit approval, inspect reports and record $60 and $90 using unique TEST references. Keep report emails disabled. The guide reaches Complete when that selected payroll is paid. Do not repeat these payments on the completed main run.
 
 ### Guided-workspace acceptance checks
 
