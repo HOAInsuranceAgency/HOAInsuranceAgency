@@ -31,7 +31,7 @@ vi.mock('../lib/client', () => ({
 vi.mock('../lib/communications', () => ({
   communicationRequest: h.communications,
 }));
-vi.mock('../lib/editProtection', () => ({ useUnsavedChanges: vi.fn(), useEditProtection: () => ({ requestLeave: (next: () => void) => next() }) }));
+vi.mock('../lib/editProtection', () => ({ useUnsavedChanges: vi.fn(() => ({markClean: vi.fn()})), useEditProtection: () => ({ requestLeave: (next: () => void) => next() }) }));
 vi.mock('../components/ReportDownload', () => ({ ReportDownload: ({ report }: { report: unknown }) => { h.report(report); return null; } }));
 import Commissions from './Commissions';
 const snapshot = () => ({

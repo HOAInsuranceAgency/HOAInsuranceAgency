@@ -1,3 +1,4 @@
+import CommissionDeposits from "./CommissionDeposits";
 import CommissionJourney, { commissionSteps } from "./CommissionJourney";
 import CommissionSourcePreview from './CommissionSourcePreview';
 import { displayCommissionAmount, importColumnLabels, suggestImportTable, suggestImportMapping } from '../lib/commissionSourceGuidance';
@@ -180,8 +181,9 @@ export default function CommissionIntake({
   const { requestLeave } = useEditProtection();
   const { target, remember } = useCommissionWorkflow();
   const [selected, saveSelected] = useCommissionPreference('selected-statement', '');
-  const setSelected = (id:string) => { saveSelected(id); remember?.({intakeId:id,statementId:undefined,cycleId:undefined,intakeStep:undefined,intakeReference:undefined}); };
+  const setSelected = (id:string) => { saveSelected(id); remember?.({intakeId:id,depositId:undefined,statementId:undefined,cycleId:undefined,intakeStep:undefined,intakeReference:undefined}); };
   const [adding, setAdding] = useState(false);
+  useEffect(() => { if (target.depositId) {saveSelected("");setAdding(false);} },[target.depositId]);
   const [query, setQuery] = useCommissionPreference('statement-search', '');
   const [filter, setFilter] = useCommissionPreference('statement-filter', 'active');
   useEffect(() => { if (target.intakeId) { saveSelected(target.intakeId); setAdding(false); } }, [target.intakeId]);
@@ -252,6 +254,7 @@ export default function CommissionIntake({
           Log carrier statement
         </button>
       </div>
+      <CommissionDeposits workspace={workspace} carriers={data.carriers} refresh={refresh} onError={denied} openStatement={setSelected}/>
       <section className="intake-work-queue" aria-label="Prioritized commission work">
         <h3>Next work</h3>
         <p className="small muted">Received settlements first, then statement review, then statements awaiting payment. Oldest arrivals come first within each group.</p>

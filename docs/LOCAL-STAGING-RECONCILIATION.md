@@ -154,3 +154,16 @@ Publish only to staging and verify the hosted source commit. Report emails remai
 During implementation, the tester approved the corrected draft and recorded one fictional $150 payment dated November 17, 2026. Read-only verification observed cycle version 5 PAID and its batch version 2 PAID with a single 15000-cent payment. This agent did not approve or record payment. The guide now marks the main run complete and preserves partial-payment testing as a separate optional exercise.
 
 Local validation: 549 staging tests passed across the initial run and focused reruns; one existing infrastructure synthesis test required a longer local timeout. All 134 financial checks passed. A final work-queue test brings the hosted gate to 550 tests. The CRM/sidebar build and fictional date-editor/receipt-cutoff navigation checks passed; the final queue and notice changes receive a focused rerun and build before publication.
+
+
+## November 17 deposit-first intake
+
+Continued from e148e0634c6d8834f7c8e01609f1e1c04ea56f65 in the isolated checkout. Remote staging matched that baseline; production main remained 0bf1db926dcd77fbdf1346eea4590904d696a445.
+
+Actual statements were imported through the authenticated staging UI before implementation began. Source hashes matched the originals; extracted summary rows were excluded with reasons. Unknowns remain pending human review. Actual record details are retained in staging and the private local review guide. The import created no receipts or earnings, and report delivery and its scheduler were verified disabled.
+
+The new workflow records an evidenced bank deposit before a statement exists. A saved deposit appears in the work queue, offers carrier/balance-based statement suggestions without selecting one, and carries authoritative receipt details into an explicitly confirmed statement match. Matching creates a recorded settlement, not earnings. One deposit can cover one statement in this release; a split across statements stays unresolved. A separate, explicitly confirmed no-employee-commission resolution requires evidence and retains history.
+
+All operations use the existing Owner-only commission handler and private ledger audit transactions. Duplicate reference guards cover ordinary intake and earlier statement entry, with versioned reconciliation updates to prevent races. Linking and voiding update both records atomically. Unmatched deposits block relevant cutoff approval, with direct links to resolution; backdated deposits also flag already approved cycles for review. No report delivery settings, schedule configuration, infrastructure permissions or production data are changed.
+
+Release validation for deposit-first intake: all 578 staging-gate tests (28 files) and all 134 financial payroll checks passed. Frontend/backend TypeScript checks, the CRM/sidebar build, and backend synthesis passed. Desktop and 390-pixel phone fictional previews confirmed explicit matching approval, currency presentation and contained layout. Actual imports remain pending human review; no receipt, employee earning or payroll was created from them. Report settings remain enabled=false and the payroll scheduler DISABLED. Publish only this isolated checkout to the staging branch and verify the successful job and served frontend against its exact commit.

@@ -260,7 +260,7 @@ export const commissionAction = async (action: string, input: Record<string, unk
       ],
     });
   if (action === 'getIntakeWorkingDraft' && useIsOwner()) return { draft: null };
-  if (action === 'intakeWorkspace' && useIsOwner()) return structuredClone({intakes: [inboxSample], settlements: inboxSettlements, templates: []});
+  if (action === 'intakeWorkspace' && useIsOwner()) return structuredClone({intakes: [inboxSample], settlements: inboxSettlements, templates: [], deposits: previewQuery.get('scenario')==='deposits' ? [{id:'sample-deposit',version:1,payor:'TEST Harbor Mutual',carrierId:inboxSample.carrierId,reference:'TEST-OCTOBER-BANK-DEPOSIT',receivedOn:'2026-10-21',totalCents:inboxSample.totalCents,evidence:'Fictional bank receipt for preview only',status:'AWAITING_REMITTANCE',createdAt:'2026-10-21T12:00:00Z',createdBy:'preview'}] : []});
   if (action === 'file' && useIsOwner() && input.key === 'fictional-source') return {url:'data:text/csv;charset=utf-8,' + encodeURIComponent(['import','review','payment'].includes(previewQuery.get('scenario') ?? '') ? 'Policy,Reference,Amount,Effective,Transaction\nPOL-1,TEST-IMPORT-1,1000.00,2026-01-01,RECEIPT\nPOL-1,TEST-IMPORT-2,500.00,2026-01-01,RECEIPT' : 'Policy,Reference,Agency commission\nPOL-1,TEST-TX-1,750.00\nHARBOR-NEW,TEST-TX-2,250.00')};
   if (action === 'getStatementIntake' && useIsOwner()) return structuredClone({intake: inboxSample, rows: inboxRows, settlements: inboxSettlements});
   if (action === "payrollWorkspace" && useIsOwner())

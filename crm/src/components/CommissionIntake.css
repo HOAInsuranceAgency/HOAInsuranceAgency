@@ -267,3 +267,12 @@
  .intake-review-overview td:nth-child(n+3) { grid-column:2; }
  .intake-review-overview select { font-size:16px;min-height:42px; }
 }
+
+.commission-deposits fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
+.commission-deposits .commission-form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr)); gap: 1rem; }
+.commission-deposits select, .commission-deposits input, .commission-deposits textarea { max-width: 100%; }
+.commission-deposits .deposit-review { display: grid; gap: .75rem; padding: 1rem; margin-top: 1rem; border: 1px solid var(--border, #dbe3ef); border-radius: 8px; background: #f4f7fb; }
+.commission-deposits .deposit-review p, .commission-deposits .deposit-review h4 { margin: 0; }
+.commission-deposits .deposit-review > button { justify-self: start; }
+.commission-deposits details { margin-top: 1rem; }
+.commission-deposits p, .commission-deposits strong { overflow-wrap: anywhere; }

@@ -1,7 +1,9 @@
+import { depositSuggestions, depositPayrollStatements, type CommissionDeposit } from '../../../shared/commissionDeposits';
 import {
   payrollBlockers,
   suggestPayrollDates,
   type PayrollCycle,
+  type PayrollSettings,
 } from "../../../shared/commissionPayroll";
 import { beforeEach, expect, it, vi } from "vitest";
 import { commissionPolicy, line, statement } from "./commissionFixtures";
@@ -647,4 +649,110 @@ it("rejects an unbalanced financial preview without changing the recorded settle
   const s=await payment('PREVIEW-INVALID',10000);
   expect(await call('previewIntakeSettlement',{id:'inbox',settlementId:s.id,version:s.version,allocations:[{rowId:'row1',amountCents:9999}]})).toMatchObject({ok:false});
   expect(get<IntakeSettlement>('INTAKE_SETTLEMENT',s.id).allocations).toHaveLength(0);
+});
+
+
+const bankDeposit = (patch: Record<string,unknown> = {}) => ({payor:'TEST Unknown Payor',reference:'TEST-BANK-OCT-01',receivedOn:'2026-10-21',totalCents:10000,evidence:'TEST bank evidence',confirmed:true,...patch});
+async function recordDeposit(patch:Record<string,unknown>={}) {
+  const r=await call('recordUnmatchedDeposit',bankDeposit(patch));
+  expect(r).toMatchObject({ok:true});
+  return get<CommissionDeposit>('COMMISSION_DEPOSIT',r.depositId as string);
+}
+it('logs a deposit without a statement, policy or employee earning and retries idempotently',async()=>{
+  records.clear();
+  const d=await recordDeposit();
+  expect(d).toMatchObject({status:'AWAITING_REMITTANCE',receivedOn:'2026-10-21',totalCents:10000,version:1});
+  const retried=await recordDeposit(); expect(retried.id).toBe(d.id);
+  expect(all('COMMISSION_DEPOSIT')).toHaveLength(1);
+  for(const kind of ['EARNING','POLICY','INTAKE_SETTLEMENT','BATCH'])expect(all(kind)).toHaveLength(0);
+  expect((await call('intakeWorkspace')).deposits).toHaveLength(1);
+});
+it.each(['ADMIN','SALES','EMPLOYEE'])('rejects %s deposit writes and reads',async role=>{
+  expect(await handler(request('recordUnmatchedDeposit',bankDeposit(),role))).toMatchObject({ok:false});
+  expect(await handler(request('intakeWorkspace',{},role))).toMatchObject({ok:false});
+  expect(h.commit).not.toHaveBeenCalled();
+});
+it.each([{confirmed:false},{totalCents:0},{totalCents:-1},{totalCents:1.5},{receivedOn:'2999-01-01'},{receivedOn:'2026-02-30'},{reference:''},{evidence:''},{carrierId:'missing'}])('rejects incomplete or invalid bank evidence %j',async patch=>{
+  expect(await call('recordUnmatchedDeposit',bankDeposit(patch))).toMatchObject({ok:false}); expect(all('COMMISSION_DEPOSIT')).toHaveLength(0);
+});
+it('rejects altered reuse of a bank reference and duplicate existing receipts',async()=>{
+  await recordDeposit();
+  expect(await call('recordUnmatchedDeposit',bankDeposit({totalCents:5000}))).toMatchObject({ok:false});
+  seed('INTAKE_SETTLEMENT',{id:'existing',version:1,reference:'Already-Saved'} as IntakeSettlement);
+  expect(await call('recordUnmatchedDeposit',bankDeposit({reference:' already-saved '}))).toMatchObject({ok:false});
+});
+it('suggests exact balances first without choosing or approving a match',async()=>{
+  const d=await recordDeposit({carrierId:undefined});
+  const result=depositSuggestions(d,[intake({id:'partial',totalCents:20000}),intake({id:'exact'}),intake({id:'void',status:'VOID'}),intake({id:'small',totalCents:5000})],[]);
+  expect(result.map(s=>s.intake.id)).toEqual(['exact','partial']);
+  expect(result[0].reason).toMatch(/Carrier must be confirmed/);
+  expect(depositSuggestions({...d,carrierId:'other'},[intake()],[])).toEqual([]);
+  expect(depositSuggestions(d,[intake()],[{intakeId:'inbox',totalCents:10000,status:'RECORDED'} as IntakeSettlement])).toEqual([]);
+  expect(get<CommissionDeposit>('COMMISSION_DEPOSIT',d.id).status).toBe('AWAITING_REMITTANCE');
+});
+it('carries authoritative bank evidence into a confirmed statement link exactly once',async()=>{
+  seed('STATEMENT_INTAKE',intake());
+  const d=await recordDeposit();
+  const r=await call('recordIntakeSettlement',{id:'inbox',version:1,depositId:d.id,depositVersion:d.version,confirmed:true,receivedOn:'2026-11-01',totalCents:1,evidence:'forged',reference:'forged'});
+  expect(r).toMatchObject({ok:true});
+  expect(get<IntakeSettlement>('INTAKE_SETTLEMENT',r.settlementId!)).toMatchObject({depositId:d.id,receivedOn:d.receivedOn,totalCents:d.totalCents,evidence:d.evidence,reference:d.reference,status:'RECORDED',allocations:[],postedRows:[]});
+  expect(get<CommissionDeposit>('COMMISSION_DEPOSIT',d.id)).toMatchObject({status:'LINKED',intakeId:'inbox',settlementId:r.settlementId});
+  expect(await call('recordIntakeSettlement',{id:'inbox',version:version(),depositId:d.id,depositVersion:d.version,confirmed:true})).toMatchObject({ok:false});
+  expect(all('INTAKE_SETTLEMENT')).toHaveLength(1); expect(all('EARNING')).toHaveLength(0);
+});
+it('requires confirmation, current versions, sufficient balance and the right carrier to link',async()=>{
+  seed('CARRIER',commissionPolicy().carrierTerms); seed('STATEMENT_INTAKE',intake());
+  const d=await recordDeposit({carrierId:'c'});
+  for(const patch of [{confirmed:false},{depositVersion:0},{version:0}]) expect(await call('recordIntakeSettlement',{id:'inbox',version:1,depositId:d.id,depositVersion:1,confirmed:true,...patch})).toMatchObject({ok:false});
+  seed('STATEMENT_INTAKE',intake({carrierId:'other'}));
+  expect(await call('recordIntakeSettlement',{id:'inbox',version:1,depositId:d.id,depositVersion:1,confirmed:true})).toMatchObject({ok:false});
+  seed('STATEMENT_INTAKE',intake({totalCents:9999}));
+  expect(await call('recordIntakeSettlement',{id:'inbox',version:1,depositId:d.id,depositVersion:1,confirmed:true})).toMatchObject({ok:false});
+  expect(all('INTAKE_SETTLEMENT')).toHaveLength(0); expect(get<CommissionDeposit>('COMMISSION_DEPOSIT',d.id).status).toBe('AWAITING_REMITTANCE');
+});
+it('blocks ordinary receipt entry from duplicating a saved bank deposit',async()=>{
+  seed('STATEMENT_INTAKE',intake()); const d=await recordDeposit();
+  expect(await call('recordIntakeSettlement',{id:'inbox',version:1,reference:d.reference,receivedOn:d.receivedOn,totalCents:d.totalCents,evidence:d.evidence,settlementType:'DEPOSIT',confirmed:true})).toMatchObject({ok:false});
+  expect(all('INTAKE_SETTLEMENT')).toHaveLength(0);
+});
+it('guards an ordinary receipt against a bank deposit recorded during its save',async()=>{
+  seed('STATEMENT_INTAKE',intake());
+  const implementation=h.commit.getMockImplementation()!;
+  h.commit.mockImplementationOnce(async(...args)=>{
+    seed('COMMISSION_DEPOSIT',{id:hash('test-bank-oct-01'),version:1} as CommissionDeposit);
+    return implementation(...args);
+  });
+  expect(await call('recordIntakeSettlement',{id:'inbox',version:1,...bankDeposit(),settlementType:'DEPOSIT'})).toMatchObject({ok:false});
+  expect(all('INTAKE_SETTLEMENT')).toHaveLength(0);
+});
+it('keeps received unknown money in cutoff blockers and links the review to its deposit',async()=>{
+  const d=await recordDeposit();
+  const c={...suggestPayrollDates('2026-10'),version:1,status:'OPEN',revision:1,batchIds:[],totalCents:0} as PayrollCycle;
+  seed('PAYROLL_CYCLE',c);
+  expect(payrollBlockers(c,[],depositPayrollStatements([d])).join(' ')).toMatch(/unmatched deposit/);
+  expect(payrollBlockers({...c,cutoff:'2026-10-20'},[],depositPayrollStatements([d]))).toEqual([]);
+  const w=await call('payrollWorkspace'); const cycle=(w.cycles as PayrollCycle[])[0];
+  expect(cycle.preview?.issues).toContainEqual(expect.objectContaining({target:{tab:'statements',depositId:d.id}}));
+  seed('PAYROLL_SETTINGS',{id:'payroll',version:1,enabled:false,hrRecipient:'',reviewRecipient:''} as PayrollSettings);
+  expect(await call('approvePayrollCycle',{id:c.id,version:1,confirmed:true,previewToken:cycle.preview?.token})).toMatchObject({ok:false});
+});
+it('requires an evidenced human resolution and preserves history without earnings',async()=>{
+  const d=await recordDeposit();
+  for(const patch of [{confirmed:false},{reason:''},{version:0},{status:'LINKED'}])expect(await call('resolveUnmatchedDeposit',{id:d.id,version:1,status:'NO_EMPLOYEE_COMMISSION',reason:'TEST bank reimbursement; no employee commission',confirmed:true,...patch})).toMatchObject({ok:false});
+  expect(await call('resolveUnmatchedDeposit',{id:d.id,version:1,status:'NO_EMPLOYEE_COMMISSION',reason:'TEST bank reimbursement; no employee commission',confirmed:true})).toMatchObject({ok:true});
+  const resolved=get<CommissionDeposit>('COMMISSION_DEPOSIT',d.id);
+  expect(resolved.resolutionReason).toMatch(/reimbursement/);expect(depositPayrollStatements([resolved])).toEqual([]);expect(all('EARNING')).toEqual([]);
+});
+it('holds already approved payroll when a newly recorded deposit falls within its cutoff',async()=>{
+  seed('PAYROLL_CYCLE',{...suggestPayrollDates('2026-10'),version:1,status:'APPROVED',revision:1,batchIds:[],totalCents:0} as PayrollCycle);
+  await recordDeposit();
+  expect(get<PayrollCycle>('PAYROLL_CYCLE','2026-10').reviewRequired).toMatch(/unmatched bank deposit/);
+});
+it('voids the linked deposit together with an incorrect unposted receipt',async()=>{
+  seed('STATEMENT_INTAKE',intake());const d=await recordDeposit();
+  const r=await call('recordIntakeSettlement',{id:'inbox',version:1,depositId:d.id,depositVersion:1,confirmed:true});expect(r.ok).toBe(true);
+  const s=get<IntakeSettlement>('INTAKE_SETTLEMENT',r.settlementId!);
+  expect(await call('voidIntakeSettlement',{id:'inbox',version:s.version,settlementId:s.id,confirmed:true,reason:'TEST wrong bank entry'})).toMatchObject({ok:true});
+  expect(get<CommissionDeposit>('COMMISSION_DEPOSIT',d.id)).toMatchObject({status:'VOID',resolutionReason:'TEST wrong bank entry'});
+  expect(get<IntakeSettlement>('INTAKE_SETTLEMENT',s.id).status).toBe('VOID');
 });

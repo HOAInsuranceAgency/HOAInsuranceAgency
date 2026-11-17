@@ -33,6 +33,10 @@ export default function CommissionWorkQueue({ data, onAccessDenied }: { data: Co
       detail: pending.length ? 'Received money needs allocation or posting' + (affected ? ' · payroll cutoff ' + affected.cutoff : '') : review ? 'Review source and policy matches' : 'Awaiting carrier payment',
       action: pending.length ? 'Review settlement' : 'Open statement', target: { tab: 'statements', intakeId: s.id } };
   });
+  for (const d of inbox.deposits ?? []) if (d.status === 'AWAITING_REMITTANCE') {
+    const affected = cycles.find(c => d.receivedOn <= c.cutoff);
+    items.push({id:'deposit:'+d.id,priority:affected?0:1,due:affected?.cutoff??d.receivedOn,title:d.payor+' · '+new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(d.totalCents/100),detail:'Awaiting remittance · '+d.reference+(affected?' · payroll cutoff '+affected.cutoff:''),action:'Match deposit',target:{tab:'statements',depositId:d.id,intakeId:''}});
+  }
   for (const s of data.statements.filter(s => s.status === 'DRAFT')) {
     const affected = cycles.find(c => s.receivedOn <= c.cutoff);
     items.push({id:'legacy:'+s.id,priority:affected?0:1,due:affected?.cutoff??s.receivedOn,title:s.reference,detail:'Earlier received statement needs reconciliation'+(affected?' · payroll cutoff '+affected.cutoff:''),action:'Review reconciliation',target:{tab:'statements',statementId:s.id}});
@@ -55,7 +59,7 @@ export default function CommissionWorkQueue({ data, onAccessDenied }: { data: Co
   items.sort((a,b) => a.priority-b.priority || a.due.localeCompare(b.due) || a.id.localeCompare(b.id));
   return <section className="commission-work-queue">
     <div className="commission-section-heading"><div><h2>Work queue</h2><p>Start with received money affecting payroll, then the nearest cutoff and review decisions.</p></div><button className="secondary" onClick={() => void resource.refetch()}>Refresh work queue</button></div>
-    <div className="commission-action-bar"><button className="primary" onClick={() => navigate({tab:'statements'})}>Log or review a statement</button><button className="secondary" onClick={() => navigate({tab:'exceptions'})}>Shared commissions, departures & adjustments</button></div>
+    <div className="commission-action-bar"><button className="primary" onClick={() => navigate({tab:'statements'})}>Log or review a statement</button><button className="secondary" onClick={() => navigate({tab:"statements",depositId:"new",intakeId:""})}>Log carrier deposit</button><button className="secondary" onClick={() => navigate({tab:'exceptions'})}>Shared commissions, departures & adjustments</button></div>
     {!items.length && <p>No unfinished commission work.</p>}
     {items.map(item => <div className="commission-work-item" key={item.id}><div><strong>{item.title}</strong><p>{item.detail}</p><small>{item.priority === 4 ? 'Arrived ' : 'Date / cutoff '}{item.due}</small></div><button className="secondary" onClick={() => navigate(item.target)}>{item.action}</button></div>)}
   </section>;

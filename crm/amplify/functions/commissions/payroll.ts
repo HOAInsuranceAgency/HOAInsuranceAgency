@@ -1,3 +1,4 @@
+import { depositPayrollStatements, type CommissionDeposit } from '../../../../shared/commissionDeposits';
 import { intakePayrollStatements, type IntakeSettlement, type StatementIntake } from '../../../../shared/commissionIntake';
 import type { CommissionEarning, CommissionDeparture, CommissionAdjustment } from '../../../../shared/commissionExceptions';
 import { createHash, randomUUID } from 'node:crypto';
@@ -51,17 +52,19 @@ export async function payrollAction(_event: Event, actor: string, owner: boolean
     const [cycles, deliveries, batches] = await Promise.all([store.list<PayrollCycle>('PAYROLL_CYCLE'), store.list<PayrollDelivery>('PAYROLL_DELIVERY'), store.list<CommissionBatch>('BATCH')]);
     const [policies, statements, earnings, departures, adjustments] = await Promise.all([store.list<CommissionPolicy>('POLICY'), store.list<CommissionStatement>('STATEMENT'),store.list<CommissionEarning>('EARNING'),store.list<CommissionDeparture>('DEPARTURE'),store.list<CommissionAdjustment>('ADJUSTMENT')]);
     const [intakes, intakeSettlements] = await Promise.all([store.list<StatementIntake>('STATEMENT_INTAKE'), store.list<IntakeSettlement>('INTAKE_SETTLEMENT')]);
-    statements.push(...intakePayrollStatements(intakeSettlements));
+    const deposits = await store.list<CommissionDeposit>('COMMISSION_DEPOSIT');
+    statements.push(...intakePayrollStatements(intakeSettlements), ...depositPayrollStatements(deposits));
     validateAllocationSnapshot(policies, batches, earnings);
     for (const c of cycles) if (c.status === 'OPEN') {
       c.preview = preview(c, policies, settings, statements, earnings, departures, adjustments);
       c.preview.issues = c.preview.blockers.map(message => {
         const statement = statements.find(s => message === 'Reconcile draft statement ' + s.reference + ' received ' + s.receivedOn + '.');
         const settlement = statement && intakeSettlements.find(s => statement.id === s.id);
+        const deposit = statement && deposits.find(d => statement.id === 'deposit:' + d.id);
         const policyMatches = policies.filter(p => message.startsWith(p.policyNumber + ':'));
         const departureMatches = departures.filter(d => message.startsWith(d.producerName + ':'));
         const adjustment = adjustments.find(a => message === 'Resolve unpaid compensation correction ' + a.id + ' before payroll approval.');
-        const target = statement ? { tab: 'statements', ...(settlement ? { intakeId: settlement.intakeId } : { statementId: statement.id }) } :
+        const target = deposit ? {tab:'statements',depositId:deposit.id} : statement ? { tab: 'statements', ...(settlement ? { intakeId: settlement.intakeId } : { statementId: statement.id }) } :
           adjustment ? { tab: 'exceptions', adjustmentId: adjustment.id } :
           departureMatches.length === 1 ? { tab: 'exceptions', departureId: departureMatches[0].id } :
           policyMatches.length === 1 ? { tab: 'ledger', policyId: policyMatches[0].id } :
@@ -168,7 +171,7 @@ export async function payrollAction(_event: Event, actor: string, owner: boolean
     if (!settings) throw new Error('Save report delivery settings or initialize the monthly calendars before approval.');
     const reconciliation = await store.get<{ id: string; version: number }>('PAYROLL_STATE', 'reconciliation');
     const [policies, batches, statements, earnings, departures, adjustments] = await Promise.all([store.list<CommissionPolicy>('POLICY'), store.list<CommissionBatch>('BATCH'), store.list<CommissionStatement>('STATEMENT'),store.list<CommissionEarning>('EARNING'),store.list<CommissionDeparture>('DEPARTURE'),store.list<CommissionAdjustment>('ADJUSTMENT')]);
-    statements.push(...intakePayrollStatements(await store.list<IntakeSettlement>('INTAKE_SETTLEMENT')));
+    statements.push(...intakePayrollStatements(await store.list<IntakeSettlement>('INTAKE_SETTLEMENT')), ...depositPayrollStatements(await store.list<CommissionDeposit>('COMMISSION_DEPOSIT')));
     const current = preview(cycle, policies, settings, statements, earnings, departures, adjustments);
     if (current.blockers.length) throw new Error(current.blockers.join(' '));
     if (input.previewToken !== current.token) throw new Error('The reviewed payroll amounts or employee settings changed. Refresh and review before approval.');

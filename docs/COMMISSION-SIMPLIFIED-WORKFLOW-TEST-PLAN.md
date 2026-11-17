@@ -2,7 +2,23 @@
 
 Updated November 17, 2026: one Guided workflow from source import through employee payment, with statement-specific payroll suggestions and explicit human approval.
 
-### Resume the main test at payroll review
+## Actual statement review
+
+Open Commissions > Guided workflow > Statement inbox. Imported statements continue at Match & review. Edit details contains row-specific unknowns. Keep historical employee agreements, eligibility, policy matches and bank receipt evidence pending until confirmed. Actual statement details and the private review checklist are retained in staging and the local testing guide, outside this public repository.
+
+## Deposit before remittance
+
+Use fictional records for these checks; do not log the same bank receipt twice. This feature handles one deposit against one statement, including a partial statement payment. A deposit spanning multiple statements remains unresolved pending its breakdown.
+
+1. Choose Log carrier deposit in Work queue or the Statement inbox. Enter a unique TEST bank reference, actual test receipt date, positive amount, payor and evidence. Carrier can remain Unknown. Confirm the bank details, then save. No statement file or policy setup is required. Expect Awaiting remittance, a currency-formatted amount and no employee earnings.
+2. Open Review deposit. No match is selected automatically. Statements with matching carriers and exact unpaid balances appear first; partial balances can also be chosen. For an unknown carrier, an amount match is only a suggestion. Select the correct statement, check the remittance, confirm, then choose Confirm match & continue. Expect the original bank date, amount, reference and evidence to carry forward without re-entry. The statement opens at the relevant review/posting stage.
+3. Change the selected statement before confirming. Expect confirmation to reset. Try an existing bank reference, a stale version, a future date, missing evidence and an excessive amount. Expect a clear rejection and no duplicate receipt or earnings.
+4. Inspect payroll with an inclusive cutoff on/after the deposit date. Expect unresolved money to block approval and provide a link to the deposit. A confirmed link transfers this work to the statement's unposted settlement; matching alone does not clear reconciliation or approve earnings.
+5. For a separate fictional noncommission deposit, choose Resolve without employee commission or correct an entry > Confirmed: no employee commission. Provide the reason/evidence and confirm. Expect a retained history record, no employee earnings and removal of this deposit's payroll blocker. This decision is never suggested or inferred automatically.
+6. Void a separate incorrect fictional receipt with supporting reason before any posting. For a linked deposit, void the receipt in its statement: both records must show Voided together. Posted receipts still require corrections. References remain reserved in history.
+7. Verify unsaved-edit protection, disabled controls while saving, and 390-pixel phone layout. Actual bank dates must not default to the statement arrival date. Report emails remain disabled throughout.
+
+## Resume the main test at payroll review
 
 Read-only staging inspection confirmed **TEST-20261116-0B7609-01** is fully posted: **$1,500.00** received and posted, **$150.00** employee earnings for **Brian Cole at 10%**, and **$0.00** source remaining. The saved receipt is **TEST-20261116-0B7609-MAIN-PAY**, dated **November 11, 2026**. Do not upload, reimport or record that carrier payment again.
 

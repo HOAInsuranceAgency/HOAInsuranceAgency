@@ -60,6 +60,7 @@ export interface IntakeAllocation {
   amountCents: number;
 }
 export interface IntakeSettlement {
+  depositId?: string;
   id: string;
   version: number;
   intakeId: string;
@@ -85,6 +86,7 @@ export interface CarrierImportTemplate {
   mapping: StatementImportMapping;
 }
 export interface IntakeWorkspace {
+  deposits?: import("./commissionDeposits").CommissionDeposit[];
   intakes: StatementIntake[];
   settlements: IntakeSettlement[];
   templates: CarrierImportTemplate[];

@@ -1,3 +1,5 @@
+import { noSavedDeposit, depositKey } from "./deposits";
+import { statementReceiptBalance, type CommissionDeposit } from "../../../../shared/commissionDeposits";
 import { createHash, randomUUID } from "node:crypto";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { AccountAccess } from "../crm-access/access";
@@ -118,16 +120,18 @@ export async function intakeAction(
   input: store.Data,
 ) {
   if (operation === "intakeWorkspace") {
-    const [intakes, settlements, templates] = await Promise.all([
+    const [intakes, settlements, templates, deposits] = await Promise.all([
       store.list<StatementIntake>("STATEMENT_INTAKE"),
       store.list<IntakeSettlement>("INTAKE_SETTLEMENT"),
       store.list<CarrierImportTemplate>("CARRIER_IMPORT_TEMPLATE"),
+      store.list<CommissionDeposit>("COMMISSION_DEPOSIT"),
     ]);
     return {
       ok: true,
       intakes: intakes.sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
       settlements,
       templates,
+      deposits,
     };
   }
   if (operation === "policyIntakeContext") {
@@ -491,6 +495,16 @@ export async function intakeAction(
   }
   if (operation === "recordIntakeSettlement") {
     version(input, intake);
+    const deposit = input.depositId ? await store.get<CommissionDeposit>('COMMISSION_DEPOSIT', required(input.depositId, 'a saved deposit', 128)) : undefined;
+    if (input.depositId) {
+      if (!deposit || deposit.status !== 'AWAITING_REMITTANCE' || input.depositVersion !== deposit.version) throw new Error('This deposit changed. Refresh and review it again.');
+      if (deposit.carrierId && deposit.carrierId !== intake.carrierId) throw new Error('This statement is for a different carrier. Review the original deposit.');
+      const balance = statementReceiptBalance(intake, await store.list<IntakeSettlement>('INTAKE_SETTLEMENT'));
+      if (balance === undefined || balance < deposit.totalCents) throw new Error('The deposit exceeds the unpaid statement balance, or the statement total is missing. Review the remittance before linking.');
+      input = {...input, reference:deposit.reference, receivedOn:deposit.receivedOn, totalCents:deposit.totalCents, settlementType:'DEPOSIT', evidence:deposit.evidence};
+    } else if (typeof input.reference === 'string' && await store.get('COMMISSION_DEPOSIT', depositKey(input.reference))) {
+      throw new Error('This bank reference is already saved. Match the saved deposit from the statement inbox.');
+    }
     const reference = required(
       input.reference,
       "the unique deposit or retained commission reference",
@@ -516,6 +530,7 @@ export async function intakeAction(
     )
       throw new Error("Choose the settlement type.");
     const settlement: IntakeSettlement = {
+      ...(deposit ? {depositId:deposit.id} : {}),
       id,
       version: 0,
       intakeId: intake.id,
@@ -544,6 +559,7 @@ export async function intakeAction(
     };
     await store.commit(
       [
+        ...(deposit ? [change("COMMISSION_DEPOSIT", {...deposit,status:"LINKED",intakeId:intake.id,settlementId:id},deposit)] : []),
         change("INTAKE_SETTLEMENT", settlement),
         change("SETTLEMENT", {
           id,
@@ -555,6 +571,7 @@ export async function intakeAction(
         await reconciliationChange(),
       ],
       actor,
+      deposit ? [] : [noSavedDeposit(reference)],
     );
     return { ok: true, settlementId: id };
   }
@@ -713,6 +730,8 @@ export async function intakeAction(
   }
   version(input, settlement);
   if (operation === "voidIntakeSettlement") {
+    const deposit = settlement.depositId ? await store.get<CommissionDeposit>('COMMISSION_DEPOSIT',settlement.depositId) : undefined;
+    if (settlement.depositId && (!deposit || deposit.status !== 'LINKED' || deposit.settlementId !== settlement.id)) throw new Error('Linked deposit records changed. Refresh and review the receipt.');
     if (settlement.postedRows.length || settlement.status === "POSTED")
       throw new Error(
         "Posted settlements require linked corrections, not voiding.",
@@ -725,6 +744,7 @@ export async function intakeAction(
       );
     await store.commit(
       [
+        ...(deposit ? [change("COMMISSION_DEPOSIT", {...deposit,status:"VOID",resolutionReason:required(input.reason,"the correction reason and evidence",2000)},deposit)] : []),
         change(
           "INTAKE_SETTLEMENT",
           {

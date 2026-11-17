@@ -24,7 +24,7 @@ export interface PayrollCycle {
   approvalToken?: string; cancellationReason?: string;
   preview?: { rows?: ReturnType<typeof payrollPreview>; issues?: PayrollReviewIssue[]; token: string; totalCents: number; entryCount: number; employees: { producerId: string; name: string; amountCents: number }[]; blockers: string[] };
 }
-export interface PayrollReviewIssue { message: string; target?: { tab: string; intakeId?: string; statementId?: string; policyId?: string; departureId?: string; adjustmentId?: string; cycleId?: string } }
+export interface PayrollReviewIssue { message: string; target?: { tab: string; depositId?: string; intakeId?: string; statementId?: string; policyId?: string; departureId?: string; adjustmentId?: string; cycleId?: string } }
 export const payrollCutoffIssue = (cycle: Pick<PayrollCycle, 'cutoff'>, asOf = payrollDay()) =>
   asOf <= cycle.cutoff ? 'Approve after the inclusive receipt cutoff has ended.' : '';
 export function payrollApprovalIssues(cycle: PayrollCycle, asOf = payrollDay()) {

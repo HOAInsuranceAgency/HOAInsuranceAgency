@@ -52,6 +52,7 @@ import { holdApprovedPayroll, payrollAction, payrollOperations } from './payroll
 import { planAction, planOperations } from './plans';
 import { statementPostingChanges } from './posting';
 import { intakeAction, intakeOperations } from './intake';
+import { depositAction, depositOperations, noSavedDeposit } from './deposits';
 
 const agencyToday = () =>
   new Intl.DateTimeFormat('en-CA', {
@@ -203,6 +204,7 @@ export async function handler(event: Event) {
       };
     }
     const operation = required(args.operation, 'an operation');
+    if (depositOperations.has(operation)) return await depositAction(actor, operation, input);
     if (intakeOperations.has(operation)) return await intakeAction(event, actor, operation, input);
     if (exceptionOperations.has(operation)) return await exceptionAction(actor, operation, input);
     if (planOperations.has(operation)) return await planAction(event, actor, operation, input);
@@ -687,7 +689,7 @@ export async function handler(event: Event) {
         policies.set(policy.id, appendEntry(policy, line.reviewStatus === 'PENDING' ? { ...line, reviewStatus: undefined, eligible: false } : line, statement, `${id}:${line.lineRef}`));
       }
       const reconciliation = await store.get<{ id: string; version: number }>('PAYROLL_STATE', 'reconciliation');
-      await store.commit([change('STATEMENT', statement, old), change('PAYROLL_STATE', { id: 'reconciliation' }, reconciliation)], actor);
+      await store.commit([change('STATEMENT', statement, old), change('PAYROLL_STATE', { id: 'reconciliation' }, reconciliation)], actor, [noSavedDeposit(statement.settlementRef)]);
       return { ok: true };
     }
     if (operation === 'voidStatement') {
