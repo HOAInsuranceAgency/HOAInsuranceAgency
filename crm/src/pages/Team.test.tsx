@@ -258,9 +258,26 @@ describe("combined team and assignment settings", () => {
     expect(within(row).getByRole("checkbox", { name: "Lead texts for Casey Staff" })).not.toBeChecked();
     expect(within(row).queryByRole("checkbox", { name: /Salesperson eligibility/ })).toBeNull();
     expect(within(row).queryByRole("checkbox", { name: /Receive new leads/ })).toBeNull();
+    expect(within(row).getByRole("checkbox", { name: "Autoreplies for Casey Staff" })).toBeChecked();
     expect(within(row).getByText("Producers only")).toBeVisible();
     expect(within(row).getByText(eligibility.frontId!)).toBeVisible();
     expect(within(row).getByText(eligibility.dialpadId!)).toBeVisible();
+  });
+
+  it("lets an administrator control autoreplies for a teammate with only the Admin role", async () => {
+    combinedSetup();
+    listTeamUsers.mockResolvedValue({ data: { users: [{ ...teammate, groups: ["ADMIN"] }], profiles: [teammateProfile] } });
+    renderPage();
+    const checkbox = await screen.findByRole("checkbox", { name: "Autoreplies for Casey Staff" });
+    expect(screen.getByRole("columnheader", { name: "Autoreplies" })).toBeVisible();
+    expect(checkbox).toBeChecked();
+    fireEvent.click(checkbox);
+    await waitFor(() => expect(checkbox).not.toBeChecked());
+    expect(communicationRequest).toHaveBeenLastCalledWith("saveEligibility", { userId: eligibility.userId, version: 3, autoRepliesEnabled: false }, true);
+    expect(screen.getByText("ADMIN")).toBeVisible();
+    expect(screen.getByText(eligibility.frontId!)).toBeVisible();
+    expect(screen.getByRole("checkbox", { name: "Lead texts for Casey Staff" })).not.toBeChecked();
+    expect(UserProfile.update).not.toHaveBeenCalled();
   });
 
   it("saves eligibility and connections from the same row using the committed version without changing access or lead alerts", async () => {

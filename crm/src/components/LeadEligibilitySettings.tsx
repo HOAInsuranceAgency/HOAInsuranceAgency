@@ -112,7 +112,7 @@ export function LeadEligibilityFeedback({ settings }: { settings: EligibilitySet
 
 export function LeadEligibilityCells({ member, settings, disabled: rowDisabled = false }: { member?: TeamEligibility; settings: EligibilitySettings; disabled?: boolean }) {
   const { disabled, save, editMember, resource } = settings;
-  if (!member) return <td colSpan={2} className="muted small">{resource.error ? "Assignment settings unavailable" : "Loading assignment settings…"}</td>;
+  if (!member) return <td colSpan={3} className="muted small">{resource.error ? "Assignment settings unavailable" : "Loading assignment settings…"}</td>;
   return <>
     <td>{member.salesperson ? <label className="lead-text-switch">
       <input aria-label={`Receive new leads for ${member.name}`} type="checkbox" checked={member.receiveNewLeads !== false}
@@ -120,6 +120,12 @@ export function LeadEligibilityCells({ member, settings, disabled: rowDisabled =
         onChange={event => void save(member, { receiveNewLeads: event.target.checked })} />
       <span>{member.receiveNewLeads !== false ? "On" : "Off"}</span>
     </label> : <span className="muted small">Producers only</span>}</td>
+    <td><label className="lead-text-switch">
+      <input aria-label={`Autoreplies for ${member.name}`} type="checkbox" checked={member.autoRepliesEnabled !== false}
+        disabled={disabled || rowDisabled || member.available === false}
+        onChange={event => void save(member, { autoRepliesEnabled: event.target.checked })} />
+      <span>{member.autoRepliesEnabled !== false ? "On" : "Off"}</span>
+    </label></td>
     <td>
       <div className="small">Front: {member.frontId ? <code className="team-connection-id">{member.frontId}</code> : <span className="muted">Not linked</span>}</div>
       {member.frontId && <div className="small muted">Email: {member.frontChannelId || member.frontSignatureId ? "Custom Front selections" : "Automatic from Front"}</div>}

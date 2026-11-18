@@ -1349,6 +1349,147 @@ describe("initial email salesperson identity", () => {
     await runOperation(op); expect(h.front).not.toHaveBeenCalled();
   });
 });
+describe("per-teammate automatic replies at delivery", () => {
+  async function preference(userId: string, enabled: boolean) {
+    const previous = (await get<any>(`eligibility:${userId}`))!;
+    await save(row("ELIGIBILITY", previous.id, { ...previous.data, autoRepliesEnabled: enabled }, { previous }), previous);
+  }
+  async function queued() {
+    await lead();
+    return enqueueOperation("op:ai:preference", { type: "EMAIL", accountId: "a1", producerId: "brian", producerName: "Brian Cole", emailIdentity: emailIdentity(), replyId: "reply:preference", recipient: "prospect@example.com" });
+  }
+  it.each(["READY", "RETRY_WAIT"] as const)("suppresses %s before provider checks even when paused and the user is no longer a Producer", async state => {
+    const initial = await queued();
+    const op = state === "READY" ? initial : await save(row<Operation>("OPERATION", initial.id, { ...initial.data, state }, { accountId: "a1", previous: initial }), initial);
+    await preference("brian", false);
+    h.nonProducers.add("brian"); h.c.paused = true;
+    h.producerEmail.mockRejectedValue(new ProducerEmailSetupError("No connected mailbox"));
+    await runOperation(op);
+    expect(record(op.id).data).toMatchObject({ state: "SUPPRESSED", attempts: 0, error: "Automatic replies are turned off for the assigned teammate." });
+    expect(h.update).toHaveBeenCalledWith(expect.objectContaining({ id: "reply:preference", status: "SUPPRESSED", note: "Automatic replies are turned off for the assigned teammate." }));
+    expect(h.front).not.toHaveBeenCalled(); expect(h.producerEmail).not.toHaveBeenCalled();
+  });
+  it("uses the current assigned user's preference after reassignment", async () => {
+    const op = await queued();
+    const wf = (await get<LeadWorkflow>("workflow:a1"))!;
+    await save(row("WORKFLOW", wf.id, { ...wf.data, salespersonId: "holly" }, { accountId: "a1", previous: wf }), wf);
+    await save(row("ELIGIBILITY", "eligibility:holly", { userId: "holly", name: "Holly Martin", autoRepliesEnabled: false }));
+    await runOperation(op);
+    expect(record(op.id).data.state).toBe("SUPPRESSED");
+    expect(h.front).not.toHaveBeenCalled(); expect(h.producerEmail).not.toHaveBeenCalled();
+  });
+  it("keeps opted-in users sending when another user's automatic replies are off", async () => {
+    const op = await queued();
+    await save(row("ELIGIBILITY", "eligibility:holly", { userId: "holly", autoRepliesEnabled: false }));
+    h.front.mockImplementation(async (_path, method) => method === "POST" ? { message_uid: "uid_enabled" } : { _results: [] });
+    await runOperation(op);
+    expect(record(op.id).data.state).toBe("ACCEPTED");
+    expect(h.front.mock.calls.filter(([, method]) => method === "POST")).toHaveLength(1);
+  });
+  it("fences a concurrent opt-out before claiming delivery, then suppresses on retry", async () => {
+    const op = await queued();
+    h.beforeWrite = () => { record("eligibility:brian").version++; record("eligibility:brian").data.autoRepliesEnabled = false; };
+    await runOperation(op);
+    expect(record(op.id).data.state).toBe("READY");
+    expect(h.front.mock.calls.some(([, method]) => method === "POST")).toBe(false);
+    await runOperation(record(op.id) as Row<Operation>);
+    expect(record(op.id).data.state).toBe("SUPPRESSED");
+    expect(h.front.mock.calls.some(([, method]) => method === "POST")).toBe(false);
+  });
+  it("catches an opt-out while provider preflight is running", async () => {
+    const op = await queued();
+    h.front.mockImplementation(async (_path, method) => {
+      if (!method) await preference("brian", false);
+      return { _results: [] };
+    });
+    await runOperation(op);
+    expect(record(op.id).data.state).toBe("SUPPRESSED");
+    expect(h.front.mock.calls.some(([, method]) => method === "POST")).toBe(false);
+  });
+  it.each([
+    ["initial preference", "thrown error"], ["initial preference", "errors array"],
+    ["preflight preference", "thrown error"], ["preflight preference", "errors array"],
+  ] as const)("retries %s cancellation after a projection %s without reviving the email", async (detection, failure) => {
+    const op = await queued();
+    if (detection === "initial preference") await preference("brian", false);
+    else h.front.mockImplementation(async (_path, method) => {
+      if (!method) await preference("brian", false);
+      return { _results: [] };
+    });
+    h.update.mockImplementationOnce(async () => {
+      expect(record(op.id).data).toMatchObject({ state: "RETRY_WAIT", autoReplySuppressionPending: true });
+      if (failure === "thrown error") throw new Error("Projection unavailable");
+      return { data: null, errors: [{ message: "Projection unavailable" }] };
+    });
+    await runOperation(op);
+    expect(record(op.id).data).toMatchObject({ state: "RETRY_WAIT", autoReplySuppressionPending: true, attempts: 0 });
+    expect(record(op.id).dueAt).toBe(new Date(Date.parse(NOW) + 60_000).toISOString());
+    expect(h.front.mock.calls.some(([, method]) => method === "POST")).toBe(false);
+
+    // Once cancellation is durable, neither a changed owner/preference nor an
+    // integration pause may divert its retry back into the email send path.
+    await preference("brian", true);
+    const wf = (await get<LeadWorkflow>("workflow:a1"))!;
+    await save(row("WORKFLOW", wf.id, { ...wf.data, salespersonId: "jake" }, { accountId: "a1", previous: wf }), wf);
+    h.c.paused = true; h.readFailureId = "workflow:a1";
+    h.front.mockClear(); h.producerEmail.mockClear(); h.reads.length = 0;
+    h.update.mockRejectedValueOnce(new Error("Projection still unavailable"));
+    vi.setSystemTime(new Date(Date.parse(NOW) + 60_000));
+    await runOperation(record(op.id) as Row<Operation>);
+    expect(record(op.id).data).toMatchObject({ state: "RETRY_WAIT", autoReplySuppressionPending: true });
+    expect(record(op.id).dueAt).toBe(new Date(Date.parse(NOW) + 120_000).toISOString());
+
+    vi.setSystemTime(new Date(Date.parse(NOW) + 120_000));
+    await runOperation(record(op.id) as Row<Operation>);
+    expect(record(op.id).data.state).toBe("SUPPRESSED");
+    expect(record(op.id).data.autoReplySuppressionPending).toBeUndefined();
+    expect(record(op.id).dueAt).toBeUndefined();
+    expect(h.update).toHaveBeenCalledTimes(3);
+    expect(h.reads).not.toContain("workflow:a1");
+    expect(h.front).not.toHaveBeenCalled(); expect(h.producerEmail).not.toHaveBeenCalled();
+  });
+  it("finishes cancellation after projection succeeds but its terminal save is interrupted", async () => {
+    const op = await queued(); await preference("brian", false);
+    h.update.mockImplementationOnce(async () => { h.fail = true; return { data: {} }; });
+    await runOperation(op);
+    expect(record(op.id).data).toMatchObject({ state: "RETRY_WAIT", autoReplySuppressionPending: true });
+    expect(h.update).toHaveBeenCalledWith(expect.objectContaining({ id: "reply:preference", status: "SUPPRESSED" }));
+
+    h.fail = false;
+    await preference("brian", true); h.records.delete("comms:workflow:a1"); h.c.paused = true;
+    vi.setSystemTime(new Date(Date.parse(NOW) + 60_000));
+    await runOperation(record(op.id) as Row<Operation>);
+    expect(record(op.id).data.state).toBe("SUPPRESSED");
+    expect(record(op.id).data.autoReplySuppressionPending).toBeUndefined();
+    expect(h.update).toHaveBeenCalledTimes(2);
+    expect(h.front).not.toHaveBeenCalled(); expect(h.producerEmail).not.toHaveBeenCalled();
+  });
+  it("does not revive a suppressed email after automatic replies are enabled again", async () => {
+    const op = await queued(); await preference("brian", false);
+    await runOperation(op); await preference("brian", true);
+    await runOperation(record(op.id) as Row<Operation>);
+    expect(record(op.id).data.state).toBe("SUPPRESSED"); expect(h.front).not.toHaveBeenCalled();
+  });
+  it("reconciles accepted mail as sent after an opt-out", async () => {
+    const initial = await queued();
+    const op = await save(row<Operation>("OPERATION", initial.id, { ...initial.data, state: "ACCEPTED", attempts: 1, uid: "uid_accepted" }, { accountId: "a1", previous: initial }), initial);
+    await preference("brian", false);
+    h.front.mockResolvedValue({ id: "msg_accepted", is_inbound: false, is_draft: false, created_at: Date.parse(NOW) / 1000, conversation: { id: "cnv_a" } });
+    await runOperation(op);
+    expect(record(op.id).data.state).toBe("CONFIRMED");
+    expect(h.update).toHaveBeenCalledWith(expect.objectContaining({ status: "SENT" }));
+    expect(h.front.mock.calls.some(([, method]) => method === "POST")).toBe(false);
+  });
+  it.each(["active lease", "expired lease", "unknown result"])("preserves delivery evidence for an %s after an opt-out", async situation => {
+    const initial = await queued();
+    const state = situation === "unknown result" ? "UNKNOWN" : "LEASED";
+    const leaseUntil = new Date(Date.now() + (situation === "active lease" ? 60_000 : -60_000)).toISOString();
+    const op = await save(row<Operation>("OPERATION", initial.id, { ...initial.data, state, attempts: 1, leaseUntil }, { accountId: "a1", previous: initial }), initial);
+    await preference("brian", false); await runOperation(op);
+    expect(record(op.id).data.state).toBe(situation === "active lease" ? "LEASED" : "UNKNOWN");
+    expect(h.front).not.toHaveBeenCalled(); expect(h.update).not.toHaveBeenCalled();
+  });
+});
 describe("Front durable delivery", () => {
   it.each(["<pre>Website submission\nReference: hoa:main:s1\nDetails</pre>", "Website submission\n\nChanged formatting"])("does not turn an imported form into a prospect reply: %s", async text => {
     await lead();
@@ -1991,6 +2132,61 @@ describe("Front email selections in teammate settings", () => {
     expect(await write({ frontChannelId: "cha_new" }, ["SALESPERSON"])).toMatchObject({ ok: false, error: expect.stringContaining("Only an admin") });
     expect(await write({ frontChannelId: "cha_new", version: 0 })).toMatchObject({ ok: false, error: expect.stringContaining("settings changed") });
     expect(record("eligibility:jake").data).toEqual(initial);
+  });
+});
+
+describe("per-user autoreply settings", () => {
+  const initial = { userId: "holly", name: "Holly Martin", email: "holly@example.com", enabled: true, salesperson: true,
+    receiveNewLeads: true, frontId: "tea_holly", dialpadId: "123456", frontChannelId: "cha_holly", frontSignatureId: "sig_holly" };
+  async function setup(autoRepliesEnabled?: boolean) {
+    h.records.set("UserProfile:holly", { userId: "holly", firstName: "Holly", lastName: "Martin", email: initial.email });
+    await save(row("ELIGIBILITY", "eligibility:holly", { ...initial, ...(autoRepliesEnabled === undefined ? {} : { autoRepliesEnabled }) }));
+    const { handler } = await import("../../amplify/functions/communications/handler");
+    return (patch: Record<string, unknown>, groups = ["ADMIN"]) => handler({
+      arguments: { operation: "saveEligibility", input: { userId: "holly", version: 1, ...patch } },
+      identity: { sub: "admin", groups } as never,
+    });
+  }
+
+  it("disables and re-enables only the selected teammate without changing routing or connections", async () => {
+    const write = await setup();
+    const other = structuredClone(record("eligibility:brian"));
+    expect(await write({ autoRepliesEnabled: false })).toMatchObject({ ok: true, member: { ...initial, autoRepliesEnabled: false, version: 2 } });
+    expect(record("eligibility:holly").data).toEqual({ ...initial, autoRepliesEnabled: false });
+    expect(record("eligibility:brian")).toEqual(other);
+    expect(await write({ version: 2, autoRepliesEnabled: true })).toMatchObject({ ok: true, member: { ...initial, autoRepliesEnabled: true, version: 3 } });
+    expect(entries("OPERATION")).toHaveLength(0);
+    expect(h.front).not.toHaveBeenCalled();
+  });
+
+  it("keeps existing users enabled and preserves an opt-out during unrelated edits", async () => {
+    const write = await setup();
+    expect(await write({ dialpadId: "654321" })).toMatchObject({ ok: true, member: { autoRepliesEnabled: true } });
+    expect(await write({ version: 2, autoRepliesEnabled: false })).toMatchObject({ ok: true });
+    expect(await write({ version: 3, receiveNewLeads: false, frontChannelId: "cha_new" })).toMatchObject({ ok: true, member: {
+      autoRepliesEnabled: false, receiveNewLeads: false, frontChannelId: "cha_new", frontSignatureId: "sig_holly", version: 4,
+    } });
+  });
+
+  it("lets an admin configure a teammate without a Producer role", async () => {
+    const write = await setup();
+    h.nonProducers.add("holly");
+    expect(await write({ autoRepliesEnabled: false })).toMatchObject({ ok: true, member: { salesperson: false, autoRepliesEnabled: false } });
+  });
+
+  it.each([null, "false", 0, {}, []])("rejects a non-boolean autoreply preference: %j", async autoRepliesEnabled => {
+    const write = await setup();
+    expect(await write({ autoRepliesEnabled })).toMatchObject({ ok: false, error: expect.stringContaining("autoreplies") });
+    expect(record("eligibility:holly").data).toEqual(initial);
+    expect(record("eligibility:holly").version).toBe(1);
+  });
+
+  it("requires admin access and the current teammate version", async () => {
+    const write = await setup(true);
+    expect(await write({ autoRepliesEnabled: false }, ["PRODUCER"])).toMatchObject({ ok: false, error: expect.stringContaining("Only an admin") });
+    expect(await write({ autoRepliesEnabled: false, version: 0 })).toMatchObject({ ok: false, error: expect.stringContaining("settings changed") });
+    expect(record("eligibility:holly").data.autoRepliesEnabled).toBe(true);
+    expect(record("eligibility:holly").version).toBe(1);
   });
 });
 
