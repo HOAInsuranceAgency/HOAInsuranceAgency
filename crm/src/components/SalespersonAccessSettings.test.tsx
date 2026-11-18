@@ -15,11 +15,11 @@ it('starts restrictive and saves the three independent sections explicitly', asy
   render(<SalespersonAccessSettings />);
   const visibility = await screen.findByLabelText('Which accounts can salespeople see?');
   expect(visibility).toHaveValue('ASSIGNED');
-  expect(screen.getByLabelText('Access level')).toHaveValue('READ');
+  expect(screen.getByLabelText('Access to other salespeople’s accounts')).toHaveValue('READ');
   expect(screen.getByLabelText('Allow sending emails and proposals')).not.toBeChecked();
   expect(screen.getByRole('button', { name: 'Save access settings' })).toBeDisabled();
   fireEvent.change(visibility, { target: { value: 'ALL' } });
-  fireEvent.change(screen.getByLabelText('Access level'), { target: { value: 'EDIT' } });
+  fireEvent.change(screen.getByLabelText('Access to other salespeople’s accounts'), { target: { value: 'EDIT' } });
   fireEvent.click(screen.getByLabelText('Allow binding policies'));
   expect(h.request).toHaveBeenCalledTimes(1);
   fireEvent.click(screen.getByRole('button', { name: 'Save access settings' }));
