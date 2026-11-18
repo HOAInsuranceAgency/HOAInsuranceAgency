@@ -9,7 +9,7 @@ import { sesMailFeedback } from "./functions/ses-mail-feedback/resource";
 import { mailVerification, mailRecovery } from "./functions/transactional-mail/resource";
 import { migrationDestination, migrationPreview, migrationTargets, businessBranch, providerBranch, migrationWebOrigin, migrationExecution, migrationRuntimeBranch } from "./migration-config";
 import { installMigrationPreview } from "./migration-preview";
-import { commissions } from './functions/commissions/resource';
+import { commissions, commissionPayrollWorker } from './functions/commissions/resource';
 import { installCommissions } from './commissions';
 import { installAccountAccess } from "./account-access";
 import { modelIndex } from "./model-index";
@@ -96,6 +96,7 @@ export const backend = defineBackend({
   crmAccess,
   ownerProfitability,
   commissions,
+  commissionPayrollWorker,
   brokerFees,
   assignmentIndexWorker,
   data,
@@ -467,7 +468,7 @@ const userAccessTable = new Table(backend.data.resources.graphqlApi, "TeamUserAc
   partitionKey: { name: "userId", type: AttributeType.STRING }, billingMode: BillingMode.PAY_PER_REQUEST,
   encryption: TableEncryption.AWS_MANAGED, pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
 });
-for (const fn of [backend.crmAccess, backend.commissions, backend.brokerFees, backend.teamAdmin, backend.communications, backend.communicationWorker, backend.leadIntake, backend.leadReply, backend.assignmentIndexWorker]) {
+for (const fn of [backend.crmAccess, backend.commissions, backend.commissionPayrollWorker, backend.brokerFees, backend.teamAdmin, backend.communications, backend.communicationWorker, backend.leadIntake, backend.leadReply, backend.assignmentIndexWorker]) {
   fn.addEnvironment("USER_ACCESS_TABLE", userAccessTable.tableName);
   fn.resources.lambda.addToRolePolicy(new PolicyStatement({ actions: ["dynamodb:GetItem", "dynamodb:ConditionCheckItem"], resources: [userAccessTable.tableArn] }));
 }
@@ -1020,7 +1021,7 @@ backend.extractLead.resources.lambda.grantInvoke(
 installAccountAccess(backend, communicationTable);
 installDashboardReads(backend);
 installOwnerProfitability(backend, communicationTable);
-const commissionStorage = installCommissions(backend, communicationTable);
+const commissionStorage = installCommissions(backend, communicationTable, communicationAlerts, internalMailbox, crmBaseUrl);
 installBrokerFees(backend, communicationTable, commissionStorage.table, siteBaseUrl);
 installLiveChanges(backend);
 

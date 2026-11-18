@@ -1,7 +1,9 @@
+import { payrollPreview } from '../../../shared/commissionPayroll';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { commissionPolicy, commissionAccount, line, statement } from './commissionFixtures';
 import {
   appendEntry,
+  receiptOnlyCarrierTerms,
   type CarrierPaymentArrangement,
   type CommissionPolicy,
 } from '../../../shared/commissions';
@@ -139,6 +141,7 @@ it.each([
     'file',
     'saveStatement',
     'postStatement',
+    'voidStatement',
     'preparePayroll',
     'payPayroll',
     'adoptPolicy',
@@ -164,6 +167,20 @@ it('preserves the access-denial type for live commission refreshes after revocat
     ok: false, errorType: 'Unauthorized', error: expect.stringContaining('Unauthorized:'),
   });
   expect(h.get).not.toHaveBeenCalled(); expect(h.commit).not.toHaveBeenCalled();
+});
+it('keeps monthly payroll operations within existing Owner access', async () => {
+  for (const operation of ['payrollWorkspace', 'downloadPayrollCycle', 'confirmPayrollCycle', 'approvePayrollCycle', 'savePayrollSettings']) {
+    const event = request(operation, {}, 'STAFF');
+    expect(await handler(event)).toMatchObject({ ok: false });
+  }
+  expect(h.get).not.toHaveBeenCalled();
+  expect(h.commit).not.toHaveBeenCalled();
+});
+it('does not expose a separate HR payroll endpoint', async () => {
+  const event = request('payrollWorkspace', {}, 'STAFF');
+  event.fieldName = 'commissionPayroll';
+  expect(await handler(event)).toMatchObject({ ok: false, error: expect.stringMatching(/Unknown commission request/) });
+  expect(h.list).not.toHaveBeenCalled();
 });
 it('posts a statement atomically with source deduplication and safely retries', async () => {
   const s = { ...statement(), lines: [line()] };
@@ -226,55 +243,16 @@ it('rechecks aggregate reversal limits at posting and makes no partial write', a
   ).toMatchObject({ ok: false, error: expect.stringMatching(/exceed/) });
   expect(h.commit).not.toHaveBeenCalled();
 });
-it('prepares positive earned payroll only, locks entries, cancels safely and confirms payment', async () => {
-  const p = appendEntry(
-    appendEntry(commissionPolicy(), line(), statement(), 'original'),
-    line({ kind: 'REVERSAL', originalId: 'original', agencyCents: -10000 }),
-    statement(),
-    'reversal',
-  );
+it('releases unpaid legacy allocations but cannot bypass approved payroll reports', async () => {
+  const p = appendEntry(commissionPolicy(), line(), statement(), 'original');
+  p.entries[0].batchId = 'legacy';
   records.set('POLICY:p', p);
-  const input = {
-    producerId: 'producer',
-    cutoff: '2026-10-01',
-    payDate: '2026-10-15',
-    requestId: 'batch',
-  };
-  expect(await handler(request('preparePayroll', input))).toEqual({ ok: true });
-  expect(records.get('BATCH:batch')).toMatchObject({
-    totalCents: 16000,
-    status: 'APPROVED',
-  });
-  expect(await handler(request('preparePayroll', { ...input, requestId: 'other' }))).toMatchObject({
-    ok: false,
-  });
-  expect(
-    await handler(
-      request('cancelPayroll', {
-        id: 'batch',
-        version: 1,
-        reference: 'Export rejected',
-      }),
-    ),
-  ).toEqual({ ok: true });
+  records.set('BATCH:legacy', { id: 'legacy', version: 1, producerId: 'producer', producerName: 'Avery', cutoff: '2026-10-01', payDate: '2026-10-15', status: 'APPROVED', totalCents: 16000, lines: [{ policyId: 'p', entryId: 'original', amountCents: 16000 }] });
+  expect(await handler(request('preparePayroll', { producerId: 'producer', cutoff: '2026-10-01', payDate: '2026-10-15', requestId: 'new' }))).toMatchObject({ ok: false, error: expect.stringMatching(/off-cycle/) });
+  expect(await handler(request('payPayroll', { id: 'legacy', version: 1, reference: 'PAY', payDate: '2026-10-15' }))).toMatchObject({ ok: false, error: expect.stringMatching(/off-cycle/) });
+  expect(await handler(request('cancelPayroll', { id: 'legacy', version: 1, reference: 'Move to reviewed off-cycle report' }))).toEqual({ ok: true });
   expect((records.get('POLICY:p') as CommissionPolicy).entries[0].batchId).toBeUndefined();
-  expect(await handler(request('preparePayroll', { ...input, requestId: 'replacement' }))).toEqual({
-    ok: true,
-  });
-  expect(
-    await handler(
-      request('payPayroll', {
-        id: 'replacement',
-        version: 1,
-        reference: 'PAY-10',
-        payDate: '2026-10-15',
-      }),
-    ),
-  ).toEqual({ ok: true });
-  expect(records.get('BATCH:replacement')).toMatchObject({
-    status: 'PAID',
-    totalCents: 16000,
-  });
+  expect(records.get('BATCH:legacy')).toMatchObject({ status: 'CANCELLED' });
 });
 it('returns only the authenticated producer’s records and excludes reconciliation data', async () => {
   const own = commissionPolicy();
@@ -412,30 +390,12 @@ it('retains carrier-reported comparison values and refuses an unbalanced settlem
   expect(h.commit).not.toHaveBeenCalled();
 });
 
-it('prepares payroll from only the selected producer partition with fresh batched records', async () => {
+it('refuses the retired manual approval endpoint without reserving any earnings', async () => {
   const own = appendEntry(commissionPolicy(), line(), statement(), 'e');
   records.set('POLICY:p', own);
-  records.set('POLICY:other', {
-    ...own,
-    id: 'other',
-    producerId: 'someone-else',
-  });
-  records.set('PLAN:producer', { id: 'producer', producerId: 'producer' });
-  expect(
-    await handler(
-      request('preparePayroll', {
-        producerId: 'producer',
-        cutoff: '2026-10-01',
-        payDate: '2026-10-15',
-        requestId: 'batch',
-      }),
-    ),
-  ).toEqual({ ok: true });
-  expect(h.list).toHaveBeenCalledExactlyOnceWith('producer', true, 'POLICY');
-  expect(h.getMany).toHaveBeenCalledExactlyOnceWith([{ kind: 'POLICY', id: 'p' }]);
-  expect(records.get('BATCH:batch')).toMatchObject({
-    lines: [{ policyId: 'p' }],
-  });
+  expect(await handler(request('preparePayroll', { producerId: 'producer', cutoff: '2026-10-01', payDate: '2026-10-15', requestId: 'batch' }))).toMatchObject({ ok: false });
+  expect(h.commit).not.toHaveBeenCalled();
+  expect(records.get('POLICY:p')).toEqual(own);
 });
 it('updates shared and private policy numbers in the same version-guarded transaction', async () => {
   records.set('POLICY:p', commissionPolicy());
@@ -523,24 +483,26 @@ it('saves Owner account classification with an audit version and rejects stale e
     await handler(request('saveAccountClassification', { ...input, id: 'nonexistent' })),
   ).toMatchObject({ ok: false });
 });
-it('loads only the selected classification for the Owner and excludes classifications from overview', async () => {
+it('shows saved account classifications in the Owner overview and keeps them private to Owners', async () => {
   records.set('ACCOUNT:a', commissionAccount());
   h.sources.set('Account:a', { id: 'a', name: 'Cedar HOA' });
   expect(await handler(request('getAccountClassification', { id: 'a' }))).toMatchObject({
-    classification: { id: 'a', version: 2 },
-    accountName: 'Cedar HOA',
+    classification: { id: 'a', version: 2 }, accountName: 'Cedar HOA',
   });
-  expect(h.get).toHaveBeenCalledExactlyOnceWith('ACCOUNT', 'a');
   const owner = request('');
   owner.fieldName = 'commissionOverview';
-  const response = await handler(owner);
-  expect(response).not.toHaveProperty('accounts');
+  expect(await handler(owner)).toMatchObject({ accounts: [{ id: 'a', version: 2, periods: commissionAccount().periods }] });
+  expect(h.list).toHaveBeenCalledWith('ACCOUNT');
+  h.list.mockClear();
+  const producer = request('', {}, 'PRODUCER');
+  producer.fieldName = 'commissionOverview';
+  const result = await handler(producer);
+  expect(result).not.toHaveProperty('accounts');
   expect(h.list.mock.calls.some(([kind]) => kind === 'ACCOUNT')).toBe(false);
-  expect(JSON.stringify(response)).not.toContain('Owner reviewed account source');
-  expect(await handler(request('getAccountClassification', { id: 'a' }, 'PRODUCER'))).toMatchObject(
-    { ok: false },
-  );
+  expect(JSON.stringify(result)).not.toContain('Owner reviewed account source');
+  expect(await handler(request('getAccountClassification', { id: 'a' }, 'PRODUCER'))).toMatchObject({ ok: false });
 });
+
 it.each(['NEW', 'RENEWAL'] as const)(
   'adopts historical GIM %s with original dated classification and concurrency guard',
   async (transaction) => {
@@ -791,10 +753,7 @@ it('revises only the receipt forecast and records which receipt history the Owne
     policyId: 'p', version: 1, receiptForecast,
   }))).toMatchObject({ ok: false, error: expect.stringMatching(/changed/) });
   expect(h.commit).toHaveBeenCalledTimes(1);
-  expect(await handler(request('preparePayroll', {
-    producerId: 'producer', cutoff: '2026-10-01', payDate: '2026-10-15', requestId: 'actual-earnings',
-  }))).toEqual({ ok: true });
-  expect(records.get('BATCH:actual-earnings')).toMatchObject({ totalCents: 16000 });
+  expect(payrollPreview([records.get('POLICY:p') as CommissionPolicy], '2026-10-01')).toMatchObject([{ amountCents: 16000 }]);
 });
 
 it.each([
@@ -877,4 +836,82 @@ it('adopts the carrier arrangement applicable to historical term facts, not curr
       ExpressionAttributeValues: { ':v': 7 },
     },
   });
+});
+
+it('saves receipt-only tracking with authoritative identity and a versioned audit, without inventing timing', async () => {
+  h.sources.set('Carrier:c', { id: 'c', name: 'Authoritative carrier' });
+  const input = { id: 'c', version: 0, receiptOnly: true, name: 'Untrusted name' };
+  expect(await handler(request('saveCarrier', input))).toEqual({ ok: true });
+  expect(records.get('CARRIER:c')).toEqual({
+    ...receiptOnlyCarrierTerms({ id: 'c', name: 'Authoritative carrier', version: 1 }),
+  });
+  expect(h.commit.mock.calls[0][1]).toBe('producer');
+  expect(await handler(request('saveCarrier', input))).toMatchObject({ ok: false, error: expect.stringMatching(/changed/) });
+  expect(h.commit).toHaveBeenCalledTimes(1);
+});
+it('changes tracking mode only for future snapshots and allows a later confirmed forecast', async () => {
+  h.sources.set('Carrier:c', { id: 'c', name: 'Carrier' });
+  const prior = { ...commissionPolicy().carrierTerms, arrangements: [paymentArrangement()] };
+  records.set('CARRIER:c', prior);
+  const policy = commissionPolicy();
+  records.set('POLICY:p', policy);
+  expect(await handler(request('saveCarrier', { id: 'c', version: 1, receiptOnly: true }))).toEqual({ ok: true });
+  expect(records.get('CARRIER:c')).toMatchObject({ version: 2, receiptOnly: true, basis: 'UNSPECIFIED' });
+  expect(records.get('CARRIER:c')).not.toHaveProperty('arrangements');
+  expect(h.commit.mock.calls[0][0][0].previous).toEqual(prior);
+  expect(records.get('POLICY:p')).toEqual(policy);
+  expect(await handler(request('saveCarrier', { id: 'c', version: 2, arrangements: [paymentArrangement()] }))).toEqual({ ok: true });
+  expect(records.get('CARRIER:c')).toMatchObject({ version: 3, basis: 'WRITTEN', arrangements: [paymentArrangement()] });
+  expect(records.get('CARRIER:c')).not.toHaveProperty('receiptOnly');
+  expect(records.get('POLICY:p')).toEqual(policy);
+});
+it('rejects contradictory receipt-only and forecast setup without writing', async () => {
+  h.sources.set('Carrier:c', { id: 'c', name: 'Carrier' });
+  expect(await handler(request('saveCarrier', { id: 'c', version: 0, receiptOnly: true, arrangements: [paymentArrangement()] }))).toMatchObject({ ok: false });
+  expect(h.commit).not.toHaveBeenCalled();
+});
+it('adopts a historical policy with receipt-only tracking and preserves its eligibility checks', async () => {
+  h.sources.set('Account:a', { id: 'a', name: 'Cedar HOA' });
+  h.sources.set('Policy:old', { id: 'old', accountId: 'a', carrierId: 'c', updatedAt: 'before' });
+  records.set('ACCOUNT:a', commissionAccount());
+  records.set('PLAN:producer', { id: 'producer', producerId: 'producer', name: 'Producer', version: 1,
+    terms: [{ from: '2020-01-01', newBps: 2000, renewalBps: 1000, agreement: 'Signed agreement' }] });
+  records.set('CARRIER:c', receiptOnlyCarrierTerms({ id: 'c', name: 'Carrier', version: 4 }));
+  expect(await handler(request('adoptPolicy', {
+    policyId: 'old', producerId: 'producer', transaction: 'NEW', boundOn: '2026-01-01',
+    effectiveDate: '2026-01-01', expirationDate: '2027-01-01', premium: '10000', agencyRate: '10',
+    evidence: 'Original binder and agency agreement',
+  }))).toEqual({ ok: true });
+  expect(records.get('POLICY:old')).toMatchObject({ producerBps: 2000, planVersion: 1,
+    carrierTerms: { version: 4, receiptOnly: true, basis: 'UNSPECIFIED' }, entries: [] });
+});
+
+it('voids only a reviewed draft and retains its evidence without creating earnings', async () => {
+  const original = { ...statement(), lines: [line()] };
+  records.set('STATEMENT:s', original);
+  records.set('POLICY:p', commissionPolicy());
+  const input = { id: 's', version: 1, reason: 'TEST duplicate; do not post', confirmed: true };
+  expect(await handler(request('voidStatement', input))).toEqual({ ok: true });
+  expect(records.get('STATEMENT:s')).toMatchObject({ ...original, status: 'VOID', version: 2, voidReason: input.reason, voidedBy: 'producer', voidedAt: expect.any(String) });
+  expect((records.get('POLICY:p') as CommissionPolicy).entries).toEqual([]);
+  expect(h.commit.mock.calls[0][0].map((c: {kind: string})=>c.kind)).toEqual(['STATEMENT','PAYROLL_STATE']);
+  expect(await handler(request('voidStatement', input))).toEqual({ ok: true });
+  expect(h.commit).toHaveBeenCalledTimes(1);
+  expect(await handler(request('postStatement', {id:'s',version:2,confirmed:true}))).toMatchObject({ok:false,error:expect.stringMatching(/Only a draft/)});
+});
+it.each([
+  [{ confirmed: false }, /Confirm/],
+  [{ reason: ' ' }, /reason/],
+  [{ version: 0 }, /changed/i],
+])('rejects invalid void requests without changing history: %j', async (patch, error) => {
+  records.set('STATEMENT:s', {...statement(),lines:[line()]});
+  expect(await handler(request('voidStatement', {id:'s',version:1,reason:'Duplicate',confirmed:true,...patch}))).toMatchObject({ok:false,error:expect.stringMatching(error)});
+  expect(h.commit).not.toHaveBeenCalled();
+});
+it('cannot void a posted receipt or overwrite a different void decision', async () => {
+  records.set('STATEMENT:s', {...statement(),status:'POSTED'});
+  expect(await handler(request('voidStatement',{id:'s',version:1,reason:'Wrong draft',confirmed:true}))).toMatchObject({ok:false});
+  records.set('STATEMENT:s', {...statement(),status:'VOID',voidReason:'Original reason',voidedBy:'producer'});
+  expect(await handler(request('voidStatement',{id:'s',version:1,reason:'New reason',confirmed:true}))).toMatchObject({ok:false});
+  expect(h.commit).not.toHaveBeenCalled();
 });

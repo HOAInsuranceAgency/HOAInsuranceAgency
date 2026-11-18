@@ -733,7 +733,7 @@ function BindForm({
                       {paymentPreview.data.basis === 'COLLECTED' && <p className="small muted">Expected receipt amounts require collection information or an Owner-entered schedule.</p>}
                       <label><Input type="checkbox" checked={paymentConfirmation === paymentKey} disabled={saving} onChange={e => setPaymentConfirmation(e.target.checked ? paymentKey : '')} /> I reviewed the carrier commission payment arrangement.</label>
                     </>
-                  ) : <p className="small muted">Legacy carrier terms: receipt timing is unconfirmed. An Owner can add structured terms; producer earnings continue to follow actual receipts.</p>}
+                  ) : <p className="small muted">{paymentPreview.data.basis === 'UNSPECIFIED' ? 'Actual receipt tracking is enabled. Payment timing is not configured; producer earnings follow reconciled receipts.' : 'Legacy carrier terms: receipt timing is unconfirmed. An Owner can add structured terms; producer earnings continue to follow actual receipts.'}</p>}
                 </>
               )}
               <Button variant="secondary" type="button"  disabled={saving || paymentPreview.loading} onClick={() => { setPaymentConfirmation(''); void paymentPreview.refetch(); }}>Refresh carrier payment terms</Button>

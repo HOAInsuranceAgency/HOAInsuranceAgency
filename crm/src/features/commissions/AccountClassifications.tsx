@@ -1,45 +1,45 @@
-import { useState } from 'react';
+import { useContext,useState } from 'react';
 import {
-  ACCOUNT_COMMISSION_CLASSES,
-  type AccountCommissionClass,
-  type CommissionAccount
+ACCOUNT_COMMISSION_CLASSES,
+type AccountCommissionClass,
+type CommissionAccount
 } from '../../../../shared/commissions';
 import AccountPicker from '../../components/AccountPicker';
-import { Button } from "../../components/ui/Button";
-import { Input } from "../../components/ui/Input";
-import { Select } from "../../components/ui/Select";
-import { commissionAction } from '../../lib/commissions';
+import { Button } from '../../components/ui/Button';
+import { Input } from '../../components/ui/Input';
+import { Select } from '../../components/ui/Select';
+import { Table } from '../../components/ui/Table';
+import { isAuthorizationError } from '../../../../shared/authorizationError';
+import { commissionWorkflowAction as commissionAction } from '../../lib/commissions';
 import { useAsyncResource } from '../../lib/useAsyncResource';
-import { ActionForm, Field } from './CommissionForm';
 
-export function AccountClassifications() {
-  const [accountId, setAccountId] = useState('');
-  return (
-    <section>
-      <h2>Account commission classification</h2>
-      <p>
-        GIM Property Management is the only house-account program. Review each account as Standard
-        or GIM before binding. Classification is an Owner decision; changing a management
-        relationship does not change commission terms.
-      </p>
-      <AccountPicker value={accountId} onChange={setAccountId} disabled={false} />
-      {accountId && <AccountClassificationResource key={accountId} id={accountId} />}
-    </section>
-  );
+import { ActionForm,Field } from './CommissionForm';
+import { CommissionAccessContext } from './context';
+
+export function AccountClassifications({ accounts, refresh }: { accounts: CommissionAccount[]; refresh: () => Promise<void> }) {
+  const [accountId, setAccountId] = useState(''), [editing, setEditing] = useState(false);
+  return <section className="card commission-setting-section" id="commission-account-eligibility">
+    <div className="commission-section-heading"><div><h2>Account eligibility</h2><p>Confirm Standard or GIM and the original first-bind history for the accounts you are testing.</p></div><Button variant="secondary" type="button" onClick={() => setEditing(v => !v)}>{editing ? 'Close account form' : 'Add account classification'}</Button></div>
+    {accounts.length ? <div className="commission-scroll"><Table aria-label="Saved account classifications"><thead><tr><th>Account</th><th>Classification / dates</th><th>First bind</th><th><span className="sr-only">Actions</span></th></tr></thead><tbody>{accounts.map(a => <tr key={a.id}><td><strong>{a.name}</strong></td><td>{a.periods.map((p, i) => <div className="commission-summary-period" key={i}>{p.classification === 'GIM' ? 'GIM' : 'Standard'}<span className="commission-row-note">{p.from}{p.to ? ' – ' + p.to : ' onward'}</span></div>)}</td><td>{a.firstBoundOn || (a.neverBound ? 'Never bound' : 'Needs review')}</td><td><Button type="button" variant="secondary" aria-label={'Edit account ' + a.name} onClick={() => { setAccountId(a.id); setEditing(true); }}>Edit</Button></td></tr>)}</tbody></Table></div> : <p className="commission-compact-empty">No account classifications saved.</p>}
+    <div hidden={!editing} className="commission-inline-editor"><AccountPicker value={accountId} onChange={setAccountId} disabled={false} />{accountId && <AccountClassificationResource key={accountId} id={accountId} onSaved={refresh} />}</div>
+  </section>;
 }
 
-function AccountClassificationResource({ id }: { id: string }) {
+export function AccountClassificationResource({ id, onSaved }: { id: string; onSaved: () => Promise<void> }) {
+  const invalidate = useContext(CommissionAccessContext);
   const resource = useAsyncResource(
-    () =>
-      commissionAction('getAccountClassification', { id }),
+    async () => {
+      try { return await commissionAction<{ classification: CommissionAccount | null; accountName: string }>('getAccountClassification', { id }); }
+      catch (error) { if (isAuthorizationError(error)) invalidate(error); throw error; }
+    },
     [id],
-    { clearDataOnError: () => true, live: { topics: ['CRM', 'OWNER', 'PERSONAL'] } },
+    { clearDataOnError: () => true },
   );
   if (resource.error)
     return (
       <div role="alert">
         <p>{resource.error}</p>
-        <Button variant="secondary" type="button" onClick={() => void resource.refetch()}>
+        <Button type="button" variant="secondary" onClick={() => void resource.refetch()}>
           Retry account classification
         </Button>
       </div>
@@ -51,12 +51,12 @@ function AccountClassificationResource({ id }: { id: string }) {
       id={id}
       name={resource.data.accountName}
       account={resource.data.classification ?? undefined}
-      refresh={resource.refetch}
+      refresh={async () => { await resource.refetch(); await onSaved(); }}
     />
   );
 }
 
-function AccountClassificationEditor({
+export function AccountClassificationEditor({
   id,
   name,
   account,
@@ -162,9 +162,9 @@ function AccountClassificationEditor({
                     periods.map((r, j) =>
                       i === j
                         ? {
-                          ...r,
-                          classification: e.target.value as AccountCommissionClass,
-                        }
+                            ...r,
+                            classification: e.target.value as AccountCommissionClass,
+                          }
                         : r,
                     ),
                   )
@@ -184,9 +184,9 @@ function AccountClassificationEditor({
             value={p.evidence}
             change={(v) => setPeriods(periods.map((r, j) => (i === j ? { ...r, evidence: v } : r)))}
           />
-          <Button variant="secondary"
+          <Button
             type="button"
-
+            variant="secondary"
             disabled={periods.length === 1}
             onClick={() => setPeriods(periods.filter((_, j) => i !== j))}
           >
@@ -194,9 +194,9 @@ function AccountClassificationEditor({
           </Button>
         </div>
       ))}
-      <Button variant="secondary"
+      <Button
         type="button"
-
+        variant="secondary"
         onClick={() =>
           setPeriods([...periods, { from: '', to: '', classification: '', evidence: '' }])
         }

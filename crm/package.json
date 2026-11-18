@@ -17,7 +17,8 @@
     "pf:generate": "tsx scripts/generate-pf-config.ts",
     "preview:check": "node --import tsx scripts/preview-support/check.ts",
     "verify:offline": "node ../scripts/verify.mjs --scope=crm",
-    "test:verification": "node --test --experimental-test-isolation=none ../scripts/*.test.mjs"
+    "test:verification": "node --test --experimental-test-isolation=none ../scripts/*.test.mjs",
+    "test:commission-payroll": "node --test scripts/check-commission-payroll.mjs"
   },
   "overrides": {
     "@opentelemetry/core": "^2.0.0",

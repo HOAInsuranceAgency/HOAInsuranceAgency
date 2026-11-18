@@ -1,15 +1,16 @@
+import { formatUsdDollars } from '../../../../shared/money';
 import { useState } from 'react';
 import {
-  type CommissionOverview
+type CommissionOverview
 } from '../../../../shared/commissions';
-import { Button } from "../../components/ui/Button";
-import { Input } from "../../components/ui/Input";
-import { Select } from "../../components/ui/Select";
-import { assertGraphqlErrors } from '../../lib/apiResponse';
-import { client, fmtMoney } from "../../lib/client";
-import { commissionAction } from '../../lib/commissions';
+import { Button } from '../../components/ui/Button';
+import { Input } from '../../components/ui/Input';
+import { Select } from '../../components/ui/Select';
+import { client } from '../../lib/client';
+import { commissionWorkflowAction as commissionAction } from '../../lib/commissions';
 import { useAsyncResource } from '../../lib/useAsyncResource';
-import { ActionForm, Field } from './CommissionForm';
+
+import { ActionForm,Field } from './CommissionForm';
 
 export function LegacyPolicies({
   data,
@@ -34,11 +35,11 @@ export function LegacyPolicies({
         limit: 25,
         nextToken: cursor,
       });
-      assertGraphqlErrors(page);
+      if (page.errors?.length) throw new Error(page.errors[0].message);
       return page;
     },
     [query, cursor],
-    { clearDataOnError: () => true, live: { topics: ['CRM', 'OWNER', 'PERSONAL'] } },
+    { clearDataOnError: () => true },
   );
   const [premium, setPremium] = useState(''),
     [agencyRate, setAgencyRate] = useState(''),
@@ -47,11 +48,11 @@ export function LegacyPolicies({
   const [policyId, setPolicy] = useState(''),
     [producerId, setProducer] = useState(''),
     [boundOn, setBound] = useState(''),
-    [transaction, setTransaction] = useState<'NEW' | 'RENEWAL' | ''>(''),
+    [transaction, setTransaction] = useState(''),
     [evidence, setEvidence] = useState('');
   const options = resource.data?.data ?? [],
     selected = options.find((p) => p.id === policyId);
-  const draft = { policyId, producerId, boundOn, transaction, evidence, premium, agencyRate, effectiveDate, expirationDate };
+  const draft={policyId,producerId,boundOn,transaction,evidence,premium,agencyRate,effectiveDate,expirationDate};
   return (
     <ActionForm
       title="Add an existing policy to commission tracking"
@@ -60,7 +61,7 @@ export function LegacyPolicies({
         setPolicy('');
         await refresh();
         await resource.refetch();
-        return { savedDraft: { ...draft, policyId: '' } };
+        return {savedDraft:{...draft,policyId:''}};
       }}
       submit={() =>
         commissionAction('adoptPolicy', {
@@ -85,9 +86,9 @@ export function LegacyPolicies({
         Find historical policy number
         <Input value={search} onChange={(e) => setSearch(e.target.value)} />
       </label>
-      <Button variant="secondary"
+      <Button
         type="button"
-
+        variant="secondary"
         disabled={resource.loading || search.trim().length < 2}
         onClick={() => {
           setPolicy('');
@@ -109,9 +110,9 @@ export function LegacyPolicies({
         </p>
       )}
       {resource.data?.nextToken && (
-        <Button variant="secondary"
+        <Button
           type="button"
-
+          variant="secondary"
           disabled={resource.loading}
           onClick={() => {
             setPolicy('');
@@ -152,7 +153,7 @@ export function LegacyPolicies({
       </label>
       {selected && (
         <p>
-          Recorded premium {selected.premium == null ? 'Missing' : fmtMoney(selected.premium)} ·
+          Recorded premium {selected.premium == null ? 'Missing' : formatUsdDollars(selected.premium)} ·
           Agency rate {selected.commissionPct ?? 'Missing'}%
         </p>
       )}
@@ -171,7 +172,7 @@ export function LegacyPolicies({
         <Field label="Original bind date" type="date" value={boundOn} change={setBound} />
         <label className="field">
           Original transaction
-          <Select required value={transaction} onChange={(e) => { if (e.target.value === "NEW" || e.target.value === "RENEWAL" || e.target.value === "") setTransaction(e.target.value); }}>
+          <Select required value={transaction} onChange={(e) => setTransaction(e.target.value)}>
             <option value="">Choose…</option>
             <option value="NEW">New business</option>
             <option value="RENEWAL">Renewal</option>
