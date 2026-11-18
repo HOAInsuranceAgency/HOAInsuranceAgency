@@ -22,6 +22,8 @@ export interface TeamEligibility {
   salesperson: boolean;
   /** Producer's preference for automatic website leads; manual ownership stays available. */
   receiveNewLeads?: boolean;
+  /** Initial automated website lead emails; omitted preserves the existing enabled behavior. */
+  autoRepliesEnabled?: boolean;
   /** @deprecated Legacy storage only. */ champion?: boolean; frontId?: string; dialpadId?: string; version?: number;
   /** Optional choices when the mapped Front teammate has multiple sending identities. */
   frontChannelId?: string; frontSignatureId?: string;

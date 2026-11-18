@@ -253,8 +253,10 @@ export const handler = async (event: { arguments: { operation?: string; readOper
       if (input.salesperson !== undefined && input.salesperson !== member.salesperson) throw new Error("Assign or remove the Producer role to change salesperson eligibility");
       if (input.receiveNewLeads !== undefined && typeof input.receiveNewLeads !== "boolean") throw new Error("Choose whether this Producer receives new website leads");
       if (input.receiveNewLeads !== undefined && !member.salesperson) throw new Error("Only a teammate with the Producer role can receive new website leads");
+      if (input.autoRepliesEnabled !== undefined && typeof input.autoRepliesEnabled !== "boolean") throw new Error("Choose whether autoreplies are enabled for this teammate");
       const next: TeamEligibility = { userId, name: member.name, email: member.email, enabled: member.enabled, salesperson: member.salesperson,
         receiveNewLeads: input.receiveNewLeads === undefined ? member.receiveNewLeads : input.receiveNewLeads,
+        autoRepliesEnabled: input.autoRepliesEnabled === undefined ? old?.data.autoRepliesEnabled ?? true : input.autoRepliesEnabled,
         frontId, dialpadId: connectionId("dialpadId", old?.data.dialpadId),
         frontChannelId: connectionId("frontChannelId", changedFront ? undefined : old?.data.frontChannelId),
         frontSignatureId: connectionId("frontSignatureId", changedFront ? undefined : old?.data.frontSignatureId) };
