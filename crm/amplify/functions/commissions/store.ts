@@ -138,7 +138,7 @@ export async function auditPage(token?: unknown) {
   }
   const result = await db.send(new QueryCommand({ TableName: table(), ConsistentRead: true,
     KeyConditionExpression: legacy ? '#kind = :kind' : '#kind = :kind AND begins_with(id, :prefix)', ExpressionAttributeNames: { '#kind': 'kind' },
-    ExpressionAttributeValues: { ':kind': 'AUDIT', ':prefix': 'audit#' }, ...(legacy ? { FilterExpression: 'NOT begins_with(id, :prefix)' } : {}), ScanIndexForward: false, Limit: 25, ExclusiveStartKey: cursor }));
+    ExpressionAttributeValues: { ':kind': 'AUDIT', ...(!legacy ? { ':prefix': 'audit#' } : {}) }, ScanIndexForward: false, Limit: 25, ExclusiveStartKey: cursor }));
   const next = result.LastEvaluatedKey ? { phase: legacy ? 'legacy' : 'current', key: result.LastEvaluatedKey } : legacy ? undefined : { phase: 'legacy' };
-  return { entries: result.Items ?? [], legacy, cursor: next ? Buffer.from(JSON.stringify(next)).toString('base64url') : undefined };
+  return { entries: (result.Items ?? []).filter(row => !legacy || !String(row.id).startsWith('audit#')), legacy, cursor: next ? Buffer.from(JSON.stringify(next)).toString('base64url') : undefined };
 }

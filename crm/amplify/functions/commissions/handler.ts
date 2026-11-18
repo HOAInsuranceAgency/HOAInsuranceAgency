@@ -1,3 +1,4 @@
+import { workspaceEarnings } from "./earnings";
 import { agencyDay } from '../../../../shared/agencyTime';
 import { type CommissionEarning } from '../../../../shared/commissionExceptions';
 import { exceptionAction, exceptionOperations } from './exceptions';
@@ -177,16 +178,16 @@ export async function handler(event: Event) {
           })),
         };
       }
-      const [plans, carriers, policies, statements, batches, planDefinitions, earnings, accounts] = await Promise.all([
+      const [plans, carriers, policies, statements, batches, planDefinitions, accounts] = await Promise.all([
         store.list<CommissionPlan>('PLAN'),
         store.list<CarrierCommissionTerms>('CARRIER'),
         store.list<CommissionPolicy>('POLICY'),
         store.list<CommissionStatement>('STATEMENT'),
         store.list<CommissionBatch>('BATCH'),
         store.list<CommissionPlanDefinition>('PLAN_DEFINITION'),
-        store.list<CommissionEarning>('EARNING'),
         store.list<CommissionAccount>('ACCOUNT'),
       ]);
+      const earnings = await workspaceEarnings(policies);
       validateAllocationSnapshot(policies, batches, earnings);
       return {
         ok: true,

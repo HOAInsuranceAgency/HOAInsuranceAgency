@@ -1,4 +1,4 @@
-import { noSavedDeposit, depositKey } from "./deposits";
+import { noSavedDeposit, depositKey, holdReceiptPayroll } from "./deposits";
 import { statementReceiptBalance, type CommissionDeposit } from "../../../../shared/commissionDeposits";
 import { createHash, randomUUID } from "node:crypto";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
@@ -30,7 +30,7 @@ import {
   type CarrierImportTemplate,
   type IntakeAllocation,
 } from "../../../../shared/commissionIntake";
-import type { CommissionEarning } from "../../../../shared/commissionExceptions";
+import { policyReceiptEarnings } from "./earnings";
 import { statementPostingChanges, assertStatementPostingPlan } from "./posting";
 import * as store from "./store";
 import type { Event } from "./handler";
@@ -495,6 +495,8 @@ export async function intakeAction(
   }
   if (operation === "recordIntakeSettlement") {
     version(input, intake);
+    // Fence approval before discovering cycles; a concurrent approval must force a retry.
+    const receiptReconciliation = await reconciliationChange();
     const deposit = input.depositId ? await store.get<CommissionDeposit>('COMMISSION_DEPOSIT', required(input.depositId, 'a saved deposit', 128)) : undefined;
     if (input.depositId) {
       if (!deposit || deposit.status !== 'AWAITING_REMITTANCE' || input.depositVersion !== deposit.version) throw new Error('This deposit changed. Refresh and review it again.');
@@ -561,6 +563,7 @@ export async function intakeAction(
       [
         ...(deposit ? [change("COMMISSION_DEPOSIT", {...deposit,status:"LINKED",intakeId:intake.id,settlementId:id},deposit)] : []),
         change("INTAKE_SETTLEMENT", settlement),
+        ...(await holdReceiptPayroll(settlement.receivedOn)),
         change("SETTLEMENT", {
           id,
           intakeId: intake.id,
@@ -568,7 +571,7 @@ export async function intakeAction(
           amount: settlement.totalCents,
         }),
         change("STATEMENT_INTAKE", intake, intake),
-        await reconciliationChange(),
+        receiptReconciliation,
       ],
       actor,
       deposit ? [] : [noSavedDeposit(reference)],
@@ -818,7 +821,7 @@ export async function intakeAction(
         }),
       },
       policies,
-      await store.list<CommissionEarning>("EARNING"),
+      await policyReceiptEarnings(policies.filter(p => allocations.some(a => rows.find(r => r.id === a.rowId)?.policyId === p.id))),
     );
     const sourceKeys = allocations.map((a) => ({
       rowId: a.rowId,

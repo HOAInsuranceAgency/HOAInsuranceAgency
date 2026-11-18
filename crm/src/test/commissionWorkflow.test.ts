@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import { PDFDocument } from 'pdf-lib';
 import { appendEntry, required } from '../../../shared/commissions';

@@ -35,3 +35,16 @@ Use new fictional references for each run. Do not repeat payments against comple
 ## Verification
 
 Run `npm run verify` from the repository root. This includes the offline commission/payroll integration suite, application tests, architecture checks, frontend/backend types, fictional previews, builds and both retained-environment synthesis checks. No credentials, email delivery or deployment is required for these checks.
+
+
+## PR 167 review corrections
+
+- Direct and linked late receipts hold affected approved payroll in the receipt transaction. Reconciliation is read before cycle discovery so a concurrent approval forces a retry; stale reports cannot authorize payment.
+- Empty or unreadable sources offer **Enter source rows manually**. Review and posting confirmations are still required.
+- Receipt posting and financial workspaces load exact policy receipt and approved adjustment identities with consistent, bounded reads. Missing history fails closed. Earnings display in pages of 50; totals and exports use the complete snapshot. Existing per-scope complete-read and transaction limits remain in effect.
+- Intake read authorization failures invalidate parent caches. Earlier audit pages filter current-format records after the bounded database query and retain continuation through empty pages.
+- Payroll PDFs embed Noto Sans and Noto CJK fonts. Regression checks cover Unicode extraction, drawable glyph outlines, deterministic bytes, archive size, employee isolation and long reports. Font source/licensing and generation notes are beside the assets.
+- The dormant payroll worker joins existing transactional-mail and migration registries. The report schedule remains disabled and this change does not enable delivery settings.
+- Retired agreement UI is removed; currency formatting uses the shared formatter.
+
+Review regression exercise: start an empty fictional statement, choose manual entry, save reviewed rows, then confirm payment and posting. Separately approve a fictional payroll cycle and record a late receipt within its cutoff: the cycle must require fresh review. Verify access-denial cache clearing, earlier audit pages, paginated ledger totals and PDFs containing `Łukasz 李明` and `東京 김민수 José`.

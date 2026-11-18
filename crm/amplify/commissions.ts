@@ -5,7 +5,8 @@ import { Alarm, TreatMissingData } from 'aws-cdk-lib/aws-cloudwatch';
 import { SnsAction } from 'aws-cdk-lib/aws-cloudwatch-actions';
 import type { ITopic } from 'aws-cdk-lib/aws-sns';
 import { Queue, QueueEncryption } from 'aws-cdk-lib/aws-sqs';
-import { CfnFunction } from 'aws-cdk-lib/aws-lambda';
+import { fileURLToPath } from 'node:url';
+import { CfnFunction, Code, LayerVersion, type Function as LambdaFunction } from 'aws-cdk-lib/aws-lambda';
 import { businessBranch, migrationExecution } from './migration-config';
 import { AttributeType, BillingMode, Table, TableEncryption } from 'aws-cdk-lib/aws-dynamodb';
 import { Bucket, BucketEncryption, BlockPublicAccess, HttpMethods } from 'aws-cdk-lib/aws-s3';
@@ -79,6 +80,14 @@ export function installCommissions(backend: typeof Backend, communicationTable: 
     }),
   );
   const worker = backend.commissionPayrollWorker;
+  const fonts = new LayerVersion(stack, 'CommissionReportFonts', {
+    description: 'Bundled Noto fonts for portable Unicode payroll reports',
+    code: Code.fromAsset(fileURLToPath(new URL('./functions/commissions/report-fonts/', import.meta.url))),
+  });
+  for (const renderer of [fn, worker]) {
+    (renderer.resources.lambda as LambdaFunction).addLayers(fonts);
+    renderer.addEnvironment('COMMISSION_REPORT_FONT_DIRECTORY', '/opt');
+  }
   const workerStack = Stack.of(worker.resources.lambda);
   worker.addEnvironment('COMMISSION_TABLE', table.tableName);
   worker.addEnvironment('COMMISSION_PAYROLL_ENV', businessBranch || 'local');
