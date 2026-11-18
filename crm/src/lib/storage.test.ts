@@ -57,10 +57,7 @@ beforeEach(() => {
   s3.remove.mockResolvedValue({ path: "gone" });
   s3.getUrl.mockResolvedValue({ url: new URL("https://s3.example/signed?sig=1") });
   Document.create.mockResolvedValue({ data: { id: "doc-1" }, errors: undefined });
-  Document.update.mockResolvedValue({
-    data: { id: "doc-1", s3Key: "linked" },
-    errors: undefined,
-  });
+  Document.update.mockImplementation(async input => ({ data: { ...input }, errors: undefined }));
   Document.delete.mockResolvedValue({ data: { id: "doc-1" }, errors: undefined });
 });
 
@@ -251,7 +248,7 @@ describe("uploadDocument", () => {
     file: file(),
   };
 
-  it("creates the record, links the key, then uploads", async () => {
+  it("creates the pending record, uploads, then publishes the key", async () => {
     const order: string[] = [];
     Document.create.mockImplementation(async () => {
       order.push("create");
@@ -268,7 +265,7 @@ describe("uploadDocument", () => {
 
     const doc = await uploadDocument(opts);
 
-    expect(order).toEqual(["create", "update", "upload"]);
+    expect(order).toEqual(["create", "upload", "update"]);
     expect(Document.create).toHaveBeenCalledWith(
       expect.objectContaining({ s3Key: PENDING_KEY, ocrStatus: "PENDING", name: "budget.pdf" })
     );
@@ -278,6 +275,35 @@ describe("uploadDocument", () => {
       data: opts.file,
       options: { contentType: "application/pdf" },
     });
+  });
+
+  it("keeps another reader on the pending path until the upload completes", async () => {
+    let visible = { id: "doc-1", s3Key: PENDING_KEY, name: "budget.pdf", ocrStatus: "PENDING" };
+    let finishUpload!: () => void;
+    const uploaded = new Promise<void>(resolve => { finishUpload = resolve; });
+    Document.create.mockImplementation(async () => ({ data: { ...visible } }));
+    Document.update.mockImplementation(async input => {
+      visible = { ...visible, ...input };
+      return { data: { ...visible } };
+    });
+    s3.uploadData.mockReturnValue({ result: uploaded });
+
+    const uploading = uploadDocument(opts);
+    await vi.waitFor(() => expect(s3.uploadData).toHaveBeenCalledOnce());
+    expect(visible.s3Key).toBe(PENDING_KEY);
+    expect(Document.update).not.toHaveBeenCalled();
+    await expect(downloadFile(visible.s3Key)).rejects.toThrow(/hasn't finished uploading/);
+    expect(s3.getUrl).not.toHaveBeenCalled();
+
+    // The object event can start OCR while the client's upload completes.
+    // Publishing its key must not overwrite those independent worker fields.
+    visible = { ...visible, ocrStatus: "PROCESSING", name: "OCR-updated name.pdf" };
+    finishUpload();
+    const linked = await uploading;
+    expect(Document.update).toHaveBeenCalledWith({ id: "doc-1", s3Key: "documents/ACCOUNT/acc-1/doc-1/budget.pdf" });
+    expect(linked).toMatchObject({ s3Key: visible.s3Key, ocrStatus: "PROCESSING", name: "OCR-updated name.pdf" });
+    await expect(getFileUrl(visible.s3Key, { validate: true })).resolves.toBe("https://s3.example/signed?sig=1");
+    expect(s3.getUrl).toHaveBeenCalledWith(expect.objectContaining({ path: visible.s3Key, options: expect.objectContaining({ validateObjectExistence: true }) }));
   });
 
   it("keeps a hostile filename inside the record's own folder", async () => {
@@ -312,14 +338,61 @@ describe("uploadDocument", () => {
 
     await expect(uploadDocument(opts)).rejects.toThrow("upload blew up");
     expect(Document.delete).toHaveBeenCalledWith({ id: "doc-1" });
+    expect(Document.update).not.toHaveBeenCalled();
+    expect(s3.remove).not.toHaveBeenCalled();
   });
 
-  it("deletes the ghost record when the s3Key link fails", async () => {
+  it("removes only the new uploaded object and row when the s3Key link fails", async () => {
     Document.update.mockResolvedValue({ data: null, errors: [{ message: "not authorized" }] });
 
     await expect(uploadDocument(opts)).rejects.toThrow("not authorized");
     expect(Document.delete).toHaveBeenCalledWith({ id: "doc-1" });
-    expect(s3.uploadData).not.toHaveBeenCalled();
+    expect(s3.uploadData).toHaveBeenCalledOnce();
+    expect(s3.remove).toHaveBeenCalledExactlyOnceWith({ path: "documents/ACCOUNT/acc-1/doc-1/budget.pdf" });
+    expect(Document.delete.mock.invocationCallOrder[0]).toBeLessThan(s3.remove.mock.invocationCallOrder[0]);
+  });
+
+  it("does not report a completed upload without a confirmed linked row", async () => {
+    Document.update.mockResolvedValue({ data: null, errors: undefined });
+    await expect(uploadDocument(opts)).rejects.toThrow("Couldn't finish recording the uploaded file.");
+    expect(s3.remove).toHaveBeenCalledExactlyOnceWith({ path: "documents/ACCOUNT/acc-1/doc-1/budget.pdf" });
+    expect(Document.delete).toHaveBeenCalledWith({ id: "doc-1" });
+  });
+
+  it("still removes the row and reports the link failure if object cleanup fails", async () => {
+    Document.update.mockRejectedValue(new Error("link failed"));
+    s3.remove.mockRejectedValue(new Error("object cleanup failed"));
+    await expect(uploadDocument(opts)).rejects.toThrow("link failed");
+    expect(Document.delete).toHaveBeenCalledWith({ id: "doc-1" });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("object cleanup failed"));
+  });
+
+  it("retains a committed object's bytes when the link response and row cleanup fail", async () => {
+    let visibleKey = PENDING_KEY;
+    let objectExists = false;
+    s3.uploadData.mockReturnValue({ result: Promise.resolve().then(() => { objectExists = true; }) });
+    s3.remove.mockImplementation(async () => { objectExists = false; return { path: "gone" }; });
+    Document.update.mockImplementation(async input => {
+      visibleKey = input.s3Key;
+      throw new Error("link response lost");
+    });
+    Document.delete.mockRejectedValue(new Error("row cleanup failed"));
+    await expect(uploadDocument(opts)).rejects.toThrow("link response lost");
+    expect(visibleKey).toBe("documents/ACCOUNT/acc-1/doc-1/budget.pdf");
+    expect(objectExists).toBe(true);
+    expect(s3.remove).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("row cleanup failed"));
+  });
+
+  it.each([
+    { data: null, errors: undefined },
+    { data: null, errors: [{ message: "removal response failed" }] },
+  ])("retains uploaded bytes when row removal is unconfirmed", async removal => {
+    Document.update.mockRejectedValue(new Error("link response lost"));
+    Document.delete.mockResolvedValue(removal);
+    await expect(uploadDocument(opts)).rejects.toThrow("link response lost");
+    expect(s3.remove).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("the uploaded file was retained"));
   });
 
   it("surfaces a create failure and never uploads", async () => {
