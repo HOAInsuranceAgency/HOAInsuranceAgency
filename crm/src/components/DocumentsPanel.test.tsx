@@ -22,7 +22,7 @@ vi.mock("../lib/scopedStorage", () => ({
 }));
 
 import DocumentsPanel from "./DocumentsPanel";
-import { uploadData } from "../lib/scopedStorage";
+import { remove, uploadData } from "../lib/scopedStorage";
 
 /**
  * Renaming a document.
@@ -69,7 +69,10 @@ beforeEach(() => {
   vi.clearAllMocks();
   models.Policy.list.mockResolvedValue({ data: [] });
   models.Quote.list.mockResolvedValue({ data: [] });
-  models.Document.update.mockResolvedValue({ errors: undefined });
+  models.Document.update.mockImplementation(async input => ({ data: { ...input }, errors: undefined }));
+  models.Document.delete.mockImplementation(async input => ({ data: { ...input }, errors: undefined }));
+  vi.mocked(uploadData).mockReturnValue({ result: Promise.resolve({ path: "uploaded" }) });
+  vi.mocked(remove).mockResolvedValue({ path: "removed" });
 });
 
 it("offers Front handoff for account documents but not carrier documents or pending uploads", async () => {
@@ -256,6 +259,31 @@ describe("DocumentsPanel authorized reads", () => {
 
 
 describe("document recovery", () => {
+  it.each([
+    ["policy:policy-1", { policyId: "policy-1", quoteId: null }],
+    ["quote:quote-1", { policyId: null, quoteId: "quote-1" }],
+  ])("keeps %s upload metadata while withholding the key until PUT completes", async (initialLink, link) => {
+    let finish!: () => void;
+    const result = new Promise<{ path: string }>(resolve => {
+      finish = () => resolve({ path: "documents/ACCOUNT/acct-1/new-doc/budget.pdf" });
+    });
+    vi.mocked(uploadData).mockReturnValue({ result });
+    models.Document.listDocumentByEntityId.mockResolvedValue({ data: [] });
+    models.Document.create.mockResolvedValue({ data: { id: "new-doc" } });
+    const view = render(<DocumentsPanel entityType="ACCOUNT" entityId="acct-1" initialLink={initialLink} sourceCommunicationId="comm-1" />);
+    await userEvent.setup().upload(view.container.querySelector('input[type="file"]')!, new File(["pdf"], "budget.pdf", { type: "application/pdf" }));
+    await waitFor(() => expect(uploadData).toHaveBeenCalledOnce());
+    expect(models.Document.create).toHaveBeenCalledWith(expect.objectContaining({
+      entityType: "ACCOUNT", entityId: "acct-1", sourceCommunicationId: "comm-1", s3Key: "pending", ...link,
+    }));
+    expect(models.Document.update).not.toHaveBeenCalled();
+    await act(async () => finish());
+    await waitFor(() => expect(models.Document.update).toHaveBeenCalledOnce());
+    expect(models.Document.update.mock.calls[0][0]).toEqual(expect.objectContaining({ id: "new-doc", s3Key: "documents/ACCOUNT/acct-1/new-doc/budget.pdf" }));
+    expect(models.Document.update.mock.calls[0][0]).not.toHaveProperty("ocrStatus");
+    expect(models.Document.update.mock.calls[0][0]).not.toHaveProperty("name");
+  });
+
   it("keeps a failed rename editable and retries the same typed name", async () => {
     const user = userEvent.setup();
     renderPanel();
@@ -282,7 +310,7 @@ describe("document recovery", () => {
     expect(screen.getByRole("textbox", { name: "Document name" })).toHaveValue("Keep my title");
   });
 
-  it("does not upload an object when saving its document path failed", async () => {
+  it("cleans the uploaded object after removing its row when publishing the document path failed", async () => {
     const user = userEvent.setup();
     models.Document.listDocumentByEntityId.mockResolvedValue({ data: [] });
     models.Document.create.mockResolvedValue({ data: { id: "new-doc" } });
@@ -291,8 +319,10 @@ describe("document recovery", () => {
     const view = render(<DocumentsPanel entityType="ACCOUNT" entityId="acct-1" />);
     await user.upload(view.container.querySelector('input[type="file"]')!, new File(["pdf"], "budget.pdf", { type: "application/pdf" }));
     await screen.findByRole("alert");
-    expect(uploadData).not.toHaveBeenCalled();
+    expect(uploadData).toHaveBeenCalledOnce();
     expect(models.Document.delete).toHaveBeenCalledWith({ id: "new-doc" });
+    expect(remove).toHaveBeenCalledExactlyOnceWith({ path: "documents/ACCOUNT/acct-1/new-doc/budget.pdf" });
+    expect(models.Document.delete.mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(remove).mock.invocationCallOrder[0]);
   });
 
   it("resets document drafts immediately when the entity changes", async () => {

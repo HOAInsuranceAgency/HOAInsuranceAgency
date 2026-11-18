@@ -9,7 +9,7 @@ import { isAssignableSalesperson } from "../../../shared/salespersonOwnership";
 import { useAsyncResource } from "../lib/useAsyncResource";
 import { useState, useEffect, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { uploadData } from "../lib/scopedStorage";
+import { uploadDocument } from "../lib/storage";
 import {
   client,
   friendlyError,
@@ -262,30 +262,14 @@ export default function NewLead() {
     for (const file of stagedFiles) {
       if (!mounted.current) return;
       try {
-        const { data: doc } = await client.models.Document.create({
+        // Finish or compensate the current file transaction after unmount,
+        // then stop before another file or any post-upload UI work.
+        await uploadDocument({
           entityType: "ACCOUNT",
           entityId: data.id,
           category: "OTHER",
-          name: file.name,
-          s3Key: "pending",
-          contentType: file.type,
-          sizeBytes: file.size,
-          ocrStatus: "PENDING",
+          file,
         });
-        if (!mounted.current) return;
-        if (!doc) {
-          failedUploads.push(file.name);
-          continue;
-        }
-        const path = `documents/ACCOUNT/${data.id}/${doc.id}/${file.name}`;
-        const updated = await client.models.Document.update({ id: doc.id, s3Key: path });
-        if (!mounted.current) return;
-        if (updated.errors?.length) throw new Error(updated.errors[0].message);
-        await uploadData({
-          path,
-          data: file,
-          options: { contentType: file.type || undefined },
-        }).result;
       } catch {
         // A failed upload shouldn't block lead creation, but navigating away
         // without saying so loses the attachment silently.
