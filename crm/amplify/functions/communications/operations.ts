@@ -14,6 +14,7 @@ import type { Submission } from "../lead-intake/handler";
 import { renderIntakeBrief } from "../lead-intake/brief";
 import type { Communication, LeadWorkflow, Responsibility, TeamEligibility } from "../../../../shared/leadWorkflow";
 import { activeTeamUserCheck } from "../crm-access/user-status";
+import { autoRepliesDisabled, AUTO_REPLIES_DISABLED_NOTE } from "./autoReplies";
 
 class AssignmentError extends ProviderError {
   constructor(message: string) { super(message, 0, false); }
@@ -99,6 +100,15 @@ export async function runOperation(candidate: Row<Operation>) {
   let acceptedUid: string | undefined;
   try {
     if (op.data.state === "ACCEPTED") { await resolveAccepted(op); return; }
+    // Opt-outs apply to already queued emails too, even when integration or
+    // mailbox setup is paused or invalid. Accepted/uncertain attempts above
+    // keep their delivery history and are never relabelled as unsent.
+    const emailWorkflow = op.data.type === "EMAIL" ? await get<LeadWorkflow>(`workflow:${op.data.accountId}`) : undefined;
+    if (emailWorkflow && await autoRepliesDisabled(emailWorkflow.data.salespersonId)) {
+      await transition(op, { state: "SUPPRESSED", error: AUTO_REPLIES_DISABLED_NOTE });
+      await updateReply(op.data, "SUPPRESSED", AUTO_REPLIES_DISABLED_NOTE);
+      return;
+    }
     const c = await config();
     if ((c.paused || !c.activatedAt) && op.data.type !== "SMS_ALERT") { await transition(op, { state: "RETRY_WAIT" }, 60); return; }
     if (op.data.type === "ATTACHMENT") {
@@ -110,7 +120,7 @@ export async function runOperation(candidate: Row<Operation>) {
     }
     // Delivery follows a durable assignment. It must never manufacture a
     // default owner when an intake workflow has not been assigned yet.
-    const wf = ["IMPORT", "EMAIL", "SMS_ALERT", "ASSIGN"].includes(op.data.type)
+    const wf = op.data.type === "EMAIL" ? emailWorkflow : ["IMPORT", "SMS_ALERT", "ASSIGN"].includes(op.data.type)
       ? await get<LeadWorkflow>(`workflow:${op.data.accountId}`) : await ensureWorkflow(op.data.accountId);
     if (!wf) throw new AssignmentError("Assign an active salesperson to this lead before delivering its alert or Front assignment");
     let assignee: Row<TeamEligibility> | undefined;
@@ -152,6 +162,13 @@ export async function runOperation(candidate: Row<Operation>) {
       }
       const producer = await assignedEmailProducer(wf.data.salespersonId);
       assignee = producer.member;
+      // Fence the verified member below; a concurrent opt-out after this read
+      // prevents the lease transaction from authorizing an external send.
+      if (assignee.data.autoRepliesEnabled === false) {
+        await transition(op, { state: "SUPPRESSED", error: AUTO_REPLIES_DISABLED_NOTE });
+        await updateReply(op.data, "SUPPRESSED", AUTO_REPLIES_DISABLED_NOTE);
+        return;
+      }
       if (!op.data.producerId || !op.data.producerName) throw new AssignmentError("Initial email held: its salesperson identity was not recorded. Review this queued email and handle the lead personally before sending");
       if (op.data.producerId !== producer.producerId || op.data.producerName !== producer.producerName) throw new AssignmentError("Initial email held: the assigned salesperson changed after this email was prepared. Review it and handle the lead personally before sending");
       const identity = op.data.emailIdentity;

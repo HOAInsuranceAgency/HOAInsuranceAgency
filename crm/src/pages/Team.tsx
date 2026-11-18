@@ -538,8 +538,9 @@ export default function Team({ profile }: { profile: UserProfile }) {
           <div>
             <h2 id="team-members-title" style={{ margin: 0 }}>Team members</h2>
             <p className="muted small" style={{ margin: "4px 0 0" }}>
-              Manage {canManageOwners ? "sign-in emails, " : ""}roles, access, new leads, lead texts and connections in one place.
+              Manage {canManageOwners ? "sign-in emails, " : ""}roles, access, new leads, autoreplies, lead texts and connections in one place.
               Producers are automatically eligible for account assignments. Receive new leads controls automatic website lead rotation.
+              Autoreplies controls the initial automated email for website leads assigned to each teammate.
               Only the assigned producer gets the Front conversation and lead text.
               Lead texts need both the switch and a mobile number.
             </p>
@@ -570,6 +571,7 @@ export default function Team({ profile }: { profile: UserProfile }) {
                   <th>Signature</th>
                   <SortTh label="Lead texts" colKey="leadTexts" sortKey={sortKey} dir={dir} onToggle={toggle} />
                   <th scope="col">Receive new leads</th>
+                  <th scope="col">Autoreplies</th>
                   <th scope="col">Connections</th>
                   <SortTh label="Invited" colKey="invited" sortKey={sortKey} dir={dir} onToggle={toggle} />
                 </tr>
@@ -643,7 +645,7 @@ export default function Team({ profile }: { profile: UserProfile }) {
                         )}
                       </td>
                       {p ? <LeadEligibilityCells member={member} settings={eligibility} disabled={u.enabled === false || team.loading || moreLoading || memberEditorOpen} />
-                        : <td colSpan={2} className="muted small">Available after first sign-in</td>}
+                        : <td colSpan={3} className="muted small">Available after first sign-in</td>}
                       <td className="small">
                         {fmtDate(u.createdAt?.slice(0, 10))}
                       </td>

@@ -31,6 +31,7 @@ const dialpadInput = () => screen.getByRole("textbox", { name: /^Dialpad user ID
 const channelInput = () => screen.getByRole("textbox", { name: /^Email channel ID/ });
 const signatureInput = () => screen.getByRole("textbox", { name: /^Email signature ID/ });
 const receiveLeadsInput = () => screen.getByRole("checkbox", { name: "Receive new leads for Jake Greasley" });
+const autorepliesInput = () => screen.getByRole("checkbox", { name: "Autoreplies for Jake Greasley" });
 
 describe("producer lead delivery settings", () => {
   it("defaults existing producers to receive new leads and keeps assignment eligibility read-only", async () => {
@@ -61,7 +62,8 @@ describe("producer lead delivery settings", () => {
     mockRoster({ ...member, salesperson: false });
     render(<LeadEligibilitySettings />);
     expect(await screen.findByText("Producers only")).toBeVisible();
-    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: /Receive new leads/ })).not.toBeInTheDocument();
+    expect(autorepliesInput()).toBeEnabled();
     expect(screen.getByRole("button", { name: "Edit connections for Jake Greasley" })).toBeEnabled();
   });
 
@@ -90,6 +92,7 @@ describe("producer lead delivery settings", () => {
     mockRoster({ ...member, available: false });
     render(<LeadEligibilitySettings />);
     expect(await screen.findByRole("checkbox", { name: "Receive new leads for Jake Greasley" })).toBeDisabled();
+    expect(autorepliesInput()).toBeDisabled();
     expect(screen.getByRole("button", { name: "Edit connections for Jake Greasley" })).toBeDisabled();
     expect(h.request.mock.calls.filter(call => call[0] === "saveEligibility")).toHaveLength(0);
   });
@@ -97,7 +100,41 @@ describe("producer lead delivery settings", () => {
   it("honors an inactive team row independently of persisted assignment settings", async () => {
     render(<LeadEligibilitySettings disabled />);
     expect(await screen.findByRole("checkbox", { name: "Receive new leads for Jake Greasley" })).toBeDisabled();
+    expect(autorepliesInput()).toBeDisabled();
     expect(screen.getByRole("button", { name: "Edit connections for Jake Greasley" })).toBeDisabled();
+  });
+});
+
+describe("per-user autoreplies", () => {
+  it("defaults a missing preference to on and saves an explicit off value with version zero", async () => {
+    h.request.mockImplementation(async (operation: string, input: EligibilityPatch) => operation === "teamSettings"
+      ? { team: [] } : { member: { ...member, ...input, version: 1 } });
+    render(<LeadEligibilitySettings />);
+    expect(await screen.findByRole("checkbox", { name: "Autoreplies for Jake Greasley" })).toBeChecked();
+    fireEvent.click(autorepliesInput());
+    await waitFor(() => expect(h.request).toHaveBeenLastCalledWith("saveEligibility", { userId: member.userId, version: 0, autoRepliesEnabled: false }, true));
+    await waitFor(() => expect(autorepliesInput()).not.toBeChecked());
+    expect(receiveLeadsInput()).toBeChecked();
+  });
+
+  it("preserves the off preference through lead rotation and connection changes and can turn it back on", async () => {
+    mockRoster({ ...member, autoRepliesEnabled: false });
+    render(<LeadEligibilitySettings />);
+    expect(await screen.findByRole("checkbox", { name: "Autoreplies for Jake Greasley" })).not.toBeChecked();
+    fireEvent.click(receiveLeadsInput());
+    await waitFor(() => expect(receiveLeadsInput()).not.toBeChecked());
+    expect(autorepliesInput()).not.toBeChecked();
+    await edit();
+    expect(autorepliesInput()).toBeDisabled();
+    fireEvent.change(frontInput(), { target: { value: "tea_updated" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save connections" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(autorepliesInput()).not.toBeChecked();
+    fireEvent.click(autorepliesInput());
+    await waitFor(() => expect(h.request).toHaveBeenLastCalledWith("saveEligibility", { userId: member.userId, version: 5, autoRepliesEnabled: true }, true));
+    await waitFor(() => expect(autorepliesInput()).toBeChecked());
+    expect(receiveLeadsInput()).not.toBeChecked();
+    expect(screen.getByText("tea_updated")).toBeVisible();
   });
 });
 
@@ -265,6 +302,7 @@ it("clears saved rows and loaded defaults after an authorization denial instead 
   fireEvent.click(screen.getByRole("button", { name: "Refresh roster" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("Access denied");
   expect(screen.queryByRole("checkbox", { name: /Receive new leads/ })).toBeNull();
+  expect(screen.queryByRole("checkbox", { name: /Autoreplies/ })).toBeNull();
   expect(screen.queryByRole("button", { name: /Edit connections/ })).toBeNull();
   expect(screen.queryByText(member.frontId!)).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Retry" }));

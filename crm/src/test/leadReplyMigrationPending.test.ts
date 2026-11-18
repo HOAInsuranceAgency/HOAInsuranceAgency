@@ -27,6 +27,7 @@ beforeEach(() => {
   vi.clearAllMocks(); h.cursors.clear(); vi.useFakeTimers(); vi.setSystemTime(new Date("2026-11-01T20:00:00Z")); h.cutoff = Date.parse("2026-11-01T19:30:00Z");
   h.query.mockReset().mockResolvedValue({ data: [] }); h.get.mockReset().mockResolvedValue({ data: { state: "ACCEPTED", uid: "existing-provider-uid" } });
   h.update.mockResolvedValue({ data: {} }); h.resolve.mockResolvedValue(undefined);
+  h.producer.mockResolvedValue({ member: { data: {} } });
   h.account.mockResolvedValue({ data: { id: "account" } }); h.documents.mockResolvedValue({ data: [{ name: "policy.pdf", ocrStatus: "PENDING" }] }); h.contacts.mockResolvedValue({ data: [] });
 });
 afterEach(() => vi.useRealTimers());
