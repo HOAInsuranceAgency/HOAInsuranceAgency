@@ -1,6 +1,16 @@
 # HOA commission workflow — staging acceptance plan
 
-Updated November 17, 2026: one Guided workflow from source import through employee payment, with statement-specific payroll suggestions and explicit human approval.
+Updated November 18, 2026: one Guided workflow from source import through employee payment, with statement-specific payroll suggestions and explicit human approval.
+
+## November 18 review fixes to test
+
+Existing statements, saved reviews and payments carry forward. Continue the existing record from **Work queue** or **Guided workflow**; do not upload or record the same payment again.
+
+- **Manual source entry:** for a separate fictional source that cannot be read automatically, choose **Enter source rows manually** on the Read source step. Expect Match & review to open with **Add source row** available. Enter and review the rows, then continue through the same explicit approvals.
+- **Late carrier receipts:** on a separate fictional approved, unpaid payroll, record a receipt dated on or before its cutoff. Expect payroll to require reconciliation review before payment or report delivery. A receipt after that cutoff must not hold the earlier cycle. Do not introduce fictional receipts into the actual October comparison.
+- **Ledger history:** use **Previous earnings / Next earnings** when more than 50 earnings match. Searching and policy context limit the visible rows; totals and downloads still include the complete ledger.
+- **Reports:** download an archived report and check names, currency, totals and page layout. New reports use bundled fonts so supported accented, Chinese, Japanese and Korean names remain readable. Existing archived reports retain their original contents. Report emails stay disabled; use downloads for testing.
+- **Access changes:** if access is denied while opening an inbox or statement, expect the private commission view to clear and require access to be restored before continuing.
 
 ## Actual statement review
 

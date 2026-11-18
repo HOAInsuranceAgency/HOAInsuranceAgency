@@ -1,4 +1,4 @@
-import { formatUsdCents as money } from "../../../shared/money";
+import { formatUsdCents as money, formatUsdDollars } from "../../../shared/money";
 import { getCurrentUser } from 'aws-amplify/auth';
 import { CommissionWorkflowContext, CommissionTarget, useCommissionWorkflow, type CommissionDestination } from '../lib/commissionWorkflow';
 import CommissionWorkQueue from '../components/CommissionWorkQueue';
@@ -2039,7 +2039,7 @@ function LegacyPolicies({
       </label>
       {selected && (
         <p>
-          Recorded premium {selected.premium == null ? 'Missing' : commissionCurrency.format(selected.premium)} ·
+          Recorded premium {selected.premium == null ? 'Missing' : formatUsdDollars(selected.premium)} ·
           Agency rate {selected.commissionPct ?? 'Missing'}%
         </p>
       )}

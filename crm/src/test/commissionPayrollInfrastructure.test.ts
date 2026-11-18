@@ -17,6 +17,8 @@ it('limits payroll worker writes to delivery/audit while allowing archived PDFs 
   const communicationTable = new Table(stack,'Communications',{partitionKey:{name:'id',type:AttributeType.STRING}});
   installCommissions(backend,communicationTable,new Topic(stack,'Alerts'),'insurance@example.test','https://crm.example.test');
   const template = Template.fromStack(stack).toJSON();
+  const schedule = Object.values(template.Resources).find((r:any)=>r.Type==='AWS::Scheduler::Schedule') as any;
+  expect(schedule.Properties.State).toBe('DISABLED');
   const policies = Object.values(template.Resources).filter((r:any)=>r.Type==='AWS::IAM::Policy') as any[];
   const worker = policies.find(p=>JSON.stringify(p.Properties.Roles).includes('Worker'));
   const statements = worker.Properties.PolicyDocument.Statement;
