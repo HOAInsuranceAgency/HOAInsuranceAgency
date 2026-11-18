@@ -47,6 +47,8 @@ export interface Operation {
   conversationId?: string; recipient?: string; subject?: string; html?: string; text?: string;
   uid?: string; messageId?: string; error?: string; leaseUntil?: string; assigneeId?: string;
   producerId?: string; producerName?: string; emailIdentity?: ProducerEmailIdentity;
+  /** Durable no-send intent until the reply record has caught up. */
+  autoReplySuppressionPending?: boolean;
   lead?: LeadSummary; sourceMessageId?: string; attachmentId?: string; requestedBy?: string;
   // Legacy reminder metadata is retained so queued deliveries can be retired.
   reminder?: { taskId: string; noticeAt: string; recipientId: string; escalated: boolean; stage?: string; workflowVersion?: number };
@@ -70,6 +72,23 @@ async function transition(old: Row<Operation>, patch: Partial<Operation>, delay?
   if (previousIssue && !previousIssue.data.resolved) writes.push(put(row("ISSUE", previousIssue.id, { ...previousIssue.data, resolved: true, resolvedAt: new Date().toISOString(), resolution: "Operation completed successfully" }, { accountId: previousIssue.accountId, previous: previousIssue }), previousIssue));
   await commit(writes);
   return next;
+}
+async function suppressAutoReply(op: Row<Operation>) {
+  // Persist cancellation before projecting it. A crash or a failed projection
+  // must leave queued work that can finish cancellation, never send the email.
+  const pending = op.data.autoReplySuppressionPending ? op : await transition(op, {
+    state: "RETRY_WAIT", autoReplySuppressionPending: true, leaseUntil: undefined, error: AUTO_REPLIES_DISABLED_NOTE,
+  }, 60);
+  try {
+    await updateReply(pending.data, "SUPPRESSED", AUTO_REPLIES_DISABLED_NOTE);
+    await transition(pending, { state: "SUPPRESSED", autoReplySuppressionPending: undefined, error: AUTO_REPLIES_DISABLED_NOTE });
+  } catch (error) {
+    if (conflict(error)) return;
+    // Both the projection and its terminal acknowledgement are idempotent.
+    // Even if rescheduling fails, the saved intent remains due for retry.
+    try { await transition(pending, { state: "RETRY_WAIT", autoReplySuppressionPending: true, error: AUTO_REPLIES_DISABLED_NOTE }, 60); }
+    catch (retryError) { if (!conflict(retryError)) console.warn("Initial auto-reply suppression remains pending", pending.id); }
+  }
 }
 export async function runOperation(candidate: Row<Operation>) {
   let op = await get<Operation>(candidate.id);
@@ -100,13 +119,13 @@ export async function runOperation(candidate: Row<Operation>) {
   let acceptedUid: string | undefined;
   try {
     if (op.data.state === "ACCEPTED") { await resolveAccepted(op); return; }
+    if (op.data.type === "EMAIL" && op.data.autoReplySuppressionPending) { await suppressAutoReply(op); return; }
     // Opt-outs apply to already queued emails too, even when integration or
     // mailbox setup is paused or invalid. Accepted/uncertain attempts above
     // keep their delivery history and are never relabelled as unsent.
     const emailWorkflow = op.data.type === "EMAIL" ? await get<LeadWorkflow>(`workflow:${op.data.accountId}`) : undefined;
     if (emailWorkflow && await autoRepliesDisabled(emailWorkflow.data.salespersonId)) {
-      await transition(op, { state: "SUPPRESSED", error: AUTO_REPLIES_DISABLED_NOTE });
-      await updateReply(op.data, "SUPPRESSED", AUTO_REPLIES_DISABLED_NOTE);
+      await suppressAutoReply(op);
       return;
     }
     const c = await config();
@@ -165,8 +184,7 @@ export async function runOperation(candidate: Row<Operation>) {
       // Fence the verified member below; a concurrent opt-out after this read
       // prevents the lease transaction from authorizing an external send.
       if (assignee.data.autoRepliesEnabled === false) {
-        await transition(op, { state: "SUPPRESSED", error: AUTO_REPLIES_DISABLED_NOTE });
-        await updateReply(op.data, "SUPPRESSED", AUTO_REPLIES_DISABLED_NOTE);
+        await suppressAutoReply(op);
         return;
       }
       if (!op.data.producerId || !op.data.producerName) throw new AssignmentError("Initial email held: its salesperson identity was not recorded. Review this queued email and handle the lead personally before sending");
