@@ -10,7 +10,7 @@ import { CfnFunction, Code, LayerVersion, type Function as LambdaFunction } from
 import { businessBranch, migrationExecution } from './migration-config';
 import { AttributeType, BillingMode, Table, TableEncryption } from 'aws-cdk-lib/aws-dynamodb';
 import { Bucket, BucketEncryption, BlockPublicAccess, HttpMethods } from 'aws-cdk-lib/aws-s3';
-import { PolicyStatement } from 'aws-cdk-lib/aws-iam';
+import { PolicyStatement, ManagedPolicy } from 'aws-cdk-lib/aws-iam';
 import type { Table as DynamoTable } from 'aws-cdk-lib/aws-dynamodb';
 import type { backend as Backend } from './backend';
 export function installCommissions(backend: typeof Backend, communicationTable: DynamoTable, alerts: ITopic, sender: string, crmUrl: string) {
@@ -55,10 +55,15 @@ export function installCommissions(backend: typeof Backend, communicationTable: 
   fn.addEnvironment('ACCESS_API_ID', api.apiId);
   fn.addEnvironment('COMMUNICATION_TABLE', communicationTable.tableName);
   communicationTable.grantReadData(fn.resources.lambda);
+  // Keep source-model grants outside the nearly full data template. Attach via
+  // the policy's Roles property so the data stack does not depend on this stack.
+  const sourcePermissions = new ManagedPolicy(backend.createStack('CommissionSourcePermissions'), 'SourceModels', {
+    roles: [fn.resources.lambda.role!],
+  });
   for (const model of ['Account', 'Quote', 'Policy', 'Carrier']) {
     const name = `${model}-${api.apiId}-NONE`,
       arn = Stack.of(api).formatArn({ service: 'dynamodb', resource: 'table', resourceName: name });
-    fn.resources.lambda.addToRolePolicy(
+    sourcePermissions.addStatements(
       new PolicyStatement({
         actions: [
           'dynamodb:GetItem',
@@ -69,11 +74,11 @@ export function installCommissions(backend: typeof Backend, communicationTable: 
       }),
     );
     if (model === 'Policy')
-      fn.resources.lambda.addToRolePolicy(
+      sourcePermissions.addStatements(
         new PolicyStatement({ actions: ['dynamodb:Query'], resources: [`${arn}/index/*`] }),
       );
   }
-  fn.resources.lambda.addToRolePolicy(
+  sourcePermissions.addStatements(
     new PolicyStatement({
       actions: ['dynamodb:ConditionCheckItem'],
       resources: [communicationTable.tableArn],

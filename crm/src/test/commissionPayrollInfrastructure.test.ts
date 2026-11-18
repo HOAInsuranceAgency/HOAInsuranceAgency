@@ -30,4 +30,12 @@ it('limits payroll worker writes to delivery/audit while allowing archived PDFs 
   const lambda = Object.values(template.Resources).find((r:any)=>r.Type==='AWS::Lambda::Function'&&r.Properties.Environment?.Variables.COMMISSION_PAYROLL_FROM) as any;
   expect(lambda.Properties.Environment.Variables.USER_POOL_ID).toBe('pool');
   expect(lambda.Properties.ReservedConcurrentExecutions).toBe(1);
+  const sourceTemplate=Template.fromStack(app.node.findChild('CommissionSourcePermissions') as Stack).toJSON();
+  const grants=(Object.values(sourceTemplate.Resources).find((r:any)=>r.Type==='AWS::IAM::ManagedPolicy') as any).Properties;
+  expect(grants.Roles).toHaveLength(1);
+  const sourceStatements=grants.PolicyDocument.Statement;
+  expect(sourceStatements).toHaveLength(6);
+  expect(sourceStatements.filter((s:any)=>s.Action.includes('dynamodb:PutItem'))).toHaveLength(3);
+  expect(sourceStatements.some((s:any)=>s.Action==='dynamodb:Query')).toBe(true);
+  expect(JSON.stringify(sourceStatements)).not.toContain('dynamodb:DeleteItem');
 }, 30_000);
