@@ -61,6 +61,25 @@ beforeEach(() => {
   });
   h.sign.mockResolvedValue("https://files.example.test/signed"); h.s3.mockResolvedValue({});
 });
+it("authorizes uploading a pending Document while refusing reads until its key is published", async () => {
+  h.records.set("documents:doc", { id: "doc", entityType: "ACCOUNT", entityId: "a", s3Key: "pending" });
+  const path = "documents/ACCOUNT/a/doc/file.pdf";
+  await expect(handler({ fieldName: "crmFile", identity, arguments: { operation: "write", path, sizeBytes: 1 } })).resolves.toMatchObject({ url: "https://files.example.test/signed" });
+  expect(h.sign).toHaveBeenCalledOnce();
+  h.sign.mockClear();
+  await expect(handler({ fieldName: "crmFile", identity, arguments: { operation: "read", path, validateObjectExistence: true } })).rejects.toThrow("not available");
+  expect(h.s3).not.toHaveBeenCalled(); expect(h.sign).not.toHaveBeenCalled();
+});
+it("allows cleanup after the new Document row was deleted only within its authorized entity", async () => {
+  h.records.delete("documents:doc");
+  const path = "documents/ACCOUNT/a/doc/file.pdf";
+  await expect(handler({ fieldName: "crmFile", identity, arguments: { operation: "delete", path } })).resolves.toEqual({ ok: true });
+  expect(h.s3).toHaveBeenCalledOnce();
+  expect(h.s3.mock.calls[0][0].input).toMatchObject({ Bucket: "bucket", Key: path });
+  h.s3.mockClear();
+  await expect(handler({ fieldName: "crmFile", identity, arguments: { operation: "delete", path: "documents/ACCOUNT/b/doc/file.pdf" } })).rejects.toThrow("not available");
+  expect(h.s3).not.toHaveBeenCalled(); expect(h.sign).not.toHaveBeenCalled();
+});
 it("filters raw list/relationship responses without dropping the pagination cursor", async () => {
   const result = await handler({ mode: "read", model: "Account", identity, previous: { items: [{ id: "b", name: "Hidden" }, { id: "a", name: "Visible" }], nextToken: "cursor" } });
   expect(result).toEqual({ items: [{ id: "a", name: "Visible" }], nextToken: "cursor" });

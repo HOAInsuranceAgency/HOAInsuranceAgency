@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -8,7 +8,9 @@ const h = vi.hoisted(() => ({
   contactCreate: vi.fn(),
   documentCreate: vi.fn(),
   documentUpdate: vi.fn(),
+  documentDelete: vi.fn(),
   upload: vi.fn(),
+  remove: vi.fn(),
   accountGet: vi.fn(),
 }));
 vi.mock("react-router-dom", () => ({ useNavigate: () => h.navigate, useSearchParams: () => [new URLSearchParams()] }));
@@ -20,13 +22,13 @@ vi.mock("../lib/googlePlaces", () => ({
     <input value={value} onChange={event => onChange(event.target.value)} />
   ),
 }));
-vi.mock("../lib/scopedStorage", () => ({ uploadData: h.upload }));
+vi.mock("../lib/scopedStorage", () => ({ uploadData: h.upload, remove: h.remove }));
 vi.mock("aws-amplify/auth", () => ({ getCurrentUser: async () => ({ userId: "actor" }) }));
 vi.mock("aws-amplify/data", () => ({
   generateClient: () => ({ models: {
     Contact: { create: h.contactCreate },
     Account: { get: h.accountGet },
-    Document: { create: h.documentCreate, update: h.documentUpdate },
+    Document: { create: h.documentCreate, update: h.documentUpdate, delete: h.documentDelete },
   } }),
 }));
 import NewLead from "./NewLead";
@@ -37,8 +39,10 @@ beforeEach(() => {
     operation === "team" ? { team: [] } : { id: "new-lead" });
   h.contactCreate.mockReset().mockResolvedValue({ data: { id: "contact-1" } });
   h.documentCreate.mockReset().mockResolvedValue({ data: { id: "document-1" } });
-  h.documentUpdate.mockReset().mockResolvedValue({});
+  h.documentUpdate.mockReset().mockImplementation(async input => ({ data: { ...input } }));
+  h.documentDelete.mockReset().mockImplementation(async input => ({ data: { ...input } }));
   h.upload.mockReset().mockReturnValue({ result: Promise.resolve() });
+  h.remove.mockReset().mockResolvedValue({ path: "removed" });
   h.accountGet.mockReset().mockImplementation(async () => {
     const fields = h.request.mock.calls.filter(([operation]) => operation === "createLead").at(-1)?.[1]?.fields ?? {};
     return { data: { id: "new-lead", ...fields, propertyType: fields.propertyType ?? (fields.type === "PERSONAL" ? "INDIVIDUAL_UNIT_OWNER" : null) } };
@@ -269,6 +273,31 @@ describe("new lead form", () => {
       path: "documents/ACCOUNT/new-lead/document-1/budget.pdf",
       data: budget, options: { contentType: "application/pdf" },
     });
+  });
+
+  it.each(["create", "put"])("finishes the current file after unmount during %s without starting another file", async phase => {
+    let finish!: () => void;
+    const pending = new Promise<void>(resolve => { finish = resolve; });
+    if (phase === "create") h.documentCreate.mockImplementationOnce(async () => {
+      await pending;
+      return { data: { id: "document-1" } };
+    });
+    else h.upload.mockReturnValueOnce({ result: pending });
+    const view = render(<NewLead />);
+    fireEvent.click(disclosure("Notes & documents"));
+    const files = [new File(["one"], "one.pdf"), new File(["two"], "two.pdf")];
+    fireEvent.change(screen.getByLabelText("Add documents…"), { target: { files } });
+    fillRequired();
+    fireEvent.click(screen.getByRole("button", { name: /^Create lead/ }));
+    await waitFor(() => expect(phase === "create" ? h.documentCreate : h.upload).toHaveBeenCalledOnce());
+    expect(h.documentUpdate).not.toHaveBeenCalled();
+    view.unmount();
+    await act(async () => finish());
+    await waitFor(() => expect(h.documentUpdate).toHaveBeenCalledOnce());
+    expect(h.documentCreate).toHaveBeenCalledOnce();
+    expect(h.upload).toHaveBeenCalledOnce();
+    expect(h.documentUpdate.mock.calls[0][0]).toMatchObject({ id: "document-1", s3Key: "documents/ACCOUNT/new-lead/document-1/one.pdf" });
+    expect(h.navigate).not.toHaveBeenCalled();
   });
 
   it("prevents duplicate submissions and requires review after retrying an uncertain creation", async () => {
