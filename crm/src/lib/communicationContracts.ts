@@ -47,7 +47,7 @@ export interface FinancePolicyAnchor { id: string; accountId: string; quoteId?: 
 export interface FinanceLineReceipt { id: string; invoiceId: string; policyId?: string | null }
 export interface PortfolioItem { id: string; relationship: AccountRelationshipRecord; account: { id: string; name: string; stage: string } }
 export interface LegacyManagerCandidate { id: string; contact: Contact; accountName: string }
-export type EligibilityPatch = Partial<Pick<TeamEligibility, 'receiveNewLeads' | 'frontId' | 'frontChannelId' | 'frontSignatureId' | 'dialpadId'>>;
+export type EligibilityPatch = Partial<Pick<TeamEligibility, 'receiveNewLeads' | 'autoRepliesEnabled' | 'frontId' | 'frontChannelId' | 'frontSignatureId' | 'dialpadId'>>;
 export type CommercialChange =
   | { action: 'ESTIMATE'; amount: string | null }
   | { action: 'SAVE_OPTION'; optionId?: string; name: string; quoteIds: string[] }
