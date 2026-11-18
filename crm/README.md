@@ -49,8 +49,13 @@ Internal agency management system replacing EzLynx for the commercial
   in Settings → Team controls automatic website enquiry rotation separately;
   pausing it leaves manual assignments and existing work available. New
   Producers receive website leads by default, while migration preserves an
-  existing Producer's paused lead rotation. The
-  lead and its pending assignment are saved together. A durable worker
+  existing Producer's paused lead rotation.
+  **Autoreplies** switch in Settings → Team controls the initial automated
+  website lead email for each assigned teammate. It is on by default. Admins
+  can turn it off independently of lead rotation, Front assignment and lead
+  texts; pending emails are checked again before delivery. Turning it back on
+  applies to future replies; suppressed emails are not replayed.
+  The lead and its pending assignment are saved together. A durable worker
   advances the rotation with the assigned owner, so retries do not consume
   another turn and bursts never compete for the cursor during capture.
   Only the assigned salesperson receives the Front conversation and text alert, with texts requiring the switch and a saved mobile number
