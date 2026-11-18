@@ -1,0 +1,6 @@
+.commission-journey { display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:.4rem;padding:0;margin:1rem 0;list-style:none; }
+.commission-journey li { min-width:0; }
+.commission-journey button { display:flex;align-items:center;gap:.5rem;width:100%;text-align:left; }
+.commission-journey button small { display:block;font-size:.7rem;margin-top:.2rem; }
+@media(max-width:1000px) { .commission-journey { grid-template-columns:repeat(4,minmax(0,1fr)); } }
+@media(max-width:600px) { .commission-journey { grid-template-columns:repeat(2,minmax(0,1fr)); } .commission-journey li:last-child { grid-column:1/-1; } }

@@ -1,4 +1,6 @@
 import { agencyDay } from '../../../../shared/agencyTime';
+import { type CommissionEarning } from '../../../../shared/commissionExceptions';
+import { exceptionAction, exceptionOperations } from './exceptions';
 import { assertPreviewRead } from "../migration-readonly";
 import { apiFailure } from '../../../../shared/apiResponse';
 import { QueryCommand } from '@aws-sdk/lib-dynamodb';
@@ -14,6 +16,9 @@ import { type Identity } from '../crm-access/policy';
 import { object } from '../api-input';
 import {
   appendEntry,
+  ratio,
+  batchPaidCents,
+  COMMISSION_REVIEW_CATEGORIES,
   day,
   decimal,
   required,
@@ -24,6 +29,7 @@ import {
   selectCommissionTerms,
   selectCarrierPaymentTerms,
   validateCarrierPaymentTerms,
+  receiptOnlyCarrierTerms,
   validateReceiptForecast,
   carrierReconciliationBalances,
   ipfsFeeBalances,
@@ -32,6 +38,7 @@ import {
   MONEY_MAX,
   validateAllocationSnapshot,
   type CommissionPlan,
+  type CommissionPlanDefinition,
   type CarrierCommissionTerms,
   type CommissionPolicy,
   type CommissionStatement,
@@ -46,6 +53,11 @@ import {
   fileSigningOptions,
 } from '../crm-access/file-signing';
 import * as store from './store';
+import { holdApprovedPayroll, payrollAction, payrollOperations } from './payroll';
+import { planAction, planOperations } from './plans';
+import { statementPostingChanges } from './posting';
+import { intakeAction, intakeOperations } from './intake';
+import { depositAction, depositOperations, noSavedDeposit } from './deposits';
 
 const agencyToday = () =>
   agencyDay(new Date());
@@ -84,7 +96,8 @@ export function permitted(event: Event) {
   return { actor, role, field };
 }
 export async function handler(event: Event) {
-  assertPreviewRead((event.fieldName ?? event.info?.fieldName) === "commissionOverview");
+  const fieldName = event.fieldName ?? event.info?.fieldName;
+  assertPreviewRead(fieldName === 'commissionOverview' || (fieldName === 'commissionAction' && event.arguments?.operation === 'payrollWorkspace'));
   try {
     const { actor, role, field } = permitted(event);
     await assertUserSession(event.identity);
@@ -108,7 +121,12 @@ export async function handler(event: Event) {
         const ownBatches = rows.filter(
           (r): r is CommissionBatch => !!r && r.producerId === actor && 'payDate' in r,
         );
-        validateAllocationSnapshot(ownPolicies, ownBatches);
+        const ownEarnings = (await store.getMany<CommissionEarning>(refs.filter(r=>r.kind==='EARNING'))).filter(e=>e.producerId===actor);
+        validateAllocationSnapshot(ownPolicies, ownBatches, ownEarnings);
+        // Check cancelled batches too, and never expose payroll-run references or
+        // future internal fields through an employee response/export.
+        const ownPolicyIds = new Set([...ownPolicies.map(p => p.id), ...ownEarnings.map(e => e.policyId)]);
+        if (ownBatches.some(b => b.lines.some(l => !ownPolicyIds.has(l.policyId)))) throw new Error('Commission records require review. Contact the Owner.');
         const policies = rows
           .filter((r): r is CommissionPolicy => !!r && r.producerId === actor && 'entries' in r)
           .map((p) => ({
@@ -138,6 +156,9 @@ export async function handler(event: Event) {
               agencyCents: e.agencyCents,
               producerCents: e.producerCents,
               originalId: e.originalId,
+              supersededBy: e.supersededBy ? 'corrected' : undefined,
+              allocationId: e.allocationId ? 'shared' : undefined,
+              excludedByCase: e.excludedByCase ? 'reviewed' : undefined,
               batchId: e.batchId,
               eligible: e.eligible,
             })),
@@ -145,22 +166,38 @@ export async function handler(event: Event) {
         return {
           ok: true,
           asOf,
+          isTest: !!process.env.COMMISSION_PAYROLL_ENV && process.env.COMMISSION_PAYROLL_ENV !== 'main',
           policies,
-          batches: rows.filter((r) => r && r.producerId === actor && 'payDate' in r),
+          earnings: ownEarnings.map(e => ({id:e.id,version:e.version,producerId:e.producerId,producerName:e.producerName,policyId:e.policyId,policyNumber:e.policyNumber,accountName:e.accountName,transaction:e.transaction,entryId:e.entryId,receivedOn:e.receivedOn,agencyCents:e.shareBps===undefined?e.agencyCents:ratio(e.agencyCents,e.shareBps,10000),producerBps:e.producerBps,shareBps:e.shareBps,amountCents:e.amountCents,source:e.source,status:e.status,batchId:e.batchId})),
+          batches: ownBatches.map(b => ({
+            id: b.id, version: b.version, producerId: b.producerId, producerName: b.producerName,
+            cutoff: b.cutoff, payDate: b.payDate, actualPaidOn: b.actualPaidOn, status: b.status, totalCents: b.totalCents, paidCents: batchPaidCents(b),
+            payments: b.payments?.map((p,i) => ({ id: String(i+1), amountCents: p.amountCents, paidOn: p.paidOn })),
+            lines: b.lines.map(l => ({ earningId: l.earningId, source: l.source, shareBps: l.shareBps, policyId: l.policyId, entryId: l.entryId, accountName: l.accountName,
+              policyNumber: l.policyNumber, receivedOn: l.receivedOn, transaction: l.transaction,
+              agencyCents: l.agencyCents, producerBps: l.producerBps, amountCents: l.amountCents })),
+          })),
         };
       }
-      const [plans, carriers, policies, statements, batches] = await Promise.all([
+      const [plans, carriers, policies, statements, batches, planDefinitions, earnings, accounts] = await Promise.all([
         store.list<CommissionPlan>('PLAN'),
         store.list<CarrierCommissionTerms>('CARRIER'),
         store.list<CommissionPolicy>('POLICY'),
         store.list<CommissionStatement>('STATEMENT'),
         store.list<CommissionBatch>('BATCH'),
+        store.list<CommissionPlanDefinition>('PLAN_DEFINITION'),
+        store.list<CommissionEarning>('EARNING'),
+        store.list<CommissionAccount>('ACCOUNT'),
       ]);
-      validateAllocationSnapshot(policies, batches);
+      validateAllocationSnapshot(policies, batches, earnings);
       return {
         ok: true,
         asOf,
+        isTest: !!process.env.COMMISSION_PAYROLL_ENV && process.env.COMMISSION_PAYROLL_ENV !== 'main',
         plans,
+        planDefinitions,
+        accounts,
+        earnings,
         carriers,
         policies,
         statements,
@@ -168,6 +205,31 @@ export async function handler(event: Event) {
       };
     }
     const operation = required(args.operation, 'an operation');
+    if (depositOperations.has(operation)) return await depositAction(actor, operation, input);
+    if (intakeOperations.has(operation)) return await intakeAction(event, actor, operation, input);
+    if (exceptionOperations.has(operation)) return await exceptionAction(actor, operation, input);
+    if (planOperations.has(operation)) return await planAction(event, actor, operation, input);
+    if (payrollOperations.has(operation)) return await payrollAction(event, actor, role === 'OWNER', operation, input);
+    if (operation === 'addCommissionReview' || operation === 'resolveCommissionReview') {
+      const policy = await store.get<CommissionPolicy>('POLICY', required(input.id, 'a policy'));
+      if (!policy) throw new Error('Commission policy not found.');
+      currentVersion(input, policy);
+      const holds = [...(policy.reviewHolds ?? [])];
+      if (operation === 'addCommissionReview') {
+        const category = input.category as typeof COMMISSION_REVIEW_CATEGORIES[number];
+        if (!COMMISSION_REVIEW_CATEGORIES.includes(category)) throw new Error('Choose a review category.');
+        if (holds.length >= 100) throw new Error('This policy review history needs archival.');
+        holds.push({ id: randomUUID(), category, note: required(input.note, 'the issue and supporting evidence', 2000), dueOn: day(input.dueOn), status: 'OPEN', openedAt: new Date().toISOString(), openedBy: actor });
+      } else {
+        const index = holds.findIndex(h => h.id === input.holdId && h.status === 'OPEN');
+        if (index < 0) throw new Error('The open review item no longer exists. Refresh before resolving.');
+        holds[index] = { ...holds[index], status: 'RESOLVED', resolution: required(input.resolution, 'the resolution and agreement evidence', 2000), resolvedAt: new Date().toISOString(), resolvedBy: actor };
+      }
+      const reconciliation = await store.get<{ id: string; version: number }>('PAYROLL_STATE', 'reconciliation');
+      const payrollHolds = operation === 'addCommissionReview' ? await holdApprovedPayroll(policy, holds[holds.length - 1].dueOn) : [];
+      await store.commit([change('POLICY', { ...policy, reviewHolds: holds }, policy), change('PAYROLL_STATE', { id: 'reconciliation' }, reconciliation), ...payrollHolds], actor);
+      return { ok: true };
+    }
     if (operation === 'getAccountClassification') {
       const accountId = required(input.id, 'an account');
       const account = await new AccountAccess(
@@ -233,6 +295,7 @@ export async function handler(event: Event) {
         throw new Error('Choose a teammate from the team roster.');
       const old = await store.get<CommissionPlan>('PLAN', producerId);
       currentVersion(input, old);
+      if (old?.terms.some(t => t.assignment) || (input.terms as CommissionPlan['terms'])?.some(t => t.assignment)) throw new Error("Use dated plan assignments to change this producer's configuration.");
       const plan = validatePlan({
         id: producerId,
         version: Number(input.version),
@@ -254,6 +317,12 @@ export async function handler(event: Event) {
       ).requireRecord('Carrier', carrierId);
       const old = await store.get<CarrierCommissionTerms>('CARRIER', carrierId);
       currentVersion(input, old);
+      if (input.receiptOnly === true) {
+        if (Array.isArray(input.arrangements) && input.arrangements.length) throw new Error('Choose actual receipts or a payment forecast.');
+        const terms = receiptOnlyCarrierTerms({ id: carrierId, name: String(carrier.name), version: Number(input.version) });
+        await store.commit([change('CARRIER', terms, old)], actor);
+        return { ok: true };
+      }
       const arrangements = input.arrangements as CarrierCommissionTerms['arrangements'];
       const terms = validateCarrierPaymentTerms({
         id: carrierId,
@@ -274,6 +343,7 @@ export async function handler(event: Event) {
         'Policy',
         required(input.policyId, 'an existing policy'),
       );
+      if (input.policyUpdatedAt !== undefined && input.policyUpdatedAt !== policy.updatedAt) throw new Error('CRM policy details changed. Reopen the policy setup before saving.');
       if (policy.commissionSnapshotId || (await store.get('POLICY', String(policy.id))))
         throw new Error('This policy already has a commission snapshot.');
       const account = await access.requireRecord(
@@ -593,8 +663,8 @@ export async function handler(event: Event) {
       const id = hash(`${carrierId}|${reference.toLowerCase()}`),
         old = await store.get<CommissionStatement>('STATEMENT', id);
       currentVersion(input, old);
-      if (old?.status === 'POSTED')
-        throw new Error('Posted statements are immutable. Record linked adjustments instead.');
+      if (old && old.status !== 'DRAFT')
+        throw new Error('Posted and voided statements are immutable. Use a new reference for a new reconciliation.');
       if (!(await store.get('CARRIER', carrierId)))
         throw new Error('Configure carrier terms first.');
       const source = required(input.source, 'the source statement file');
@@ -625,6 +695,7 @@ export async function handler(event: Event) {
         settlementType: input.settlementType as CommissionStatement['settlementType'],
         totalCents: integer(input.totalCents, -MONEY_MAX, MONEY_MAX, 'settlement total'),
         lines: lines.map((l) => ({
+          ...(l.sourceRow !== undefined ? { sourceRow: integer(l.sourceRow, 2, 1001, 'source row') } : {}),
           ...(l.reportedPremiumCents != null
             ? {
                 reportedPremiumCents: integer(
@@ -650,7 +721,8 @@ export async function handler(event: Event) {
           kind: l.kind,
           agencyCents: integer(l.agencyCents, -MONEY_MAX, MONEY_MAX, 'agency commission'),
           eligible: l.eligible,
-          eligibilityNote: required(l.eligibilityNote, 'eligibility and variance review notes'),
+          ...(l.reviewStatus ? { reviewStatus: l.reviewStatus } : {}),
+          eligibilityNote: required(l.eligibilityNote, 'eligibility and variance review notes', 2000),
           ...(l.originalId ? { originalId: required(l.originalId, 'an original entry') } : {}),
         })),
         status: 'DRAFT',
@@ -676,9 +748,27 @@ export async function handler(event: Event) {
         const policy = policies.get(line.policyId);
         if (!policy || policy.carrierId !== carrierId)
           throw new Error('Each line must match a policy for this carrier.');
-        policies.set(policy.id, appendEntry(policy, line, statement, `${id}:${line.lineRef}`));
+        // Pending is allowed in a draft, but never posted as zero compensation.
+        policies.set(policy.id, appendEntry(policy, line.reviewStatus === 'PENDING' ? { ...line, reviewStatus: undefined, eligible: false } : line, statement, `${id}:${line.lineRef}`));
       }
-      await store.commit([change('STATEMENT', statement, old)], actor);
+      const reconciliation = await store.get<{ id: string; version: number }>('PAYROLL_STATE', 'reconciliation');
+      await store.commit([change('STATEMENT', statement, old), change('PAYROLL_STATE', { id: 'reconciliation' }, reconciliation)], actor, [noSavedDeposit(statement.settlementRef)]);
+      return { ok: true };
+    }
+    if (operation === 'voidStatement') {
+      const statement = await store.get<CommissionStatement>('STATEMENT', required(input.id, 'a statement'));
+      if (!statement) throw new Error('Statement not found.');
+      const reason = required(input.reason, 'a reason for voiding this draft', 1000);
+      if (input.confirmed !== true) throw new Error('Confirm that this draft must not be posted.');
+      // Only an identical retry may succeed after a lost response.
+      if (statement.status === 'VOID' && statement.voidReason === reason && statement.voidedBy === actor) return { ok: true };
+      currentVersion(input, statement);
+      if (statement.status !== 'DRAFT') throw new Error('Only a draft statement can be voided. Posted receipts require linked adjustments.');
+      const reconciliation = await store.get<{ id: string; version: number }>('PAYROLL_STATE', 'reconciliation');
+      await store.commit([
+        change('STATEMENT', { ...statement, status: 'VOID', voidReason: reason, voidedAt: new Date().toISOString(), voidedBy: actor }, statement),
+        change('PAYROLL_STATE', { id: 'reconciliation' }, reconciliation),
+      ], actor);
       return { ok: true };
     }
     if (operation === 'postStatement') {
@@ -689,123 +779,25 @@ export async function handler(event: Event) {
       if (!statement) throw new Error('Statement not found.');
       if (statement.status === 'POSTED') return { ok: true }; // Durable retry after lost response.
       currentVersion(input, statement);
+      if (statement.status !== 'DRAFT') throw new Error('Only a draft statement can be posted. Voided statements remain in history.');
       if (sum(statement.lines.map((l) => l.agencyCents)) !== statement.totalCents)
         throw new Error('Statement control totals do not balance.');
       if (input.confirmed !== true)
         throw new Error('Confirm settlement evidence and line eligibility before posting.');
-      const changes: store.Change[] = [],
-        originals = new Map<string, CommissionPolicy>(),
-        updated = new Map<string, CommissionPolicy>();
-      for (const line of statement.lines) {
-        const original =
-          originals.get(line.policyId) ??
-          (await store.get<CommissionPolicy>('POLICY', line.policyId));
-        if (!original || original.carrierId !== statement.carrierId)
-          throw new Error('A policy match is no longer available.');
-        originals.set(original.id, original);
-        updated.set(
-          original.id,
-          appendEntry(
-            updated.get(original.id) ?? original,
-            line,
-            statement,
-            `${statement.id}:${line.lineRef}`,
-          ),
-        );
-        changes.push(
-          change('CARRIER_TRANSACTION', {
-            id: hash(`${statement.carrierId}|${line.lineRef.toLowerCase()}`),
-            statementId: statement.id,
-          }),
-        );
-      }
-      for (const [id, value] of updated) changes.push(change('POLICY', value, originals.get(id)));
-      changes.push(
-        change('SETTLEMENT', {
-          id: hash(`${statement.carrierId}|${statement.settlementRef.toLowerCase()}`),
-          statementId: statement.id,
-          amount: statement.totalCents,
-        }),
-      );
-      changes.push(
-        change(
-          'STATEMENT',
-          {
-            ...statement,
-            status: 'POSTED',
-            postedAt: new Date().toISOString(),
-            postedBy: actor,
-          },
-          statement,
-        ),
-      );
-      await store.commit(changes, actor);
+      const changes = await statementPostingChanges(statement, actor, statement);
+      const reconciliation = await store.get<{ id: string; version: number }>('PAYROLL_STATE', 'reconciliation');
+      await store.commit([...changes, change('PAYROLL_STATE', { id: 'reconciliation' }, reconciliation)], actor, statement.lines.map(line => ({ ConditionCheck: { TableName: store.table(), Key: { kind: 'INTAKE_TRANSACTION', id: hash(statement.carrierId + '|' + line.lineRef.toLowerCase()) }, ConditionExpression: 'attribute_not_exists(id)' } })));
       return { ok: true };
     }
-    if (operation === 'preparePayroll') {
-      const producerId = required(input.producerId, 'a producer'),
-        cutoff = day(input.cutoff),
-        payDate = day(input.payDate),
-        id = required(input.requestId, 'a payroll request ID', 128);
-      if (cutoff > payDate) throw new Error('The cutoff must not follow the pay date.');
-      const existing = await store.get<CommissionBatch>('BATCH', id);
-      if (existing) {
-        if (
-          existing.producerId !== producerId ||
-          existing.cutoff !== cutoff ||
-          existing.payDate !== payDate
-        )
-          throw new Error('Payroll request ID was already used.');
-        return { ok: true };
-      }
-      const refs = await store.list<{ id: string }>(producerId, true, 'POLICY');
-      const policies = (
-        await store.getMany<CommissionPolicy>(refs.map((r) => ({ kind: 'POLICY', id: r.id })))
-      ).filter((p) => p.producerId === producerId);
-      const changes: store.Change[] = [],
-        lines: CommissionBatch['lines'] = [];
-      for (const p of policies) {
-        const entries = p.entries.map((e) => {
-          if (e.kind !== 'RECEIPT' || e.batchId || e.producerCents <= 0 || e.receivedOn > cutoff)
-            return e;
-          lines.push({
-            policyId: p.id,
-            entryId: e.id,
-            revenueKind: e.revenueKind ?? 'CARRIER_COMMISSION',
-            accountName: p.accountName,
-            policyNumber: p.policyNumber,
-            agencyCents: e.agencyCents,
-            producerBps: p.producerBps,
-            amountCents: e.producerCents,
-          });
-          return { ...e, batchId: id };
-        });
-        if (entries.some((e, i) => e !== p.entries[i]))
-          changes.push(change('POLICY', { ...p, entries }, p));
-      }
-      if (!lines.length)
-        throw new Error('There are no unpaid, unbatched earnings through this cutoff.');
-      if (changes.length > 70 || lines.length > 500)
-        throw new Error('Payroll is too large. Use an earlier cutoff to prepare smaller batches.');
-      const batch: CommissionBatch = {
-        id,
-        version: 0,
-        producerId,
-        producerName: policies[0].producerName,
-        cutoff,
-        payDate,
-        status: 'APPROVED',
-        totalCents: sum(lines.map((l) => l.amountCents)),
-        lines,
-      };
-      await store.commit([...changes, change('BATCH', batch)], actor);
-      return { ok: true };
-    }
+    if (operation === 'preparePayroll') throw new Error('Use the payroll workspace to create an off-cycle run, review its preview, and approve its HR report.');
     if (operation === 'payPayroll' || operation === 'cancelPayroll') {
       const batch = await store.get<CommissionBatch>('BATCH', required(input.id, 'a batch'));
       if (!batch) throw new Error('Payroll batch not found.');
+      if (batch.cycleId) throw new Error('Use the monthly payroll workspace to confirm or cancel this cycle.');
       const target = operation === 'payPayroll' ? 'PAID' : 'CANCELLED';
       if (batch.status === target) return { ok: true };
+      if (operation === 'payPayroll') throw new Error('Cancel this unpaid legacy batch, then use an approved off-cycle payroll report to record payment.');
+      if (batchPaidCents(batch) > 0) throw new Error('A batch with recorded payments cannot be cancelled.');
       currentVersion(input, batch);
       if (batch.status !== 'APPROVED')
         throw new Error('Only an approved, unpaid batch can change status.');

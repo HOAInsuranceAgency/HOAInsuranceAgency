@@ -1,12 +1,12 @@
 import { useState } from 'react';
 import {
-  decimal,
-  type CommissionPlan
+decimal,
+type CommissionPlan
 } from '../../../../shared/commissions';
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
 import { commissionAction } from '../../lib/commissions';
-import { ActionForm, Field } from './CommissionForm';
+import { ActionForm,Field } from './CommissionForm';
 
 export function PlanEditor({
   producerId,

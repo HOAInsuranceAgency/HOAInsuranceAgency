@@ -1,16 +1,16 @@
 import { privateApiRecord, privateApiError, ApiResponseError } from './apiResponse';
-import { isCommissionOperationName } from '../../../shared/apiOperations';
+import { type CommissionOperationName, isCommissionOperationName } from '../../../shared/apiOperations';
 import { client } from './client';
 import type { CommissionOverview, CommissionBasis, CarrierPaymentArrangement } from '../../../shared/commissions';
 import type { CommissionOperation, CommissionInput, CommissionResult, CommissionFileUpload, CommissionFileRead } from './commissionContracts';
 export type { CommissionOperation, CommissionInput, CommissionResult } from './commissionContracts';
 export interface CarrierPaymentPreview {
   carrierTermsVersion: number;
-  basis: CommissionBasis;
+  basis: CommissionBasis | 'UNSPECIFIED';
   payment?: Pick<CarrierPaymentArrangement,
     'id' | 'payor' | 'trigger' | 'cadence' | 'lagDays' | 'cutoffDay' | 'paymentDay' | 'earningMethod'>;
 }
-function commissionResponse<T>(response: {
+export function commissionResponse<T>(response: {
   data?: unknown;
   errors?: readonly { message: string }[];
 }): T {
@@ -29,4 +29,11 @@ export function commissionAction<K extends CommissionOperation>(operation: K, in
 export async function commissionAction(operation: CommissionOperation | 'file', input: CommissionInput<CommissionOperation> | CommissionFileUpload | CommissionFileRead): Promise<unknown> {
   if (!isCommissionOperationName(operation)) throw new ApiResponseError('Unknown commission operation.', { code: 'INVALID_API_OPERATION' });
   return commissionResponse(await client.mutations.commissionAction({ operation, input: JSON.stringify(input) }).catch(privateApiError));
+}
+
+/** Versioned workflow payloads are validated by their server operation. Existing
+ * policy and binding callers retain their operation-specific typed contract. */
+export async function commissionWorkflowAction<T = { ok: true }>(operation: CommissionOperationName, input: object): Promise<T> {
+  if (!isCommissionOperationName(operation)) throw new ApiResponseError('Unknown commission operation.', { code: 'INVALID_API_OPERATION' });
+  return commissionResponse<T>(await client.mutations.commissionAction({operation, input: JSON.stringify(input)}).catch(privateApiError));
 }

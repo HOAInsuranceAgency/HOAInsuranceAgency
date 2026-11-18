@@ -1,7 +1,7 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 import { packageTerms } from '../../../shared/quotePackages';
 import { commissionPolicy, commissionAccount } from './commissionFixtures';
-import { carrierReconciliationBalances, type CarrierPaymentArrangement } from '../../../shared/commissions';
+import { carrierReconciliationBalances, receiptOnlyCarrierTerms, type CarrierPaymentArrangement } from '../../../shared/commissions';
 const h = vi.hoisted(() => ({
   get: vi.fn(),
   commit: vi.fn(),
@@ -211,7 +211,7 @@ it('blocks a stale client selection and missing agreement setup', async () => {
   await expect(bindPolicy(event, input())).rejects.toThrow(/selected package/);
   h.rows.delete('Communication:commercial:a');
   h.get.mockResolvedValue(undefined);
-  await expect(bindPolicy(event, input())).rejects.toThrow(/configure/);
+  await expect(bindPolicy(event, input())).rejects.toThrow(/assign a commission plan/);
   expect(h.commit).not.toHaveBeenCalled();
 });
 
@@ -286,7 +286,7 @@ it.each(['missing account', 'missing GIM terms'])(
             }
         : fallback(kind, id),
     );
-    await expect(bindPolicy(event, input())).rejects.toThrow(/Owner must/);
+    await expect(bindPolicy(event, input())).rejects.toThrow(scenario === "missing GIM terms" ? /No GIM rate covers/ : /Owner must/);
     expect(h.commit).not.toHaveBeenCalled();
   },
 );
@@ -480,4 +480,16 @@ it('requires review of the existing carrier policy before registering a duplicat
   h.send.mockResolvedValue({ Items: [{ id: 'existing', carrierId: 'c', policyNumber: 'pol-1', effectiveDate: '2026-10-13' }] });
   await expect(bindPolicy(event, registration)).rejects.toThrow(/carrier policy and term already exist/);
   expect(h.commit).not.toHaveBeenCalled();
+});
+it('binds receipt-only tracking without guessing a payment arrangement and still freezes the plan', async () => {
+  const original = h.get.getMockImplementation()!;
+  h.get.mockImplementation(async (...args) => args[0] === 'CARRIER'
+    ? receiptOnlyCarrierTerms({ id: 'c', name: 'Carrier', version: 6 }) : original(...args));
+  await bindPolicy(event, { ...input(), carrierTermsVersion: 6 });
+  const [changes, , guards] = h.commit.mock.calls[0];
+  expect(changes[0].value).toMatchObject({ producerBps: 1600, planVersion: 3, entries: [],
+    carrierTerms: { version: 6, receiptOnly: true, basis: 'UNSPECIFIED' } });
+  expect(changes[0].value.carrierTerms).not.toHaveProperty('payment');
+  expect(guards).toContainEqual({ ConditionCheck: { TableName: 'commissions', Key: { kind: 'CARRIER', id: 'c' },
+    ConditionExpression: '#v = :v', ExpressionAttributeNames: { '#v': 'version' }, ExpressionAttributeValues: { ':v': 6 } } });
 });
