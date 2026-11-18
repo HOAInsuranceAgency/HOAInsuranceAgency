@@ -74,7 +74,7 @@ it('fails closed on missing classifications, gaps, and missing GIM terms but per
   expect(() => selectCommissionTerms(p, undefined, '2026-10-28', 'NEW')).toThrow(/classify/);
   expect(() => selectCommissionTerms(p, gim(), '2025-12-31', 'NEW')).toThrow(/classify/);
   expect(() => selectCommissionTerms(p, gim(), '2026-10-28', 'NEW')).toThrow(
-    /No GIM rate covers this policy’s bind date/,
+    /No GIM rate covers this policy’s bind date \(2026-10-28\).*Standard rates cannot be used\./,
   );
   expect(selectCommissionTerms(p, commissionAccount(), '2026-10-28', 'NEW').producerBps).toBe(2000);
 });
