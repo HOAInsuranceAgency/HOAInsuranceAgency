@@ -76,7 +76,8 @@ export async function writeInvoiceDraftLine(access: AccountAccess, context: Nati
   } }];
   if (!access.admin) {
     const workflow = await access.get('Communication', `workflow:${accountId}`);
-    if (!workflow || object(workflow.data).salespersonId !== access.actor) throw new AccessDenied();
+    if (!workflow) throw new AccessDenied();
+    writes.push(...await access.capabilityChecks(String(accountId), 'invoice'));
     writes.push({ ConditionCheck: {
       TableName: modelTable('Communication'), Key: { id: `workflow:${accountId}` },
       ConditionExpression: '#data = :data', ExpressionAttributeNames: { '#data': 'data' },

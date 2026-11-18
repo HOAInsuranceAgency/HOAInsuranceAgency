@@ -40,6 +40,11 @@ export function installAccountAccess(backend: typeof Backend, communicationTable
     const name = `${model}-${api.apiId}-NONE`;
     if (JSON.stringify(properties.tableName) !== JSON.stringify(Stack.of(resource).resolve(name))) throw new Error(`Unexpected table name for ${model}; update the access map`);
     tables[model] = name;
+    if (model === 'Account') {
+      const stage = properties.globalSecondaryIndexes?.find(index => index.keySchema.some(key => key.keyType === 'HASH' && key.attributeName === 'stage'));
+      if (!stage) throw new Error('Missing account stage index for salesperson visibility');
+      guard.addEnvironment('ACCESS_ACCOUNT_STAGE_INDEX', stage.indexName);
+    }
     if (isIndexedAccountModel(model)) {
       const all = [...properties.globalSecondaryIndexes ?? []], definitions = [...properties.attributeDefinitions ?? []];
       let added = 0;

@@ -18,7 +18,8 @@ const naturalKey = (model: string) => ["GlApplication", "DoApplication"].include
 async function query(model: string, field: string, key: string, limit: number, cursor?: Key, filter: RecordData = {}) {
   const error = () => new Error(`Missing list index for ${model}.${field}`);
   const indexes = parseAccessIndexes(process.env.ACCESS_INDEXES, error);
-  const index = model === "Communication" ? "assignment" : resolveAccessIndex(indexes, requireModelIndexKey(model, field, error), { error });
+  const index = model === "Account" && field === "stage" ? process.env.ACCESS_ACCOUNT_STAGE_INDEX : model === "Communication" ? "assignment" : resolveAccessIndex(indexes, requireModelIndexKey(model, field, error), { error });
+  if (!index) throw error();
   const pushed = queryFilter(filter, field);
   const page = await db.send(new QueryCommand({ TableName: tableName(model), IndexName: index,
     KeyConditionExpression: "#scope = :scope", ...pushed,
@@ -44,8 +45,10 @@ function decode(token: unknown, scope: string): Cursor {
  * the cursor. Cursors are traversal hints, never proof of current access. */
 export async function listAssigned(access: AccountAccess, model: string, args: RecordData) {
   if (RETIRED_MODELS.includes(model) || !(ACCOUNT_MODELS as readonly string[]).includes(model) || access.admin) throw new AccessDenied();
-  const filter = object(args.filter), owners = [...await access.salespeople()].sort();
-  const scope = createHash("sha256").update(JSON.stringify([access.actor, owners, model, filter])).digest("hex");
+  const filter = object(args.filter), policy = await access.accessPolicy();
+  const broad = policy.visibility !== "ASSIGNED";
+  const owners = broad ? ["LEAD", "CLIENT"] : [...await access.salespeople()].sort();
+  const scope = createHash("sha256").update(JSON.stringify([access.actor, owners, policy, model, filter])).digest("hex");
   const c = decode(args.nextToken, scope), limit = Math.min(100, Math.max(1, Math.floor(Number(args.limit) || 100)));
   const items: RecordData[] = [], seen = new Set<string>(), deadline = Date.now() + 8_000;
   let queries = 0, evaluated = 0, steps = 0, done = false;
@@ -89,7 +92,7 @@ export async function listAssigned(access: AccountAccess, model: string, args: R
     return finish();
   }
   const migration = await access.get("Communication", "migration:assignment-index:v1");
-  if (object(migration?.data).complete !== true) throw new Error("Account access is being prepared. Please try again shortly.");
+  if (!broad && object(migration?.data).complete !== true) throw new Error("Account access is being prepared. Please try again shortly.");
   const advanceAccount = () => { delete c.account; delete c.parents; delete c.parent; delete c.parentIds; delete c.records; c.part = 0; };
   const advanceParent = () => {
     delete c.parent; delete c.records;
@@ -104,10 +107,11 @@ export async function listAssigned(access: AccountAccess, model: string, args: R
     if (!c.account) {
       if (c.accounts?.length) { c.account = c.accounts.shift(); continue; }
       if (c.owner < owners.length) {
-        const page = await readPage("Communication", "assignedSalespersonId", owners[c.owner], Math.min(limit - items.length, 25), c.assignment);
+        const page = await readPage(broad ? "Account" : "Communication", broad ? "stage" : "assignedSalespersonId", owners[c.owner], Math.min(limit - items.length, 25), c.assignment);
         c.assignment = page.cursor;
         if (!page.cursor) c.owner++;
-        c.accounts = page.items.map(item => id(item.accountId)).filter(Boolean);
+        c.accounts = page.items.map(item => id(broad ? item.id : item.accountId)).filter(Boolean);
+        if (broad) await access.prefetch("Account", c.accounts);
         await access.prefetchAccounts(c.accounts);
         if (model === "Account") {
           const permitted = (await Promise.all(c.accounts.map(async key => await access.canAccount(key) ? { id: key } : undefined))).filter((r): r is { id: string } => !!r);

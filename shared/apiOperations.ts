@@ -1,5 +1,8 @@
 /** Client-visible names and transport classification, not authorization policy. */
 export const COMMUNICATION_OPERATION_MODES = {
+  accountPermissions: 'read',
+  salespersonAccessSettings: 'read',
+  saveSalespersonAccessSettings: 'write',
   team: 'read',
   teamSettings: 'read',
   settings: 'read',

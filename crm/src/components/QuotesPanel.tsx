@@ -1,3 +1,4 @@
+import { useAccountPermissions } from './AccountPermissions';
 import { assertGraphqlErrors } from '../lib/apiResponse';
 import { readBrokerFeeStatus, bindCommissionPolicy, type BrokerFeeStatus } from '../lib/brokerFees';
 import { serviceFinanceLoan } from '../lib/billingApi';
@@ -81,6 +82,7 @@ function QuotesPanelContent({
   const today = useAgencyDay();
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Quote | null>(null);
+  const permissions = useAccountPermissions();
   const [binding, setBinding] = useState<Quote | null>(null);
   const [bindError, setBindError] = useState("");
   const [authorization, setAuthorization] = useState<Quote | null>(null);
@@ -182,6 +184,7 @@ function QuotesPanelContent({
           </div>
           <Button
             variant={showForm ? "secondary" : "primary"}
+            disabled={!permissions.edit}
             onClick={() => {
               setEditing(null);
               setShowForm(!showForm);
@@ -321,6 +324,7 @@ function QuotesPanelContent({
                       <div className="quotes-row-actions">
                         <Button variant="link"
                           className="quote-action"
+                          disabled={!permissions.edit || (!permissions.assigned && !["DRAFT", "SUBMITTED", "QUOTED"].includes(qt.status))}
                           onClick={() => {
                             setShowForm(false);
                             setEditing(qt);
@@ -333,7 +337,7 @@ function QuotesPanelContent({
                             <Select
                               className="quote-status-select"
                               aria-label="Quote status"
-                              disabled={statusSave.busy || !!binding}
+                              disabled={!permissions.edit || statusSave.busy || !!binding}
                               value={qt.status}
                               onChange={(e) =>
                                 setStatus(qt, e.target.value as Quote["status"])
@@ -347,7 +351,7 @@ function QuotesPanelContent({
                             </Select>{" "}
                             <Button variant="link"
                               className="quote-action"
-                              disabled={statusSave.busy || !!binding}
+                              disabled={!permissions.bind || statusSave.busy || !!binding}
                               onClick={() => setBinding(qt)}
                             >
                               Bind
@@ -358,6 +362,7 @@ function QuotesPanelContent({
                                   authorizedQuoteTerms(qt)) && (
                                 <Button variant="link"
                                   className="quote-action"
+                                  disabled={!permissions.bind}
                                   onClick={() => {
                                     setAuthorization(qt);
                                     setClientAuthorized(false);
@@ -411,7 +416,7 @@ function QuotesPanelContent({
             <div className="form-actions quote-flow-actions">
               <Button variant="primary"
 
-                disabled={!clientAuthorized || authorizing}
+                disabled={!permissions.bind || !clientAuthorized || authorizing}
                 onClick={async () => {
                   if (authorizationLock.current) return;
                   authorizationLock.current = true;

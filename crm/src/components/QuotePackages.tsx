@@ -1,3 +1,4 @@
+import { AccountEditBoundary, useAccountPermissions } from './AccountPermissions';
 import { useLiveUpdateBlock } from "../lib/useLiveUpdates";
 import { Button } from "./ui/Button";
 import { Input } from "./ui/Input";
@@ -36,6 +37,7 @@ function QuotePackagesContent({
   quotes: Quote[];
   carriers: Carrier[];
 }) {
+  const permissions = useAccountPermissions();
   const resource = useCommercial([accountId], quotes),
     plan =
       resource.data.entries[accountId]?.plan ?? emptyCommercialPlan(accountId);
@@ -127,7 +129,7 @@ function QuotePackagesContent({
         <Button variant="secondary"
 
           disabled={
-            resource.loading ||
+            !permissions.edit || resource.loading ||
             !!resource.error ||
             saving ||
             !!plan.selectedOptionId
@@ -153,7 +155,7 @@ function QuotePackagesContent({
           <div className="package-summary">
             <div className="package-metric">
               <h3>Estimated opportunity</h3>
-              <OpportunityEstimate plan={plan} onSaved={update} />
+              <AccountEditBoundary><OpportunityEstimate plan={plan} onSaved={update} /></AccountEditBoundary>
             </div>
             <div className="package-metric">
               <h3>Pending commission</h3>
@@ -230,12 +232,12 @@ function QuotePackagesContent({
                     </p>
                   )}
                   <div className="form-actions">
-                    <BusinessDraftButton accountId={accountId} kind="PACKAGE" recordId={option.id} label="Prepare proposal in Front" disabled={saving || !assessment.complete} />
+                    <BusinessDraftButton accountId={accountId} kind="PACKAGE" recordId={option.id} label="Prepare proposal in Front" disabled={saving || !permissions.edit || !assessment.complete} />
                     {(!plan.selectedOptionId || chosen) && (
                       <>
                         <Button variant="secondary"
 
-                          disabled={saving}
+                          disabled={saving || !permissions.edit}
                           onClick={() => edit(option)}
                         >
                           {chosen ? 'Review / revise option' : 'Edit option'}
@@ -243,7 +245,7 @@ function QuotePackagesContent({
                         {(!chosen || forecast.cents == null) && (
                           <Button variant="primary"
 
-                            disabled={saving || !assessment.complete}
+                            disabled={saving || !permissions.edit || !assessment.complete}
                             onClick={() =>
                               void write({
                                 action: 'SELECT',
@@ -260,7 +262,7 @@ function QuotePackagesContent({
                         {!chosen && (
                           <Button variant="link"
 
-                            disabled={saving}
+                            disabled={saving || !permissions.edit}
                             onClick={() =>
                               void write({
                                 action: 'REMOVE_OPTION',
@@ -279,7 +281,7 @@ function QuotePackagesContent({
                         {!assessment.boundCount && (
                           <Button variant="link"
 
-                            disabled={saving}
+                            disabled={saving || !permissions.edit}
                             onClick={() =>
                               void write({ action: 'CLEAR_SELECTION' })
                             }
@@ -320,7 +322,7 @@ function QuotePackagesContent({
                 <Input
                   id="package-option-name"
                   value={editor.name}
-                  disabled={saving}
+                  disabled={saving || !permissions.edit}
                   maxLength={100}
                   required
                   onChange={(e) =>
@@ -329,7 +331,7 @@ function QuotePackagesContent({
                 />
               </div>
               <div className="package-editor-grid">
-                <fieldset className="package-fieldset" disabled={saving}>
+                <fieldset className="package-fieldset" disabled={saving || !permissions.edit}>
                   <legend>Coverages needed for this account</legend>
                   <div className="package-coverage-grid">
                     {[
@@ -362,7 +364,7 @@ function QuotePackagesContent({
                     ))}
                   </div>
                 </fieldset>
-                <fieldset className="package-fieldset" disabled={saving}>
+                <fieldset className="package-fieldset" disabled={saving || !permissions.edit}>
                   <legend>Quotes in this option</legend>
                   <div className="package-quote-choices">
                     {!selectableQuotes.length && (
@@ -424,7 +426,7 @@ function QuotePackagesContent({
                 <Input
                   type="checkbox"
                   checked={editor.reviewed}
-                  disabled={saving}
+                  disabled={saving || !permissions.edit}
                   onChange={(e) =>
                     setEditor({ ...editor, reviewed: e.target.checked })
                   }
@@ -444,7 +446,7 @@ function QuotePackagesContent({
                 <Button variant="secondary"
 
                   type="button"
-                  disabled={saving}
+                  disabled={saving || !permissions.edit}
                   onClick={() => setEditor(null)}
                 >
                   Cancel

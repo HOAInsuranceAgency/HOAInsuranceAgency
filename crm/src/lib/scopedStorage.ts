@@ -2,10 +2,10 @@ import { client } from "./client";
 import { privateApiCall, isRecord } from './apiResponse';
 import { isHttpsUrl, type ApiRecord } from '../../../shared/apiResponse';
 type FileInput = { path: string; options?: { contentType?: string; expiresIn?: number; validateObjectExistence?: boolean; contentDisposition?: { type: "attachment"; filename: string }; onProgress?: (progress: { transferredBytes: number; totalBytes: number }) => void } };
-type SignedFile = { url: string; expiresAt: string };
+type SignedFile = { url: string; expiresAt: string; createOnly?: boolean };
 type FilePage = { items: { path: string; size?: number; lastModified?: string }[]; nextToken?: string | null };
 function signedFile(value: ApiRecord): value is ApiRecord & SignedFile {
-  return isHttpsUrl(value.url) && typeof value.expiresAt === 'string' && Number.isFinite(Date.parse(value.expiresAt));
+  return isHttpsUrl(value.url) && typeof value.expiresAt === 'string' && Number.isFinite(Date.parse(value.expiresAt)) && (value.createOnly === undefined || typeof value.createOnly === 'boolean');
 }
 function filePage(value: ApiRecord): value is ApiRecord & FilePage {
   return Array.isArray(value.items) && value.items.every(item => isRecord(item) && typeof item.path === 'string'
@@ -30,7 +30,7 @@ export function uploadData(input: FileInput & { data: Blob | ArrayBuffer | Array
     const data = input.data instanceof Blob ? input.data : new Blob([input.data as BlobPart]);
     const contentType = input.options?.contentType || data.type || "application/octet-stream";
     const signed = await request("write", input.path, signedFile, { contentType, sizeBytes: data.size });
-    const response = await fetch(signed.url, { method: "PUT", headers: { "Content-Type": contentType }, body: data });
+    const response = await fetch(signed.url, { method: "PUT", headers: { "Content-Type": contentType, ...(signed.createOnly ? { "If-None-Match": "*" } : {}) }, body: data });
     if (!response.ok) throw new Error("The file could not be uploaded. Please try again.");
     input.options?.onProgress?.({ transferredBytes: data.size, totalBytes: data.size });
     return { path: input.path };

@@ -1,3 +1,6 @@
+import { AccountAccess } from '../crm-access/access';
+import type { Identity } from '../crm-access/policy';
+import type { RoleRequest } from '../crm-access/active-role';
 import { randomUUID, createHash } from 'node:crypto';
 import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import type { BusinessDeliveryAttempt, BusinessDeliveryContext, BusinessDeliveryPreview, BusinessDeliverySelection, BusinessDeliverySender, PrepareBusinessDraftInput, ReconcileBusinessDraftInput } from '../../../../shared/frontBusinessDelivery';
@@ -31,10 +34,22 @@ interface PreviewRecord { actor: string; preview: BusinessDeliveryPreview; sourc
 interface AttemptRecord extends BusinessDeliveryAttempt { actor: string; previewId: string; previewHash: string; requestHash: string; reference: string; facts: string[]; files: FrozenFile[]; quoteTerms: Record<string,string>; sender: BusinessDeliverySender; sourceFingerprint: string; frontMessageId?: string; lastCheckedBy?:string; lastCheckedAt?:string; contentProof?:MessageContentProof; nativeImageAliases?:NativeImageAlias[]; }
 interface TargetPointer { accountId:string; kind:string; recordId:string; attemptId:string; }
 interface MessagePointer { accountId:string; attemptId:string; }
-interface ServerAccess { admin: boolean; }
-async function accountAccess(accountId:string,actor:string,access:ServerAccess) {
+interface ServerAccess { admin: boolean; identity?: Identity; request?: RoleRequest; }
+async function accountAccess(accountId:string,actor:string,access:ServerAccess, capability: 'read' | 'send' = 'send') {
   const workflow=await get<LeadWorkflow>(`workflow:${accountId}`);
-  if(!access.admin && workflow?.data.salespersonId!==actor)throw businessValidation('Account assignment changed. Refresh the account before preparing a draft');
+  if(!access.admin && workflow?.data.salespersonId!==actor) {
+    if (!access.identity) throw businessValidation('Account assignment changed. Refresh the account before preparing a draft');
+    const guard = new AccountAccess(access.identity ?? {sub: actor}, async (model,key) => {
+      if(model === 'Communication') return get(key);
+      if(model === 'Account') {
+        const result = await (await dataClient()).models.Account.get({id:key});
+        if(result.errors?.length) throw new Error('Could not verify account access');
+        return result.data ?? undefined;
+      }
+      return undefined;
+    }, access.request);
+    await guard.requireCapability(accountId, capability);
+  }
   if(await get(`deleted-account:${accountId}`))throw businessValidation('This account is unavailable');
   return workflow;
 }
@@ -197,7 +212,7 @@ function attemptDto(d:AttemptRecord):BusinessDeliveryAttempt {
 }
 /** Missing personal mailbox setup must not hide available sources or account history. */
 export async function businessDeliveryContext(input:{accountId:string},actor:string,access:ServerAccess={admin:false}):Promise<BusinessDeliveryContext> {
-  await accountAccess(input.accountId,actor,access);
+  await accountAccess(input.accountId,actor,access, 'read');
   const account=await deliveryAccount(input.accountId),client=await dataClient();
   const context:BusinessDeliveryContext={accountId:account.id,accountName:account.name,choices:[],documents:[],conversations:[{id:'NEW',label:'New conversation — no quoted history'}],recipientSuggestions:[]};
   try{context.sender=(await sender(actor)).sender;}catch(error){context.senderError=error instanceof Error?error.message:'Your Front mailbox needs setup';}
@@ -383,7 +398,7 @@ export async function prepareBusinessDraft(input:PrepareBusinessDraftInput,actor
   }
 }
 export async function historyBusinessDeliveries(input:{accountId:string;kind?:string;recordId?:string;nextToken?:string},actor?:string,access:ServerAccess={admin:false}) {
-  if(actor)await accountAccess(input.accountId,actor,access);else throw businessValidation('Sign in to review draft history');
+  if(actor)await accountAccess(input.accountId,actor,access, 'read');else throw businessValidation('Sign in to review draft history');
   await deliveryAccount(input.accountId);
   const page=await query<AttemptRecord>('account',input.accountId,input.nextToken,50,'BUSINESS_DELIVERY#');
   return {items:page.items.filter(r=>r.data.id && (!input.kind || r.data.kind===input.kind) && (!input.recordId || r.data.recordId===input.recordId)).map(r=>attemptDto(r.data)),nextToken:page.nextToken};

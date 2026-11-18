@@ -1,3 +1,4 @@
+import type { SalespersonAccessPolicy } from '../../../shared/salespersonAccess';
 import type { CommunicationReadOperationName, CommunicationWriteOperationName } from '../../../shared/apiOperations';
 /** Client-visible operation contracts. SDK model imports are type-only. */
 import type { Account, Contact, Policy, Quote } from './client';
@@ -64,6 +65,8 @@ export interface NewLeadFields {
 }
 
 export interface CommunicationReadContracts {
+  accountPermissions: Operation<{ accountId: string }, { assigned: boolean; level: 'OWN' | SalespersonAccessPolicy['level']; edit: boolean; collaborate: boolean; send: boolean; invoice: boolean; bind: boolean }>;
+  salespersonAccessSettings: Operation<EmptyInput, { policy: SalespersonAccessPolicy; version: number; updatedAt?: string; updatedBy?: string }>;
   team: Operation<EmptyInput, { team: TeamEligibility[]; actorId?: string }>;
   teamSettings: Operation<{ userIds: string[] }, { team: TeamEligibility[] }>;
   settings: Operation<EmptyInput, CommunicationSettingsSnapshot>;
@@ -94,6 +97,7 @@ export interface CommunicationReadContracts {
   lastContacts: Operation<{ accounts: { accountId: string; nextToken?: string }[] }, { items: { accountId: string; contact: ContactStamp | null; complete: boolean; nextToken?: string }[] }>;
 }
 export interface CommunicationWriteContracts {
+  saveSalespersonAccessSettings: Operation<{ policy: SalespersonAccessPolicy; version: number }, { policy: SalespersonAccessPolicy; version: number; updatedAt: string; updatedBy: string }>;
   setResponsibilities: Operation<{ accountId: string; salespersonId: string; version: number }, { workflow: LeadWorkflow }>;
   saveEligibility: Operation<{ userId: string; version: number } & EligibilityPatch, { member: TeamEligibility }>;
   saveSettings: Operation<{ config: IntegrationConfig; credentials?: CredentialPatch }, { config: IntegrationConfig }>;

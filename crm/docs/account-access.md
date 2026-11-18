@@ -1,9 +1,31 @@
+# Salesperson access settings
+
+Settings → Team → Salesperson access provides three sections:
+
+- Visibility: Assigned only (default), All leads, All leads and clients.
+- Access to other accounts: Read only (default), Collaborate, Edit.
+- Independent switches: sending emails/proposals, creating/sending/voiding invoices, binding policies. All default off.
+
+These settings apply only to the active, authenticated PRODUCER view. STAFF remains assignment-only. OWNER/ADMIN retain their existing access. A missing setting preserves the current behavior; malformed settings and failed reads fail closed. Administrators save the complete policy with an optimistic version. Each change stores the authenticated administrator and an immutable audit-history row in the existing server-only Communication table. No new tables or account backfill are required.
+
+All leads includes shared and unassigned LEAD accounts, while assigned clients remain accessible. All leads and clients also includes CLIENT accounts. Lists traverse the existing Account stage index in bounded pages, and re-read current account stage, assignment, and deletion state before returning records. Continuation tokens include the visibility policy; changing it invalidates old shared-list cursors. Search, direct IDs, relationships, and file reads use the same access rule.
+
+Collaborate allows internal notes and new document uploads, including finalizing a new document's pending path. It does not allow replacing/deleting existing documents. Shared-account uploads are signed with a create-only S3 condition. The CRM task feature is retired and is not restored by this change.
+
+Edit additionally permits account details, contacts, underwriting details and draft/open quote edits. It does not grant reassignment, lifecycle changes, deletion, editing bound terms, financing administration, recording receipts, or private compensation access. Existing assignment-based permissions continue on one's own accounts. Sending, invoicing and binding each require their explicit switch; financial/source/signature safeguards remain in place. Lead ownership and commission attribution remain tied to the assigned producer.
+
+The account page fetches current effective permissions before mounting controls, displays the shared-access level, and disables relevant editing/action controls. The backend remains authoritative for native model writes, custom mutations and file signing. Settings changes publish the existing live-change signal; previously downloaded data and already-issued 60-second file URLs cannot be recalled.
+
+Deployment must be followed by staged checks with two actual salespeople: all three scopes and levels, independent action switches, direct account/document links, unassigned leads, CLIENT transition, and revocation during an open session. Unit/build/synthesis checks do not replace those deployed identity checks.
+
+---
+
 # CRM account access
 
 | Signed-in user | Account visibility |
 | --- | --- |
 | Administrator (`ADMIN` Cognito group) | All accounts, including unassigned accounts |
-| Salesperson | Accounts currently assigned to their Cognito user ID |
+| Salesperson | Assigned accounts, plus the administrator-configured visibility above |
 
 The authoritative assignment is `workflow:<accountId>.data.salespersonId` in the server-only communication table. Manager hierarchies and temporary coverage are retired. Stored manager, owner, and cover relationships do not grant account access. Self-editable `UserProfile.role`, legacy champion fields, old reminders, and service-task assignments do not grant access either.
 

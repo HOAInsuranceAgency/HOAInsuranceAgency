@@ -1,3 +1,4 @@
+import { useAccountPermissions } from './AccountPermissions';
 import { Button } from "./ui/Button";
 import { useState } from "react";
 import type { BusinessDeliveryKind } from "../../../shared/frontBusinessDelivery";
@@ -18,9 +19,10 @@ export default function BusinessDraftButton(props: BusinessDraftButtonProps) {
 }
 
 function BusinessDraftButtonContent({ label = "Prepare email in Front", disabled, ...selection }: BusinessDraftButtonProps) {
+  const permissions = useAccountPermissions();
   const [open, setOpen] = useState(false);
   return <>
-    <Button variant="secondary" type="button"  disabled={disabled} onClick={() => setOpen(true)}>{label}</Button>
+    <Button variant="secondary" type="button"  disabled={disabled || !permissions.send} onClick={() => setOpen(true)}>{label}</Button>
     {open && <BusinessDeliveryComposer {...selection} onClose={() => setOpen(false)} />}
   </>;
 }

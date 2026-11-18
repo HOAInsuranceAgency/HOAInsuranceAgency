@@ -582,3 +582,73 @@ describe('relationship access boundaries', () => {
     await expect(admin().write('Contact', 'delete', { id: 'managed' })).resolves.toBeUndefined();
   });
 });
+
+
+describe('admin-controlled salesperson access', () => {
+  const producer = (groups = ['PRODUCER']) => new AccountAccess({ sub: 'alice', groups }, reader);
+  function configure(patch: Record<string, unknown> = {}) {
+    records['Account:b'].stage = 'LEAD';
+    records['Quote:qb'].status = 'DRAFT';
+    records['Communication:settings:salesperson-access:v1'] = { version: 1, data: { policy: { visibility: 'LEADS', level: 'READ', send: false, invoice: false, bind: false, ...patch } } };
+  }
+  it('keeps missing settings assigned-only and applies sharing only to the Producer view', async () => {
+    expect(await producer().canAccount('b')).toBe(false);
+    configure();
+    expect(await producer().canAccount('b')).toBe(true);
+    expect(await producer(['STAFF']).canAccount('b')).toBe(false);
+    expect(await user().canAccount('b')).toBe(false);
+  });
+  it('keeps clients private in all-leads mode, includes unassigned leads, and rechecks revocation', async () => {
+    configure(); records['Account:b'].stage = 'CLIENT';
+    expect(await producer().canAccount('b')).toBe(false);
+    configure({ visibility: 'ALL' }); records['Account:b'].stage = 'CLIENT';
+    expect(await producer().canAccount('b')).toBe(true);
+    delete records['Communication:workflow:b'];
+    expect(await producer().canAccount('b')).toBe(true);
+    configure({ visibility: 'ASSIGNED' });
+    expect(await producer().canAccount('b')).toBe(false);
+    configure(); records['Communication:deleted-account:b'] = {};
+    expect(await producer().canAccount('b')).toBe(false);
+  });
+  it('allows read-only details and downloads, while denying native writes, custom actions and file writes', async () => {
+    configure();
+    await expect(producer().requireRecord('Quote', 'qb')).resolves.toMatchObject({id:'qb'});
+    await expect(producer().path('documents/ACCOUNT/b/db/file.pdf','read')).resolves.toBeUndefined();
+    await expect(producer().write('Account','update',{id:'b',name:'Changed'})).rejects.toThrow(AccessDenied);
+    await expect(producer().write('Document','create',{id:'new',entityType:'ACCOUNT',entityId:'b',s3Key:'pending'})).rejects.toThrow(AccessDenied);
+    await expect(producer().path('documents/ACCOUNT/b/db/file.pdf','write')).rejects.toThrow(AccessDenied);
+    for (const [field,args] of [['sendInvoice',{invoiceId:'ib'}],['voidInvoice',{invoiceId:'ib'}],['bindCommissionPolicy',{input:{quoteId:'qb'}}],['communicationWrite',{operation:'addNote',input:{accountId:'b'}}],['communicationWrite',{operation:'prepareBusinessDraft',input:{accountId:'b'}}]] as const) {
+      await expect(authorizeCustom(producer(),field,args)).rejects.toThrow(AccessDenied);
+    }
+  });
+  it('collaboration allows notes and new uploads, not edits or destructive document actions', async () => {
+    configure({level:'COLLABORATE'});
+    await expect(authorizeCustom(producer(),'communicationWrite',{operation:'addNote',input:{accountId:'b'}})).resolves.toBeUndefined();
+    await expect(authorizeCustom(producer(),'communicationWrite',{operation:'addNote',input:{accountId:'b',publishToFront:true}})).rejects.toThrow(AccessDenied);
+    await expect(producer().write('Document','create',{id:'new',entityType:'ACCOUNT',entityId:'b',s3Key:'pending'})).resolves.toBeUndefined();
+    await expect(producer().write('Document','delete',{id:'db'})).rejects.toThrow(AccessDenied);
+    await expect(producer().write('Contact','create',{id:'c',accountId:'b'})).rejects.toThrow(AccessDenied);
+  });
+  it('edit does not imply sending, invoicing, binding, deletion or reassignment', async () => {
+    configure({level:'EDIT'});
+    await expect(producer().write('Account','update',{id:'b',name:'Changed'})).resolves.toBeUndefined();
+    await expect(producer().write('Quote','update',{id:'qb',notes:'Draft'})).resolves.toBeUndefined();
+    for (const capability of ['send','invoice','bind','restricted'] as const) await expect(producer().requireCapability('b',capability)).rejects.toThrow(AccessDenied);
+    await expect(producer().write('Account','update',{id:'b',stage:'CLIENT'})).rejects.toThrow(AccessDenied);
+    await expect(producer().write('Account','delete',{id:'b'})).rejects.toThrow(AccessDenied);
+    await expect(producer().requireSalesperson('bob')).rejects.toThrow(AccessDenied);
+    records['Quote:qb'].status='BOUND';
+    await expect(producer().write('Quote','update',{id:'qb',notes:'Changed'})).rejects.toThrow(AccessDenied);
+  });
+  it.each(['send','invoice','bind'] as const)('enables only the independent %s action', async capability => {
+    configure({[capability]:true});
+    await expect(producer().requireCapability('b',capability)).resolves.toBeUndefined();
+    for (const other of ['edit','restricted',...(['send','invoice','bind'] as const).filter(c=>c!==capability)] as const) await expect(producer().requireCapability('b',other)).rejects.toThrow(AccessDenied);
+  });
+  it('keeps settings admin-only and rejects malformed persisted permissions', async () => {
+    configure();
+    for (const op of ['salespersonAccessSettings','saveSalespersonAccessSettings']) await expect(authorizeCustom(producer(),op.startsWith('save')?'communicationWrite':'communicationRead',{readOperation:op,operation:op,input:{}})).rejects.toThrow(AccessDenied);
+    configure({send:'yes'});
+    await expect(producer().canAccount('b')).rejects.toThrow('valid salesperson access');
+  });
+});

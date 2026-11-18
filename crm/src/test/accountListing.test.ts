@@ -334,3 +334,26 @@ it.each(['{}', '{"Contact.accountId":15}', '{"Contact":{"accountId":"nested-not-
   await expect(listAssigned(access(), 'Contact', { filter: { accountId: { eq: 'a' } } })).rejects.toThrow('Missing list index for Contact.accountId');
   expect(h.db.mock.calls.filter(([command]) => command.input.IndexName && command.input.TableName === 'Contact')).toEqual([]);
 });
+
+
+it('lists shared leads and unassigned accounts through the stage index with revocable cursors', async () => {
+  process.env.ACCESS_ACCOUNT_STAGE_INDEX = 'by_stage';
+  const policy = { visibility: 'LEADS', level: 'READ', send: false, invoice: false, bind: false };
+  put('Communication', 'settings:salesperson-access:v1', {version: 1, data: {policy}});
+  put('Account','unassigned',{id:'unassigned',name:'Unassigned',stage:'LEAD'});
+  put('Account','client',{id:'client',name:'Client',stage:'CLIENT'});
+  const producer = () => new AccountAccess({sub:'alice',groups:['PRODUCER']});
+  const items: RecordData[] = []; let nextToken: string | null | undefined;
+  let firstToken: string | undefined;
+  for (let n=0;n<20;n++) {
+    const page = await listAssigned(producer(),'Account',{limit:1,nextToken});
+    items.push(...page.items); nextToken=page.nextToken;
+    firstToken ||= nextToken ?? undefined;
+    if (!nextToken) break;
+  }
+  expect(items.map(x=>x.id).sort()).toEqual(['a','b','unassigned']);
+  expect(nextToken).toBeNull();
+  put('Communication', 'settings:salesperson-access:v1', {version: 2, data: {policy:{...policy,visibility:'ASSIGNED'}}});
+  await expect(listAssigned(producer(),'Account',{nextToken:firstToken})).rejects.toThrow('list changed');
+  expect(await producer().canAccount('b')).toBe(false);
+});

@@ -45,7 +45,7 @@ export async function bindPolicy(event: Event, input: Data) {
     : undefined;
   const access = new AccountAccess(event.identity, undefined, event.request),
     quoteId = required(input.quoteId, 'a quote');
-  const quote = await access.requireRecord('Quote', quoteId),
+  const quote = await access.requireRecordCapability('Quote', quoteId, 'bind'),
     accountId = required(quote.accountId, 'an account');
   const account = await access.requireRecord('Account', accountId);
   const policyId = `bound-${createHash('sha256').update(quoteId).digest('hex').slice(0, 40)}`;
