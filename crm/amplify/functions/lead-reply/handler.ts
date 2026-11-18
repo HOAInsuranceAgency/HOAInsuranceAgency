@@ -9,6 +9,7 @@ import { resolveIssue } from "../communications/routing";
 import { db, get, issue } from "../communications/store";
 import { openQueueCursor, saveQueueCursor } from "../communications/queueCursor";
 import { assignedEmailProducer, enqueueOperation, type Operation } from "../communications/operations";
+import { autoRepliesDisabled, AUTO_REPLIES_DISABLED_NOTE } from "../communications/autoReplies";
 import type { LeadWorkflow } from "../../../../shared/leadWorkflow";
 import { Amplify } from "aws-amplify";
 import { generateClient } from "aws-amplify/data";
@@ -148,10 +149,18 @@ export const handler = async () => {
       // under a default identity, or permanently fail while assignment catches up.
       let workflow;
       let producer;
+      let autoRepliesOff = false;
       try {
         workflow = await get<LeadWorkflow>(`workflow:${reply.accountId}`);
         if (!workflow) throw new Error("Assign an active salesperson before the initial email can be prepared");
-        if (!workflow.data.humanTakeover && workflow.data.disposition === "ACTIVE") producer = await assignedEmailProducer(workflow.data.salespersonId);
+        if (!workflow.data.humanTakeover && workflow.data.disposition === "ACTIVE") {
+          autoRepliesOff = await autoRepliesDisabled(workflow.data.salespersonId);
+          if (!autoRepliesOff) {
+            producer = await assignedEmailProducer(workflow.data.salespersonId);
+            // The preference may have changed while the producer was verified.
+            autoRepliesOff = producer.member.data.autoRepliesEnabled === false;
+          }
+        }
         await resolveIssue(`generation-assignment:${reply.id}`);
       } catch (error) {
         const message = error instanceof Error ? error.message : "The assigned salesperson could not be verified";
@@ -245,6 +254,18 @@ export const handler = async () => {
         );
         summary.extracting++;
         console.log("lead-reply extraction started", reply.id);
+        continue;
+      }
+
+      if (autoRepliesOff) {
+        // Document processing remains automatic even when the assigned person
+        // replies personally. Only the outgoing email is suppressed.
+        // Another sweep may already have claimed this stale WAITING candidate;
+        // never overwrite queued or accepted delivery with an unsent status.
+        await db.send(new UpdateCommand({ TableName: process.env.LEAD_REPLY_TABLE, Key: { id: reply.id },
+          UpdateExpression: "SET #s = :suppressed, note = :note, updatedAt = :now", ConditionExpression: "#s = :waiting",
+          ExpressionAttributeNames: { "#s": "status" }, ExpressionAttributeValues: { ":suppressed": "SUPPRESSED", ":waiting": "WAITING", ":note": AUTO_REPLIES_DISABLED_NOTE, ":now": now },
+        })).catch(error => { if (error?.name !== "ConditionalCheckFailedException") throw error; });
         continue;
       }
 
