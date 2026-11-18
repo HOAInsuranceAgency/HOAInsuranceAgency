@@ -15,7 +15,7 @@ const pdfModulePath = createRequire(import.meta.url).resolve('pdf-lib', { paths:
 globalThis[Symbol.for('commission-payroll-test')] = state;
 const mockSources = {
   // Interop wrapper around the real installed PDF library, not a PDF mock.
-  pdf: `import {createRequire} from 'node:module';const lib=createRequire(${JSON.stringify(import.meta.url)})(${JSON.stringify(pdfModulePath)});export const {PDFDocument,StandardFonts,rgb,degrees}=lib;`,
+  pdf: `import {createRequire} from 'node:module';const lib=createRequire(${JSON.stringify(import.meta.url)})(${JSON.stringify(pdfModulePath)});export const {PDFDocument,StandardFonts,rgb,degrees,PDFName,decodePDFRawStream}=lib;`,
   store: `const s=globalThis[Symbol.for('commission-payroll-test')];
     export const db={send:async c=>({Item:structuredClone(s.receipts.get(c.input.Key.pk))})};
     export const auditPage=async()=>({entries:[]});
@@ -445,16 +445,21 @@ test('Friday EOD cutoff includes Friday receipts and excludes Saturday, with HR 
 test('missing approval on processing morning alerts Jake without sending unapproved earnings to HR',async()=>{
   seed();state.records.set('PAYROLL_CYCLE:2026-11',validatePayrollCycle({...suggestPayrollDates('2026-11'),version:1}));clock=NativeDate.parse('2026-11-23T13:00:00Z');await runWorker(scheduleEvent());assert.equal(state.sent.length,1);assert.deepEqual(state.sent[0].command.Destination.ToAddresses,['owner@example.com']);assert.match(state.sent[0].details.subject,/overdue/);
 });
-function pdfText(bytes) {
-  return [...Buffer.from(bytes).toString('latin1').matchAll(/stream\r?\n([\s\S]*?)\r?\nendstream/g)].flatMap(m=>{
-    let data;try{data=inflateSync(Buffer.from(m[1],'latin1')).toString('latin1');}catch{return [];}
-    return [...data.matchAll(/<([A-Fa-f0-9]+)>\s*Tj/g)].map(t=>Buffer.from(t[1],'hex').toString('latin1'));
-  }).join('\n');
+async function pdfText(bytes) {
+  // Decode the embedded font's Unicode map rather than assuming WinAnsi bytes.
+  const {getDocument}=await import('pdfjs-dist/legacy/build/pdf.mjs');
+  const task=getDocument({data:new Uint8Array(bytes),useSystemFonts:false,isEvalSupported:false});
+  const doc=await task.promise;
+  try {
+    const pages=[];
+    for(let i=1;i<=doc.numPages;i++)pages.push((await (await doc.getPage(i)).getTextContent()).items.map(item=>item.str??'').join(' '));
+    return pages.join('\n');
+  } finally { await task.destroy(); }
 }
 test('separate pay-file PDFs never include another employee, amounts or internal payment references',async()=>{
   const a=buildPayrollApproval(cycle(),[earned(),{...earned(),id:'p2',producerId:'other',producerName:'OTHER_PRIVATE_EMPLOYEE',accountName:'OTHER_PRIVATE_ACCOUNT'}],[],settings(),'owner',new Date().toISOString());a.batches[0].reference='PRIVATE_PAYROLL_RUN';
-  const files=await commissionReportFiles(a.cycle,a.batches);const own=pdfText(files.find(f=>f.filename.includes('Avery')).content);assert.match(own,/Avery/);assert.match(own,/\$160\.00/);assert.doesNotMatch(own,/OTHER_PRIVATE|PRIVATE_PAYROLL_RUN|\$320\.00/);assert.match(pdfText(files[0].content),/\$320\.00/);
-  const large={...a.batches[0],lines:Array.from({length:75},(_,i)=>({...a.batches[0].lines[0],entryId:'receipt-'+i})),totalCents:75*16000};const largeCycle={...a.cycle,batchIds:[large.id],totalCents:large.totalCents};const pages=await commissionReportFiles(largeCycle,[large]);assert.ok((await PDFDocument.load(pages[1].content)).getPageCount()>1);assert.match(pdfText(pages[1].content),/receipt-74/);
+  const files=await commissionReportFiles(a.cycle,a.batches);const own=await pdfText(files.find(f=>f.filename.includes('Avery')).content);assert.match(own,/Avery/);assert.match(own,/\$160\.00/);assert.doesNotMatch(own,/OTHER_PRIVATE|PRIVATE_PAYROLL_RUN|\$320\.00/);assert.match(await pdfText(files[0].content),/\$320\.00/);
+  const large={...a.batches[0],lines:Array.from({length:75},(_,i)=>({...a.batches[0].lines[0],entryId:'receipt-'+i})),totalCents:75*16000};const largeCycle={...a.cycle,batchIds:[large.id],totalCents:large.totalCents};const pages=await commissionReportFiles(largeCycle,[large]);assert.ok((await PDFDocument.load(pages[1].content)).getPageCount()>1);assert.match(await pdfText(pages[1].content),/receipt-74/);
   if(process.env.COMMISSION_REPORT_PREVIEW_DIR){mkdirSync(process.env.COMMISSION_REPORT_PREVIEW_DIR,{recursive:true});for(const f of files)writeFileSync(join(process.env.COMMISSION_REPORT_PREVIEW_DIR,f.filename),f.content);for(const f of pages)writeFileSync(join(process.env.COMMISSION_REPORT_PREVIEW_DIR,'Long_'+f.filename),f.content);}
 });
 test('payroll remains on the existing Owner endpoint',async()=>{
@@ -795,10 +800,10 @@ test('test watermark is explicit and never changes approved amounts or productio
   const a=buildPayrollApproval(cycle(),[earned()],[],settings(),'owner','2026-11-21T15:00:00Z');
   const live=await commissionReportFiles(a.cycle,a.batches);
   const sample=await commissionReportFiles(a.cycle,a.batches,undefined,{isTest:true});
-  assert.doesNotMatch(pdfText(live[0].content),/TEST DATA/);
-  assert.match(pdfText(sample[0].content),/TEST DATA/);
-  assert.match(pdfText(sample[0].content),/\$160\.00/);
-  assert.match(pdfText(sample[0].content),/10:00 AM ET/);
+  assert.doesNotMatch(await pdfText(live[0].content),/TEST DATA/);
+  assert.match(await pdfText(sample[0].content),/TEST DATA/);
+  assert.match(await pdfText(sample[0].content),/\$160\.00/);
+  assert.match(await pdfText(sample[0].content),/10:00 AM ET/);
   const again=await commissionReportFiles(a.cycle,a.batches);
   assert.deepEqual(live.map(f=>Buffer.from(f.content)),again.map(f=>Buffer.from(f.content)));
 });
@@ -812,7 +817,7 @@ test('departure PDF keeps totals, carrier balances, decisions and long evidence 
     {policyId:'s',policyNumber:'SHARED',entryId:'r2',receivedOn:'2026-10-01',transaction:'NEW',amountCents:12000,decision:'REVIEW',paymentStatus:'UNALLOCATED'}];
   const w={rows,pending:[{policyId:'p',policyNumber:'POL-1',receiptCount:1,expectedAgencyCents:1200000,receivedAgencyCents:150000}],adjustments:[]};
   const report=await departureStatement(c,w,'2026-11-06T16:00:00Z');
-  const bytes=Buffer.from(departureReportFile(report).content,'base64'),text=pdfText(bytes);
+  const bytes=Buffer.from(departureReportFile(report).content,'base64'),text=await pdfText(bytes);
   for(const token of ['$440.00','$10,500.00','12.5%','AGREEMENT_END','EVIDENCE_END','entry-49'])assert.ok(text.includes(token),token);
   assert.doesNotMatch(text,/TEST DATA/);
   assert.ok((await PDFDocument.load(bytes)).getPageCount()>1);
@@ -843,9 +848,10 @@ test('a concurrent post wins safely over a stale void without partial reconcilia
 });
 test('selected off-cycle adjustment survives save, reserves once, pays in parts and never enters monthly payroll',async()=>{
   seed();
-  const e={id:'extra',kind:'EARNING',version:1,producerId:'producer',producerName:'Avery',policyId:'p',policyNumber:'POL-1',accountName:'Cedar HOA',transaction:'NEW',entryId:'adjustment:extra',receivedOn:'2026-11-16',agencyCents:0,producerBps:1600,amountCents:5000,source:'ADJUSTMENT',status:'PAYABLE'};
-  state.records.set('EARNING:extra',e);
-  const id='2026-11-OFF-abcdef12',selectedEarningKeys=[JSON.stringify(['earning','extra'])];
+  const e={id:'adjustment:extra',adjustmentId:'extra',kind:'EARNING',version:1,producerId:'producer',producerName:'Avery',policyId:'p',policyNumber:'POL-1',accountName:'Cedar HOA',transaction:'NEW',entryId:'adjustment:extra',receivedOn:'2026-11-16',agencyCents:0,producerBps:1600,amountCents:5000,source:'ADJUSTMENT',status:'PAYABLE'};
+  state.records.set('EARNING:adjustment:extra',e);
+  state.records.set('ADJUSTMENT:extra',{id:'extra',version:1,policyId:'p',producerId:'producer',status:'APPROVED'});
+  const id='2026-11-OFF-abcdef12',selectedEarningKeys=[JSON.stringify(['earning','adjustment:extra'])];
   await ownerAction('savePayrollCycle',{...cycle(),id,version:0,producerIds:['producer'],reason:'TEST adjustment only',selectedEarningKeys});
   let c=(await ownerAction('payrollWorkspace')).cycles.find(c=>c.id===id);
   assert.equal(c.preview.totalCents,5000);
@@ -863,4 +869,42 @@ test('selected off-cycle adjustment survives save, reserves once, pays in parts 
   assert.deepEqual(history.files.map(f=>f.content),original.files.map(f=>f.content));
   assert.equal((await ownerAction('payrollWorkspace')).cycles.find(c=>c.id==='2026-11').preview.totalCents,16000);
   assert.equal(state.records.get('BATCH:'+c.batchIds[0]).payments.length,2);
+});
+
+test('approval preserves multilingual names in portable, searchable reports and the immutable archive',async()=>{
+  seed();const policy=earned();policy.producerName='Łukasz 李明';policy.accountName='TEST 東京 김민수 José HOA';state.records.set('POLICY:p',policy);
+  const c=await approve();assert.equal(c.status,'APPROVED');assert.equal(c.totalCents,16000);
+  const report=await ownerAction('downloadPayrollCycle',{id:c.id});
+  const archived=[...state.records].filter(([key])=>key.startsWith('PAYROLL_REPORT_FILE:'));
+  assert.equal(archived.length,2);
+  for(const [,row] of archived)assert.ok(Buffer.byteLength(JSON.stringify(row))<300000);
+  const files=await commissionReportFiles(c,[...state.records].filter(([key])=>key.startsWith('BATCH:')).map(([,row])=>row));
+  assert.deepEqual(files,await commissionReportFiles(c,[...state.records].filter(([key])=>key.startsWith('BATCH:')).map(([,row])=>row)));
+  const text=await pdfText(files[1].content);
+  assert.match(text,/Łukasz/);assert.match(text,/李明/);assert.match(text,/東京/);assert.match(text,/김민수/);assert.match(text,/José/);assert.match(text,/\$160\.00/);assert.doesNotMatch(text,/\uFFFD/);
+  assert.ok(report.files.length>0);
+  if(process.env.COMMISSION_REPORT_PREVIEW_DIR){mkdirSync(process.env.COMMISSION_REPORT_PREVIEW_DIR,{recursive:true});for(const [i,f] of files.entries())writeFileSync(join(process.env.COMMISSION_REPORT_PREVIEW_DIR,'Unicode-'+i+'.pdf'),f.content);}
+});
+
+test('embedded CJK subsets retain nonempty drawable outlines as well as searchable Unicode',async()=>{
+  const {PDFName,decodePDFRawStream}=await import('pdf-lib');
+  const fontkit=createRequire(import.meta.url)('@pdf-lib/fontkit');
+  const p=earned();p.producerName='Łukasz 李明';p.accountName='東京 김민수';
+  const a=buildPayrollApproval(cycle(),[p],[],settings(),'owner',new Date().toISOString());
+  const files=await commissionReportFiles(a.cycle,a.batches);
+  let checked=0;
+  for(const file of files){
+    const doc=await PDFDocument.load(file.content);
+    for(const [,obj] of doc.context.enumerateIndirectObjects()){
+      const ref=obj.get?.(PDFName.of('FontFile2'));if(!ref)continue;
+      if(!obj.get(PDFName.of('FontName'))?.toString().includes('CJK'))continue;
+      const font=fontkit.create(decodePDFRawStream(doc.context.lookup(ref)).decode());
+      for(let i=1;i<font.numGlyphs;i++){
+        const g=font.getGlyph(i);assert.ok(g.path.commands.length>0,'An embedded name glyph must have a drawable outline');
+        for(const command of g.path.commands)assert.ok(command.args.every(Number.isFinite));
+        checked++;
+      }
+    }
+  }
+  assert.ok(checked>=7);
 });

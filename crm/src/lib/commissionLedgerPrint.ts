@@ -1,3 +1,4 @@
+import { formatUsdCents } from "../../../shared/money";
 import { commissionLogo } from '../../../shared/commissionBrand';
 import type { DashboardReport, ReportSnapshot, ReportValue } from './reportDownload';
 
@@ -13,7 +14,7 @@ export interface CommissionLedgerSummary {
 }
 const text = (value: ReportValue) => value == null ? '' : String(value);
 const escape = (value: ReportValue) => text(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
-const money = (cents: number) => escape((cents / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' }));
+const money = (cents: number) => escape(formatUsdCents(cents));
 const amount = (value: ReportValue) => typeof value === 'number' ? money(Math.round(value * 100)) : '—';
 const percent = (value: ReportValue) => typeof value === 'number' ? escape(value) + '%' : '—';
 const date = (value: ReportValue) => /^\d{4}-\d{2}-\d{2}$/.test(text(value))

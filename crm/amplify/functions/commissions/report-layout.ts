@@ -1,4 +1,6 @@
-import { PDFDocument, StandardFonts, rgb, degrees, type PDFFont, type PDFPage, type PDFImage, type RGB } from 'pdf-lib';
+import { PDFDocument, rgb, degrees, type PDFPage, type PDFImage, type RGB } from 'pdf-lib';
+import { formatUsdCents } from '../../../../shared/money';
+import { reportFonts } from './report-fonts';
 import { commissionLogo } from './report-brand';
 
 export interface ReportRenderOptions { isTest?: boolean }
@@ -15,7 +17,7 @@ const tones: Record<Tone, { ink: RGB; fill: RGB }> = {
   notice: { ink: palette.navy, fill: palette.light },
   neutral: { ink: palette.muted, fill: palette.light },
 };
-export const reportMoney = (cents: number) => '$' + (cents / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+export const reportMoney = formatUsdCents;
 export function reportDate(value?: string) {
   if (!value) return { date: 'Not recorded', weekday: '' };
   const at = new Date(value + 'T12:00:00Z');
@@ -56,8 +58,7 @@ export class CommissionPdf {
   private footerText = '';
   private constructor(
     readonly doc: PDFDocument,
-    private regular: PDFFont,
-    private bold: PDFFont,
+    private fonts: Awaited<ReturnType<typeof reportFonts>>,
     private logo: PDFImage,
     private copy: string,
     private options: ReportRenderOptions,
@@ -69,33 +70,33 @@ export class CommissionPdf {
     doc.setCreationDate(date); doc.setModificationDate(date);
     doc.setProducer('HOA Insurance Agency CRM'); doc.setCreator('HOA Insurance Agency CRM'); doc.setTitle(title);
     if (options.isTest) doc.setSubject('Fictional review copy. TEST DATA - DO NOT PAY.');
-    return new CommissionPdf(doc, await doc.embedFont(StandardFonts.Helvetica), await doc.embedFont(StandardFonts.HelveticaBold),
+    return new CommissionPdf(doc, await reportFonts(doc),
       await doc.embedPng(commissionLogo), copy, options);
   }
   wrap(value: string, size = 10, width = this.width, bold = false): string[] {
-    const font = bold ? this.bold : this.regular;
     const text = String(value).replace(/[\r\n\t]+/g, ' ').normalize('NFC');
-    try {
-      const lines: string[] = []; let line = '';
-      for (const word of text.split(/\s+/)) {
-        const candidate = line ? line + ' ' + word : word;
-        if (font.widthOfTextAtSize(candidate, size) <= width) { line = candidate; continue; }
-        if (line) { lines.push(line); line = ''; }
-        for (const char of word) {
-          if (font.widthOfTextAtSize(line + char, size) > width && line) { lines.push(line); line = ''; }
-          line += char;
-        }
+    const lines: string[] = []; let line = '';
+    for (const word of text.split(/\s+/)) {
+      const candidate = line ? line + ' ' + word : word;
+      if (this.fonts.width(candidate, size, bold) <= width) { line = candidate; continue; }
+      if (line) { lines.push(line); line = ''; }
+      for (const char of word) {
+        if (this.fonts.width(line + char, size, bold) > width && line) { lines.push(line); line = ''; }
+        line += char;
       }
-      lines.push(line); return lines;
-    } catch { throw new Error('A report name or policy contains a character unsupported by the PDF font. Review the source text before delivery.'); }
+    }
+    lines.push(line); return lines;
   }
+
   text(value: string, top: number, x = this.left, size = 10, bold = false, color = palette.ink, width = this.width, align: 'left' | 'right' = 'left') {
-    const font = bold ? this.bold : this.regular;
     const lines = this.wrap(value, size, width, bold);
-    lines.forEach((line, i) => this.page.drawText(line, {
-      x: align === 'right' ? x + width - font.widthOfTextAtSize(line, size) : x,
-      y: 792 - top - size - i * (size + 4), size, font, color,
-    }));
+    lines.forEach((line, i) => {
+      let offset = align === 'right' ? x + width - this.fonts.width(line, size, bold) : x;
+      for (const run of this.fonts.runs(line, bold)) {
+        this.page.drawText(run.text, {x: offset, y: 792 - top - size - i * (size + 4), size, font: run.font, color});
+        offset += run.font.widthOfTextAtSize(run.text, size);
+      }
+    });
     return lines.length * (size + 4);
   }
   box(x: number, top: number, width: number, height: number, fill = palette.white, border = palette.rule, radius = 6) {
@@ -108,7 +109,7 @@ export class CommissionPdf {
     this.page.drawLine({ start: { x, y: 792-top }, end: { x: x+width, y: 792-top }, thickness, color });
   }
   badge(label: string, x: number, top: number, tone: Tone = 'notice') {
-    const size = 7, width = this.bold.widthOfTextAtSize(label, size) + 16;
+    const size = 7, width = this.fonts.width(label, size, true) + 16;
     const t = tones[tone];
     this.box(x, top, width, 16, t.fill, t.ink, 8);
     this.text(label, top+3, x+8, size, true, t.ink, width-16);
@@ -117,7 +118,7 @@ export class CommissionPdf {
   private addPage(continued: boolean) {
     this.page = this.doc.addPage([612, 792]);
     if (this.options.isTest) {
-      this.page.drawText('TEST DATA', { x: 100, y: 330, size: 74, font: this.bold, color: rgb(.75,.2,.2), opacity: .045, rotate: degrees(32) });
+      this.page.drawText('TEST DATA', { x: 100, y: 330, size: 74, font: this.fonts.bold, color: rgb(.75,.2,.2), opacity: .045, rotate: degrees(32) });
       this.box(44, 32, 524, 20, rgb(1,.965,.965), rgb(1,.74,.74), 1);
       this.text('TEST DATA — DO NOT PAY', 37, 53, 7, true, tones.uncovered.ink, 240);
       this.text('Generated from test records for visual review', 37, 295, 6.8, false, tones.uncovered.ink, 264, 'right');
@@ -140,7 +141,7 @@ export class CommissionPdf {
     this.meta = meta; this.heading = title;
     this.addPage(false);
     // Keep metadata and badges on separate lines when identifiers are long.
-    const badgeWidth = badges.reduce((sum,b)=>sum + this.bold.widthOfTextAtSize(b.label,7)+22,0);
+    const badgeWidth = badges.reduce((sum,b)=>sum + this.fonts.width(b.label,7,true)+22,0);
     const metaHeight = this.text(meta,this.y,44,7.2,true,rgb(.65,.43,.04),Math.max(180,524-badgeWidth-10));
     if (badges.length) {
       let x = 568-badgeWidth+6;
@@ -206,7 +207,7 @@ export class CommissionPdf {
   section(number: string,title: string,note='') {
     this.ensure(65);this.text(number,this.y,44,16,true,palette.gold,24);
     const h=this.text(title,this.y+2,72,11.5,true,palette.navy,496);
-    const titleWidth=this.bold.widthOfTextAtSize(title,11.5);
+    const titleWidth=this.fonts.width(title,11.5,true);
     const noteWidth=496-titleWidth-20;
     if(note && noteWidth>0 && this.wrap(note,7.5,noteWidth).length===1) {
       this.text(note,this.y+5,72+titleWidth+20,7.5,false,palette.muted,noteWidth,'right');

@@ -1,3 +1,4 @@
+import { formatUsdCents } from "../../../shared/money";
 import { importedMoney, type StatementImportMapping } from "../../../shared/commissionImport";
 import { reuseImportMapping, type CarrierImportTemplate } from "../../../shared/commissionIntake";
 
@@ -28,7 +29,8 @@ export function suggestImportMapping(headers: string[], template?: CarrierImport
 export function displayCommissionAmount(value: string): string {
   if (!value.trim()) return value;
   try {
-    return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", currencySign: "accounting" }).format(importedMoney(value) / 100);
+    const cents = importedMoney(value);
+    return cents < 0 ? `(${formatUsdCents(-cents)})` : formatUsdCents(cents);
   } catch { return value; }
 }
 

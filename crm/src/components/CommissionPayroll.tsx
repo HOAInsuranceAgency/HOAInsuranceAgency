@@ -1,3 +1,4 @@
+import { formatUsdCents as money } from "../../../shared/money";
 import { zipSync } from "fflate";
 import {
 createContext,
@@ -40,10 +41,7 @@ import { Input } from './ui/Input';
 import { Select } from './ui/Select';
 import { Table } from './ui/Table';
 
-const money = (cents: number) =>
-  new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(
-    cents / 100,
-  );
+
 const displayDate = (value: string) =>
   new Intl.DateTimeFormat("en-US", {
     month: "short",

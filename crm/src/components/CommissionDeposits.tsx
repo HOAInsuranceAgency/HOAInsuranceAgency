@@ -1,3 +1,4 @@
+import { formatUsdCents as money } from "../../../shared/money";
 import { useEffect,useRef,useState,type FormEvent } from 'react';
 import { depositSuggestions,type CommissionDeposit } from '../../../shared/commissionDeposits';
 import { importedMoney } from '../../../shared/commissionImport';
@@ -12,7 +13,7 @@ import { Input } from './ui/Input';
 import { Select } from './ui/Select';
 import { Textarea } from './ui/Textarea';
 
-const money = (n:number) => new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(n/100);
+
 const empty = {payor:'',carrierId:'',reference:'',receivedOn:'',amount:'',evidence:''};
 export default function CommissionDeposits({workspace,carriers,refresh,onError,openStatement}:{workspace:IntakeWorkspace;carriers:CommissionOverview['carriers'];refresh:()=>Promise<void>;onError:(e:unknown)=>void;openStatement:(id:string)=>void}) {
   const {target,remember}=useCommissionWorkflow();

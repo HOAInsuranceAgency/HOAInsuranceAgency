@@ -8,6 +8,7 @@ import {
   receiptEarnings,
   type CommissionEarning,
 } from "../../../../shared/commissionExceptions";
+import { policyReceiptEarnings } from "./earnings";
 import * as store from "./store";
 const hash = (value: string) =>
   createHash("sha256").update(value).digest("hex");
@@ -26,7 +27,7 @@ export async function statementPostingChanges(
   actor: string,
   previous?: CommissionStatement,
 ) {
-  const earnings = await store.list<CommissionEarning>("EARNING");
+  const earnings: CommissionEarning[] = [];
   const changes: store.Change[] = [],
     originals = new Map<string, CommissionPolicy>(),
     updated = new Map<string, CommissionPolicy>();
@@ -36,6 +37,7 @@ export async function statementPostingChanges(
       (await store.get<CommissionPolicy>("POLICY", line.policyId));
     if (!original || original.carrierId !== statement.carrierId)
       throw new Error("A policy match is no longer available.");
+    if (!originals.has(original.id)) earnings.push(...await policyReceiptEarnings([original]));
     originals.set(original.id, original);
     updated.set(
       original.id,

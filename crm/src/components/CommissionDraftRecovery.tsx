@@ -1,3 +1,4 @@
+import { formatUsdCents } from "../../../shared/money";
 import { useEffect,useRef,useState,type ReactNode } from "react";
 import type { IntakeWorkingDraft,StatementIntake } from "../../../shared/commissionIntake";
 import { commissionWorkflowAction as commissionAction } from "../lib/commissions";
@@ -10,7 +11,7 @@ function SavedValues({ value }: { value: unknown }): ReactNode {
   if (Array.isArray(value)) return <ol>{value.map((v, i) => <li key={i}><SavedValues value={v} /></li>)}</ol>;
   return <dl className="intake-saved-values">{Object.entries(value).map(([key, v]) =>
     <div key={key}><dt>{key.replace(/([a-z])([A-Z])/g, "$1 $2")}</dt><dd>
-      {key.endsWith("Cents") && typeof v === "number" ? new Intl.NumberFormat("en-US", {style:"currency",currency:"USD"}).format(v/100) : <SavedValues value={v} />}
+      {key.endsWith("Cents") && typeof v === "number" ? formatUsdCents(v) : <SavedValues value={v} />}
     </dd></div>)}</dl>;
 }
 export default function CommissionDraftRecovery<T extends object>({
