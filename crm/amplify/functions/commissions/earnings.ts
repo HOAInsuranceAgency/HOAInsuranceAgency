@@ -8,17 +8,24 @@ import * as store from './store';
  */
 export async function policyReceiptEarnings(policies: CommissionPolicy[]): Promise<CommissionEarning[]> {
   const result: CommissionEarning[] = [];
+  const refs: {kind: string; id: string}[] = [];
   for (const policy of new Map(policies.map(p => [p.id, p])).values()) {
-    const refs = policy.entries.flatMap(entry => {
+    const policyRefs = policy.entries.flatMap(entry => {
       if (!entry.allocationId) return [];
       const allocation = policy.allocations?.find(a => a.id === entry.allocationId);
       if (!allocation) throw new Error('The receipt’s approved shared allocation is missing.');
       return allocation.participants.map(p => ({kind:'EARNING', id:receiptEarningId(policy.id, entry.id, p.producerId)}));
     });
-    if (!refs.length) continue;
-    const records = await store.getMany<CommissionEarning>(refs);
+    if (policyRefs.length > 5000) throw new Error('Too many commission records for one policy.');
+    refs.push(...policyRefs);
+  }
+  // Fill the existing 100-key database batches across policies rather than
+  // issuing one small request per policy. The complete-read bound stays 5000.
+  for (let offset = 0; offset < refs.length; offset += 5000) {
+    const chunk = refs.slice(offset, offset + 5000);
+    const records = await store.getMany<CommissionEarning>(chunk);
     const found = new Set(records.map(e => e.id));
-    if (refs.some(ref => !found.has(ref.id))) throw new Error('The policy’s shared earnings history is incomplete. Review it before posting.');
+    if (chunk.some(ref => !found.has(ref.id))) throw new Error('The policy’s shared earnings history is incomplete. Review it before posting.');
     result.push(...records);
   }
   return result;
