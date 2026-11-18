@@ -1,3 +1,4 @@
+import { workspaceEarnings } from "./earnings";
 import { depositPayrollStatements, type CommissionDeposit } from '../../../../shared/commissionDeposits';
 import { intakePayrollStatements, type IntakeSettlement, type StatementIntake } from '../../../../shared/commissionIntake';
 import type { CommissionEarning, CommissionDeparture, CommissionAdjustment } from '../../../../shared/commissionExceptions';
@@ -50,7 +51,8 @@ export async function payrollAction(_event: Event, actor: string, owner: boolean
   }
   if (operation === 'payrollWorkspace') {
     const [cycles, deliveries, batches] = await Promise.all([store.list<PayrollCycle>('PAYROLL_CYCLE'), store.list<PayrollDelivery>('PAYROLL_DELIVERY'), store.list<CommissionBatch>('BATCH')]);
-    const [policies, statements, earnings, departures, adjustments] = await Promise.all([store.list<CommissionPolicy>('POLICY'), store.list<CommissionStatement>('STATEMENT'),store.list<CommissionEarning>('EARNING'),store.list<CommissionDeparture>('DEPARTURE'),store.list<CommissionAdjustment>('ADJUSTMENT')]);
+    const [policies, statements, departures, adjustments] = await Promise.all([store.list<CommissionPolicy>('POLICY'), store.list<CommissionStatement>('STATEMENT'),store.list<CommissionDeparture>('DEPARTURE'),store.list<CommissionAdjustment>('ADJUSTMENT')]);
+    const earnings = await workspaceEarnings(policies, adjustments);
     const [intakes, intakeSettlements] = await Promise.all([store.list<StatementIntake>('STATEMENT_INTAKE'), store.list<IntakeSettlement>('INTAKE_SETTLEMENT')]);
     const deposits = await store.list<CommissionDeposit>('COMMISSION_DEPOSIT');
     statements.push(...intakePayrollStatements(intakeSettlements), ...depositPayrollStatements(deposits));
@@ -109,11 +111,12 @@ export async function payrollAction(_event: Event, actor: string, owner: boolean
     if (cycle?.status === 'OPEN' && (await store.get('PAYROLL_DELIVERY', `${id}:${cycle.revision}:REVIEW`))) throw new Error('A review notice already exists. Keep these dates or cancel this cycle.');
     const next = validatePayrollCycle(input as unknown as PayrollCycle);
     if (next.producerIds) {
-      const known = new Set([...(await store.list<CommissionPolicy>('POLICY')).map(p => p.producerId),...(await store.list<CommissionEarning>('EARNING')).map(e=>e.producerId)]);
+      const known = new Set([...(await store.list<CommissionPolicy>('POLICY')).map(p => p.producerId),...(await workspaceEarnings()).map(e=>e.producerId)]);
       if (next.producerIds.some(id => !known.has(id))) throw new Error('Choose employees with existing commission policy records.');
     }
     if (next.selectedEarningKeys) {
-      const [policies, earnings, departures] = await Promise.all([store.list<CommissionPolicy>('POLICY'), store.list<CommissionEarning>('EARNING'), store.list<CommissionDeparture>('DEPARTURE')]);
+      const [policies, departures] = await Promise.all([store.list<CommissionPolicy>('POLICY'), store.list<CommissionDeparture>('DEPARTURE')]);
+      const earnings = await workspaceEarnings(policies);
       const available = new Set(payrollPreview(policies, next.cutoff, next.producerIds, earnings, departures).map(payrollRowKey));
       if (next.selectedEarningKeys.some(key => !available.has(key))) throw new Error('Selected earnings are no longer available. Refresh and review the off-cycle selection.');
     }
@@ -170,7 +173,8 @@ export async function payrollAction(_event: Event, actor: string, owner: boolean
     if (input.confirmed !== true) throw new Error('Confirm reconciliation and payroll totals before approval.');
     if (!settings) throw new Error('Save report delivery settings or initialize the monthly calendars before approval.');
     const reconciliation = await store.get<{ id: string; version: number }>('PAYROLL_STATE', 'reconciliation');
-    const [policies, batches, statements, earnings, departures, adjustments] = await Promise.all([store.list<CommissionPolicy>('POLICY'), store.list<CommissionBatch>('BATCH'), store.list<CommissionStatement>('STATEMENT'),store.list<CommissionEarning>('EARNING'),store.list<CommissionDeparture>('DEPARTURE'),store.list<CommissionAdjustment>('ADJUSTMENT')]);
+    const [policies, batches, statements, departures, adjustments] = await Promise.all([store.list<CommissionPolicy>('POLICY'), store.list<CommissionBatch>('BATCH'), store.list<CommissionStatement>('STATEMENT'),store.list<CommissionDeparture>('DEPARTURE'),store.list<CommissionAdjustment>('ADJUSTMENT')]);
+    const earnings = await workspaceEarnings(policies, adjustments);
     statements.push(...intakePayrollStatements(await store.list<IntakeSettlement>('INTAKE_SETTLEMENT')), ...depositPayrollStatements(await store.list<CommissionDeposit>('COMMISSION_DEPOSIT')));
     const current = preview(cycle, policies, settings, statements, earnings, departures, adjustments);
     if (current.blockers.length) throw new Error(current.blockers.join(' '));

@@ -1,3 +1,4 @@
+import { workspaceEarnings } from "./earnings";
 import { bindDay } from "./account-history";
 import { departureStatement, departureReportFile } from "./departure-report";
 import { randomUUID } from "node:crypto";
@@ -78,16 +79,15 @@ export async function exceptionAction(
   input: store.Data,
 ) {
   if (operation === "commissionExceptions") {
-    const [policies, earnings, departures, adjustments, batches, plans, earningReviews] =
-      await Promise.all([
+    const [policies, departures, adjustments, batches, plans, earningReviews] = await Promise.all([
         store.list<CommissionPolicy>("POLICY"),
-        store.list<CommissionEarning>("EARNING"),
         store.list<CommissionDeparture>("DEPARTURE"),
         store.list<CommissionAdjustment>("ADJUSTMENT"),
         store.list<CommissionBatch>("BATCH"),
         store.list<CommissionPlan>("PLAN"),
         store.list("EARNING_REVIEW"),
       ]);
+    const earnings = await workspaceEarnings(policies, adjustments);
     return {
       ok: true,
       policies,
@@ -145,11 +145,11 @@ export async function exceptionAction(
       throw new Error(
         "Approve departure terms before creating a review statement.",
       );
-    const [policies, earnings, batches] = await Promise.all([
+    const [policies, batches] = await Promise.all([
       store.list<CommissionPolicy>("POLICY"),
-      store.list<CommissionEarning>("EARNING"),
       store.list<CommissionBatch>("BATCH"),
     ]);
+    const earnings = await workspaceEarnings(policies);
     const worklist = departureWorklist(c, policies, earnings, batches);
     const report = await departureStatement(c, worklist, at),
       id = c.id + ":" + report.snapshotHash;
@@ -350,11 +350,11 @@ export async function exceptionAction(
     }
     if (old.status === "DRAFT")
       throw new Error("Approve the departure terms first.");
-    const [policies, earnings, batches] = await Promise.all([
+    const [policies, batches] = await Promise.all([
       store.list<CommissionPolicy>("POLICY"),
-      store.list<CommissionEarning>("EARNING"),
       store.list<CommissionBatch>("BATCH"),
     ]);
+    const earnings = await workspaceEarnings(policies);
     const worklist = departureWorklist(old, policies, earnings, batches);
     if (operation === "settleDeparturePolicy") {
       const pending = worklist.pending.find(

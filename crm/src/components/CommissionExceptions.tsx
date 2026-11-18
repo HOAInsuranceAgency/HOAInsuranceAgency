@@ -1,3 +1,4 @@
+import { formatUsdCents as money } from "../../../shared/money";
 import { CommissionTarget, useCommissionWorkflow } from '../lib/commissionWorkflow';
 import { payrollRowKey } from '../../../shared/commissionPayroll';
 import {
@@ -36,10 +37,7 @@ export type CommissionExceptionWorkspace = {
   carrierAdjustments?: { policyId: string; policyNumber: string; accountName: string; unpaidAdjustment: number; paidRecovery: number; partialAdjustment?: number }[];
   producers: { id: string; name: string }[];
 };
-const money = (n: number) =>
-  new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(
-    n / 100,
-  );
+
 const Access = createContext<(error: unknown) => void>(() => {});
 function Panel({ title, children }: { title: string; children: ReactNode }) {
   return <CommissionPanel title={title}>{children}</CommissionPanel>;

@@ -25,6 +25,7 @@ vi.mock('../../amplify/functions/broker-fees/store', async original => ({
 vi.mock('../../amplify/functions/commissions/store', () => ({
   get: async (kind: string, id: string) => structuredClone(kind === 'POLICY' ? h.ledger.get(id) : h.commissionRows.get(kind + ':' + id)),
   list: async (kind: string) => structuredClone([...h.commissionRows.entries()].filter(([key]) => key.startsWith(kind + ':')).map(([, value]) => value)),
+  getMany: async (refs: {kind:string;id:string}[]) => structuredClone(refs.map(r=>h.commissionRows.get(r.kind+':'+r.id)).filter(Boolean)),
   commit: h.commit,
 }));
 vi.mock('../../amplify/functions/crm-access/user-status', async original => ({ ...await original<typeof import('../../amplify/functions/crm-access/user-status')>(), assertUserSession: h.session }));

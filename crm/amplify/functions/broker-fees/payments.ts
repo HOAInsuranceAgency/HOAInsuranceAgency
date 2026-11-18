@@ -4,7 +4,8 @@ import { assertBrokerFeeAgencyBilling, brokerFeeCents, feeAllocations, type Brok
 import { authorizedQuoteTerms } from '../../../../shared/quoteAuthorization';
 import { appendEntry, type CommissionPolicy, type CommissionStatement, type StatementLine } from '../../../../shared/commissions';
 import * as commissions from '../commissions/store';
-import { receiptEarnings, type CommissionEarning } from '../../../../shared/commissionExceptions';
+import { policyReceiptEarnings } from '../commissions/earnings';
+import { receiptEarnings } from '../../../../shared/commissionExceptions';
 import { db, table, getRow, getFee, getModel, feePut, transact, versionCheck, type Write, modelTable } from './store';
 
 export interface BrokerFeePaymentInput {
@@ -274,7 +275,7 @@ async function allocatePayment(id: string) {
       if(next!==old) {
         const added = next.entries.filter(entry => !old.entries.some(previous => previous.id === entry.id));
         if (added.some(entry => entry.allocationId)) {
-          const earnings = await commissions.list<CommissionEarning>('EARNING');
+          const earnings = await policyReceiptEarnings([old]);
           for (const entry of added) {
             // Rebuild the incremental receipt snapshot so a same-event refund
             // cannot change the receipt's original cumulative rounding.

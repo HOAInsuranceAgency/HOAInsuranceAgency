@@ -1,3 +1,4 @@
+import { formatUsdCents } from "../../../shared/money";
 import { allWithAuthorizationPriority } from '../lib/allWithAuthorizationPriority';
 import { commissionAction } from '../lib/commissions';
 import { useAsyncResource } from '../lib/useAsyncResource';
@@ -35,7 +36,7 @@ export default function CommissionWorkQueue({ data, onAccessDenied }: { data: Co
   });
   for (const d of inbox.deposits ?? []) if (d.status === 'AWAITING_REMITTANCE') {
     const affected = cycles.find(c => d.receivedOn <= c.cutoff);
-    items.push({id:'deposit:'+d.id,priority:affected?0:1,due:affected?.cutoff??d.receivedOn,title:d.payor+' · '+new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(d.totalCents/100),detail:'Awaiting remittance · '+d.reference+(affected?' · payroll cutoff '+affected.cutoff:''),action:'Match deposit',target:{tab:'statements',depositId:d.id,intakeId:''}});
+    items.push({id:'deposit:'+d.id,priority:affected?0:1,due:affected?.cutoff??d.receivedOn,title:d.payor+' · '+formatUsdCents(d.totalCents),detail:'Awaiting remittance · '+d.reference+(affected?' · payroll cutoff '+affected.cutoff:''),action:'Match deposit',target:{tab:'statements',depositId:d.id,intakeId:''}});
   }
   for (const s of data.statements.filter(s => s.status === 'DRAFT')) {
     const affected = cycles.find(c => s.receivedOn <= c.cutoff);
@@ -44,7 +45,7 @@ export default function CommissionWorkQueue({ data, onAccessDenied }: { data: Co
   for (const c of payroll.cycles.filter(c => c.status === 'APPROVED')) {
     const issue=(payroll.deliveries??[]).some(d=>d.cycleId===c.id&&d.cycleRevision===c.revision&&(d.status==='FAILED'||d.status==='UNKNOWN'||!!d.failureState));
     const paid=(payroll.batches??[]).filter(b=>c.batchIds.includes(b.id)).reduce((n,b)=>n+batchPaidCents(b),0);
-    items.push({id:'approved:'+c.id,priority:2,due:c.payDate,title:'Approved payroll · '+c.id,detail:issue?'Review report delivery evidence':new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format((c.totalCents-paid)/100)+' employee payment remaining',action:issue?'Review delivery':'Review approved payroll',target:{tab:'payroll',cycleId:c.id}});
+    items.push({id:'approved:'+c.id,priority:2,due:c.payDate,title:'Approved payroll · '+c.id,detail:issue?'Review report delivery evidence':formatUsdCents(c.totalCents-paid)+' employee payment remaining',action:issue?'Review delivery':'Review approved payroll',target:{tab:'payroll',cycleId:c.id}});
   }
   for (const c of cycles) {
     const cutoffWait = payrollCutoffIssue(c);

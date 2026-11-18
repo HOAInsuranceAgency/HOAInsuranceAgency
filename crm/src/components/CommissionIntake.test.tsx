@@ -435,3 +435,23 @@ it("suggests only the unrecorded receipt balance and leaves date, evidence and a
   fireEvent.change(screen.getByLabelText("Agency commission received / retained ($)"),{target:{value:"50"}});
   expect(h.dirty).toHaveBeenLastCalledWith(true);
 });
+
+it('offers manual rows from an empty source without unlocking posting or confirming anything',async()=>{
+  const source={...intake,rowCount:0,rowTotalCents:0,needsReview:0};
+  h.action.mockImplementation(async op=>op==='intakeWorkspace'?{intakes:[source],settlements:[],templates:[]}:op==='getStatementIntake'?{intake:source,rows:[],settlements:[]}:{draft:null});
+  renderInbox();fireEvent.click(await screen.findByRole('button',{name:'Open'}));
+  fireEvent.click(await screen.findByRole('button',{name:'Enter source rows manually'}));
+  fireEvent.click(await screen.findByRole('button',{name:'Add source row'}));
+  expect(screen.getByText(/Each row still needs your review/)).toBeVisible();
+  expect(screen.getByRole('button',{name:'Step 4: Post earnings, up next'})).toBeDisabled();
+  expect(h.action.mock.calls.some(([op])=>['saveIntakeRows','postIntakeSettlement'].includes(op))).toBe(false);
+});
+it.each(['intakeWorkspace','getStatementIntake'])('forwards %s access denial to clear the parent ledger',async deniedOp=>{
+  const denied=vi.fn(),error=new Error('Not authorized');
+  const original=h.action.getMockImplementation()!;
+  h.action.mockImplementation(async (...args)=>{if(args[0]===deniedOp)throw error;return original(...args);});
+  render(<CommissionIntake data={data} refreshLedger={vi.fn()} renderPolicySetup={()=>null} onAccessDenied={denied}/>);
+  if(deniedOp==='getStatementIntake')fireEvent.click(await screen.findByRole('button',{name:'Open'}));
+  await waitFor(()=>expect(denied).toHaveBeenCalledWith(error));
+  expect(screen.queryByText('TEST-SOURCE')).toBeNull();
+});

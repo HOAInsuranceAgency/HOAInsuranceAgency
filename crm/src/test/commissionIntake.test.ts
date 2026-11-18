@@ -746,7 +746,7 @@ it('requires an evidenced human resolution and preserves history without earning
 it('holds already approved payroll when a newly recorded deposit falls within its cutoff',async()=>{
   seed('PAYROLL_CYCLE',{...suggestPayrollDates('2026-10'),version:1,status:'APPROVED',revision:1,batchIds:[],totalCents:0} as PayrollCycle);
   await recordDeposit();
-  expect(get<PayrollCycle>('PAYROLL_CYCLE','2026-10').reviewRequired).toMatch(/unmatched bank deposit/);
+  expect(get<PayrollCycle>('PAYROLL_CYCLE','2026-10').reviewRequired).toMatch(/carrier receipt/);
 });
 it('voids the linked deposit together with an incorrect unposted receipt',async()=>{
   seed('STATEMENT_INTAKE',intake());const d=await recordDeposit();
@@ -755,4 +755,45 @@ it('voids the linked deposit together with an incorrect unposted receipt',async(
   expect(await call('voidIntakeSettlement',{id:'inbox',version:s.version,settlementId:s.id,confirmed:true,reason:'TEST wrong bank entry'})).toMatchObject({ok:true});
   expect(get<CommissionDeposit>('COMMISSION_DEPOSIT',d.id)).toMatchObject({status:'VOID',resolutionReason:'TEST wrong bank entry'});
   expect(get<IntakeSettlement>('INTAKE_SETTLEMENT',s.id).status).toBe('VOID');
+});
+
+it('holds approved payroll atomically for direct receipts inside its cutoff, but not later receipts',async()=>{
+  seed('STATEMENT_INTAKE',intake());
+  const c={...suggestPayrollDates('2026-10'),cutoff:'2026-10-10',version:1,status:'APPROVED',revision:1,batchIds:[],totalCents:0} as PayrollCycle;
+  seed('PAYROLL_CYCLE',c);
+  await payment('LATER',100,'2026-10-11');
+  expect(get<PayrollCycle>('PAYROLL_CYCLE',c.id).reviewRequired).toBeUndefined();
+  await payment('LATE-RECEIPT',100,'2026-10-03');
+  expect(get<PayrollCycle>('PAYROLL_CYCLE',c.id).reviewRequired).toMatch(/carrier receipt/);
+  const changes=h.commit.mock.calls.at(-1)![0];
+  expect(changes.map((c:{kind:string})=>c.kind)).toEqual(expect.arrayContaining(['INTAKE_SETTLEMENT','STATEMENT_INTAKE','PAYROLL_STATE','PAYROLL_CYCLE']));
+  expect(changes.find((c:{kind:string})=>c.kind==='PAYROLL_CYCLE').previous).toMatchObject({version:1});
+});
+it('puts a linked bank deposit and the affected payroll hold in the same receipt transaction',async()=>{
+  seed('STATEMENT_INTAKE',intake());const d=await recordDeposit();
+  seed('PAYROLL_CYCLE',{...suggestPayrollDates('2026-10'),version:1,status:'APPROVED',revision:1,batchIds:[],totalCents:0} as PayrollCycle);
+  expect(await call('recordIntakeSettlement',{id:'inbox',version:1,depositId:d.id,depositVersion:1,confirmed:true})).toMatchObject({ok:true});
+  expect(h.commit.mock.calls.at(-1)![0].map((c:{kind:string})=>c.kind)).toEqual(expect.arrayContaining(['COMMISSION_DEPOSIT','INTAKE_SETTLEMENT','PAYROLL_CYCLE']));
+});
+it('posts an ordinary receipt without querying unrelated earnings history',async()=>{
+  seed('STATEMENT_INTAKE',intake());await save();const s=await allocate(await payment());
+  const list=h.list.getMockImplementation()!;
+  h.list.mockImplementation(async (...args)=>{if(args[0]==='EARNING')throw new Error('History exceeds 5000 rows');return list(...args);});
+  expect(await post(s)).toMatchObject({ok:true,complete:true});
+  expect(get<CommissionPolicy>('POLICY','p').entries).toHaveLength(1);
+});
+
+it('retries safely if payroll is approved during receipt discovery without saving a partial settlement',async()=>{
+  seed('STATEMENT_INTAKE',intake());
+  const list=h.list.getMockImplementation()!;
+  h.list.mockImplementation(async (...args)=>{
+    const result=await list(...args);
+    if(args[0]==='PAYROLL_CYCLE') {
+      records.set('PAYROLL_STATE:reconciliation',{id:'reconciliation',version:1});
+      seed('PAYROLL_CYCLE',{...suggestPayrollDates('2026-10'),version:1,status:'APPROVED',revision:1,batchIds:[],totalCents:0} as PayrollCycle);
+    }
+    return result;
+  });
+  expect(await call('recordIntakeSettlement',{id:'inbox',version:1,reference:'RACE',totalCents:100,receivedOn:'2026-10-03',settlementType:'DEPOSIT',evidence:'TEST bank evidence',confirmed:true})).toMatchObject({ok:false});
+  expect(all('INTAKE_SETTLEMENT')).toEqual([]);expect(version()).toBe(1);
 });

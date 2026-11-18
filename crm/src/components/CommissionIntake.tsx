@@ -1,3 +1,4 @@
+import { formatUsdCents as money } from "../../../shared/money";
 import CommissionDeposits from "./CommissionDeposits";
 import CommissionJourney, { commissionSteps } from "./CommissionJourney";
 import CommissionSourcePreview from './CommissionSourcePreview';
@@ -31,10 +32,7 @@ import CommissionPanel from "./CommissionPanel";
 import CommissionDraftRecovery from "./CommissionDraftRecovery";
 import "./CommissionIntake.css";
 
-const money = (cents: number) =>
-  new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(
-    cents / 100,
-  );
+
 const today = () =>
   new Intl.DateTimeFormat("en-CA", {
     timeZone: "America/New_York",
@@ -174,7 +172,10 @@ export default function CommissionIntake({
   onAccessDenied: (error: unknown) => void;
 }) {
   const resource = useAsyncResource(
-    () => commissionAction<IntakeWorkspace>("intakeWorkspace", {}),
+    async () => {
+      try { return await commissionAction<IntakeWorkspace>("intakeWorkspace", {}); }
+      catch (error) { if (isAuthorizationError(error)) onAccessDenied(error); throw error; }
+    },
     [],
     { clearDataOnError: () => true },
   );
@@ -537,7 +538,10 @@ function IntakeDetail({
   close: () => void;
 }) {
   const resource = useAsyncResource(
-    () => commissionAction<Detail>("getStatementIntake", { id }),
+    async () => {
+      try { return await commissionAction<Detail>("getStatementIntake", { id }); }
+      catch (error) { if (isAuthorizationError(error)) onError(error); throw error; }
+    },
     [id],
     { clearDataOnError: () => true },
   );
@@ -655,7 +659,7 @@ function IntakeDetail({
           <StatementSummary detail={detail} data={data} choose={chooseStep} />
           {nextStep < 2 && settlements.some(s => s.status === "RECORDED" || s.status === "POSTING") && <p role="status" className="commission-notice">Payment recorded. Complete the source review before allocating or posting this settlement.</p>}
           {nextStep >= 2 && <div className="intake-completion-note" role="status"><strong>Source review complete</strong><span>{intake.rowCount} rows saved · {money(intake.rowTotalCents)} reconciled. {nextStep === 2 ? "Next: confirm the carrier payment below." : nextStep === 3 ? "Payment recorded. Review and post the settlement below." : "Settlement posted."}</span></div>}
-          {activeStep !== nextStep && <div className="intake-completion-note"><span>{activeStep > nextStep ? "Record received money now; source review is still required before posting." : "You are viewing an earlier step. Its saved work is complete."}</span><button className="secondary" onClick={() => chooseStep(nextStep)}>Return to {commissionSteps[nextStep].toLowerCase()}</button></div>}
+          {activeStep !== nextStep && <div className="intake-completion-note"><span>{activeStep === 1 && nextStep === 0 ? "Enter source rows below. Each row still needs your review before posting." : activeStep > nextStep ? "Record received money now; source review is still required before posting." : "You are viewing an earlier step. Its saved work is complete."}</span><button className="secondary" onClick={() => chooseStep(nextStep)}>Return to {commissionSteps[nextStep].toLowerCase()}</button></div>}
           <CommissionPanel title="Statement details & control total" hint={intake.totalCents === undefined ? "Enter the statement total" : money(intake.totalCents) + " saved"} open={intake.totalCents===undefined || (!!rows.length && intake.totalCents!==intake.rowTotalCents)} >
           <HeaderEditor
             key={
@@ -685,6 +689,7 @@ function IntakeDetail({
               onError={onError}
             />
           </CommissionPanel>
+          <div className="intake-source-options"><p>Cannot read this file automatically? Enter its rows, then confirm policy matches and eligibility.</p><button className="secondary" onClick={() => chooseStep(1)}>Enter source rows manually</button></div>
           </div>}{shown(1) && <div hidden={activeStep !== 1}><RowsEditor
             key={"rows-" + rows.map((r) => r.id + ":" + r.version).join(",")}
             detail={detail}

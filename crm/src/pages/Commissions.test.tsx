@@ -800,3 +800,15 @@ it('requires a reason and explicit confirmation before voiding a draft', async (
   fireEvent.click(button);
   await waitFor(()=>expect(h.action).toHaveBeenCalledWith('voidStatement',{id:'s',version:1,reason:'TEST duplicate statement',confirmed:true}));
 });
+
+it('pages earnings history without truncating the ledger totals or downloads',async()=>{
+  const base=snapshot();
+  const earnings=Array.from({length:51},(_,i)=>({id:'earning-'+i,version:1,producerId:'producer',producerName:'Avery',policyId:'p',policyNumber:'POL-'+i,accountName:'History '+i,transaction:'NEW',entryId:'r'+i,receivedOn:'2026-10-01',agencyCents:1000,producerBps:1000,amountCents:100,source:'SHARED_RECEIPT',status:'PAYABLE'}));
+  h.read.mockResolvedValue({...base,earnings});render(<Commissions/>);
+  expect(await screen.findByText('History 0')).toBeVisible();
+  expect(screen.queryByText('History 50')).toBeNull();
+  const before=screen.getByText('Producer earned').parentElement?.textContent;
+  fireEvent.click(screen.getByRole('button',{name:'Next earnings'}));
+  expect(screen.getByText('History 50')).toBeVisible();expect(screen.queryByText('History 0')).toBeNull();
+  expect(screen.getByText('Producer earned').parentElement?.textContent).toBe(before);
+});

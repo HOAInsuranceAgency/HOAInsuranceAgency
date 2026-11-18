@@ -11,6 +11,13 @@ const change = (kind: string, value: unknown, previous?: unknown): store.Change 
 export const noSavedDeposit = (reference: string): store.Transaction[number] => ({ ConditionCheck: {
   TableName: store.table(), Key: {kind: 'COMMISSION_DEPOSIT', id: depositKey(reference)}, ConditionExpression: 'attribute_not_exists(id)',
 } });
+/** Include late receipts in the same transaction that invalidates the approved report. */
+export async function holdReceiptPayroll(receivedOn: string): Promise<store.Change[]> {
+  const cycles = await store.list<PayrollCycle>('PAYROLL_CYCLE');
+  const holds = cycles.filter(c => c.status === 'APPROVED' && receivedOn <= c.cutoff).map(c => change('PAYROLL_CYCLE', {...c, reviewRequired:'A carrier receipt was recorded within this payroll cutoff after approval. Reconcile it and review a replacement payroll approval before payment.'},c));
+  if (holds.length > 90) throw new Error('Review outstanding payroll cycles before recording another receipt.');
+  return holds;
+}
 export async function depositAction(actor: string, operation: string, input: store.Data) {
   // Read the reconciliation version BEFORE duplicate discovery, so concurrent receipts conflict.
   const reconciliation = await store.get('PAYROLL_STATE', 'reconciliation');
@@ -23,12 +30,11 @@ export async function depositAction(actor: string, operation: string, input: sto
       throw new Error('This deposit reference already exists. Review the saved deposit or use a distinct correction reference.');
     }
     if (fields.carrierId && !(await store.get('CARRIER', fields.carrierId))) throw new Error('Choose a configured carrier or leave carrier unknown.');
-    const [settlements, statements, cycles] = await Promise.all([
-      store.list<IntakeSettlement>('INTAKE_SETTLEMENT'), store.list<CommissionStatement>('STATEMENT'), store.list<PayrollCycle>('PAYROLL_CYCLE'),
+    const [settlements, statements] = await Promise.all([
+      store.list<IntakeSettlement>('INTAKE_SETTLEMENT'), store.list<CommissionStatement>('STATEMENT'),
     ]);
     if (settlements.some(s => depositReference(s.reference) === depositReference(fields.reference)) || statements.some(s => depositReference(s.settlementRef) === depositReference(fields.reference))) throw new Error('This reference is already recorded with a statement. Review the existing receipt.');
-    const holds = cycles.filter(c => c.status === 'APPROVED' && fields.receivedOn <= c.cutoff).map(c => change('PAYROLL_CYCLE', {...c, reviewRequired:'An unmatched bank deposit was recorded within this payroll cutoff after approval. Resolve it and review a replacement payroll approval before payment.'},c));
-    if (holds.length > 90) throw new Error('Review outstanding payroll cycles before recording another deposit.');
+    const holds = await holdReceiptPayroll(fields.receivedOn);
     const deposit: CommissionDeposit = {id, version:0, ...fields, status:'AWAITING_REMITTANCE', createdAt:new Date().toISOString(), createdBy:actor};
     await store.commit([change('COMMISSION_DEPOSIT',deposit), change('PAYROLL_STATE',{id:'reconciliation'},reconciliation), ...holds],actor);
     return {ok:true,depositId:id};

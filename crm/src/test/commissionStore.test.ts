@@ -109,5 +109,17 @@ it('continues into earlier-format audit records without deleting or hiding their
   h.send.mockResolvedValueOnce({Items:[]}).mockResolvedValueOnce({Items:[{id:'legacy-uuid',at:'2026-10-01T12:00:00Z'}]});
   const current=await auditPage();const legacy=await auditPage(current.cursor);
   expect(legacy.legacy).toBe(true);expect(legacy.entries).toHaveLength(1);expect(legacy.cursor).toBeUndefined();
-  expect(h.send.mock.calls[1][0].input).toMatchObject({KeyConditionExpression:'#kind = :kind',FilterExpression:'NOT begins_with(id, :prefix)',ExpressionAttributeValues:{':kind':'AUDIT',':prefix':'audit#'}});
+  expect(h.send.mock.calls[1][0].input).toMatchObject({KeyConditionExpression:'#kind = :kind',ExpressionAttributeValues:{':kind':'AUDIT'}});
+});
+
+it('filters current-format audit rows after a bounded legacy query and preserves empty-page cursors', async () => {
+  const key = {kind:'AUDIT',id:'audit#2026-11-05#one'};
+  h.send.mockResolvedValueOnce({Items:[key],LastEvaluatedKey:key}).mockResolvedValueOnce({Items:[{id:'earlier-uuid'}]});
+  const page = await auditPage(Buffer.from(JSON.stringify({phase:'legacy'})).toString('base64url'));
+  expect(page.entries).toEqual([]);
+  expect(page.cursor).toBeTruthy();
+  expect(h.send.mock.calls[0][0].input).not.toHaveProperty('FilterExpression');
+  expect(h.send.mock.calls[0][0].input.ExpressionAttributeValues).toEqual({':kind':'AUDIT'});
+  expect((await auditPage(page.cursor)).entries).toEqual([{id:'earlier-uuid'}]);
+  expect(h.send.mock.calls[1][0].input.ExclusiveStartKey).toEqual(key);
 });

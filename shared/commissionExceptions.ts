@@ -147,6 +147,8 @@ export function validateAllocation(allocation: CommissionAllocation) {
     );
   return allocation;
 }
+export const receiptEarningId = (policyId: string, entryId: string, producerId: string) =>
+  "receipt:" + JSON.stringify([policyId, entryId, producerId]);
 /** Rates differ per employee: round each employee’s cumulative entitlement, not a common pool. */
 export function receiptEarnings(
   policy: CommissionPolicy,
@@ -221,7 +223,7 @@ export function receiptEarnings(
     }
     integer(amountCents, -MONEY_MAX, MONEY_MAX, "shared employee earnings");
     return {
-      id: "receipt:" + JSON.stringify([policy.id, entry.id, p.producerId]),
+      id: receiptEarningId(policy.id, entry.id, p.producerId),
       version: 0,
       producerId: p.producerId,
       producerName: p.producerName,
