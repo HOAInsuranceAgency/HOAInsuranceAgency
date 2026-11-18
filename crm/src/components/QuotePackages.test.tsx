@@ -1,5 +1,7 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
+const permissions = vi.hoisted(() => ({assigned:true,edit:true,send:true}));
+vi.mock('./AccountPermissions', () => ({useAccountPermissions:()=>permissions,AccountEditBoundary:({children}:any)=>children}));
 const h = vi.hoisted(() => ({ request: vi.fn(), resource: { loading: false, loaded: true, error: "", data: { entries: {}, team: [] }, refetch: vi.fn(), setData: vi.fn() } }));
 vi.mock("../lib/commercial", () => ({ useCommercial: () => h.resource }));
 vi.mock("../lib/communications", () => ({ communicationRequest: h.request }));
@@ -9,6 +11,17 @@ import QuotePackages from "./QuotePackages";
 import { emptyCommercialPlan, packageTerms } from "../../../shared/quotePackages";
 import type { Quote } from "../lib/client";
 beforeEach(() => { vi.clearAllMocks(); h.resource.loading = false; h.resource.loaded = true; h.resource.error = ""; h.resource.data.entries = {}; });
+it('allows send-only access to deliver a reviewed package without opening editing', () => {
+  permissions.assigned=false; permissions.edit=false; permissions.send=true;
+  try {
+    const quote = { id:'q1',accountId:'a1',carrierId:'c1',lines:['Property'],status:'QUOTED',premium:1000,commissionPct:10,effectiveDate:'2099-01-01',expirationDate:'2100-01-01' } as Quote;
+    const option={id:'option',name:'Reviewed',quoteIds:['q1'],reviewed:{at:'2026-11-01',by:'owner',terms:{q1:packageTerms(quote)}}};
+    h.resource.data.entries={a1:{plan:{...emptyCommercialPlan('a1'),requiredLines:['Property'],options:[option]}}};
+    render(<QuotePackages accountId="a1" quotes={[quote]} carriers={[]} />);
+    expect(screen.getByRole('button',{name:'Prepare proposal in Front'})).toBeEnabled();
+    expect(screen.getByRole('button',{name:'+ Package option'})).toBeDisabled();
+  } finally { permissions.assigned=true;permissions.edit=true;permissions.send=true; }
+});
 it("offers package delivery only after the complete current terms have been reviewed", () => {
   const quote = { id: "q1", accountId: "a1", carrierId: "c1", lines: ["Property"], status: "QUOTED", premium: 1000, commissionPct: 10, effectiveDate: "2099-01-01", expirationDate: "2100-01-01" } as Quote;
   const option = { id: "option-one", name: "Complete package", quoteIds: [quote.id] };

@@ -3125,6 +3125,16 @@ describe('destination inherited communications remain review-only', () => {
 describe('salesperson access settings', () => {
   const policy = { visibility: 'LEADS', level: 'COLLABORATE', send: false, invoice: true, bind: false };
   const owner = { sub:'admin', groups:['ADMIN','PRODUCER'] } as never;
+  it.each(['HOA_MIGRATION_PREVIEW','HOA_MIGRATION_BUSINESS_HELD'])('keeps permission reads available under %s', async flag => {
+    const {handler} = await import('../../amplify/functions/communications/handler');
+    const previous = process.env[flag];
+    process.env[flag] = 'true';
+    try {
+      expect(await handler({identity:owner, arguments:{readOperation:'accountPermissions',input:{accountId:'a1'}}})).toMatchObject({ok:true,assigned:true});
+      expect(await handler({identity:owner, arguments:{readOperation:'salespersonAccessSettings'}})).toMatchObject({ok:true,version:0});
+      expect(await handler({identity:owner, arguments:{operation:'saveSalespersonAccessSettings',input:{version:0,policy}}})).toMatchObject({ok:false});
+    } finally { if (previous === undefined) delete process.env[flag]; else process.env[flag] = previous; }
+  });
   it('starts restrictive, records the administrator and history, and rejects stale saves', async () => {
     const {handler} = await import('../../amplify/functions/communications/handler');
     expect(await handler({identity:owner, arguments:{readOperation:'salespersonAccessSettings'}})).toMatchObject({ok:true,version:0,policy:{visibility:'ASSIGNED',level:'READ',send:false,invoice:false,bind:false}});

@@ -232,7 +232,7 @@ function QuotePackagesContent({
                     </p>
                   )}
                   <div className="form-actions">
-                    <BusinessDraftButton accountId={accountId} kind="PACKAGE" recordId={option.id} label="Prepare proposal in Front" disabled={saving || !permissions.edit || !assessment.complete} />
+                    <BusinessDraftButton accountId={accountId} kind="PACKAGE" recordId={option.id} label="Prepare proposal in Front" disabled={saving || !assessment.complete} />
                     {(!plan.selectedOptionId || chosen) && (
                       <>
                         <Button variant="secondary"

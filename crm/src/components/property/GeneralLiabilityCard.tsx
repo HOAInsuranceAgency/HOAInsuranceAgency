@@ -1,3 +1,4 @@
+import { useAccountPermissions } from '../AccountPermissions';
 import { Field } from "../ui/Field";
 import { Select } from "../ui/Select";
 import { Textarea } from "../ui/Textarea";
@@ -89,6 +90,7 @@ export default function GeneralLiabilityCard({ accountId }: { accountId: string 
 }
 
 function GlApplicationCard({ accountId }: { accountId: string }) {
+  const permissions = useAccountPermissions();
   const gl = useSingletonChild<GlApplication, GlForm>(client.models.GlApplication, {
     accountId,
     noun: "general liability application",
@@ -253,7 +255,7 @@ function GlApplicationCard({ accountId }: { accountId: string }) {
           </div>
 
           <div className="form-actions">
-            <Button variant="primary"  disabled={gl.status.busy} onClick={gl.save}>
+            <Button variant="primary"  disabled={!permissions.edit || gl.status.busy} onClick={gl.save}>
               {gl.status.busy ? "Saving…" : "Save general liability"}
             </Button>
             <SaveStatus {...gl.status.status} />

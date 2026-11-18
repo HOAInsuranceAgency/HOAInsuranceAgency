@@ -1,4 +1,5 @@
 import { type Account } from "../lib/client";
+import { AccountEditBoundary } from './AccountPermissions';
 import DetailsCard from "./property/DetailsCard";
 import PhotosCard from "./property/PhotosCard";
 
@@ -12,7 +13,7 @@ export default function PropertyPanel({
 }) {
   return (
     <>
-      <DetailsCard account={account} onChange={onChange} />
+      <AccountEditBoundary><DetailsCard account={account} onChange={onChange} /></AccountEditBoundary>
       <PhotosCard account={account} onChange={onChange} />
     </>
   );

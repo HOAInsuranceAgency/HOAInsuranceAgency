@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+const fileHead = vi.hoisted(() => vi.fn());
+vi.mock('../../amplify/functions/crm-access/file-signing', () => ({ fileClient: () => ({ send: fileHead }) }));
 const issuedFees = vi.hoisted(() => new Map<string, { issuedInvoiceIds: string[] }>());
 vi.mock("../../amplify/functions/broker-fees/store", async original => ({
   ...await original<typeof import("../../amplify/functions/broker-fees/store")>(),
@@ -16,6 +18,7 @@ const reader: Reader = async (model, key) => records[`${model}:${key}`];
 const user = (sub = "alice") => new AccountAccess({ sub }, reader);
 const admin = () => new AccountAccess({ sub: "admin", groups: ["ADMIN"] }, reader);
 beforeEach(() => {
+  fileHead.mockReset();
   issuedFees.clear();
   process.env.ACCESS_INDEXES=JSON.stringify({'InvoiceLine.invoiceId':'original-lines'});
   records = {
@@ -615,7 +618,7 @@ describe('admin-controlled salesperson access', () => {
     await expect(producer().requireRecord('Quote', 'qb')).resolves.toMatchObject({id:'qb'});
     await expect(producer().path('documents/ACCOUNT/b/db/file.pdf','read')).resolves.toBeUndefined();
     await expect(producer().write('Account','update',{id:'b',name:'Changed'})).rejects.toThrow(AccessDenied);
-    await expect(producer().write('Document','create',{id:'new',entityType:'ACCOUNT',entityId:'b',s3Key:'pending'})).rejects.toThrow(AccessDenied);
+    await expect(producer().write('Document','create',{id:'new',entityType:'ACCOUNT',entityId:'b',s3Key:'pending',lastWriteBy:'alice'})).rejects.toThrow(AccessDenied);
     await expect(producer().path('documents/ACCOUNT/b/db/file.pdf','write')).rejects.toThrow(AccessDenied);
     for (const [field,args] of [['sendInvoice',{invoiceId:'ib'}],['voidInvoice',{invoiceId:'ib'}],['bindCommissionPolicy',{input:{quoteId:'qb'}}],['communicationWrite',{operation:'addNote',input:{accountId:'b'}}],['communicationWrite',{operation:'prepareBusinessDraft',input:{accountId:'b'}}]] as const) {
       await expect(authorizeCustom(producer(),field,args)).rejects.toThrow(AccessDenied);
@@ -625,7 +628,7 @@ describe('admin-controlled salesperson access', () => {
     configure({level:'COLLABORATE'});
     await expect(authorizeCustom(producer(),'communicationWrite',{operation:'addNote',input:{accountId:'b'}})).resolves.toBeUndefined();
     await expect(authorizeCustom(producer(),'communicationWrite',{operation:'addNote',input:{accountId:'b',publishToFront:true}})).rejects.toThrow(AccessDenied);
-    await expect(producer().write('Document','create',{id:'new',entityType:'ACCOUNT',entityId:'b',s3Key:'pending'})).resolves.toBeUndefined();
+    await expect(producer().write('Document','create',{id:'new',entityType:'ACCOUNT',entityId:'b',s3Key:'pending',lastWriteBy:'alice'})).resolves.toBeUndefined();
     await expect(producer().write('Document','delete',{id:'db'})).rejects.toThrow(AccessDenied);
     await expect(producer().write('Contact','create',{id:'c',accountId:'b'})).rejects.toThrow(AccessDenied);
   });
@@ -640,6 +643,25 @@ describe('admin-controlled salesperson access', () => {
     records['Quote:qb'].status='BOUND';
     await expect(producer().write('Quote','update',{id:'qb',notes:'Changed'})).rejects.toThrow(AccessDenied);
   });
+  it('cleans up only the caller’s recent failed upload and never an existing object', async () => {
+    configure({level:'COLLABORATE'});
+    process.env.STORAGE_BUCKET = 'test-uploads';
+    Object.assign(records['Document:db'], {lastWriteBy:'alice',createdAt:new Date().toISOString()});
+    fileHead.mockRejectedValue({$metadata:{httpStatusCode:404}});
+    await expect(producer().write('Document','delete',{id:'db'})).resolves.toBeUndefined();
+    fileHead.mockResolvedValue({ContentLength:123});
+    await expect(producer().write('Document','delete',{id:'db'})).rejects.toThrow(AccessDenied);
+    fileHead.mockRejectedValue({$metadata:{httpStatusCode:403}});
+    await expect(producer().write('Document','delete',{id:'db'})).rejects.toMatchObject({$metadata:{httpStatusCode:403}});
+    records['Document:db'].s3Key='pending';
+    await expect(producer().write('Document','delete',{id:'db'})).resolves.toBeUndefined();
+    records['Document:db'].lastWriteBy='bob';
+    await expect(producer().write('Document','delete',{id:'db'})).rejects.toThrow(AccessDenied);
+    records['Document:db'].lastWriteBy='alice';
+    records['Document:db'].createdAt=new Date(Date.now()-11*60_000).toISOString();
+    await expect(producer().write('Document','delete',{id:'db'})).rejects.toThrow(AccessDenied);
+    await expect(producer().write('Document','create',{id:'new',entityType:'ACCOUNT',entityId:'b',s3Key:'pending',lastWriteBy:'bob'})).rejects.toThrow(AccessDenied);
+  });
   it.each(['send','invoice','bind'] as const)('enables only the independent %s action', async capability => {
     configure({[capability]:true});
     await expect(producer().requireCapability('b',capability)).resolves.toBeUndefined();
@@ -650,5 +672,12 @@ describe('admin-controlled salesperson access', () => {
     for (const op of ['salespersonAccessSettings','saveSalespersonAccessSettings']) await expect(authorizeCustom(producer(),op.startsWith('save')?'communicationWrite':'communicationRead',{readOperation:op,operation:op,input:{}})).rejects.toThrow(AccessDenied);
     configure({send:'yes'});
     await expect(producer().canAccount('b')).rejects.toThrow('valid salesperson access');
+  });
+  it('prefetches account stages with shared result pages', async () => {
+    configure();
+    const access=producer(), batch=vi.spyOn(access,'prefetch');
+    await access.prefetchAccounts(['a','b']);
+    expect(batch).toHaveBeenCalledWith('Account',['a','b']);
+    expect(await access.canAccount('b')).toBe(true);
   });
 });

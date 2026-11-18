@@ -37,6 +37,14 @@ beforeEach(() => {
 afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); });
 
 describe('atomic source draft line writes', () => {
+  it('permits shared invoice edits without a workflow and fences its absence', async () => {
+    vi.stubEnv('COMMUNICATION_TABLE','Communication'); vi.stubEnv('ACCESS_TABLES',JSON.stringify({Account:'Account'}));
+    rows.delete('Communication:workflow:a'); rows.set('Account:a',{id:'a',stage:'LEAD'});
+    rows.set('Communication:settings:salesperson-access:v1',{id:'settings:salesperson-access:v1',version:1,data:{policy:{visibility:'LEADS',level:'READ',send:false,invoice:true,bind:false}}});
+    const shared = new AccountAccess({sub:'alice',groups:['PRODUCER']},async (model,key)=>structuredClone(rows.get(`${model}:${key}`)));
+    await expect(writeInvoiceDraftLine(shared,{model:'InvoiceLine',field:'createInvoiceLine',arguments:{input}})).resolves.toMatchObject({handled:true});
+    expect(sent()).toEqual(expect.arrayContaining([{ConditionCheck:{TableName:'Communication',Key:{id:'workflow:a'},ConditionExpression:'attribute_not_exists(id)'}}]));
+  });
   it('creates a native line and records its generated ID on the parent in the same transaction', async () => {
     const result = await write('createInvoiceLine', input);
     expect(result).toMatchObject({ handled: true, line: { ...input, id: expect.any(String), __typename: 'InvoiceLine' } });

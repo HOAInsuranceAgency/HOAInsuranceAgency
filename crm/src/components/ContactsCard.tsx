@@ -1,3 +1,4 @@
+import { useAccountPermissions } from './AccountPermissions';
 import { Input } from "./ui/Input";
 import { Select } from "./ui/Select";
 import { useAgencyDay } from "../lib/useAgencyDay";
@@ -111,6 +112,7 @@ export default function ContactsCard({ accountId }: { accountId: string }) {
 
   // Its own status because it is its own write, and one that touches rows the
   // add and edit forms never see.
+  const permissions = useAccountPermissions();
   const primaryStatus = useSaveStatus({ autoClearMs: 4000 });
   const primaryBusy = useRef(false);
 
@@ -188,7 +190,7 @@ export default function ContactsCard({ accountId }: { accountId: string }) {
               type="radio"
               name={`primary-contact-${accountId}`}
               checked={primaryContact(child.rows)?.id === contact.id}
-              disabled={!relationshipCurrent(contact, today) || primaryStatus.busy || child.addStatus.busy || child.editStatus.busy || child.delStatus.busy}
+              disabled={!permissions.edit || !relationshipCurrent(contact, today) || primaryStatus.busy || child.addStatus.busy || child.editStatus.busy || child.delStatus.busy}
               onChange={() => makePrimary(contact.id)}
               aria-label={`Make ${contact.name} the primary contact`}
             />

@@ -1,4 +1,5 @@
 import { relationshipPath } from '../../../shared/crmRoutes';
+import { useAccountPermissions } from './AccountPermissions';
 import { Button } from "./ui/Button";
 import { Input } from "./ui/Input";
 import { usePagedList } from '../lib/usePagedList';
@@ -24,6 +25,7 @@ export default function AccountRelationships({
   onChanged: () => void;
 }) {
   const [historyToken, setHistoryToken] = useState<string>();
+  const permissions = useAccountPermissions();
   const [params, setParams] = useSearchParams();
   const day = useAgencyDay();
   const [management, setManagement] = useState(false),
@@ -89,7 +91,7 @@ export default function AccountRelationships({
       </div>
       {r.notes && <p className="small">{r.notes}</p>}
       {!r.validUntil && !['MANAGER', 'REFERRER'].includes(r.role) && (
-        <Button variant="link"  onClick={() => setEnding(r)}>
+        <Button variant="link" disabled={!permissions.edit} onClick={() => setEnding(r)}>
           End relationship
         </Button>
       )}
@@ -106,14 +108,14 @@ export default function AccountRelationships({
         <div className="toolbar">
           <Button variant="secondary"
 
-            disabled={resource.loading || !!resource.error}
+            disabled={!permissions.edit || resource.loading || !!resource.error}
             onClick={() => setManagement(true)}
           >
             Change management
           </Button>
           <Button variant="secondary"
 
-            disabled={resource.loading || !!resource.error}
+            disabled={!permissions.edit || resource.loading || !!resource.error}
             onClick={() => setLinking(true)}
           >
             Link relationship
@@ -183,7 +185,7 @@ export default function AccountRelationships({
           {notice}
         </p>
       )}
-      {management && !resource.error && (
+      {permissions.edit && management && !resource.error && (
         <ManagementChangeForm
           accountId={accountId}
           {...resource.data}
@@ -197,14 +199,14 @@ export default function AccountRelationships({
           onSaved={() => void saved()}
         />
       )}
-      {linking && (
+      {permissions.edit && linking && (
         <RelationshipLinkForm
           accountId={accountId}
           onClose={() => setLinking(false)}
           onSaved={() => void saved()}
         />
       )}
-      {ending && (
+      {permissions.edit && ending && (
         <EndRelationship relationship={ending} onClose={() => setEnding(null)} onSaved={() => void saved()} />
       )}
     </section>

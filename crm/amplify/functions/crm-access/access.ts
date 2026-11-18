@@ -1,4 +1,6 @@
 import type { TransactWriteCommandInput } from '@aws-sdk/lib-dynamodb';
+import { HeadObjectCommand } from '@aws-sdk/client-s3';
+import { fileClient } from './file-signing';
 import { DEFAULT_SALESPERSON_ACCESS, SALESPERSON_ACCESS_KEY, parseSalespersonAccess, policyAllows, type AccountCapability } from '../../../../shared/salespersonAccess';
 import { assertBrokerFeeAgencyBilling, brokerFeeCents, feeAllocations } from '../../../../shared/brokerFees';
 import { quoteSourceBillingHistory } from '../quote-source-billing';
@@ -82,6 +84,7 @@ export class AccountAccess {
   async prefetchAccounts(keys: string[]) {
     if (this.admin) return;
     await this.prefetch("Communication", keys.filter(Boolean).flatMap(key => [`workflow:${key}`, `deleted-account:${key}`]));
+    if ((await this.accessPolicy()).visibility !== 'ASSIGNED') await this.prefetch('Account', keys.filter(Boolean));
   }
   async prefetchRecordAccess(model: string, values: RecordData[]) {
     if (this.admin) return;
@@ -188,9 +191,27 @@ export class AccountAccess {
         if (!root || await this.ownsAccount(root)) continue;
         let capability: AccountCapability = 'restricted';
         if (['Invoice', 'InvoiceLine'].includes(model)) capability = 'invoice';
-        else if (model === 'Document' && (operation === 'create' || operation === 'update' && old?.s3Key === 'pending' && Object.keys(input).every(k => ['id','s3Key','lastWriteBy'].includes(k)))) capability = 'collaborate';
+        else if (model === 'Document' && (operation === 'create' || operation === 'update' && old?.s3Key === 'pending' && old.lastWriteBy === this.actor && Object.keys(input).every(k => ['id','s3Key','lastWriteBy'].includes(k)))) capability = 'collaborate';
+        else if (model === 'Document' && operation === 'delete' && old?.lastWriteBy === this.actor && typeof old.createdAt === 'string' && Date.now() - Date.parse(old.createdAt) >= 0 && Date.now() - Date.parse(old.createdAt) < 10 * 60_000) {
+          await this.requireCapability(root, 'collaborate');
+          // Only the caller's recent failed upload can be cleaned up. Existing
+          // objects and uncertain storage errors never authorize deletion.
+          if (old.s3Key !== 'pending') {
+            await this.path(id(old.s3Key), 'read', root);
+            const Bucket = process.env.STORAGE_BUCKET;
+            if (!Bucket) throw new AccessDenied();
+            try {
+              await fileClient().send(new HeadObjectCommand({ Bucket, Key: id(old.s3Key) }));
+              throw new AccessDenied();
+            } catch (error) {
+              if ((error as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode !== 404) throw error;
+            }
+          }
+          capability = 'collaborate';
+        }
         else if (['Account', 'Contact', 'PriorCarrier', 'Loss', 'Blanket', 'GlApplication', 'GlClassCode', 'DoCoveragePart', 'DoApplication', 'Building', 'Quote'].includes(model) && operation !== 'delete') capability = 'edit';
         await this.requireCapability(root, capability);
+        if (model === 'Document' && operation !== 'delete' && input.lastWriteBy !== this.actor) throw new AccessDenied();
         if (model === 'Account' && ['stage','owner','ownerId','salespersonId','producerOfRecord'].some(k => Object.hasOwn(input,k))) throw new AccessDenied();
         if (model === 'Quote' && (old && !['DRAFT','SUBMITTED','QUOTED'].includes(String(old.status)) || ['bindAuthorizedAt','bindAuthorizedBy','bindAuthorizedTerms','presentedAt','producerOfRecord'].some(k => Object.hasOwn(input,k)) || input.status && !['DRAFT','SUBMITTED','QUOTED'].includes(String(input.status)))) throw new AccessDenied();
         if (old && await this.root(model, old) !== await this.root(model, candidate)) throw new AccessDenied();

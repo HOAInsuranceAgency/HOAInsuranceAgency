@@ -234,28 +234,28 @@ function AccountDetailPage({ profile }: { profile: UserProfile }) {
       <Tabs id="account-detail" label="Account views" items={tabs.map(([value, label]) => ({ value, label }))} value={activeTab} onChange={selectTab} />
       <AccountPermissions accountId={account.id}><TabPanel tabsId="account-detail" value={activeTab}>
       {activeTab === "overview" && (
-        <AccountEditBoundary><div className="account-overview">
+        <div className="account-overview">
           {isAdmin && account.stage === "LEAD" && <LeadAssignment key={account.id} account={account} />}
-          <OverviewTab key={account.id} account={account} onChange={setAccount} />
+          <AccountEditBoundary><OverviewTab key={account.id} account={account} onChange={setAccount} /></AccountEditBoundary>
           <AccountRelationships key={account.id} accountId={account.id} onChanged={() => setContactRevision(n => n + 1)} />
           <div id="contacts"><ContactsCard key={`${account.id}:${contactRevision}`} accountId={account.id} /></div>
           <PropertyPanel key={account.id} account={account} onChange={setAccount} />
-          {account.stage === "LEAD" && <DeleteLeadZone account={account} />}
-        </div></AccountEditBoundary>
+          {account.stage === "LEAD" && <AccountEditBoundary permission="assigned"><DeleteLeadZone account={account} /></AccountEditBoundary>}
+        </div>
       )}
-      {activeTab === "property" && <AccountEditBoundary><PropertyCoveragePanel key={account.id} accountId={account.id} /></AccountEditBoundary>}
-      {activeTab === "submissions" && <AccountEditBoundary><SubmissionsPanel key={account.id} account={account} initialEstimateId={searchParams.get("estimate") ?? undefined} /></AccountEditBoundary>}
+      {activeTab === "property" && <PropertyCoveragePanel key={account.id} accountId={account.id} />}
+      {activeTab === "submissions" && <SubmissionsPanel key={account.id} account={account} initialEstimateId={searchParams.get("estimate") ?? undefined} />}
       {activeTab === "quotes" && (
         <div id="carrier-work">
           <HoneycombEstimates accountId={account.id} />
           <QuotesPanel account={account} onAccountChange={setAccount} />
         </div>
       )}
-      {activeTab === "priorcarrier" && <AccountEditBoundary><PriorCarrierTab accountId={account.id} /></AccountEditBoundary>}
-      {activeTab === "losses" && <AccountEditBoundary><LossesTab accountId={account.id} /></AccountEditBoundary>}
-      {activeTab === "policies" && <AccountEditBoundary permission="assigned"><PoliciesTab accountId={account.id} /></AccountEditBoundary>}
+      {activeTab === "priorcarrier" && <PriorCarrierTab accountId={account.id} />}
+      {activeTab === "losses" && <LossesTab accountId={account.id} />}
+      {activeTab === "policies" && <PoliciesTab accountId={account.id} />}
       {activeTab === "invoices" && <InvoicesTab accountId={account.id} />}
-      {activeTab === "financing" && <AccountEditBoundary permission="assigned"><FinancingTab account={account} /></AccountEditBoundary>}
+      {activeTab === "financing" && <FinancingTab account={account} />}
       {activeTab === "documents" && (
         <div className="account-documents">
           <div className="card">

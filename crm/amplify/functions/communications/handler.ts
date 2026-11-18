@@ -63,7 +63,7 @@ function safeCommunication(data: Communication): Communication {
 }
 export const handler = async (event: { arguments: { operation?: string; readOperation?: string; input?: unknown }; identity?: AppSyncIdentityCognito; request?: RoleRequest }) => {
   try {
-    const previewReads = new Set(["searchAccounts", "dashboardOpenQuotesPage", "dashboardBoundPoliciesPage", "dashboardQuotesPage", "dashboardQuoteStates", "dashboardInvoiceAnchors", "dashboardAssignments", "dashboardInterestPage", "dashboardPolicyAnchors", "dashboardLeadPlansPage", "commercialTable", "lastContacts", "accountSummary", "activity", "team", "teamSettings"]);
+    const previewReads = new Set(["accountPermissions", "salespersonAccessSettings", "searchAccounts", "dashboardOpenQuotesPage", "dashboardBoundPoliciesPage", "dashboardQuotesPage", "dashboardQuoteStates", "dashboardInvoiceAnchors", "dashboardAssignments", "dashboardInterestPage", "dashboardPolicyAnchors", "dashboardLeadPlansPage", "commercialTable", "lastContacts", "accountSummary", "activity", "team", "teamSettings"]);
     assertPreviewRead(!!event.arguments.readOperation && previewReads.has(event.arguments.readOperation));
     const actor = event.identity?.sub;
     if (!actor) throw new Error("Sign in to the CRM to continue");
