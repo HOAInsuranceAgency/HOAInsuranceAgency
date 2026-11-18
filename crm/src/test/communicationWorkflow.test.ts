@@ -1461,6 +1461,64 @@ describe("per-teammate automatic replies at delivery", () => {
     expect(record(op.id).data.state).toBe("SUPPRESSED");
     expect(h.front.mock.calls.some(([, method]) => method === "POST")).toBe(false);
   });
+  it.each([
+    ["initial preference", "thrown error"], ["initial preference", "errors array"],
+    ["preflight preference", "thrown error"], ["preflight preference", "errors array"],
+  ] as const)("retries %s cancellation after a projection %s without reviving the email", async (detection, failure) => {
+    const op = await queued();
+    if (detection === "initial preference") await preference("brian", false);
+    else h.front.mockImplementation(async (_path, method) => {
+      if (!method) await preference("brian", false);
+      return { _results: [] };
+    });
+    h.update.mockImplementationOnce(async () => {
+      expect(record(op.id).data).toMatchObject({ state: "RETRY_WAIT", autoReplySuppressionPending: true });
+      if (failure === "thrown error") throw new Error("Projection unavailable");
+      return { data: null, errors: [{ message: "Projection unavailable" }] };
+    });
+    await runOperation(op);
+    expect(record(op.id).data).toMatchObject({ state: "RETRY_WAIT", autoReplySuppressionPending: true, attempts: 0 });
+    expect(record(op.id).dueAt).toBe(new Date(Date.parse(NOW) + 60_000).toISOString());
+    expect(h.front.mock.calls.some(([, method]) => method === "POST")).toBe(false);
+
+    // Once cancellation is durable, neither a changed owner/preference nor an
+    // integration pause may divert its retry back into the email send path.
+    await preference("brian", true);
+    const wf = (await get<LeadWorkflow>("workflow:a1"))!;
+    await save(row("WORKFLOW", wf.id, { ...wf.data, salespersonId: "jake" }, { accountId: "a1", previous: wf }), wf);
+    h.c.paused = true; h.readFailureId = "workflow:a1";
+    h.front.mockClear(); h.producerEmail.mockClear(); h.reads.length = 0;
+    h.update.mockRejectedValueOnce(new Error("Projection still unavailable"));
+    vi.setSystemTime(new Date(Date.parse(NOW) + 60_000));
+    await runOperation(record(op.id) as Row<Operation>);
+    expect(record(op.id).data).toMatchObject({ state: "RETRY_WAIT", autoReplySuppressionPending: true });
+    expect(record(op.id).dueAt).toBe(new Date(Date.parse(NOW) + 120_000).toISOString());
+
+    vi.setSystemTime(new Date(Date.parse(NOW) + 120_000));
+    await runOperation(record(op.id) as Row<Operation>);
+    expect(record(op.id).data.state).toBe("SUPPRESSED");
+    expect(record(op.id).data.autoReplySuppressionPending).toBeUndefined();
+    expect(record(op.id).dueAt).toBeUndefined();
+    expect(h.update).toHaveBeenCalledTimes(3);
+    expect(h.reads).not.toContain("workflow:a1");
+    expect(h.front).not.toHaveBeenCalled(); expect(h.producerEmail).not.toHaveBeenCalled();
+  });
+  it("finishes cancellation after projection succeeds but its terminal save is interrupted", async () => {
+    const op = await queued(); await preference("brian", false);
+    h.update.mockImplementationOnce(async () => { h.fail = true; return { data: {} }; });
+    await runOperation(op);
+    expect(record(op.id).data).toMatchObject({ state: "RETRY_WAIT", autoReplySuppressionPending: true });
+    expect(h.update).toHaveBeenCalledWith(expect.objectContaining({ id: "reply:preference", status: "SUPPRESSED" }));
+
+    h.fail = false;
+    await preference("brian", true); h.records.delete("comms:workflow:a1"); h.c.paused = true;
+    vi.setSystemTime(new Date(Date.parse(NOW) + 60_000));
+    await runOperation(record(op.id) as Row<Operation>);
+    expect(record(op.id).data.state).toBe("SUPPRESSED");
+    expect(record(op.id).data.autoReplySuppressionPending).toBeUndefined();
+    expect(h.update).toHaveBeenCalledTimes(2);
+    expect(h.front).not.toHaveBeenCalled(); expect(h.producerEmail).not.toHaveBeenCalled();
+  });
   it("does not revive a suppressed email after automatic replies are enabled again", async () => {
     const op = await queued(); await preference("brian", false);
     await runOperation(op); await preference("brian", true);
