@@ -26,8 +26,10 @@ export async function statementPostingChanges(
   statement: CommissionStatement,
   actor: string,
   previous?: CommissionStatement,
+  review?: { policyVersions: Record<string, number>; calculations: ReturnType<typeof assertStatementPostingPlan>['calculations'] },
 ) {
   const earnings: CommissionEarning[] = [];
+  const actual: ReturnType<typeof assertStatementPostingPlan>["calculations"] = [];
   const changes: store.Change[] = [],
     originals = new Map<string, CommissionPolicy>(),
     updated = new Map<string, CommissionPolicy>();
@@ -37,6 +39,8 @@ export async function statementPostingChanges(
       (await store.get<CommissionPolicy>("POLICY", line.policyId));
     if (!original || original.carrierId !== statement.carrierId)
       throw new Error("A policy match is no longer available.");
+    if (review && review.policyVersions[original.id] !== original.version)
+      throw new Error('Commission terms changed after review. Refresh and review the remaining settlement before posting.');
     if (!originals.has(original.id)) earnings.push(...await policyReceiptEarnings([original]));
     originals.set(original.id, original);
     updated.set(
@@ -51,6 +55,7 @@ export async function statementPostingChanges(
     const postedPolicy = updated.get(original.id)!;
     const postedEntry = postedPolicy.entries.at(-1)!;
     const allocations = receiptEarnings(postedPolicy, postedEntry, earnings);
+    actual.push(...calculationRows(postedPolicy, line, postedEntry, allocations));
     earnings.push(...allocations);
     changes.push(...allocations.map((e) => change("EARNING", e)));
     changes.push(
@@ -60,6 +65,8 @@ export async function statementPostingChanges(
       }),
     );
   }
+  if (review && (actual.length !== review.calculations.length || actual.some((c,i) => calculationKey(c) !== calculationKey(review.calculations[i]))))
+    throw new Error('Employee calculations changed after review. Refresh and review the remaining settlement before posting.');
   for (const [id, value] of updated)
     changes.push(change("POLICY", value, originals.get(id)));
   changes.push(
@@ -108,9 +115,19 @@ export function assertStatementPostingPlan(
     const entry = next.entries.at(-1)!;
     const created = receiptEarnings(next, entry, earnings);
     earnings.push(...created);
-    if (!entry.allocationId) calculations.push({ policyId: policy.id, lineRef: line.lineRef, producerId: policy.producerId, producerName: policy.producerName, agencyCents: line.agencyCents, producerBps: policy.producerBps, amountCents: entry.producerCents, reviewOnly: line.kind !== 'RECEIPT' });
-    for (const earning of created) calculations.push({ policyId: policy.id, lineRef: line.lineRef, producerId: earning.producerId, producerName: earning.producerName, agencyCents: line.agencyCents, producerBps: earning.producerBps, shareBps: earning.shareBps, amountCents: earning.amountCents, reviewOnly: earning.status !== 'PAYABLE' });
+    calculations.push(...calculationRows(policy, line, entry, created));
     updated.set(policy.id, next);
   }
   return { calculations, employeeCents: calculations.filter(c => !c.reviewOnly).reduce((n,c) => n+c.amountCents,0) };
+}
+
+function calculationRows(policy: CommissionPolicy, line: CommissionStatement['lines'][number], entry: CommissionPolicy['entries'][number], created: CommissionEarning[]) {
+  return !entry.allocationId
+    ? [{ policyId: policy.id, lineRef: line.lineRef, producerId: policy.producerId, producerName: policy.producerName, agencyCents: line.agencyCents, producerBps: policy.producerBps, amountCents: entry.producerCents, reviewOnly: line.kind !== 'RECEIPT' }]
+    : created.map(earning => ({ policyId: policy.id, lineRef: line.lineRef, producerId: earning.producerId, producerName: earning.producerName, agencyCents: line.agencyCents, producerBps: earning.producerBps, shareBps: earning.shareBps, amountCents: earning.amountCents, reviewOnly: earning.status !== 'PAYABLE' }));
+}
+
+/** DynamoDB maps do not promise JSON property order. Compare the financial fields in a fixed order. */
+function calculationKey(c: ReturnType<typeof assertStatementPostingPlan>['calculations'][number]) {
+  return JSON.stringify([c.policyId,c.lineRef,c.producerId,c.producerName,c.agencyCents,c.producerBps,c.shareBps ?? null,c.amountCents,c.reviewOnly]);
 }

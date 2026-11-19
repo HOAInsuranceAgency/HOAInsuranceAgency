@@ -22,7 +22,7 @@ export default function CommissionWorkQueue({ data, onAccessDenied }: { data: Co
       if (![inbox.intakes,inbox.settlements,payroll.cycles,reviews.departures,reviews.adjustments,reviews.earnings].every(Array.isArray)) throw new Error('Commission work is unavailable. Refresh to load the complete queue.');
       return { inbox, payroll, reviews };
     } catch (error) { if (isAuthorizationError(error)) onAccessDenied(error); throw error; }
-  }, [], { clearDataOnError: () => true });
+  }, [], { clearDataOnError: () => true, live: { topics: ['OWNER'], protectEdits: true } });
   if (!resource.data) return <section className="card"><h2>Work queue</h2><p role={resource.error ? 'alert' : 'status'}>{resource.error || 'Loading current work…'}</p>{resource.error && <Button onClick={() => void resource.refetch()}>Retry work queue</Button>}</section>;
   const { inbox, payroll, reviews } = resource.data;
   const cycles = payroll.cycles.filter(c => c.status === 'OPEN').sort((a,b) => a.cutoff.localeCompare(b.cutoff));

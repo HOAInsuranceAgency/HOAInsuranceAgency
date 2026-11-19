@@ -1,6 +1,7 @@
+import { activeIntakeWork, activeSettlementWork, statementSourceLinks } from './statement-reads';
 import { workspaceEarnings } from "./earnings";
 import { depositPayrollStatements, type CommissionDeposit } from '../../../../shared/commissionDeposits';
-import { intakePayrollStatements, type IntakeSettlement, type StatementIntake } from '../../../../shared/commissionIntake';
+import { intakePayrollStatements } from '../../../../shared/commissionIntake';
 import type { CommissionEarning, CommissionDeparture, CommissionAdjustment } from '../../../../shared/commissionExceptions';
 import { createHash, randomUUID } from 'node:crypto';
 import { buildPayrollApproval, COMMISSION_START_MONTH, cycleBatches, defaultPayrollSettings, payrollBlockers, payrollCutoffIssue, payrollDay, payrollPreview, cyclePayrollRows, payrollRowKey, suggestPayrollDates, validatePayrollCycle, validatePayrollSettings, type PayrollCycle, type PayrollDelivery, type PayrollSettings, type PayrollWorkspace } from '../../../../shared/commissionPayroll';
@@ -53,7 +54,7 @@ export async function payrollAction(_event: Event, actor: string, owner: boolean
     const [cycles, deliveries, batches] = await Promise.all([store.list<PayrollCycle>('PAYROLL_CYCLE'), store.list<PayrollDelivery>('PAYROLL_DELIVERY'), store.list<CommissionBatch>('BATCH')]);
     const [policies, statements, departures, adjustments] = await Promise.all([store.list<CommissionPolicy>('POLICY'), store.list<CommissionStatement>('STATEMENT'),store.list<CommissionDeparture>('DEPARTURE'),store.list<CommissionAdjustment>('ADJUSTMENT')]);
     const earnings = await workspaceEarnings(policies, adjustments);
-    const [intakes, intakeSettlements] = await Promise.all([store.list<StatementIntake>('STATEMENT_INTAKE'), store.list<IntakeSettlement>('INTAKE_SETTLEMENT')]);
+    const [intakes, intakeSettlements] = await Promise.all([activeIntakeWork(), activeSettlementWork()]);
     const deposits = await store.list<CommissionDeposit>('COMMISSION_DEPOSIT');
     statements.push(...intakePayrollStatements(intakeSettlements), ...depositPayrollStatements(deposits));
     validateAllocationSnapshot(policies, batches, earnings);
@@ -80,8 +81,8 @@ export async function payrollAction(_event: Event, actor: string, owner: boolean
     workspace.producers = [...new Map([...policies.map(p => [p.producerId, { id: p.producerId, name: p.producerName }] as const),...earnings.map(e => [e.producerId,{id:e.producerId,name:e.producerName}] as const)]).values()].sort((a,b) => a.name.localeCompare(b.name));
     const activeIntakes = intakes.filter(s => s.status === 'OPEN' && (!s.rowCount || s.completedRows !== s.rowCount));
     workspace.statementReadiness = { activeStatements: activeIntakes.length, statementsNeedingReview: activeIntakes.filter(s => !s.rowCount || s.needsReview > 0 || s.totalCents === undefined || s.totalCents !== s.rowTotalCents).length, unmatchedRows: activeIntakes.reduce((n, s) => n + s.unmatched, 0), pendingSettlements: statements.filter(s => s.status === 'DRAFT').map(s => ({ id: s.id, reference: s.reference, receivedOn: s.receivedOn, status: 'Needs posting' })) };
-    workspace.sourceLinks = policies.flatMap(p => p.entries.map(e => ({ policyId: p.id, entryId: e.id, statementId: e.statementId,
-      ...(intakeSettlements.find(s => s.statementIds.includes(e.statementId)) ? { intakeId: intakeSettlements.find(s => s.statementIds.includes(e.statementId))!.intakeId } : {}) })));
+    const links = new Map((await statementSourceLinks(policies.flatMap(p => p.entries.map(e => e.statementId)))).map(link => [link.id,link.intakeId]));
+    workspace.sourceLinks = policies.flatMap(p => p.entries.map(e => ({ policyId:p.id, entryId:e.id, statementId:e.statementId, ...(links.has(e.statementId) ? {intakeId:links.get(e.statementId)!} : {}) })));
     workspace.availableEarnings = payrollPreview(policies, payrollDay(), undefined, earnings, departures);
     return { ok: true, ...workspace };
   }
@@ -175,7 +176,7 @@ export async function payrollAction(_event: Event, actor: string, owner: boolean
     const reconciliation = await store.get<{ id: string; version: number }>('PAYROLL_STATE', 'reconciliation');
     const [policies, batches, statements, departures, adjustments] = await Promise.all([store.list<CommissionPolicy>('POLICY'), store.list<CommissionBatch>('BATCH'), store.list<CommissionStatement>('STATEMENT'),store.list<CommissionDeparture>('DEPARTURE'),store.list<CommissionAdjustment>('ADJUSTMENT')]);
     const earnings = await workspaceEarnings(policies, adjustments);
-    statements.push(...intakePayrollStatements(await store.list<IntakeSettlement>('INTAKE_SETTLEMENT')), ...depositPayrollStatements(await store.list<CommissionDeposit>('COMMISSION_DEPOSIT')));
+    statements.push(...intakePayrollStatements(await activeSettlementWork()), ...depositPayrollStatements(await store.list<CommissionDeposit>('COMMISSION_DEPOSIT')));
     const current = preview(cycle, policies, settings, statements, earnings, departures, adjustments);
     if (current.blockers.length) throw new Error(current.blockers.join(' '));
     if (input.previewToken !== current.token) throw new Error('The reviewed payroll amounts or employee settings changed. Refresh and review before approval.');

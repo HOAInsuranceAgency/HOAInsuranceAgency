@@ -1,3 +1,5 @@
+import { act } from '@testing-library/react';
+import { liveUpdates } from '../lib/liveUpdates';
 import { render,screen,fireEvent,waitFor } from '@testing-library/react';
 import { beforeEach,it,expect,vi } from 'vitest';
 import type { CommissionOverview } from '../../../shared/commissions';
@@ -46,4 +48,18 @@ it('labels a future cutoff as a scheduled wait instead of a reconciliation issue
  expect(screen.getByText('Waiting for the 2099-11-20 receipt cutoff to end')).toBeInTheDocument();
  expect(screen.queryByText(/approval issues/)).toBeNull();
  expect(navigate).toHaveBeenCalledWith({tab:'payroll',cycleId:'future'});
+});
+
+it('refreshes remote work after an edit lock clears without replacing work during editing',async()=>{
+ const stop=liveUpdates.start('review-test:OWNER');let release:(()=>void)|undefined;
+ try {
+  let reference='Original work';
+  h.action.mockImplementation(async op=>op==='intakeWorkspace'?{intakes:[{id:'s',status:'OPEN',reference,documentReceivedOn:'2026-10-01',rowCount:0,completedRows:0,needsReview:1}],settlements:[]}:op==='payrollWorkspace'?{cycles:[]}:{departures:[],adjustments:[],earnings:[]});
+  const view=render(<CommissionWorkQueue data={data} onAccessDenied={vi.fn()}/>);await screen.findByText('Original work');
+  release=liveUpdates.acquireBlock('edit');reference='Updated by another Owner';
+  act(()=>liveUpdates.invalidate(['OWNER']));
+  await act(async()=>{await new Promise(r=>setTimeout(r,150));});
+  expect(screen.queryByText('Updated by another Owner')).toBeNull();expect(screen.getByText('Original work')).toBeInTheDocument();
+  act(()=>release!());release=undefined;await screen.findByText('Updated by another Owner');view.unmount();
+ } finally {release?.();stop();}
 });

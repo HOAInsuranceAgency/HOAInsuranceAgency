@@ -177,13 +177,16 @@ export default function CommissionIntake({
   renderPolicySetup: PolicySetup;
   onAccessDenied: (error: unknown) => void;
 }) {
+  const [filter, setFilter] = useCommissionPreference('statement-filter', 'active');
+  const [historyPages, setHistoryPages] = useState<(string | undefined)[]>([undefined]);
+  const historyCursor = historyPages.at(-1);
   const resource = useAsyncResource(
     async () => {
-      try { return await commissionAction<IntakeWorkspace>("intakeWorkspace", {}); }
+      try { return await commissionAction<IntakeWorkspace>("intakeWorkspace", {history:filter!=='active',cursor:historyCursor}); }
       catch (error) { if (isAuthorizationError(error)) onAccessDenied(error); throw error; }
     },
-    [],
-    { clearDataOnError: () => true },
+    [filter, historyCursor],
+    { clearDataOnError: () => true, live: { topics: ['OWNER'], protectEdits: true } },
   );
   const { requestLeave } = useEditProtection();
   const { target, remember } = useCommissionWorkflow();
@@ -192,7 +195,6 @@ export default function CommissionIntake({
   const [adding, setAdding] = useState(false);
   useEffect(() => { if (target.depositId) {saveSelected("");setAdding(false);} },[target.depositId]);
   const [query, setQuery] = useCommissionPreference('statement-search', '');
-  const [filter, setFilter] = useCommissionPreference('statement-filter', 'active');
   useEffect(() => { if (target.intakeId) { saveSelected(target.intakeId); setAdding(false); } }, [target.intakeId]);
   const denied = (error: unknown) => {
     if (isAuthorizationError(error)) {
@@ -327,7 +329,7 @@ export default function CommissionIntake({
         <Field label="Find a statement" value={query} set={setQuery} />
         <label className="field">
           Show
-          <Select value={filter} onChange={(e) => setFilter(e.target.value)}>
+          <Select value={filter} onChange={(e) => {const value=e.target.value;requestLeave(()=>{setFilter(value);setHistoryPages([undefined]);});}}>
             <option value="active">Active work</option>
             <option value="all">All statements</option>
             {[
@@ -348,6 +350,7 @@ export default function CommissionIntake({
           Refresh inbox
         </Button>
       </div>
+      {filter !== 'active' && <div className="intake-actions"><p>History page {historyPages.length}. Search and status filters apply to this page and active work.</p><Button variant="secondary" disabled={historyPages.length===1} onClick={()=>requestLeave(()=>setHistoryPages(p=>p.slice(0,-1)))}>Previous history page</Button><Button variant="secondary" disabled={!workspace.historyCursor} onClick={()=>requestLeave(()=>setHistoryPages(p=>[...p,workspace.historyCursor]))}>Next history page</Button></div>}
       <div className="commission-scroll">
         <Table>
           <thead>
@@ -549,7 +552,7 @@ function IntakeDetail({
       catch (error) { if (isAuthorizationError(error)) onError(error); throw error; }
     },
     [id],
-    { clearDataOnError: () => true },
+    { clearDataOnError: () => true, live: { topics: ['OWNER'], protectEdits: true } },
   );
   const task = useTask(onError),
     detail = resource.data;
@@ -1852,14 +1855,14 @@ function SettlementCard({
   const reviewedAvailable = detail.rows.filter(r=>!r.deleted && r.agencyCents!==undefined && !rowIssues(r,detail.intake.carrierId,data.policies,detail.rows).length);
   const proposed: Record<string,string> = Object.fromEntries(reviewedAvailable.map(r=>[r.id, ((r.agencyCents! - reservedCents(r.id,detail.settlements,s.id))/100).toFixed(2)]).filter(([,v])=>Number(v)!==0));
   const fullPayment = s.status === "RECORDED" && sum(Object.values(proposed).map(importedMoney)) === s.totalCents && s.totalCents > 0 && Object.keys(proposed).length > 0;
-  const [amounts, setAmounts] = useState<Record<string, string>>(() => fullPayment ? proposed : {}),
+  const [amounts, setAmounts] = useState<Record<string, string>>(() => s.status === "POSTING" ? Object.fromEntries(s.allocations.map(a => [a.rowId, (a.amountCents / 100).toFixed(2)])) : fullPayment ? proposed : {}),
     [confirmed, setConfirmed] = useState(false),
     [page, setPage] = useState(0);
   const task = useTask(onError);
   const request = useRef<string | null>(null);
   const initialAmounts = useRef(JSON.stringify(amounts));
   const { markClean } = useUnsavedChanges(
-    s.status === "RECORDED" && (JSON.stringify(amounts) !== initialAmounts.current || confirmed),
+    ["RECORDED", "POSTING"].includes(s.status) && (JSON.stringify(amounts) !== initialAmounts.current || confirmed),
     { busy: task.busy },
   );
   const available = detail.rows.filter(
@@ -1884,13 +1887,14 @@ function SettlementCard({
   const allocationKey = JSON.stringify(amounts);
   const [previewKey, setPreviewKey] = useState(allocationKey);
   useEffect(()=>{const timer=window.setTimeout(()=>setPreviewKey(allocationKey),400);return()=>window.clearTimeout(timer);},[allocationKey]);
-  type FinancialPreview = { employeeCents: number; calculations: { lineRef: string; producerName: string; producerBps: number; shareBps?: number; amountCents: number; reviewOnly: boolean }[] };
+  type FinancialPreview = { token: string; employeeCents: number; calculations: { lineRef: string; producerName: string; producerBps: number; shareBps?: number; amountCents: number; reviewOnly: boolean }[] };
   const financial = useAsyncResource(async () => {
-    if (s.status!=='RECORDED' || amountError || total!==s.totalCents || previewKey!==allocationKey) return null;
+    if (!['RECORDED','POSTING'].includes(s.status) || amountError || total!==s.totalCents || previewKey!==allocationKey) return null;
     try { return await commissionAction<FinancialPreview>('previewIntakeSettlement',{id:detail.intake.id,settlementId:s.id,version:s.version,allocations:Object.entries(JSON.parse(previewKey) as Record<string,string>).filter(([,v])=>v.trim()).map(([rowId,v])=>({rowId,amountCents:importedMoney(v)}))}); }
     catch(error){onError(error);throw error;}
-  }, [previewKey,s.version,detail.intake.version], {clearDataOnError:()=>true});
-  const previewReady = previewKey === allocationKey && !financial.loading && !!financial.data?.calculations && !financial.error;
+  }, [previewKey,s.version,detail.intake.version,data.policies], {clearDataOnError:()=>true,live:{topics:['OWNER'],protectEdits:true}});
+  useEffect(() => setConfirmed(false), [financial.data?.token]);
+  const previewReady = previewKey === allocationKey && !financial.loading && !!financial.data?.token && !!financial.data?.calculations && !financial.error;
   const post = async () => {
       const fresh = await commissionAction<Detail>("getStatementIntake", {
         id: detail.intake.id,
@@ -1955,7 +1959,7 @@ function SettlementCard({
     >
       <details><summary>Payment evidence</summary><p>{s.evidence}</p></details>
       {s.status === "VOID" && <p>Void reason: {s.voidReason}</p>}
-      {s.status === "RECORDED" && (
+      {["RECORDED", "POSTING"].includes(s.status) && (
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -1966,6 +1970,7 @@ function SettlementCard({
                 settlementId: s.id,
                 version: s.version,
                 confirmed,
+                previewToken: financial.data!.token,
                 allocations: Object.entries(amounts)
                   .filter(([, value]) => value.trim())
                   .map(([rowId, value]) => ({
@@ -1975,12 +1980,13 @@ function SettlementCard({
               });
               try { await post(); }
               catch (error) {
-                throw new Error("Allocation saved. Posting stopped; refresh this statement and resume posting. " + (error instanceof Error ? error.message : ""));
+                throw new Error("Allocation saved. Posting stopped; refresh this statement and review the remaining calculations. " + (error instanceof Error ? error.message : ""));
               }
             });
           }}
         >
           <fieldset disabled={task.busy}>
+            {s.status === 'POSTING' && <p>{s.postedRows.length} rows are already posted. The saved allocation is fixed; review the employee calculations for the remaining rows.</p>}
             {fullPayment && <p className="commission-notice">This verified full payment matches the remaining reviewed balance. The complete allocation is proposed below; review it before posting.</p>}
             {!fullPayment && <p className="commission-notice">Partial or net payment: allocate only the amounts supported by payment evidence. No policy allocation is assumed.</p>}
             <p>
@@ -1990,6 +1996,7 @@ function SettlementCard({
             <Button
               type="button"
               variant="secondary"
+              disabled={s.status === 'POSTING'}
               onClick={() => {
                 setAmounts(
                   Object.fromEntries(
@@ -2038,6 +2045,7 @@ function SettlementCard({
                       <td>
                         <CurrencyInput
                           aria-label={"Allocate " + r.lineRef}
+                          disabled={s.status === 'POSTING'}
                           value={amounts[r.id] ?? ""}
                           onChange={(e) => {
                             setAmounts({ ...amounts, [r.id]: e.target.value });
@@ -2077,8 +2085,9 @@ function SettlementCard({
                 ? " · " + money(s.totalCents - total) + " difference"
                 : " · Balanced"}
             </p>
-            <p>Remaining after this payment: {detail.intake.totalCents===undefined?'Enter source total':money(detail.intake.totalCents-detail.intake.postedCents-s.totalCents)}</p>
+            <p>Remaining after this payment: {detail.intake.totalCents===undefined?'Enter source total':money(detail.intake.totalCents-detail.intake.postedCents-(s.totalCents-sum(s.allocations.filter(a=>s.postedRows.includes(a.rowId)).map(a=>a.amountCents))))}</p>
             {amountError && <p className="error-text">{amountError}</p>}
+            <Button type="button" variant="secondary" disabled={task.busy || financial.loading} onClick={()=>{setConfirmed(false);void financial.refetch();}}>Refresh employee calculations</Button>
             {financial.loading && total===s.totalCents && <p role="status">Checking employee calculations…</p>}
             {financial.error && <p role="alert">{financial.error}<Button type="button" variant="secondary" onClick={()=>void financial.refetch()}>Refresh financial review</Button></p>}
             {previewReady && <div className="commission-financial-summary"><strong>Employee earnings to post: {money(financial.data!.employeeCents)}</strong><details open><summary>Employee calculations</summary><ul>{financial.data!.calculations.map((c,i)=><li key={i}>{c.producerName} · {c.lineRef} · {c.shareBps===undefined?'':(c.shareBps/100)+'% share × '}{c.producerBps/100}% saved rate · {money(c.amountCents)}{c.reviewOnly?' — exception review; no automatic payroll change':''}</li>)}</ul></details></div>}
@@ -2094,7 +2103,7 @@ function SettlementCard({
               variant="primary"
               disabled={!confirmed || !!amountError || total !== s.totalCents || !previewReady}
             >
-              Confirm allocation & post earnings
+              {s.status === 'POSTING' ? 'Confirm remaining calculations & resume posting' : 'Confirm allocation & post earnings'}
             </Button>
           </fieldset>
         </form>
@@ -2106,17 +2115,7 @@ function SettlementCard({
             settlement continues to block affected payroll cutoffs until posting
             completes.
           </p>
-          <Button
-            variant="primary"
-            disabled={task.busy}
-            onClick={() => void task.run(post)}
-          >
-            {task.busy
-              ? "Posting reviewed rows…"
-              : s.postedRows.length
-                ? "Resume posting"
-                : "Post verified settlement"}
-          </Button>
+          <p>Review the remaining employee calculations above and confirm to resume. Already posted rows are preserved.</p>
         </>
       )}
       {!s.postedRows.length && s.status !== "VOID" && (

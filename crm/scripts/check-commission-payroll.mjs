@@ -16,11 +16,12 @@ globalThis[Symbol.for('commission-payroll-test')] = state;
 const mockSources = {
   // Interop wrapper around the real installed PDF library, not a PDF mock.
   pdf: `import {createRequire} from 'node:module';const lib=createRequire(${JSON.stringify(import.meta.url)})(${JSON.stringify(pdfModulePath)});export const {PDFDocument,StandardFonts,rgb,degrees,PDFName,decodePDFRawStream}=lib;`,
-  store: `const s=globalThis[Symbol.for('commission-payroll-test')];
+  store: `import {statementIndexWrites} from ${JSON.stringify(new URL('../amplify/functions/commissions/statement-index.ts',import.meta.url).href)};const s=globalThis[Symbol.for('commission-payroll-test')];
     export const db={send:async c=>({Item:structuredClone(s.receipts.get(c.input.Key.pk))})};
     export const auditPage=async()=>({entries:[]});
     export const table=()=> 'private-ledger';
-    export const get=async(k,id)=>structuredClone(s.records.get(k+':'+id));
+    export const get=async(k,id)=>k==='INDEX_STATE'?{id,version:1}:structuredClone(s.records.get(k+':'+id));
+    export const page=async(k)=>({items:await list(k)});
     export const getMany=async(refs)=>refs.map(r=>structuredClone(s.records.get(r.kind+':'+r.id))).filter(Boolean);
     export const list=async(k,producer=false,recordKind)=>producer&&s.staleRefs?s.staleRefs:[...s.records].filter(([key,r])=>producer?r.producerId===k&&(!recordKind||key.startsWith(recordKind+':')):key.startsWith(k+':')).map(([key,r])=>structuredClone({...r,kind:key.split(':')[0]}));
     export async function commit(changes,actor,conditions=[]){
@@ -28,6 +29,7 @@ const mockSources = {
       const fail=()=>{const e=new Error('Transaction conflict');e.name='TransactionCanceledException';throw e;};
       for(const c of conditions){const q=c.ConditionCheck;if(q.Key.userId){if(s.disabledOwners.has(q.Key.userId))fail();continue;} const old=s.records.get(q.Key.kind+':'+q.Key.id);if(q.ConditionExpression==='attribute_not_exists(id)'?!!old:old?.version!==q.ExpressionAttributeValues[':v'])fail();}
       for(const c of changes){const old=s.records.get(c.kind+':'+c.value.id);if(c.previous?old?.version!==c.previous.version:!!old)fail();}
+      for(const c of changes)for(const w of statementIndexWrites('private-ledger',c)){if(w.Put)s.records.set(w.Put.Item.kind+':'+w.Put.Item.id,structuredClone(w.Put.Item));if(w.Delete)s.records.delete(w.Delete.Key.kind+':'+w.Delete.Key.id);}
       for(const c of changes)s.records.set(c.kind+':'+c.value.id,structuredClone({...c.value,kind:c.kind,version:(c.previous?.version??0)+1}));
     }`,
   access: `export const tableName=m=>m;export class AccountAccess {async get(model,id){return structuredClone(globalThis[Symbol.for('commission-payroll-test')].roster.get(model+':'+id));}}`,

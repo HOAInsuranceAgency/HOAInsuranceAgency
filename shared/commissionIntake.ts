@@ -73,6 +73,13 @@ export interface IntakeSettlement {
   status: "RECORDED" | "POSTING" | "POSTED" | "VOID";
   voidReason?: string;
   allocations: IntakeAllocation[];
+  review?: {
+    token: string;
+    policyVersions: Record<string, number>;
+    calculations: { policyId: string; lineRef: string; producerId: string; producerName: string; agencyCents: number; producerBps: number; shareBps?: number; amountCents: number; reviewOnly: boolean }[];
+    approvedAt: string;
+    approvedBy: string;
+  };
   postedRows: string[];
   statementIds: string[];
   createdAt: string;
@@ -86,6 +93,7 @@ export interface CarrierImportTemplate {
   mapping: StatementImportMapping;
 }
 export interface IntakeWorkspace {
+  historyCursor?: string;
   deposits?: import("./commissionDeposits").CommissionDeposit[];
   intakes: StatementIntake[];
   settlements: IntakeSettlement[];

@@ -1,3 +1,4 @@
+import { statementIndexWrites, STATEMENT_INDEX_STATE } from '../../amplify/functions/commissions/statement-index';
 import { depositSuggestions, depositPayrollStatements, type CommissionDeposit } from '../../../shared/commissionDeposits';
 import {
   payrollBlockers,
@@ -23,6 +24,7 @@ const h = vi.hoisted(() => ({
   get: vi.fn(),
   getMany: vi.fn(),
   list: vi.fn(),
+  page: vi.fn(),
   commit: vi.fn(),
   session: vi.fn(),
   bind: vi.fn(),
@@ -34,6 +36,7 @@ vi.mock("../../amplify/functions/commissions/store", () => ({
   get: h.get,
   getMany: h.getMany,
   list: h.list,
+  page: h.page,
   commit: h.commit,
   table: () => "private-ledger",
   db: { send: h.db },
@@ -81,7 +84,8 @@ const request = (
 let records: Map<string, unknown>;
 beforeEach(() => {
   vi.resetAllMocks();
-  records = new Map();
+  records = new Map([["INDEX_STATE:"+STATEMENT_INDEX_STATE, {id:STATEMENT_INDEX_STATE, version:1}]]);
+  h.page.mockImplementation(async (kind, token, limit=25) => {const rows=all<{id:string}>(kind).sort((a,b)=>a.id.localeCompare(b.id));const start=token?Number(token):0;return {items:rows.slice(start,start+limit),...(start+limit<rows.length?{cursor:String(start+limit)}:{})};});
   h.sources.clear();
   h.s3.mockResolvedValue({});
   h.db.mockResolvedValue({ Items: [] });
@@ -152,6 +156,10 @@ beforeEach(() => {
           throw e;
         }
       }
+      for (const c of changes) for (const write of statementIndexWrites('private-ledger', c as any)) {
+        if (write.Put) records.set(String(write.Put.Item!.kind)+':'+write.Put.Item!.id,structuredClone(write.Put.Item));
+        if (write.Delete) records.delete(String(write.Delete.Key!.kind)+':'+write.Delete.Key!.id);
+      }
       for (const c of changes)
         records.set(
           `${c.kind}:${c.value.id}`,
@@ -170,8 +178,13 @@ const all = <T>(kind: string): T[] =>
   [...records.entries()]
     .filter(([k]) => k.startsWith(kind + ":"))
     .map(([, v]) => structuredClone(v)) as T[];
-const seed = (kind: string, v: { id: string }) =>
+const seed = <T extends { id: string }>(kind: string, v: T) => {
   records.set(kind + ":" + v.id, structuredClone(v));
+  for (const write of statementIndexWrites('private-ledger', {kind,value:v})) {
+    if (write.Put) records.set(String(write.Put.Item!.kind)+':'+write.Put.Item!.id,structuredClone(write.Put.Item));
+    if (write.Delete) records.delete(String(write.Delete.Key!.kind)+':'+write.Delete.Key!.id);
+  }
+};
 const row = (p: Partial<IntakeRow> = {}): IntakeRow => ({
   id: "row1",
   version: 0,
@@ -246,7 +259,9 @@ async function allocate(
   s: IntakeSettlement,
   allocations = [{ rowId: "row1", amountCents: s.totalCents }],
 ) {
+  const preview = await call('previewIntakeSettlement', {id:'inbox',settlementId:s.id,version:s.version,allocations});
   const result = await call("allocateIntakeSettlement", {
+    previewToken: preview.token,
     id: "inbox",
     settlementId: s.id,
     version: s.version,
@@ -796,4 +811,94 @@ it('retries safely if payroll is approved during receipt discovery without savin
   });
   expect(await call('recordIntakeSettlement',{id:'inbox',version:1,reference:'RACE',totalCents:100,receivedOn:'2026-10-03',settlementType:'DEPOSIT',evidence:'TEST bank evidence',confirmed:true})).toMatchObject({ok:false});
   expect(all('INTAKE_SETTLEMENT')).toEqual([]);expect(version()).toBe(1);
+});
+
+
+it('rejects an old financial preview after terms change, then accepts a fresh human confirmation', async () => {
+  await save(); const s=await payment(); const allocations=[{rowId:'row1',amountCents:10000}];
+  const input={id:'inbox',settlementId:s.id,version:s.version,allocations};
+  const preview=await call('previewIntakeSettlement',input);
+  seed('POLICY',{...get<CommissionPolicy>('POLICY','p'),version:2,producerBps:2000});
+  expect(await call('allocateIntakeSettlement',{...input,confirmed:true,previewToken:preview.token})).toMatchObject({ok:false,error:expect.stringMatching(/changed/)});
+  expect(get<IntakeSettlement>('INTAKE_SETTLEMENT',s.id).status).toBe('RECORDED');
+  const approved=await allocate(s);expect(await post(approved)).toMatchObject({ok:true});
+  expect(get<CommissionPolicy>('POLICY','p').entries[0].producerCents).toBe(2000);
+});
+it('rejects changed terms after allocation and lets the Owner review and resume remaining rows only', async () => {
+  seed('STATEMENT_INTAKE',intake({totalCents:70000}));
+  const rows=Array.from({length:7},(_,i)=>row({id:'row'+i,lineRef:'PART-'+i}));await save(rows);
+  const allocations=rows.map(r=>({rowId:r.id,amountCents:10000}));
+  const approved=await allocate(await payment('PARTIAL',70000),allocations);
+  expect(await post(approved)).toMatchObject({ok:true,complete:false});
+  const interrupted=get<IntakeSettlement>('INTAKE_SETTLEMENT',approved.id);
+  const p=get<CommissionPolicy>('POLICY','p');seed('POLICY',{...p,version:p.version+1,producerBps:2000});
+  expect(await post(interrupted,'resume')).toMatchObject({ok:false,error:expect.stringMatching(/changed after review/)});
+  expect(get<CommissionPolicy>('POLICY','p').entries).toHaveLength(5);
+  const reviewed=await allocate(interrupted,allocations);
+  expect(reviewed.review!.calculations).toHaveLength(2);
+  expect(await post(reviewed,'resume')).toMatchObject({ok:true,complete:true});
+  expect(get<CommissionPolicy>('POLICY','p').entries).toHaveLength(7);
+});
+it('cannot post a legacy allocation without reviewing its employee calculations', async () => {
+  await save();const s=await allocate(await payment());
+  seed('INTAKE_SETTLEMENT',{...s,review:undefined});
+  expect(await post(s)).toMatchObject({ok:false,error:expect.stringMatching(/Review the remaining employee calculations/)});
+  expect(get<CommissionPolicy>('POLICY','p').entries).toHaveLength(0);
+});
+it('current work and payroll do not read 5001 archived settlements, while history remains paged', async () => {
+  for(let i=0;i<5001;i++) {
+    seed('STATEMENT_INTAKE',intake({id:'old'+String(i).padStart(5,'0'),status:'VOID'}));
+    seed('INTAKE_SETTLEMENT',{id:'old'+i,version:1,intakeId:'old'+i,reference:'OLD-'+i,status:'POSTED',statementIds:[],postedRows:[],allocations:[]} as unknown as IntakeSettlement);
+  }
+  const list=h.list.getMockImplementation()!;
+  h.list.mockImplementation((kind,...args)=>{if(['INTAKE_SETTLEMENT','STATEMENT_INTAKE'].includes(kind))throw new Error('Agency history must not be loaded');return list(kind,...args);});
+  expect(await save()).toMatchObject({ok:true});
+  expect(await call('getStatementIntake',{id:'inbox'})).toMatchObject({ok:true,settlements:[]});
+  const s=await allocate(await payment());expect(await post(s)).toMatchObject({ok:true});
+  expect(await call('intakeWorkspace')).toMatchObject({ok:true});
+  expect(await call('payrollWorkspace')).toMatchObject({ok:true});
+  const first=await call('intakeWorkspace',{history:true});expect(first.historyCursor).toBeDefined();
+  const second=await call('intakeWorkspace',{history:true,cursor:first.historyCursor});
+  expect((second.intakes as StatementIntake[]).map(s=>s.id)).not.toEqual((first.intakes as StatementIntake[]).map(s=>s.id));
+});
+it('fails closed for unindexed legacy statements instead of hiding pending receipts', async () => {
+  records.delete('INDEX_STATE:'+STATEMENT_INDEX_STATE);
+  expect(await call('intakeWorkspace')).toMatchObject({ok:false,error:expect.stringMatching(/lookup upgrade/)});
+  expect(await call('payrollWorkspace')).toMatchObject({ok:false,error:expect.stringMatching(/lookup upgrade/)});
+});
+
+it('checks the policy version in the posting transaction when another Owner changes it after calculation',async()=>{
+ await save();const approved=await allocate(await payment());
+ const commit=h.commit.getMockImplementation()!;
+ h.commit.mockImplementationOnce(async(...args)=>{const policy=get<CommissionPolicy>('POLICY','p');seed('POLICY',{...policy,version:policy.version+1,producerBps:2000});return commit(...args);});
+ expect(await post(approved)).toMatchObject({ok:false});
+ expect(get<CommissionPolicy>('POLICY','p').entries).toHaveLength(0);expect(all('EARNING')).toHaveLength(0);
+ expect(get<IntakeSettlement>('INTAKE_SETTLEMENT',approved.id).postedRows).toHaveLength(0);
+});
+it('compares actual calculated earnings with the retained approval before committing',async()=>{
+ await save();const approved=await allocate(await payment());
+ seed('INTAKE_SETTLEMENT',{...approved,review:{...approved.review!,calculations:approved.review!.calculations.map(c=>({...c,amountCents:c.amountCents+1}))}});
+ expect(await post(approved)).toMatchObject({ok:false,error:expect.stringMatching(/calculations changed after review/)});
+ expect(get<CommissionPolicy>('POLICY','p').entries).toHaveLength(0);
+});
+
+it('resumes when DynamoDB returns approval maps in a different property order',async()=>{
+ await save();const approved=await allocate(await payment());
+ const reverse=(v:object)=>Object.fromEntries(Object.entries(v).reverse());
+ seed('INTAKE_SETTLEMENT',{...approved,allocations:approved.allocations.map(a=>reverse(a)),review:{...approved.review!,calculations:approved.review!.calculations.map(c=>reverse(c))}});
+ const rereviewed=await allocate(get<IntakeSettlement>('INTAKE_SETTLEMENT',approved.id));
+ seed('INTAKE_SETTLEMENT',{...rereviewed,review:{...rereviewed.review!,calculations:rereviewed.review!.calculations.map(c=>reverse(c))}});
+ expect(await post(rereviewed)).toMatchObject({ok:true,complete:true});
+});
+
+it('requires a fresh preview for a newly approved employee split and posts exactly the reviewed shares',async()=>{
+ await save();const receipt=await payment();const allocations=[{rowId:'row1',amountCents:10000}];
+ const input={id:'inbox',settlementId:receipt.id,version:receipt.version,allocations};
+ const prior=await call('previewIntakeSettlement',input);
+ const policy=get<CommissionPolicy>('POLICY','p');
+ seed('POLICY',{...policy,version:policy.version+1,allocations:[{id:'split',from:'2026-01-01',method:'INDIVIDUAL_PLAN_RATE' as const,houseBps:0,agreement:'Reviewed agreement',approvedBy:'other-owner',approvedAt:'2026-10-03T12:00:00Z',participants:[{producerId:policy.producerId,producerName:policy.producerName,shareBps:5000,producerBps:1600,planVersion:1,agreement:'A',eligible:true},{producerId:'second',producerName:'Second employee',shareBps:5000,producerBps:1000,planVersion:1,agreement:'B',eligible:true}]}]});
+ expect(await call('allocateIntakeSettlement',{...input,previewToken:prior.token,confirmed:true})).toMatchObject({ok:false});
+ const fresh=await allocate(receipt);expect(fresh.review!.calculations.map(c=>c.amountCents).sort()).toEqual([500,800]);
+ expect(await post(fresh)).toMatchObject({ok:true});
+ expect(all<{amountCents:number}>('EARNING').map(e=>e.amountCents).sort()).toEqual([500,800]);
 });
