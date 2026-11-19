@@ -263,7 +263,7 @@ export async function bindPolicy(event: Event, input: Data) {
   const accountTable = tableName('Account');
   const capabilityGuards = await access.capabilityChecks(accountId, 'bind');
   const isAccountGuard = (guard: Transaction[number]) =>
-    guard.ConditionCheck?.TableName === accountTable && guard.ConditionCheck.Key.id === accountId;
+    guard.ConditionCheck?.TableName === accountTable && guard.ConditionCheck.Key?.id === accountId;
   const accountAccessCheck = capabilityGuards.find(isAccountGuard)?.ConditionCheck;
   const accountCondition = 'updatedAt = :old' +
     (accountAccessCheck?.ConditionExpression ? ` AND (${accountAccessCheck.ConditionExpression})` : '');
