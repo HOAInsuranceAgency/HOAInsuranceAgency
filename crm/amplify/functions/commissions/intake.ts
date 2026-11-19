@@ -1,3 +1,5 @@
+import { activeIntakeWork, activeSettlementWork, intakeSettlements, requireStatementIndexes } from './statement-reads';
+import { STATEMENT_INDEX_STATE } from './statement-index';
 import { noSavedDeposit, depositKey, holdReceiptPayroll } from "./deposits";
 import { statementReceiptBalance, type CommissionDeposit } from "../../../../shared/commissionDeposits";
 import { createHash, randomUUID } from "node:crypto";
@@ -97,7 +99,7 @@ async function getIntake(id: unknown) {
 async function children(intake: StatementIntake) {
   const [rows, settlements, policies] = await Promise.all([
     store.list<IntakeRow>(intakeRowsKind(intake.id)),
-    store.list<IntakeSettlement>("INTAKE_SETTLEMENT"),
+    intakeSettlements(intake.id),
     store.list<CommissionPolicy>("POLICY"),
   ]);
   return {
@@ -120,19 +122,18 @@ export async function intakeAction(
   input: store.Data,
 ) {
   if (operation === "intakeWorkspace") {
-    const [intakes, settlements, templates, deposits] = await Promise.all([
-      store.list<StatementIntake>("STATEMENT_INTAKE"),
-      store.list<IntakeSettlement>("INTAKE_SETTLEMENT"),
-      store.list<CarrierImportTemplate>("CARRIER_IMPORT_TEMPLATE"),
-      store.list<CommissionDeposit>("COMMISSION_DEPOSIT"),
+    await requireStatementIndexes();
+    const [active, pending, templates, deposits, history] = await Promise.all([
+      activeIntakeWork(), activeSettlementWork(), store.list<CarrierImportTemplate>('CARRIER_IMPORT_TEMPLATE'),
+      store.list<CommissionDeposit>('COMMISSION_DEPOSIT'),
+      input.history === true ? store.page<StatementIntake>('STATEMENT_INTAKE', input.cursor) : Promise.resolve({items: [] as StatementIntake[], cursor: undefined}),
     ]);
-    return {
-      ok: true,
-      intakes: intakes.sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
-      settlements,
-      templates,
-      deposits,
-    };
+    const pendingIntakes = await store.getMany<StatementIntake>([...new Set(pending.map(s => s.intakeId))].map(id => ({kind:'STATEMENT_INTAKE',id})));
+    if (pendingIntakes.length !== new Set(pending.map(s => s.intakeId)).size) throw new Error('A pending receipt has a missing source statement. Review statement lookup records before proceeding.');
+    const intakes = [...new Map([...active, ...pendingIntakes, ...history.items].map(s => [s.id,s])).values()];
+    const settlements: IntakeSettlement[] = [];
+    for (let start=0;start<intakes.length;start+=10) settlements.push(...(await Promise.all(intakes.slice(start,start+10).map(s => intakeSettlements(s.id)))).flat());
+    return { ok: true, intakes: intakes.sort((a,b) => b.createdAt.localeCompare(a.createdAt)), settlements, templates, deposits, historyCursor: history.cursor };
   }
   if (operation === "policyIntakeContext") {
     const access = new AccountAccess(event.identity, undefined, event.request);
@@ -253,7 +254,7 @@ export async function intakeAction(
     if (
       old &&
       (old.totalCents !== totalCents || old.reference !== reference) &&
-      (await store.list<IntakeSettlement>("INTAKE_SETTLEMENT")).some(
+      (await intakeSettlements(id)).some(
         (s) => s.intakeId === id && s.postedRows.length > 0,
       )
     )
@@ -327,7 +328,9 @@ export async function intakeAction(
       createdBy: old?.createdBy ?? actor,
       status: "OPEN",
     };
+    await requireStatementIndexes();
     const changes = [change("STATEMENT_INTAKE", intake, old)];
+    if (!await store.get('INDEX_STATE', STATEMENT_INDEX_STATE)) changes.push(change('INDEX_STATE', {id:STATEMENT_INDEX_STATE}));
     if (!old)
       changes.push(
         change("INTAKE_FILE", {
@@ -501,7 +504,7 @@ export async function intakeAction(
     if (input.depositId) {
       if (!deposit || deposit.status !== 'AWAITING_REMITTANCE' || input.depositVersion !== deposit.version) throw new Error('This deposit changed. Refresh and review it again.');
       if (deposit.carrierId && deposit.carrierId !== intake.carrierId) throw new Error('This statement is for a different carrier. Review the original deposit.');
-      const balance = statementReceiptBalance(intake, await store.list<IntakeSettlement>('INTAKE_SETTLEMENT'));
+      const balance = statementReceiptBalance(intake, await intakeSettlements(intake.id));
       if (balance === undefined || balance < deposit.totalCents) throw new Error('The deposit exceeds the unpaid statement balance, or the statement total is missing. Review the remittance before linking.');
       input = {...input, reference:deposit.reference, receivedOn:deposit.receivedOn, totalCents:deposit.totalCents, settlementType:'DEPOSIT', evidence:deposit.evidence};
     } else if (typeof input.reference === 'string' && await store.get('COMMISSION_DEPOSIT', depositKey(input.reference))) {
@@ -654,7 +657,14 @@ export async function intakeAction(
       status: "DRAFT",
       lines,
     };
-    const changes = await statementPostingChanges(statement, actor);
+    if (!settlement.review) throw new Error('Review the remaining employee calculations before posting this settlement.');
+    const expected = batch.flatMap((allocation, index) => {
+      const source = rows.find(row => row.id === allocation.rowId)!;
+      return settlement.review!.calculations.filter(c => c.lineRef === source.lineRef).map(c => ({ ...c, lineRef: lines[index].lineRef }));
+    });
+    const changes = await statementPostingChanges(statement, actor, undefined, { policyVersions: settlement.review.policyVersions, calculations: expected });
+    const nextPolicyVersions = { ...settlement.review.policyVersions };
+    for (const c of changes) if (c.kind === 'POLICY') nextPolicyVersions[c.value.id] = Number(c.previous!.version) + 1;
     const guards: store.Transaction = [];
     for (const a of batch) {
       const row = rows.find((r) => r.id === a.rowId)!;
@@ -707,6 +717,7 @@ export async function intakeAction(
         {
           ...settlement,
           postedRows,
+          review: { ...settlement.review, policyVersions: nextPolicyVersions },
           statementIds: [...settlement.statementIds, statementId],
           status: complete ? "POSTED" : "POSTING",
         },
@@ -769,7 +780,7 @@ export async function intakeAction(
     return { ok: true };
   }
   if (operation === "allocateIntakeSettlement" || operation === "previewIntakeSettlement") {
-    if (settlement.status !== "RECORDED" || (operation === "allocateIntakeSettlement" && input.confirmed !== true))
+    if (!["RECORDED", "POSTING"].includes(settlement.status) || (operation === "allocateIntakeSettlement" && input.confirmed !== true))
       throw new Error(
         "Confirm reviewed source rows and payment allocation before posting.",
       );
@@ -793,6 +804,10 @@ export async function intakeAction(
       allocations,
       policies,
     );
+    if (settlement.status === 'POSTING' && (allocations.length !== settlement.allocations.length || allocations.some((a,i) => a.rowId !== settlement.allocations[i].rowId || a.amountCents !== settlement.allocations[i].amountCents)))
+      throw new Error('Keep the saved allocation while reviewing remaining employee calculations.');
+    const remainingAllocations = allocations.filter(a => !settlement.postedRows.includes(a.rowId));
+    const reviewedPolicies = policies.filter(p => remainingAllocations.some(a => rows.find(r => r.id === a.rowId)?.policyId === p.id));
     const financialPreview = assertStatementPostingPlan(
       {
         id: settlement.id,
@@ -805,7 +820,7 @@ export async function intakeAction(
         settlementType: settlement.settlementType,
         totalCents: settlement.totalCents,
         status: "DRAFT",
-        lines: allocations.map((a) => {
+        lines: remainingAllocations.map((a) => {
           const row = rows.find((r) => r.id === a.rowId)!;
           return {
             policyId: row.policyId,
@@ -821,7 +836,7 @@ export async function intakeAction(
         }),
       },
       policies,
-      await policyReceiptEarnings(policies.filter(p => allocations.some(a => rows.find(r => r.id === a.rowId)?.policyId === p.id))),
+      await policyReceiptEarnings(reviewedPolicies),
     );
     const sourceKeys = allocations.map((a) => ({
       rowId: a.rowId,
@@ -849,12 +864,15 @@ export async function intakeAction(
       throw new Error(
         "A carrier transaction is already associated with another source row or earlier reconciliation.",
       );
-    if (operation === "previewIntakeSettlement") return { ok: true, ...financialPreview };
+    const policyVersions = Object.fromEntries(reviewedPolicies.map(p => [p.id, p.version]).sort(([a], [b]) => String(a).localeCompare(String(b))));
+    const token = hash(JSON.stringify([intake.version, settlement.version, allocations, rows.map(r => [r.id, r.version]).sort(), policyVersions, financialPreview]));
+    if (operation === "previewIntakeSettlement") return { ok: true, ...financialPreview, token };
+    if (input.previewToken !== token) throw new Error('The reviewed employee calculations or commission terms changed. Refresh the financial review and confirm again.');
     await store.commit(
       [
         change(
           "INTAKE_SETTLEMENT",
-          { ...settlement, allocations, status: "POSTING" },
+          { ...settlement, allocations, status: "POSTING", review: { token, policyVersions, calculations: financialPreview.calculations, approvedAt: new Date().toISOString(), approvedBy: actor } },
           settlement,
         ),
         change("STATEMENT_INTAKE", intake, intake),

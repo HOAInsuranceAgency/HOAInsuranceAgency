@@ -1,3 +1,4 @@
+import { statementIndexWrites } from './statement-index';
 import { randomUUID } from 'node:crypto';
 import { sendCommissionWrite } from '../live-write';
 import { batchGetComplete } from '../storage/batchGet';
@@ -118,6 +119,7 @@ export async function commit(changes: Change[], actor: string, extras: Transacti
       },
     },
     ...extras,
+    ...changes.flatMap(c => statementIndexWrites(table(), c)),
   );
   assertTransactionEnvelope(items, { maxBytes: 3_500_000, maxItemBytes: 300_000, keyFields: name => name === table() ? ['kind', 'id'] : undefined,
     error: () => new Error('This operation is too large. Use a smaller statement or payroll batch.') });
@@ -141,4 +143,17 @@ export async function auditPage(token?: unknown) {
     ExpressionAttributeValues: { ':kind': 'AUDIT', ...(!legacy ? { ':prefix': 'audit#' } : {}) }, ScanIndexForward: false, Limit: 25, ExclusiveStartKey: cursor }));
   const next = result.LastEvaluatedKey ? { phase: legacy ? 'legacy' : 'current', key: result.LastEvaluatedKey } : legacy ? undefined : { phase: 'legacy' };
   return { entries: (result.Items ?? []).filter(row => !legacy || !String(row.id).startsWith('audit#')), legacy, cursor: next ? Buffer.from(JSON.stringify(next)).toString('base64url') : undefined };
+}
+
+/** One scoped history page. The cursor cannot choose another partition or index. */
+export async function page<T>(kind: string, token?: unknown, limit = 25): Promise<{items: T[]; cursor?: string}> {
+  let key: Data | undefined;
+  if (token !== undefined) {
+    if (typeof token !== 'string' || token.length > 1000) throw new Error('Invalid statement history page.');
+    try { key = JSON.parse(Buffer.from(token, 'base64url').toString('utf8')); } catch { throw new Error('Invalid statement history page.'); }
+    if (!key || key.kind !== kind || typeof key.id !== 'string' || Object.keys(key).length !== 2) throw new Error('Invalid statement history page.');
+  }
+  const response = await db.send(new QueryCommand({ TableName: table(), ConsistentRead: true, KeyConditionExpression: '#kind = :kind',
+    ExpressionAttributeNames: { '#kind': 'kind' }, ExpressionAttributeValues: { ':kind': kind }, ExclusiveStartKey: key, Limit: limit }));
+  return { items: (response.Items ?? []) as T[], ...(response.LastEvaluatedKey ? { cursor: Buffer.from(JSON.stringify(response.LastEvaluatedKey)).toString('base64url') } : {}) };
 }

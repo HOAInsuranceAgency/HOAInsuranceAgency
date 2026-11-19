@@ -148,7 +148,7 @@ export default function CommissionPayroll({
       }
     },
     [owner],
-    { clearDataOnError: () => true },
+    { clearDataOnError: () => true, live: { topics: ['OWNER'], protectEdits: true } },
   );
   const refresh = async () => {
     await resource.refetch();

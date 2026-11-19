@@ -199,7 +199,7 @@ it("confirms allocation and posts the verified settlement in one reviewed action
   h.action.mockImplementation(async(op,input)=>{
     if(op==="intakeWorkspace")return{intakes:[source],settlements:[settlement],templates:[]};
     if(op==="getStatementIntake")return{intake:source,rows:[{...row,reviewStatus:"ELIGIBLE"}],settlements:[settlement]};
-    if(op==="previewIntakeSettlement")return{calculations:[],employeeCents:1000};
+    if(op==="previewIntakeSettlement")return{token:"reviewed-token",calculations:[],employeeCents:1000};
     if(op==="allocateIntakeSettlement"){settlement={...settlement,status:"POSTING",version:2,allocations:input.allocations};return{ok:true}}
     if(op==="postIntakeSettlement")return{complete:true,postedRows:1,totalRows:1};
     return{draft:null};
@@ -223,7 +223,7 @@ it("retains a resumable allocation when posting is interrupted instead of alloca
   h.action.mockImplementation(async(op,input)=>{
     if(op==="intakeWorkspace")return{intakes:[source],settlements:[settlement],templates:[]};
     if(op==="getStatementIntake")return{intake:source,rows:[{...row,reviewStatus:"ELIGIBLE"}],settlements:[settlement]};
-    if(op==="previewIntakeSettlement")return{calculations:[],employeeCents:1000};
+    if(op==="previewIntakeSettlement")return{token:"reviewed-token",calculations:[],employeeCents:1000};
     if(op==="allocateIntakeSettlement"){settlement={...settlement,status:"POSTING",version:2,allocations:input.allocations};return{ok:true}}
     if(op==="postIntakeSettlement"){if(interrupted){interrupted=false;throw new Error("Connection lost")}return{complete:true,postedRows:1,totalRows:1}}
     return{draft:null};
@@ -235,9 +235,15 @@ it("retains a resumable allocation when posting is interrupted instead of alloca
   fireEvent.click(screen.getByRole("button",{name:"Confirm allocation & post earnings"}));
   await screen.findByText(/Allocation saved. Posting stopped/);
   fireEvent.click(screen.getByRole("button",{name:"Refresh statement"}));
-  fireEvent.click(await screen.findByRole("button",{name:"Post verified settlement"}));
+  const resume=await screen.findByRole('button',{name:'Confirm remaining calculations & resume posting'});
+  expect(resume).toBeDisabled();
+  await screen.findByText(/Employee earnings to post/);
+  fireEvent.click(screen.getByLabelText(/I reviewed the source matches/));
+  fireEvent.click(resume);
   await waitFor(()=>expect(h.action.mock.calls.filter(([op])=>op==="postIntakeSettlement")).toHaveLength(2));
-  expect(h.action.mock.calls.filter(([op])=>op==="allocateIntakeSettlement")).toHaveLength(1);
+  expect(h.action.mock.calls.filter(([op])=>op==="allocateIntakeSettlement")).toHaveLength(2);
+  expect(h.action).toHaveBeenLastCalledWith(expect.any(String),expect.anything());
+  expect(h.action.mock.calls.filter(([op])=>op==='allocateIntakeSettlement').every(([,input])=>input.previewToken==='reviewed-token')).toBe(true);
 });
 
 

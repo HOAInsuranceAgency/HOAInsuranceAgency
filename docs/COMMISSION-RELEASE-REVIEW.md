@@ -48,3 +48,14 @@ Run `npm run verify` from the repository root. This includes the offline commiss
 - Retired agreement UI is removed; currency formatting uses the shared formatter.
 
 Review regression exercise: start an empty fictional statement, choose manual entry, save reviewed rows, then confirm payment and posting. Separately approve a fictional payroll cycle and record a late receipt within its cutoff: the cycle must require fresh review. Verify access-denial cache clearing, earlier audit pages, paginated ledger totals and PDFs containing `Łukasz 李明` and `東京 김민수 José`.
+
+
+### Statement lookup upgrade (required before release)
+
+Active work and per-statement references commit with each source record. Archived statements are paged; the complete-read limit stays at 5,000 records. Existing ledgers fail closed with an upgrade message until their lookup backfill completes. New empty ledgers initialize the marker with the first statement.
+
+After deploying the new commission writer, run the dry-run backfill against the explicitly verified staging ledger and region, then run the same command with `--apply` and verify `ready: true`. Production requires a separately authorized release. Do not run maintenance from the original working copy.
+
+From `crm`: `npx tsx scripts/backfill-commission-statements.ts --table <verified-ledger-table> --region <verified-region>` (dry run). Add `--apply` only for the approved target. The script writes derived references only; source statements, settlements, policies, earnings, payroll, and email settings remain unchanged. Source-version conditions protect against concurrent writes. The readiness marker is published only after every page succeeds. An interrupted run can safely restart. All writers must be on this release before the backfill starts; rolling back to an older writer requires rebuilding the references before enabling this reader again.
+
+Regression acceptance: more than 5,000 archived settlements do not block opening, saving, or posting a small current statement or preparing payroll. History pages expose older statements. Changes to policy terms or calculations after preview require a fresh financial review, including partially posted settlements. Live workspaces refresh across users while protecting unsaved edits. Report emails remain disabled.

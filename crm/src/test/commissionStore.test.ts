@@ -4,7 +4,7 @@ vi.mock('@aws-sdk/lib-dynamodb', async (original) => ({
   ...(await original<typeof import('@aws-sdk/lib-dynamodb')>()),
   DynamoDBDocumentClient: { from: () => ({ send: h.send }) },
 }));
-import { commit, list, getMany, auditPage } from '../../amplify/functions/commissions/store';
+import { commit, list, getMany, auditPage, page } from '../../amplify/functions/commissions/store';
 beforeEach(() => {
   vi.resetAllMocks();
   vi.stubEnv('COMMISSION_TABLE', 'private');
@@ -122,4 +122,24 @@ it('filters current-format audit rows after a bounded legacy query and preserves
   expect(h.send.mock.calls[0][0].input.ExpressionAttributeValues).toEqual({':kind':'AUDIT'});
   expect((await auditPage(page.cursor)).entries).toEqual([{id:'earlier-uuid'}]);
   expect(h.send.mock.calls[1][0].input.ExclusiveStartKey).toEqual(key);
+});
+
+it('commits statement references and active-work removal with the guarded source update',async()=>{
+ h.send.mockResolvedValue({});
+ await commit([{kind:'INTAKE_SETTLEMENT',value:{id:'s',intakeId:'inbox',reference:'bank',status:'POSTED',statementIds:['receipt']},previous:{id:'s',version:2,statementIds:[]}}],'owner');
+ const writes=h.send.mock.calls[0][0].input.TransactItems;
+ expect(writes[0].Put).toMatchObject({Item:{kind:'INTAKE_SETTLEMENT',version:3},ConditionExpression:'#v = :v',ExpressionAttributeValues:{':v':2}});
+ expect(writes).toContainEqual({Delete:{TableName:'private',Key:{kind:'INTAKE_SETTLEMENT_ACTIVE',id:'s'}}});
+ expect(writes.some((w:any)=>w.Put?.Item?.kind==='INTAKE_SETTLEMENTS#inbox')).toBe(true);
+ expect(writes.some((w:any)=>w.Put?.Item?.kind==='INTAKE_STATEMENT_LINK'&&w.Put.Item.intakeId==='inbox')).toBe(true);
+ expect(h.send).toHaveBeenCalledTimes(1);
+});
+it('pages archived statements and rejects a cursor targeting another financial partition',async()=>{
+ h.send.mockResolvedValueOnce({Items:[{id:'one'}],LastEvaluatedKey:{kind:'STATEMENT_INTAKE',id:'one'}}).mockResolvedValueOnce({Items:[{id:'two'}]});
+ const first=await page('STATEMENT_INTAKE');expect(first.items).toEqual([{id:'one'}]);
+ expect(await page('STATEMENT_INTAKE',first.cursor)).toEqual({items:[{id:'two'}]});
+ expect(h.send.mock.calls[1][0].input).toMatchObject({ConsistentRead:true,Limit:25,ExclusiveStartKey:{kind:'STATEMENT_INTAKE',id:'one'}});
+ const bad=Buffer.from(JSON.stringify({kind:'PAYROLL_REPORT_FILE',id:'private'})).toString('base64url');
+ await expect(page('STATEMENT_INTAKE',bad)).rejects.toThrow(/Invalid statement history page/);
+ expect(h.send).toHaveBeenCalledTimes(2);
 });
