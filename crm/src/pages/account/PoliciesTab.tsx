@@ -1,3 +1,4 @@
+import { useAccountPermissions } from '../../components/AccountPermissions';
 import { assertGraphqlErrors } from '../../lib/apiResponse';
 import { useLiveUpdateBlock } from "../../lib/useLiveUpdates";
 import { Button } from "../../components/ui/Button";
@@ -20,6 +21,7 @@ export function PoliciesTab({ accountId }: { accountId: string }) {
 }
 
 function AccountPolicies({ accountId }: { accountId: string }) {
+  const permissions = useAccountPermissions();
   const [editing, setEditing] = useState<Policy | null>(null);
   useLiveUpdateBlock(!!editing);
   const updates = useRef(new Set<string>());
@@ -176,7 +178,7 @@ function AccountPolicies({ accountId }: { accountId: string }) {
                   <td>
                     <Select
                       aria-label={`Status for policy ${p.policyNumber || p.id}`}
-                      disabled={rowStatus[p.id]?.state === "saving" || policyRes.loading || Boolean(policyRes.error) || Boolean(editing)}
+                      disabled={!permissions.assigned || rowStatus[p.id]?.state === "saving" || policyRes.loading || Boolean(policyRes.error) || Boolean(editing)}
                       value={p.status}
                       onChange={(e) =>
                         updatePolicy(p.id, { status: e.target.value as Policy["status"] })
@@ -189,7 +191,7 @@ function AccountPolicies({ accountId }: { accountId: string }) {
                     <SaveStatus {...(rowStatus[p.id] ?? { state: "idle" })} />
                   </td>
                   <td>
-                    <Button variant="link"  disabled={saving || policyRes.loading || Boolean(policyRes.error) || Boolean(editing) || !carrierRes.loaded || carrierRes.loading || Boolean(carrierRes.error)} onClick={() => setEditing(p)}>
+                    <Button variant="link"  disabled={!permissions.assigned || saving || policyRes.loading || Boolean(policyRes.error) || Boolean(editing) || !carrierRes.loaded || carrierRes.loading || Boolean(carrierRes.error)} onClick={() => setEditing(p)}>
                       Edit
                     </Button>
                   </td>

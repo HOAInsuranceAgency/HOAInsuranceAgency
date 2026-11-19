@@ -1,3 +1,4 @@
+import { useAccountPermissions } from '../../components/AccountPermissions';
 import { serviceFinanceLoan, generateFinanceAgreement } from '../../lib/billingApi';
 import { useLiveUpdateBlock } from "../../lib/useLiveUpdates";
 import { Button } from "../../components/ui/Button";
@@ -120,7 +121,8 @@ function LoanActions({ loan, onChanged, refreshRequired, setRefreshRequired }: {
       { savedMessage: done ?? "Done.", errorMessage: "The server refused that." }
     ); } finally { actionPending.current = false; }
   }
-  const busy = status.busy || refreshRequired;
+  const permissions = useAccountPermissions();
+  const busy = !permissions.assigned || status.busy || refreshRequired;
   const noticesUnavailable = !notices.loaded || notices.loading || !!notices.refreshing || Boolean(notices.error || notices.refreshError);
 
   const uncertifiedIntents = notices.data.filter(
@@ -145,11 +147,11 @@ function LoanActions({ loan, onChanged, refreshRequired, setRefreshRequired }: {
       </p>}
       {(notices.error || notices.refreshError) && <p className="error-text" role="alert">
         {notices.error || notices.refreshError}{" "}
-        <Button variant="secondary" type="button"  disabled={notices.loading || busy} onClick={() => void notices.refetch()}>Retry notices</Button>
+        <Button variant="secondary" type="button"  disabled={notices.loading || status.busy || refreshRequired} onClick={() => void notices.refetch()}>Retry notices</Button>
       </p>}
       {rollTarget.error && <p className="error-text" role="alert">
         {rollTarget.error}{" "}
-        <Button variant="secondary" type="button"  disabled={rollTarget.loading || busy} onClick={() => void rollTarget.refetch()}>Retry bound policy</Button>
+        <Button variant="secondary" type="button"  disabled={rollTarget.loading || status.busy || refreshRequired} onClick={() => void rollTarget.refetch()}>Retry bound policy</Button>
       </p>}
 
       {loan.status === "ACCEPTED" && (
@@ -365,6 +367,7 @@ export function FinancingTab({ account }: { account: Account }) {
 }
 
 function AccountFinancing({ account }: { account: Account }) {
+  const permissions = useAccountPermissions();
   const res = useAsyncResource(
     () => readFinancing(account.id),
     [account.id],
@@ -474,7 +477,7 @@ function AccountFinancing({ account }: { account: Account }) {
                             <Button variant="link"
                               type="button"
 
-                              disabled={agreementStatus.busy}
+                              disabled={!permissions.assigned || agreementStatus.busy}
                               onClick={() => void generateAgreement(l.id)}
                             >
                               Agreement PDF

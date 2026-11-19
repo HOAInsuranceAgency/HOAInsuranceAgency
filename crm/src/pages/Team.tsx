@@ -1,3 +1,4 @@
+import SalespersonAccessSettings from '../components/SalespersonAccessSettings';
 import { assertGraphqlErrors } from '../lib/apiResponse';
 import { LiveStatus } from "../components/LiveStatus";
 import { useLiveUpdateBlock } from "../lib/useLiveUpdates";
@@ -493,6 +494,7 @@ export default function Team({ profile }: { profile: UserProfile }) {
 
   return (
     <>
+      <SalespersonAccessSettings />
       <div className="card">
         <h2>Team — invite someone</h2>
         <p className="muted small">

@@ -1,3 +1,4 @@
+import { useAccountPermissions } from './AccountPermissions';
 import { LiveStatus } from "./LiveStatus";
 import { useLiveUpdateBlock } from "../lib/useLiveUpdates";
 import { Select } from "./ui/Select";
@@ -33,6 +34,7 @@ export function ResponsibilitySelect({ label, value, team, onChange, disabled = 
   </Select></label>;
 }
 export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }: { accountId?: string; conversationId?: string; onOpen?: (url: string) => void }) {
+  const permissions = useAccountPermissions();
   const isAdmin = useIsAdmin();
   const compact = !!onOpen;
   const [editingTeam, setEditingTeam] = useState(false);
@@ -104,8 +106,8 @@ export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }:
       {c.channel === "CALL" && <><p className="muted small">{c.enrichment}</p><CallOutcome communication={c} /></>}
       {c.summary && <p>{c.summary}</p>}<p style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{c.text || "Content is unavailable. Open the source for details."}</p>
       {c.channel === "EMAIL" && c.direction === "OUTBOUND" && <p className="muted small">{c.seenAt ? `Seen signal: ${fmtDateTime(c.seenAt)}` : c.seenCheckedAt ? "No Seen signal returned" : "Seen status not checked yet"}{c.seenCheckedAt && ` · Checked ${fmtDateTime(c.seenCheckedAt)}`}. An email-open signal does not prove it was read.</p>}
-      {c.provider === "front" && c.channel === "EMAIL" && c.direction === "OUTBOUND" && <Button variant="link"  disabled={busy} onClick={() => void run("refreshSeen", { id: c.id })}>Refresh Seen status{c.seenRequestedAt ? " (queued)" : ""}</Button>}
-      {c.attachments?.map(a => <p key={a.id}>{a.filename} · {Math.ceil(a.size / 1024)} KB <Button variant="link"  disabled={busy} onClick={() => void run("saveAttachment", { communicationId: c.id, attachmentId: a.id })}>Save to CRM documents</Button></p>)}
+      {c.provider === "front" && c.channel === "EMAIL" && c.direction === "OUTBOUND" && <Button variant="link"  disabled={busy || !permissions.assigned} onClick={() => void run("refreshSeen", { id: c.id })}>Refresh Seen status{c.seenRequestedAt ? " (queued)" : ""}</Button>}
+      {c.attachments?.map(a => <p key={a.id}>{a.filename} · {Math.ceil(a.size / 1024)} KB <Button variant="link"  disabled={busy || !permissions.collaborate} onClick={() => void run("saveAttachment", { communicationId: c.id, attachmentId: a.id })}>Save to CRM documents</Button></p>)}
       {c.seenError && <p className="error-text small">Seen status unavailable: {c.seenError}</p>}
       {c.provider === "front" && <Button variant="link"  onClick={() => open(`https://app.frontapp.com/open/${c.providerId}`)}>Open message</Button>}
       </div>
@@ -122,22 +124,22 @@ export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }:
     }}>{loadingOlder ? 'Loading older activity…' : 'Load older activity'}</Button>}
   </>;
   const noteEditor = <>
-    {!compact && <h3>Add an internal note</h3>}<div className="field"><Textarea disabled={busy} aria-label="Internal note" placeholder="Add a note for your team…" value={note} onChange={e => setNote(e.target.value)} rows={3} /></div>
+    {!compact && <h3>Add an internal note</h3>}<div className="field"><Textarea disabled={busy || !permissions.collaborate} aria-label="Internal note" placeholder="Add a note for your team…" value={note} onChange={e => setNote(e.target.value)} rows={3} /></div>
     <div className="activity-note-actions">
-    <label className="workflow-note-publish"><Input type="checkbox" disabled={busy} checked={publish} onChange={e => setPublish(e.target.checked)} /> Also post as a Front comment</label>
-    <div className="toolbar"><Button variant="primary"  disabled={busy || !note.trim()} onClick={async () => { if (await run("addNote", { accountId: workflow.accountId, text: note, publishToFront: publish, requestId: noteId.current })) { setNote(""); noteId.current = crypto.randomUUID(); } }}>Save note</Button></div></div>  </>;
+    <label className="workflow-note-publish"><Input type="checkbox" disabled={busy || !permissions.send} checked={publish} onChange={e => setPublish(e.target.checked)} /> Also post as a Front comment</label>
+    <div className="toolbar"><Button variant="primary"  disabled={busy || !permissions.collaborate || !note.trim()} onClick={async () => { if (await run("addNote", { accountId: workflow.accountId, text: note, publishToFront: publish, requestId: noteId.current })) { setNote(""); noteId.current = crypto.randomUUID(); } }}>Save note</Button></div></div>  </>;
   const conversationTools = <>
     <BusinessDraftButton accountId={workflow.accountId} conversationId={conversationId ?? workflow.conversationId} />
     {(conversationId ?? workflow.conversationId) && <ConversationContext accountId={workflow.accountId} conversationId={(conversationId ?? workflow.conversationId)!} bound={workflow.disposition === "BOUND"} saved={resource.data.frontContext} onSaved={() => void resource.refetch()} />}
     {workflow.disposition !== "BOUND" && <details className="front-disclosure"><summary>Lead status</summary>
-      {workflow.disposition === "ACTIVE" ? <><label className="field">Status<Select disabled={busy} value={leadStatus} onChange={e => { if (e.target.value === "LOST" || e.target.value === "DISQUALIFIED") setLeadStatus(e.target.value); }}><option value="LOST">Lost</option><option value="DISQUALIFIED">Not a fit</option></Select></label><Button variant="secondary"  disabled={busy} onClick={() => void run("setLeadDisposition", { accountId: workflow.accountId, version: workflow.version, disposition: leadStatus })}>Update lead status</Button></>
-        : <Button variant="secondary"  disabled={busy} onClick={() => void run("setLeadDisposition", { accountId: workflow.accountId, version: workflow.version, disposition: "ACTIVE" })}>Reopen lead</Button>}
+      {workflow.disposition === "ACTIVE" ? <><label className="field">Status<Select disabled={busy} value={leadStatus} onChange={e => { if (e.target.value === "LOST" || e.target.value === "DISQUALIFIED") setLeadStatus(e.target.value); }}><option value="LOST">Lost</option><option value="DISQUALIFIED">Not a fit</option></Select></label><Button variant="secondary"  disabled={busy || !permissions.assigned} onClick={() => void run("setLeadDisposition", { accountId: workflow.accountId, version: workflow.version, disposition: leadStatus })}>Update lead status</Button></>
+        : <Button variant="secondary"  disabled={busy || !permissions.assigned} onClick={() => void run("setLeadDisposition", { accountId: workflow.accountId, version: workflow.version, disposition: "ACTIVE" })}>Reopen lead</Button>}
     </details>}
 
-    {!workflow.humanTakeover && <div className="front-tool-action"><Button variant="secondary"  disabled={busy} onClick={() => void run("cancelAi", { accountId: workflow.accountId, version: workflow.version })}>{compact ? "Handle personally" : "Handle personally / cancel pending AI reply"}</Button>{compact && <p className="muted small">Cancels an AI reply that has not been sent.</p>}</div>}
+    {!workflow.humanTakeover && <div className="front-tool-action"><Button variant="secondary"  disabled={busy || !permissions.assigned} onClick={() => void run("cancelAi", { accountId: workflow.accountId, version: workflow.version })}>{compact ? "Handle personally" : "Handle personally / cancel pending AI reply"}</Button>{compact && <p className="muted small">Cancels an AI reply that has not been sent.</p>}</div>}
     {workflow.conversationId && <>
       {compact && <h3>Assign Front conversation to</h3>}
-      <div className="toolbar"><Button variant={compact ? "secondary" : "link"} disabled={busy} onClick={() => void run("routeConversation", { conversationId: conversationId ?? workflow.conversationId, role: "SALESPERSON" })}>Use salesperson as Front handler</Button></div>
+      <div className="toolbar"><Button variant={compact ? "secondary" : "link"} disabled={busy || !permissions.assigned} onClick={() => void run("routeConversation", { conversationId: conversationId ?? workflow.conversationId, role: "SALESPERSON" })}>Use salesperson as Front handler</Button></div>
     </>}
     {compact && conversationId && <SidebarActivityLinker accountId={workflow.accountId} conversationId={conversationId} onSaved={() => void resource.refetch()} />}
   </>;

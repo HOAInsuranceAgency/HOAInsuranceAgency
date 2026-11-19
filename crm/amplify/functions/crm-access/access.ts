@@ -1,3 +1,7 @@
+import type { TransactWriteCommandInput } from '@aws-sdk/lib-dynamodb';
+import { HeadObjectCommand } from '@aws-sdk/client-s3';
+import { fileClient } from './file-signing';
+import { DEFAULT_SALESPERSON_ACCESS, SALESPERSON_ACCESS_KEY, parseSalespersonAccess, policyAllows, type AccountCapability } from '../../../../shared/salespersonAccess';
 import { assertBrokerFeeAgencyBilling, brokerFeeCents, feeAllocations } from '../../../../shared/brokerFees';
 import { quoteSourceBillingHistory } from '../quote-source-billing';
 import { assertNoFeeLoanCheckout } from '../broker-fees/payments';
@@ -14,7 +18,8 @@ import { batchGetComplete } from '../storage/batchGet';
 import { modelKeyName, resolveModelTable, storedModel } from '../storage/models';
 import { ACCOUNT_MODELS, ACCOUNT_REFERENCES, LIST_PARENTS, SHARED_MODELS, RETIRED_MODELS, AccessDenied, id, type Identity, type RecordData } from "./policy";
 import { object } from '../api-input';
-import { isActiveAdmin, type RoleRequest } from "./active-role";
+import { activeRole, isActiveAdmin, type RoleRequest } from "./active-role";
+import { documentObjectKey } from '../../../../shared/storageKeys';
 export const db = DynamoDBDocumentClient.from(new DynamoDBClient());
 export function tableName(model: string) {
   const error = () => new Error('Account access is not configured');
@@ -41,10 +46,12 @@ function recordParent(model: string, value: RecordData) {
 export class AccountAccess {
   readonly actor: string;
   readonly admin: boolean;
+  readonly producer: boolean;
   private readonly records = new Map<string, Promise<RecordData | undefined>>();
   constructor(identity: Identity | undefined, private readonly reader: Reader = read, request?: RoleRequest) {
     this.actor = id(identity?.sub); if (!this.actor) throw new AccessDenied();
     this.admin = isActiveAdmin(identity, request);
+    this.producer = activeRole(identity, request) === "PRODUCER";
   }
   get(model: string, key: string) {
     if (!key) return Promise.resolve(undefined);
@@ -78,6 +85,7 @@ export class AccountAccess {
   async prefetchAccounts(keys: string[]) {
     if (this.admin) return;
     await this.prefetch("Communication", keys.filter(Boolean).flatMap(key => [`workflow:${key}`, `deleted-account:${key}`]));
+    if ((await this.accessPolicy()).visibility !== 'ASSIGNED') await this.prefetch('Account', keys.filter(Boolean));
   }
   async prefetchRecordAccess(model: string, values: RecordData[]) {
     if (this.admin) return;
@@ -105,12 +113,47 @@ export class AccountAccess {
     // Administrators bypass assignment checks; everyone else sees only self.
     return new Set([this.actor]);
   }
+  async accessPolicy() {
+    if (!this.producer) return { ...DEFAULT_SALESPERSON_ACCESS };
+    const record = await this.get("Communication", SALESPERSON_ACCESS_KEY);
+    return record ? parseSalespersonAccess(object(record.data).policy) : { ...DEFAULT_SALESPERSON_ACCESS };
+  }
+  async ownsAccount(accountId: string) {
+    const workflow = object((await this.get("Communication", `workflow:${accountId}`))?.data);
+    return id(workflow.salespersonId) === this.actor;
+  }
   async canAccount(accountId: string) {
     if (!accountId) return false;
     if (this.admin) return true;
     if (await this.get("Communication", `deleted-account:${accountId}`)) return false;
-    const workflow = object((await this.get("Communication", `workflow:${accountId}`))?.data);
-    return id(workflow.salespersonId) === this.actor;
+    if (await this.ownsAccount(accountId)) return true;
+    const policy = await this.accessPolicy();
+    if (policy.visibility === 'ASSIGNED') return false;
+    const account = await this.get('Account', accountId);
+    return !!account && (account.stage === 'LEAD' || policy.visibility === 'ALL' && account.stage === 'CLIENT');
+  }
+  async requireCapability(accountId: string, capability: AccountCapability) {
+    await this.requireAccount(accountId);
+    if (this.admin || await this.ownsAccount(accountId)) return;
+    if (!policyAllows(await this.accessPolicy(), capability)) throw new AccessDenied();
+  }
+  async capabilityChecks(accountId: string, capability: AccountCapability): Promise<NonNullable<TransactWriteCommandInput['TransactItems']>> {
+    await this.requireCapability(accountId, capability);
+    if (this.admin || await this.ownsAccount(accountId)) return [];
+    const settings = await this.get('Communication', SALESPERSON_ACCESS_KEY);
+    const account = await this.get('Account', accountId);
+    if (!settings || !account) throw new AccessDenied();
+    return [
+      { ConditionCheck: { TableName: tableName('Communication'), Key: { id: SALESPERSON_ACCESS_KEY }, ConditionExpression: '#v = :v', ExpressionAttributeNames: { '#v': 'version' }, ExpressionAttributeValues: { ':v': settings.version } } },
+      { ConditionCheck: { TableName: tableName('Account'), Key: { id: accountId }, ConditionExpression: '#stage = :stage', ExpressionAttributeNames: { '#stage': 'stage' }, ExpressionAttributeValues: { ':stage': account.stage } } },
+    ];
+  }
+  async requireRecordCapability(model: string, key: string, capability: AccountCapability) {
+    const record = await this.requireRecord(model, key);
+    const root = await this.root(model, record);
+    if (!root) throw new AccessDenied();
+    await this.requireCapability(root, capability);
+    return record;
   }
   async requireAccount(accountId: string) { if (!await this.canAccount(accountId)) throw new AccessDenied(); }
   async requireSalesperson(salespersonId: string) {
@@ -141,6 +184,40 @@ export class AccountAccess {
     return value;
   }
   async write(model: string, operation: string, input: RecordData) {
+    if (!this.admin && (ACCOUNT_MODELS as readonly string[]).includes(model)) {
+      const old = input.id ? await this.get(model, id(input.id)) : undefined;
+      const candidate = { ...old, ...input };
+      const roots = new Set([old ? await this.root(model, old) : null, await this.root(model, candidate)]);
+      for (const root of roots) {
+        if (!root || await this.ownsAccount(root)) continue;
+        let capability: AccountCapability = 'restricted';
+        if (['Invoice', 'InvoiceLine'].includes(model)) capability = 'invoice';
+        else if (model === 'Document' && (operation === 'create' || operation === 'update' && old?.s3Key === 'pending' && old.lastWriteBy === this.actor && Object.keys(input).every(k => ['id','s3Key','lastWriteBy'].includes(k)))) capability = 'collaborate';
+        else if (model === 'Document' && operation === 'delete' && old?.lastWriteBy === this.actor && typeof old.createdAt === 'string' && Date.now() - Date.parse(old.createdAt) >= 0 && Date.now() - Date.parse(old.createdAt) < 10 * 60_000) {
+          await this.requireCapability(root, 'collaborate');
+          // Only the caller's recent failed upload can be cleaned up. Existing
+          // objects and uncertain storage errors never authorize deletion.
+          if (old.s3Key !== 'pending') {
+            await this.path(id(old.s3Key), 'read', root);
+            const Bucket = process.env.STORAGE_BUCKET;
+            if (!Bucket) throw new AccessDenied();
+            try {
+              await fileClient().send(new HeadObjectCommand({ Bucket, Key: id(old.s3Key) }));
+              throw new AccessDenied();
+            } catch (error) {
+              if ((error as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode !== 404) throw error;
+            }
+          }
+          capability = 'collaborate';
+        }
+        else if (['Account', 'Contact', 'PriorCarrier', 'Loss', 'Blanket', 'GlApplication', 'GlClassCode', 'DoCoveragePart', 'DoApplication', 'Building', 'Quote'].includes(model) && operation !== 'delete') capability = 'edit';
+        await this.requireCapability(root, capability);
+        if (model === 'Document' && operation !== 'delete' && input.lastWriteBy !== this.actor) throw new AccessDenied();
+        if (model === 'Account' && ['stage','owner','ownerId','salespersonId','producerOfRecord'].some(k => Object.hasOwn(input,k))) throw new AccessDenied();
+        if (model === 'Quote' && (old && !['DRAFT','SUBMITTED','QUOTED'].includes(String(old.status)) || ['bindAuthorizedAt','bindAuthorizedBy','bindAuthorizedTerms','presentedAt','producerOfRecord'].some(k => Object.hasOwn(input,k)) || input.status && !['DRAFT','SUBMITTED','QUOTED'].includes(String(input.status)))) throw new AccessDenied();
+        if (old && await this.root(model, old) !== await this.root(model, candidate)) throw new AccessDenied();
+      }
+    }
     if (RETIRED_MODELS.includes(model)) throw new AccessDenied();
     // Field-level delete grants are required for whole-account deletion, but
     // Amplify also uses them to authorize clearing fields in an update. Keep
@@ -324,6 +401,22 @@ export class AccountAccess {
       const scope = { entityType: first, entityId: second };
       if (expectedRoot && await this.root("Document", scope) !== expectedRoot) throw new AccessDenied();
       if (!await this.canRecord("Document", scope)) throw new AccessDenied();
+      const root = await this.root('Document', scope);
+      if (root && ['write','delete','link'].includes(operation)) {
+        await this.requireCapability(root, operation === 'delete' ? 'restricted' : 'collaborate');
+        if (operation === 'write' && !await this.ownsAccount(root) && !this.admin) {
+          const existing = docId ? await this.get('Document', docId) : undefined;
+          const createdAt = typeof existing?.createdAt === 'string' ? Date.parse(existing.createdAt) : NaN;
+          const age = Date.now() - createdAt;
+          const filename = existing?.uploadedName ?? existing?.name;
+          // The browser publishes s3Key only after uploading. A collaborator
+          // may create only their own recent pending file at its exact key;
+          // the signed S3 request also refuses to replace an existing object.
+          if (!existing || existing.id !== docId || existing.s3Key !== 'pending' || existing.lastWriteBy !== this.actor
+            || !Number.isFinite(age) || age < 0 || age >= 10 * 60_000 || typeof filename !== 'string' || !filename
+            || path !== documentObjectKey(first, second, docId, filename)) throw new AccessDenied();
+        }
+      }
       const document = docId ? await this.get("Document", docId) : undefined;
       if (operation === "delete" && !document) return; // Failed uploads and deletion cleanup.
       if (!document || document.entityType !== first || document.entityId !== second) throw new AccessDenied();
@@ -340,7 +433,7 @@ export class AccountAccess {
     if (["certificates", "generated", "property-photos"].includes(prefix)) {
       const account = first;
       if (expectedRoot && account !== expectedRoot) throw new AccessDenied();
-      await this.requireAccount(account);
+      await this.requireCapability(account, operation === "read" ? "read" : prefix === "property-photos" ? "edit" : "restricted");
       if (path.split("/").length !== 3) throw new AccessDenied();
       if (prefix === "certificates") {
         const certificate = await this.get("Certificate", second.replace(/\.pdf$/, ""));

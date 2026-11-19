@@ -1,3 +1,4 @@
+import { useAccountPermissions } from '../AccountPermissions';
 import { FilePicker } from "../ui/FilePicker";
 import { Button } from "../ui/Button";
 import { useEffect, useId, useRef, useState } from "react";
@@ -26,6 +27,7 @@ export default function PhotosCard({
   account: Account;
   onChange: (a: Account) => void;
 }) {
+  const permissions = useAccountPermissions();
   const [operation, setOperation] = useState<{ slotKey: PhotoKey; kind: "upload" | "remove" } | null>(null);
   // The ref also guards two events received before React disables the controls.
   const operationBusy = useRef(false);
@@ -96,7 +98,7 @@ export default function PhotosCard({
             label={slot.label}
             s3Key={account[slot.key] ?? null}
             busy={operation?.slotKey === slot.key && operation.kind === "upload"}
-            disabled={operation !== null}
+            disabled={!permissions.edit || operation !== null}
             onUpload={(f) => upload(slot.key, f)}
             onView={(s3Key) =>
               setPreview({ s3Key, name: `${slot.label}${s3Key.match(/\.[^./]+$/)?.[0] ?? ""}` })

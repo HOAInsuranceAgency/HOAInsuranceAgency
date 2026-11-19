@@ -1017,10 +1017,10 @@ backend.extractLead.resources.lambda.grantInvoke(
   backend.leadReply.resources.lambda
 );
 
-installAccountAccess(backend, communicationTable);
+const commissionAccessPolicy = installAccountAccess(backend, communicationTable, businessDeliveryPermissions);
 installDashboardReads(backend);
 installOwnerProfitability(backend, communicationTable);
-const commissionStorage = installCommissions(backend, communicationTable);
+const commissionStorage = installCommissions(backend, communicationTable, commissionAccessPolicy);
 installBrokerFees(backend, communicationTable, commissionStorage.table, siteBaseUrl);
 installLiveChanges(backend);
 

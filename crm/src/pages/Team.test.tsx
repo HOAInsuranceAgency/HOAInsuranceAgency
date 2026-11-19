@@ -1,3 +1,5 @@
+// Access settings have their own interaction tests; these tests exercise roster paging.
+vi.mock('../components/SalespersonAccessSettings', () => ({ default: () => <section>Salesperson access</section> }));
 import { invalidateLiveUpdates } from "../test/liveUpdates";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";

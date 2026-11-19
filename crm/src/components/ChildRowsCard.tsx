@@ -1,4 +1,5 @@
 import { Button, ButtonSummary } from "./ui/Button";
+import { useAccountPermissions } from './AccountPermissions';
 import { Table } from "./ui/Table";
 import { type ReactNode } from "react";
 import Modal from "./Modal";
@@ -120,6 +121,7 @@ export default function ChildRowsCard<
   editTitle,
   removeMessage,
 }: ChildRowsCardProps<T, F>) {
+  const permissions = useAccountPermissions();
   const sortable = columns.filter((c) => c.sort);
   const accessors: Record<
     string,
@@ -134,13 +136,13 @@ export default function ChildRowsCard<
 
   const editingRow = child.rows.find((r) => r.id === child.editingId) ?? null;
   const mutating = busy || child.addStatus.busy || child.editStatus.busy || child.delStatus.busy;
-  const fields = (content: ReactNode) => <fieldset disabled={mutating} style={{ display: "contents", border: 0, padding: 0, margin: 0 }}>{content}</fieldset>;
+  const fields = (content: ReactNode) => <fieldset disabled={!permissions.edit || mutating} style={{ display: "contents", border: 0, padding: 0, margin: 0 }}>{content}</fieldset>;
 
   const editActions = (
     <>
       <Button variant="primary"
 
-        disabled={mutating}
+        disabled={!permissions.edit || mutating}
         onClick={child.saveEdit}
       >
         {child.editStatus.busy ? "Saving…" : "Save"}
@@ -155,7 +157,7 @@ export default function ChildRowsCard<
   const addButton = (
     <Button
       variant={addDisclosure ? "primary" : "secondary"}
-      disabled={mutating}
+      disabled={!permissions.edit || mutating}
       onClick={child.add}
     >
       {addDisclosure && child.addStatus.busy ? "Adding…" : addLabel}
@@ -288,14 +290,14 @@ export default function ChildRowsCard<
                             <Button variant="secondary"
 
                               aria-label={editButtonLabel?.(row)}
-                              disabled={mutating || canEditRow?.(row) === false}
+                              disabled={!permissions.edit || mutating || canEditRow?.(row) === false}
                               onClick={() => child.startEdit(row)}
                             >
                               Edit
                             </Button>{" "}
                             <ConfirmButton
                               label="Remove"
-                              disabled={mutating || canRemoveRow?.(row) === false}
+                              disabled={!permissions.assigned || mutating || canRemoveRow?.(row) === false}
                               busyLabel="Removing…"
                               message={removeMessage?.(row)}
                               onConfirm={() => child.remove(row.id)}

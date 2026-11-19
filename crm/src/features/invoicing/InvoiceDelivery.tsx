@@ -1,3 +1,4 @@
+import { useAccountPermissions } from '../../components/AccountPermissions';
 import {
   financeableInvoiceTotal
 } from "../../../../shared/invoiceTotals";
@@ -40,6 +41,7 @@ export function InvoiceSentDetails({ invoice }: { invoice: InvoiceDeliveryState[
 }
 
 export function InvoiceDelivery({ editor, financeOnly = false }: { editor: InvoiceDeliveryState; financeOnly?: boolean }) {
+  const permissions = useAccountPermissions();
   const {
     locked,
     inputId,
@@ -140,7 +142,7 @@ export function InvoiceDelivery({ editor, financeOnly = false }: { editor: Invoi
           <Button variant="primary"
             type="button"
 
-            disabled={actionBusy || lines.length === 0 || toEmails.length === 0 || needsRemittanceCost || needsSupplierAmount || !!adjustmentError}
+            disabled={!permissions.invoice || actionBusy || lines.length === 0 || toEmails.length === 0 || needsRemittanceCost || needsSupplierAmount || !!adjustmentError}
             onClick={() => void send()}
           >
             {invoice.sentAt ? "Send again" : "Send invoice"}
@@ -168,7 +170,7 @@ export function InvoiceDelivery({ editor, financeOnly = false }: { editor: Invoi
         <Button variant="secondary"
           type="button"
 
-          disabled={actionBusy}
+          disabled={!permissions.assigned || actionBusy}
           onClick={() => void markPaid()}
         >
           Mark paid

@@ -1,0 +1,21 @@
+import { fireEvent, render, screen } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
+import { expect, it, vi } from 'vitest';
+const h=vi.hoisted(()=>({load:vi.fn().mockResolvedValue({relationships:[],version:0,nextToken:'next'})}));
+vi.mock('./AccountPermissions',()=>({useAccountPermissions:()=>({assigned:false,edit:false})}));
+vi.mock('../lib/client',()=>({client:{models:{Contact:{list:async()=>({data:[]})}}},fmtDate:(x:string)=>x,friendlyError:()=> 'Failed'}));
+vi.mock('../lib/relationships',()=>({loadAccountRelationships:h.load,loadPartyIds:async()=>[]}));
+vi.mock('../lib/communications',()=>({communicationRequest:vi.fn()}));
+vi.mock('./ManagementChangeForm',()=>({default:()=>null}));
+vi.mock('./RelationshipLinkForm',()=>({default:()=>null}));
+import AccountRelationships from './AccountRelationships';
+it('keeps read-only pagination available while disabling relationship writes',async()=>{
+  render(<MemoryRouter><AccountRelationships accountId="shared" onChanged={()=>{}} /></MemoryRouter>);
+  const next=await screen.findByRole('button',{name:'Next relationships page'});
+  expect(next).toBeEnabled();
+  expect(screen.getByRole('button',{name:'Change management'})).toBeDisabled();
+  expect(screen.getByRole('button',{name:'Link relationship'})).toBeDisabled();
+  fireEvent.click(next);
+  expect(await screen.findByRole('button',{name:'Back to first relationships page'})).toBeEnabled();
+  expect(h.load).toHaveBeenCalledWith('shared','next');
+});

@@ -1,3 +1,4 @@
+import { SALESPERSON_ACCESS_KEY } from '../../../../shared/salespersonAccess';
 import { ScanCommand } from '@aws-sdk/lib-dynamodb';
 import { batchGetComplete } from '../storage/batchGet';
 import { AccountAccess } from '../crm-access/access';
@@ -75,7 +76,7 @@ async function visibleAccounts(ids: string[], identity: Identity, request?: Role
     relationshipBatch('Account', keys),
     relationshipBatch(
       'Communication',
-      keys.flatMap((id) => [`workflow:${id}`, `deleted-account:${id}`]),
+      [SALESPERSON_ACCESS_KEY, ...keys.flatMap((id) => [`workflow:${id}`, `deleted-account:${id}`])],
     ),
   ]);
   // Prime both kinds of lookup in batches; AccountAccess never does N+1 reads here.
