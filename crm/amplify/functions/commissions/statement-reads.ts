@@ -18,12 +18,12 @@ export async function intakeSettlements(id: string) {
   if (rows.some(s => s.intakeId !== id)) throw new Error('Statement settlement references require repair.');
   return rows;
 }
-export async function activeSettlementWork() {
-  await requireStatementIndexes();
+export async function activeSettlementWork(indexesVerified = false) {
+  if (!indexesVerified) await requireStatementIndexes();
   return (await referenced<IntakeSettlement>('INTAKE_SETTLEMENT_ACTIVE', 'INTAKE_SETTLEMENT')).filter(s => ['RECORDED','POSTING'].includes(s.status));
 }
-export async function activeIntakeWork() {
-  await requireStatementIndexes();
+export async function activeIntakeWork(indexesVerified = false) {
+  if (!indexesVerified) await requireStatementIndexes();
   return (await referenced<StatementIntake>('INTAKE_ACTIVE', 'STATEMENT_INTAKE')).filter(s => s.status === 'OPEN' && (!s.rowCount || s.completedRows !== s.rowCount));
 }
 export async function statementSourceLinks(ids: string[]) {

@@ -21,13 +21,13 @@ export function validateDeposit(input: Record<string, unknown>, today: string) {
     ...(input.carrierId ? { carrierId: required(input.carrierId, 'a carrier', 128) } : {}),
   };
 }
-export function statementReceiptBalance(intake: StatementIntake, settlements: IntakeSettlement[]) {
-  return intake.totalCents === undefined ? undefined : intake.totalCents - sum(settlements.filter(s => s.intakeId === intake.id && s.status !== 'VOID').map(s => s.totalCents));
+export function statementReceiptBalance(intake: StatementIntake, settlements: IntakeSettlement[], recordedCents?: number) {
+  return intake.totalCents === undefined ? undefined : intake.totalCents - (recordedCents ?? sum(settlements.filter(s => s.intakeId === intake.id && s.status !== 'VOID').map(s => s.totalCents)));
 }
 /** Suggestions never establish a match, actual receipt or employee eligibility. */
-export function depositSuggestions(deposit: CommissionDeposit, intakes: StatementIntake[], settlements: IntakeSettlement[]) {
+export function depositSuggestions(deposit: CommissionDeposit, intakes: StatementIntake[], settlements: IntakeSettlement[], receiptTotals?: Record<string,number>) {
   return intakes.filter(s => s.status === 'OPEN' && (!deposit.carrierId || s.carrierId === deposit.carrierId))
-    .map(intake => ({ intake, balance: statementReceiptBalance(intake, settlements) }))
+    .map(intake => ({ intake, balance: statementReceiptBalance(intake, settlements, receiptTotals?.[intake.id]) }))
     .filter(x => x.balance !== undefined && x.balance >= deposit.totalCents)
     .map(x => ({ ...x, exact: x.balance === deposit.totalCents, reason: (deposit.carrierId ? 'Same carrier; ' : 'Carrier must be confirmed; ') + (x.balance === deposit.totalCents ? 'amount matches unpaid statement balance' : 'deposit fits part of the statement balance') }))
     .sort((a,b) => Number(b.exact) - Number(a.exact) || a.intake.documentReceivedOn.localeCompare(b.intake.documentReceivedOn) || a.intake.id.localeCompare(b.intake.id));

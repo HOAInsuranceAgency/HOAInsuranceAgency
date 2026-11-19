@@ -57,7 +57,7 @@ export default function CommissionDeposits({workspace,carriers,refresh,onError,o
 function DepositReview({deposit:d,workspace,busy,run,refresh,openStatement}:{deposit:CommissionDeposit;workspace:IntakeWorkspace;busy:boolean;run:(work:()=>Promise<void>)=>Promise<void>;refresh:()=>Promise<void>;openStatement:(id:string)=>void}) {
   const [intakeId,setIntakeId]=useState(''),[confirmed,setConfirmed]=useState(false),[resolution,setResolution]=useState(''),[reason,setReason]=useState(''),[resolveConfirmed,setResolveConfirmed]=useState(false);
   const {markClean}=useUnsavedChanges(!!intakeId||!!reason||!!resolution,{busy,onDiscard:()=>{setIntakeId('');setConfirmed(false);setResolution('');setReason('');setResolveConfirmed(false);}});
-  const suggestions=depositSuggestions(d,workspace.intakes,workspace.settlements), chosen=suggestions.find(s=>s.intake.id===intakeId);
+  const suggestions=depositSuggestions(d,workspace.intakes,workspace.settlements,workspace.receiptTotals), chosen=suggestions.find(s=>s.intake.id===intakeId);
   if(d.status!=='AWAITING_REMITTANCE')return null;
   return <fieldset disabled={busy} className="deposit-review"><h4>Next: confirm the remittance match</h4><p><strong>{d.payor} · {money(d.totalCents)}</strong> · {d.receivedOn} · {d.reference}</p><p>Saved evidence: {d.evidence}</p>
     <p>The saved receipt details carry forward unchanged. A suggested amount match alone does not prove these records belong together.</p>

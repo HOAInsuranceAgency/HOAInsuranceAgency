@@ -1,3 +1,4 @@
+import { reviewRecordHash } from '../../amplify/functions/commissions/settlement-review';
 import { statementIndexWrites, STATEMENT_INDEX_STATE } from '../../amplify/functions/commissions/statement-index';
 import { depositSuggestions, depositPayrollStatements, type CommissionDeposit } from '../../../shared/commissionDeposits';
 import {
@@ -174,6 +175,7 @@ beforeEach(() => {
 const hash = (v: string) => createHash("sha256").update(v).digest("hex");
 const get = <T>(k: string, id: string): T =>
   structuredClone(records.get(k + ":" + id)) as T;
+const reviewedCalculations=(s:IntakeSettlement)=>s.review!.records.flatMap(ref=>get<{rows:{calculations:any[]}[]}>('INTAKE_REVIEW',ref.id).rows.flatMap(r=>r.calculations));
 const all = <T>(kind: string): T[] =>
   [...records.entries()]
     .filter(([k]) => k.startsWith(kind + ":"))
@@ -835,7 +837,7 @@ it('rejects changed terms after allocation and lets the Owner review and resume 
   expect(await post(interrupted,'resume')).toMatchObject({ok:false,error:expect.stringMatching(/changed after review/)});
   expect(get<CommissionPolicy>('POLICY','p').entries).toHaveLength(5);
   const reviewed=await allocate(interrupted,allocations);
-  expect(reviewed.review!.calculations).toHaveLength(2);
+  expect(reviewedCalculations(reviewed)).toHaveLength(2);
   expect(await post(reviewed,'resume')).toMatchObject({ok:true,complete:true});
   expect(get<CommissionPolicy>('POLICY','p').entries).toHaveLength(7);
 });
@@ -877,20 +879,20 @@ it('checks the policy version in the posting transaction when another Owner chan
 });
 it('compares actual calculated earnings with the retained approval before committing',async()=>{
  await save();const approved=await allocate(await payment());
- seed('INTAKE_SETTLEMENT',{...approved,review:{...approved.review!,calculations:approved.review!.calculations.map(c=>({...c,amountCents:c.amountCents+1}))}});
+ const ref=approved.review!.records[0],snapshot=get<{id:string;rows:{rowId:string;calculations:any[]}[]}>('INTAKE_REVIEW',ref.id);
+ snapshot.rows[0].calculations[0].amountCents++;
+ seed('INTAKE_REVIEW',snapshot);ref.hash=reviewRecordHash(snapshot.rows);seed('INTAKE_SETTLEMENT',approved);
  expect(await post(approved)).toMatchObject({ok:false,error:expect.stringMatching(/calculations changed after review/)});
  expect(get<CommissionPolicy>('POLICY','p').entries).toHaveLength(0);
 });
-
 it('resumes when DynamoDB returns approval maps in a different property order',async()=>{
  await save();const approved=await allocate(await payment());
  const reverse=(v:object)=>Object.fromEntries(Object.entries(v).reverse());
- seed('INTAKE_SETTLEMENT',{...approved,allocations:approved.allocations.map(a=>reverse(a)),review:{...approved.review!,calculations:approved.review!.calculations.map(c=>reverse(c))}});
+ seed('INTAKE_SETTLEMENT',{...approved,allocations:approved.allocations.map(a=>reverse(a))});
  const rereviewed=await allocate(get<IntakeSettlement>('INTAKE_SETTLEMENT',approved.id));
- seed('INTAKE_SETTLEMENT',{...rereviewed,review:{...rereviewed.review!,calculations:rereviewed.review!.calculations.map(c=>reverse(c))}});
+ for(const ref of rereviewed.review!.records){const snapshot=get<{id:string;rows:{calculations:any[]}[]}>('INTAKE_REVIEW',ref.id);snapshot.rows.forEach(r=>r.calculations=r.calculations.map(c=>reverse(c)));seed('INTAKE_REVIEW',snapshot);}
  expect(await post(rereviewed)).toMatchObject({ok:true,complete:true});
 });
-
 it('requires a fresh preview for a newly approved employee split and posts exactly the reviewed shares',async()=>{
  await save();const receipt=await payment();const allocations=[{rowId:'row1',amountCents:10000}];
  const input={id:'inbox',settlementId:receipt.id,version:receipt.version,allocations};
@@ -898,7 +900,23 @@ it('requires a fresh preview for a newly approved employee split and posts exact
  const policy=get<CommissionPolicy>('POLICY','p');
  seed('POLICY',{...policy,version:policy.version+1,allocations:[{id:'split',from:'2026-01-01',method:'INDIVIDUAL_PLAN_RATE' as const,houseBps:0,agreement:'Reviewed agreement',approvedBy:'other-owner',approvedAt:'2026-10-03T12:00:00Z',participants:[{producerId:policy.producerId,producerName:policy.producerName,shareBps:5000,producerBps:1600,planVersion:1,agreement:'A',eligible:true},{producerId:'second',producerName:'Second employee',shareBps:5000,producerBps:1000,planVersion:1,agreement:'B',eligible:true}]}]});
  expect(await call('allocateIntakeSettlement',{...input,previewToken:prior.token,confirmed:true})).toMatchObject({ok:false});
- const fresh=await allocate(receipt);expect(fresh.review!.calculations.map(c=>c.amountCents).sort()).toEqual([500,800]);
+ const fresh=await allocate(receipt);expect(reviewedCalculations(fresh).map(c=>c.amountCents).sort()).toEqual([500,800]);
  expect(await post(fresh)).toMatchObject({ok:true});
  expect(all<{amountCents:number}>('EARNING').map(e=>e.amountCents).sort()).toEqual([500,800]);
+});
+
+it('batch-loads 1000 active inbox statements without per-statement histories',async()=>{
+ for(let i=0;i<1000;i++)seed('STATEMENT_INTAKE',intake({id:'active-'+i}));
+ h.get.mockClear();h.list.mockClear();h.getMany.mockClear();
+ const result=await call('intakeWorkspace');expect(result.ok).toBe(true);expect((result.intakes as unknown[]).length).toBe(1001);
+ expect(h.get.mock.calls.filter(([kind])=>kind==='INDEX_STATE')).toHaveLength(1);
+ expect(h.list.mock.calls.some(([kind])=>kind.startsWith('INTAKE_SETTLEMENTS#'))).toBe(false);
+ expect(h.list.mock.calls.length).toBeLessThanOrEqual(4);expect(h.getMany.mock.calls.length).toBeLessThanOrEqual(3);
+});
+it('carries receipt totals into deposit suggestions during partial posting without double-counting',async()=>{
+ seed('STATEMENT_INTAKE',intake({totalCents:70000}));const rows=Array.from({length:7},(_,i)=>row({id:'r'+i,lineRef:'S'+i}));await save(rows);
+ const s=await allocate(await payment('PARTS',70000),rows.map(r=>({rowId:r.id,amountCents:10000})));await post(s);
+ const inbox=await call('intakeWorkspace');expect(inbox.receiptTotals).toEqual({inbox:70000});expect(inbox.settlements).toHaveLength(1);
+ await post(get<IntakeSettlement>('INTAKE_SETTLEMENT',s.id),'rest');
+ const history=await call('intakeWorkspace',{history:true});expect(history.receiptTotals).toEqual({inbox:70000});expect(history.settlements).toEqual([]);
 });
