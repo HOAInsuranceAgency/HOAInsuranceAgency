@@ -1,17 +1,20 @@
-import { useState } from 'react';
+import { useEffect,useRef,useState } from 'react';
 import {
-  COMMISSION_BASES,
-  type CarrierCommissionTerms,
-  type CarrierPaymentArrangement
+COMMISSION_BASES,
+type CarrierCommissionTerms,
+type CarrierPaymentArrangement
 } from '../../../../shared/commissions';
-import { Button } from "../../components/ui/Button";
-import { Input } from "../../components/ui/Input";
-import { Select } from "../../components/ui/Select";
-import { Textarea } from "../../components/ui/Textarea";
-import { commissionAction } from '../../lib/commissions';
-import { ActionForm, Field } from './CommissionForm';
+import CommissionPanel from '../../components/CommissionPanel';
+import { Button } from '../../components/ui/Button';
+import { Input } from '../../components/ui/Input';
+import { Select } from '../../components/ui/Select';
+import { Textarea } from '../../components/ui/Textarea';
+import { useCommissionUnsavedChanges as useUnsavedChanges } from '../../lib/commissionEditProtection';
+import { commissionWorkflowAction as commissionAction } from '../../lib/commissions';
 
-type ArrangementDraft = {
+import { ActionForm,Field } from './CommissionForm';
+
+export type ArrangementDraft = {
   id: string;
   from: string;
   to: string;
@@ -30,7 +33,7 @@ type ArrangementDraft = {
   notes: string;
 };
 
-const blankArrangement = (): ArrangementDraft => ({
+export const blankArrangement = (): ArrangementDraft => ({
   id: crypto.randomUUID(),
   from: '',
   to: '',
@@ -53,10 +56,12 @@ export function CarrierEditor({
   id,
   terms,
   refresh,
+  dirty,
 }: {
   id: string;
   terms?: CarrierCommissionTerms;
   refresh: () => Promise<void>;
+  dirty?: (changed: boolean) => void;
 }) {
   const [arrangements, setArrangements] = useState<ArrangementDraft[]>(
     () =>
@@ -75,10 +80,22 @@ export function CarrierEditor({
   );
   const update = (index: number, change: Partial<ArrangementDraft>) =>
     setArrangements(arrangements.map((a, i) => (i === index ? { ...a, ...change } : a)));
-  return (
+  const [schedule, setSchedule] = useState(!!terms && !terms.receiptOnly);
+  const initial = useRef(JSON.stringify(arrangements));
+  const changed = initial.current !== JSON.stringify(arrangements);
+  useUnsavedChanges(changed);
+  useEffect(() => { dirty?.(changed); }, [changed, dirty]);
+  return <div className="commission-carrier-editor">
+    <div className="commission-receipt-choice">
+      <div><strong>Actual receipts only</strong><p>Enough to reconcile statements and calculate employee earnings. Expected payment dates stay unknown.</p></div>
+      {terms?.receiptOnly ? <span className="commission-status-label">Enabled</span> : <ActionForm title="Enable receipt tracking" button="Use actual receipts only" disabled={changed} onDone={refresh} submit={() => commissionAction('saveCarrier', { id, version: terms?.version ?? 0, receiptOnly: true })}>
+        {terms && <p className="small muted">This replaces the schedule for future policy snapshots. Existing snapshots keep their saved terms.</p>}
+      </ActionForm>}
+    </div>
+    <Button type="button" variant="secondary" aria-expanded={schedule} onClick={() => setSchedule(v => !v)}>{schedule ? 'Hide payment forecast' : 'Add payment forecast (optional)'}</Button>
+    {schedule && (
     <ActionForm
       title="Carrier commission payment terms"
-      draft={arrangements}
       button="Save carrier payment terms"
       disabled={!arrangements.length}
       onDone={refresh}
@@ -89,7 +106,7 @@ export function CarrierEditor({
           version: terms?.version ?? 0,
           basis: first?.basis ?? terms?.basis,
           schedule:
-            terms?.schedule || `${first.cadence} · ${first.trigger} · ${first.lagDays} day lag`,
+            (terms?.schedule && !terms.receiptOnly) ? terms.schedule : `${first.cadence} · ${first.trigger} · ${first.lagDays} day lag`,
           evidence: first?.evidence ?? terms?.evidence,
           arrangements: arrangements.map((a) => ({
             id: a.id,
@@ -97,11 +114,11 @@ export function CarrierEditor({
             ...(a.to ? { to: a.to } : {}),
             ...(a.lines.trim()
               ? {
-                lines: a.lines
-                  .split(',')
-                  .map((v) => v.trim())
-                  .filter(Boolean),
-              }
+                  lines: a.lines
+                    .split(',')
+                    .map((v) => v.trim())
+                    .filter(Boolean),
+                }
               : {}),
             ...(a.transaction ? { transaction: a.transaction } : {}),
             ...(a.billType ? { billType: a.billType } : {}),
@@ -120,10 +137,10 @@ export function CarrierEditor({
       }}
     >
       <p className="small muted">
-        Commission basis, remittance timing, and the client’s premium payment plan are separate.
-        Terms apply by policy effective date; saved policy snapshots keep their original terms.
+        Optional forecasting only. Enter confirmed carrier rules below; actual receipts determine employee earnings.
+        Effective dates select the agreement for each policy.
       </p>
-      {terms && !terms.arrangements?.length && (
+      {terms && !terms.receiptOnly && !terms.arrangements?.length && (
         <div className="commission-notice">
           <strong>Legacy carrier terms need a structured payment arrangement.</strong>
           <p>
@@ -145,6 +162,10 @@ export function CarrierEditor({
               value={a.from}
               change={(v) => update(i, { from: v })}
             />
+          </div>
+          <CommissionPanel title={`Coverage and end date ${i + 1} (optional)`} open={!!(a.to || a.lines || a.transaction || a.billType)}>
+          <p className="small muted">Use only when this agreement applies to specific coverage, business types, or billing methods.</p>
+          <div className="form-grid">
             <label className="field">
               {`Carrier terms through ${i + 1} (optional)`}
               <Input type="date" value={a.to} onChange={(e) => update(i, { to: e.target.value })} />
@@ -187,6 +208,9 @@ export function CarrierEditor({
                 <option value="DIRECT">Direct bill</option>
               </Select>
             </label>
+          </div>
+          </CommissionPanel>
+          <div className="form-grid">
             <label className="field">
               {`Commission basis ${i + 1}`}
               <Select
@@ -195,13 +219,13 @@ export function CarrierEditor({
                 onChange={(e) =>
                   update(i, {
                     basis: e.target.value as ArrangementDraft['basis'],
-                    trigger: '',
+                    trigger: e.target.value === 'COLLECTED' ? 'COLLECTION' : e.target.value === 'EARNED' ? 'EARNED' : '',
                     earningMethod: '',
                   })
                 }
               >
                 <option value="">Confirm the premium basis…</option>
-                {Object.entries(COMMISSION_BASES).map(([value, label]) => (
+                {Object.entries(COMMISSION_BASES).filter(([value]) => value !== 'UNSPECIFIED').map(([value, label]) => (
                   <option key={value} value={value}>
                     {label}
                   </option>
@@ -265,6 +289,28 @@ export function CarrierEditor({
                 onChange={(e) => update(i, { lagDays: e.target.value })}
               />
             </label>
+            {a.basis === 'EARNED' && (
+              <label className="field">
+                {`Earned premium method ${i + 1}`}
+                <Select
+                  required
+                  value={a.earningMethod}
+                  onChange={(e) =>
+                    update(i, {
+                      earningMethod: e.target.value as ArrangementDraft['earningMethod'],
+                    })
+                  }
+                >
+                  <option value="">Confirm the method…</option>
+                  <option value="DAILY_PRORATA">Daily pro rata forecast</option>
+                  <option value="MANUAL">Carrier schedule entered manually</option>
+                </Select>
+              </label>
+            )}
+          </div>
+          <CommissionPanel title={`Statement dates ${i + 1} (optional)`} open={!!(a.cutoffDay || a.paymentDay)}>
+            <p className="small muted">Only enter documented calendar days. Blank cutoff uses month end; blank remittance day uses the cutoff date.</p>
+            <div className="form-grid">
             <label className="field">
               {`Statement cutoff day ${i + 1} (optional)`}
               <Input
@@ -288,25 +334,9 @@ export function CarrierEditor({
                 onChange={(e) => update(i, { paymentDay: e.target.value })}
               />
             </label>
-            {a.basis === 'EARNED' && (
-              <label className="field">
-                {`Earned premium method ${i + 1}`}
-                <Select
-                  required
-                  value={a.earningMethod}
-                  onChange={(e) =>
-                    update(i, {
-                      earningMethod: e.target.value as ArrangementDraft['earningMethod'],
-                    })
-                  }
-                >
-                  <option value="">Confirm the method…</option>
-                  <option value="DAILY_PRORATA">Daily pro rata forecast</option>
-                  <option value="MANUAL">Carrier schedule entered manually</option>
-                </Select>
-              </label>
-            )}
-          </div>
+
+            </div>
+          </CommissionPanel>
           <Field
             label={`Carrier agreement reference ${i + 1}`}
             value={a.evidence}
@@ -316,23 +346,24 @@ export function CarrierEditor({
             {`Original carrier wording / notes ${i + 1} (optional)`}
             <Textarea value={a.notes} onChange={(e) => update(i, { notes: e.target.value })} />
           </label>
-          <Button variant="secondary"
+          <Button
             type="button"
-
+            variant="secondary"
             onClick={() => setArrangements(arrangements.filter((_, j) => i !== j))}
           >
             Remove payment arrangement {i + 1}
           </Button>
         </div>
       ))}
-      <Button variant="secondary"
+      <Button
         type="button"
-
+        variant="secondary"
         disabled={arrangements.length >= 100}
         onClick={() => setArrangements([...arrangements, blankArrangement()])}
       >
         Add payment arrangement
       </Button>
+      <CommissionPanel title="How forecast dates work">
       <p className="small muted">
         Dates are inclusive. Separate lines of business with commas. Monthly cycles close each
         month; quarterly cycles close in March, June, September, and December. Triggers after the
@@ -347,6 +378,8 @@ export function CarrierEditor({
         mean collected premium. Record the contract’s meaning explicitly. Forecasts never create
         receipts or producer earnings.
       </p>
+      </CommissionPanel>
     </ActionForm>
-  );
+    )}
+  </div>;
 }

@@ -1,4 +1,3 @@
-import type { CommissionOperationName } from '../../../shared/apiOperations';
 import type { CommissionPlan, CommissionAccount, AccountCommissionClass, CommissionBasis, CarrierPaymentArrangement, CommissionReceiptForecast, StatementLine } from '../../../shared/commissions';
 import type { ApiAccepted } from './communicationContracts';
 interface Operation<I, R = ApiAccepted> { input: I; result: R & ApiAccepted }
@@ -23,7 +22,7 @@ export interface CommissionContracts {
   adoptPolicy: Operation<{ policyId: string; producerId: string; boundOn: string; transaction: 'NEW' | 'RENEWAL' | ''; evidence: string; premium: string; agencyRate: string; effectiveDate: string; expirationDate: string }>;
   updatePolicyNumber: Operation<{ id: string; version: number; policyNumber: string }>;
 }
-export type CommissionOperation = Exclude<CommissionOperationName, 'file'>;
+export type CommissionOperation = keyof CommissionContracts;
 export type CommissionInput<K extends CommissionOperation> = CommissionContracts[K]['input'];
 export type CommissionResult<K extends CommissionOperation> = CommissionContracts[K]['result'];
 export interface CommissionFileUpload { action: 'upload'; size: number; contentType: string; filename: string }

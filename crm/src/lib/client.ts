@@ -85,6 +85,7 @@ export function currentActor(): Promise<string | null> {
  * remain writes; this allowlist grants no API permissions. */
 function isReadOnlyMutation(field: string, argument: unknown): boolean {
   const input = argument && typeof argument === 'object' ? argument as Record<string, unknown> : {};
+  if (field === 'commissionAction') return ['intakeWorkspace', 'getStatementIntake', 'previewIntakeSettlement', 'policyIntakeContext', 'getIntakeWorkingDraft', 'payrollWorkspace', 'payrollAudit', 'commissionExceptions'].includes(String(input.operation));
   if (field === 'crmFile') return input.operation === 'read' || input.operation === 'list';
   if (field === 'brokerFeeAction') {
     try {
