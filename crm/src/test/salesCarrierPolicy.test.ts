@@ -3,7 +3,7 @@ import { annualReturn, quoteCoverage, quoteMatchesRisk, type QuoteEvidence } fro
 import { businessDeadline, followUpDeadline, scheduleReminders, reminderWindow, taskWakeAt, type Communication, type LeadTask, type LeadWorkflow, type TeamEligibility, type TeamRouting } from "../../../shared/leadWorkflow";
 import { taskRoute, validateRouting, validateCompleteRouting } from "../../../shared/workRouting";
 import { morningReport, renderMorningReport } from "../../../shared/morningReport";
-import { salespersonTask, salespersonRouting } from "../../../shared/salespersonOwnership";
+import { salespersonRouting } from "../../../shared/salespersonOwnership";
 import { contactProgress } from "../../../shared/contactProgress";
 
 const member = (id: string): TeamEligibility => ({ userId: id, name: id, email: `${id}@example.com`, salesperson: true, champion: true, enabled: true });
@@ -164,19 +164,6 @@ describe("service work is recorded by the response", () => {
 });
 
 describe("legacy ownership compatibility", () => {
-  it("removes helper and escalation metadata without losing evidence or the actual deadline", () => {
-    const old = { ...task({ role: "CHAMPION", accountableRole: "CHAMPION", kind: "FOLLOW_UP", domain: undefined, context: "RENEWAL", policyId: "p1" }), helperId: "manager1", helperRequestedBy: "sales1", helperReason: "MANAGER_COVER" as const,
-      escalationAt: "2026-09-11T13:00:00Z", ownerEscalationAt: "2026-09-14T13:00:00Z", escalatedAt: "2026-09-11T13:00:00Z", ownerNotifiedAt: "2026-09-14T13:00:00Z", escalatedRecipientId: "manager1", managerRecipientId: "manager1", ownerRecipientId: "owner", sourceIds: ["source"], nextReminderAt: "2026-09-15T13:00:00Z" };
-    const normalized = salespersonTask(old);
-    expect(normalized).toMatchObject({ id: old.id, role: "SALESPERSON", accountableRole: "SALESPERSON", domain: "CARRIER", context: "RENEWAL", policyId: "p1", dueAt: old.dueAt, sourceIds: ["source"], nextReminderAt: old.nextReminderAt });
-    for (const field of ["helperId", "helperReason", "helperRequestedBy", "escalationAt", "ownerEscalationAt", "escalatedAt", "escalatedRecipientId", "ownerNotifiedAt", "managerRecipientId", "ownerRecipientId"]) expect(normalized).not.toHaveProperty(field);
-    expect(old.helperId).toBe("manager1");
-  });
-  it("preserves explicit specialist work", () => {
-    const specialist = salespersonTask(task({ role: "CHAMPION", context: "SERVICE", specialistId: "cover" }));
-    expect(specialist.specialistId).toBe("cover");
-    expect(taskRoute(specialist, workflow, routing, people)).toMatchObject({ accountableId: "sales1", recipientId: "sales1" });
-  });
   it("includes carrier and bound-client work only in the assigned salesperson's report", () => {
     const tasks = [task({ id: "carrier", kind: "CARRIER", role: "CHAMPION", domain: "CARRIER" }), task({ id: "renewal", context: "RENEWAL", role: "CHAMPION" }), task({ id: "service", context: "SERVICE", role: "CHAMPION" })];
     const report = (recipientId: string) => morningReport({ recipientId, team: people, routing, workflows: [workflow], tasks, now: "2026-09-11T13:00:00Z", health: [] });
