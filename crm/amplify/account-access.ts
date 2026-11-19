@@ -63,6 +63,21 @@ export function installAccountAccess(backend: typeof Backend, communicationTable
     }
   }
   backend.commissions.addEnvironment("COMMISSION_POLICY_ACCOUNT_INDEX", indexes[modelIndexKey("Policy", "accountId")]!);
+  const bindIndexes = ['Invoice.accountId', 'PfLoan.accountId', 'Document.entityId'] as const;
+  backend.commissions.addEnvironment('ACCESS_INDEXES', JSON.stringify(Object.fromEntries(bindIndexes.map(key => [key, indexes[key]]))));
+  backend.commissions.resources.lambda.addToRolePolicy(new PolicyStatement({
+    actions: ['dynamodb:Query'], resources: bindIndexes.map(key => {
+      const [model] = key.split('.');
+      return `${Stack.of(api).formatArn({ service: 'dynamodb', resource: 'table', resourceName: tables[model] })}/index/${indexes[key]}`;
+    }),
+  }));
+  backend.commissions.resources.lambda.addToRolePolicy(new PolicyStatement({
+    actions: ['dynamodb:GetItem', 'dynamodb:UpdateItem', 'dynamodb:ConditionCheckItem'],
+    resources: ['Invoice', 'PfLoan'].map(model => Stack.of(api).formatArn({ service: 'dynamodb', resource: 'table', resourceName: tables[model] })),
+  }));
+  backend.commissions.resources.lambda.addToRolePolicy(new PolicyStatement({
+    actions: ['dynamodb:PutItem'], resources: [Stack.of(api).formatArn({ service: 'dynamodb', resource: 'table', resourceName: tables.PfComplianceLog })],
+  }));
   // Lead deletion checks must query the account partition, rather than mistake
   // an empty filtered scan page's continuation token for a related record.
   const deletionIndexes = (["Policy", "Invoice"] as const).map(model => {

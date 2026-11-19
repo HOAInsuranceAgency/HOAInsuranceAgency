@@ -5,16 +5,37 @@ import { QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { AccountAccess, db, tableName } from "./access";
 import { ACCOUNT_MODELS, RETIRED_MODELS, LIST_PARENTS, AccessDenied, id, listPartition, type RecordData } from "./policy";
 import { object } from '../api-input';
+import { SALESPERSON_ACCESS_KEY } from '../../../../shared/salespersonAccess';
 
 import { queryFilter, matchesFilter } from "./filters";
 export { matchesFilter } from "./filters";
 
 type Key = Record<string, unknown>;
-type Cursor = { scope: string; owner: number; assignment?: Key; accounts?: string[]; account?: string; part: number; parent?: string; parentIds?: string[]; parents?: Key; records?: Key; shared: number };
+type Cursor = { scope: string; owner: number; assignment?: Key; accounts?: string[]; account?: string; accountStage?: string; part: number; parent?: string; parentIds?: string[]; parents?: Key; records?: Key; shared: number };
+type Discovery = { model: 'Account' | 'Communication'; field: 'stage' | 'assignedSalespersonId'; key: string; stage?: string };
 const parentPageSize = 25;
 const sharedDocuments = ["CARRIER", "LICENSE", "USER_PROFILE"];
 const documentParents = ["Account", "Quote", "Policy", "Certificate"];
 const naturalKey = (model: string) => ["GlApplication", "DoApplication"].includes(model);
+/** Evaluate only stage facts. Other fields remain unknown so OR/NOT cannot
+ * prune a partition that might contain a matching current account. */
+function stageMatch(filter: RecordData, stage: string): boolean | undefined {
+  const every = (values: (boolean | undefined)[]) => values.includes(false) ? false : values.every(value => value === true) ? true : undefined;
+  return every(Object.entries(filter).map(([field, condition]): boolean | undefined => {
+    if (condition == null) return true;
+    if (field === 'stage') return matchesFilter({ stage }, { stage: condition });
+    if (field === 'and' || field === 'or') {
+      if (!Array.isArray(condition)) throw new Error('Invalid list filter');
+      const values = condition.map(child => stageMatch(object(child), stage));
+      return field === 'and' ? every(values) : values.includes(true) ? true : values.every(value => value === false) ? false : undefined;
+    }
+    if (field === 'not') {
+      const value = stageMatch(object(condition), stage);
+      return value === undefined ? undefined : !value;
+    }
+    return undefined;
+  }));
+}
 async function query(model: string, field: string, key: string, limit: number, cursor?: Key, filter: RecordData = {}) {
   const error = () => new Error(`Missing list index for ${model}.${field}`);
   const indexes = parseAccessIndexes(process.env.ACCESS_INDEXES, error);
@@ -34,6 +55,7 @@ function decode(token: unknown, scope: string): Cursor {
   try {
     const c = JSON.parse(Buffer.from(token, "base64url").toString()) as Cursor;
     if (c.scope !== scope || ![c.owner, c.part, c.shared].every(n => Number.isSafeInteger(n) && n >= 0)
+      || c.accountStage !== undefined && !['LEAD', 'CLIENT'].includes(c.accountStage)
       || c.accounts && (!Array.isArray(c.accounts) || c.accounts.length > 25 || c.accounts.some(key => !id(key)))
       || c.parentIds !== undefined && (!Array.isArray(c.parentIds) || c.parentIds.length > parentPageSize || c.parentIds.some(key => !id(key)))) throw new Error();
     return c;
@@ -46,9 +68,17 @@ function decode(token: unknown, scope: string): Cursor {
 export async function listAssigned(access: AccountAccess, model: string, args: RecordData) {
   if (RETIRED_MODELS.includes(model) || !(ACCOUNT_MODELS as readonly string[]).includes(model) || access.admin) throw new AccessDenied();
   const filter = object(args.filter), policy = await access.accessPolicy();
-  const broad = policy.visibility !== "ASSIGNED";
-  const owners = broad ? ["LEAD", "CLIENT"] : [...await access.salespeople()].sort();
-  const scope = createHash("sha256").update(JSON.stringify([access.actor, owners, policy, model, filter])).digest("hex");
+  const stages = ['LEAD', 'CLIENT'].filter(stage => model !== 'Account' || stageMatch(filter, stage) !== false);
+  const owners = [...await access.salespeople()].sort();
+  const assignments = (stage?: string): Discovery[] => owners.map(key => ({ model: 'Communication', field: 'assignedSalespersonId', key, ...(stage ? { stage } : {}) }));
+  const discovery: Discovery[] = policy.visibility === 'ALL'
+    ? stages.map(stage => ({ model: 'Account', field: 'stage', key: stage, stage }))
+    : policy.visibility === 'LEADS'
+      ? [...(stages.includes('LEAD') ? [{ model: 'Account' as const, field: 'stage' as const, key: 'LEAD', stage: 'LEAD' }] : []),
+        ...(stages.includes('CLIENT') ? assignments('CLIENT') : [])]
+      : assignments();
+  const policyVersion = access.producer ? (await access.get('Communication', SALESPERSON_ACCESS_KEY))?.version ?? 0 : 0;
+  const scope = createHash("sha256").update(JSON.stringify([access.actor, discovery, policy, policyVersion, model, filter])).digest("hex");
   const c = decode(args.nextToken, scope), limit = Math.min(100, Math.max(1, Math.floor(Number(args.limit) || 100)));
   const items: RecordData[] = [], seen = new Set<string>(), deadline = Date.now() + 8_000;
   let queries = 0, evaluated = 0, steps = 0, done = false;
@@ -92,7 +122,7 @@ export async function listAssigned(access: AccountAccess, model: string, args: R
     return finish();
   }
   const migration = await access.get("Communication", "migration:assignment-index:v1");
-  if (!broad && object(migration?.data).complete !== true) throw new Error("Account access is being prepared. Please try again shortly.");
+  if (discovery.some(partition => partition.model === 'Communication') && object(migration?.data).complete !== true) throw new Error("Account access is being prepared. Please try again shortly.");
   const advanceAccount = () => { delete c.account; delete c.parents; delete c.parent; delete c.parentIds; delete c.records; c.part = 0; };
   const advanceParent = () => {
     delete c.parent; delete c.records;
@@ -102,19 +132,22 @@ export async function listAssigned(access: AccountAccess, model: string, args: R
       else advanceAccount();
     }
   };
-  const finished = () => !c.account && !c.accounts?.length && c.owner >= owners.length && (model !== "Document" || c.shared >= sharedDocuments.length);
+  const currentAccount = async (key: string) => (!c.accountStage || (await access.get('Account', key))?.stage === c.accountStage) && await access.canAccount(key);
+  const finished = () => !c.account && !c.accounts?.length && c.owner >= discovery.length && (model !== "Document" || c.shared >= sharedDocuments.length);
   while (withinBudget() && !finished()) {
     if (!c.account) {
       if (c.accounts?.length) { c.account = c.accounts.shift(); continue; }
-      if (c.owner < owners.length) {
-        const page = await readPage(broad ? "Account" : "Communication", broad ? "stage" : "assignedSalespersonId", owners[c.owner], Math.min(limit - items.length, 25), c.assignment);
+      if (c.owner < discovery.length) {
+        const partition = discovery[c.owner];
+        const page = await readPage(partition.model, partition.field, partition.key, Math.min(limit - items.length, 25), c.assignment,
+          model === 'Account' && partition.model === 'Account' ? filter : undefined);
+        c.accountStage = partition.stage;
         c.assignment = page.cursor;
         if (!page.cursor) c.owner++;
-        c.accounts = page.items.map(item => id(broad ? item.id : item.accountId)).filter(Boolean);
-        if (broad) await access.prefetch("Account", c.accounts);
+        c.accounts = page.items.map(item => id(partition.model === 'Account' ? item.id : item.accountId)).filter(Boolean);
         await access.prefetchAccounts(c.accounts);
         if (model === "Account") {
-          const permitted = (await Promise.all(c.accounts.map(async key => await access.canAccount(key) ? { id: key } : undefined))).filter((r): r is { id: string } => !!r);
+          const permitted = (await Promise.all(c.accounts.map(async key => await currentAccount(key) ? { id: key } : undefined))).filter((r): r is { id: string } => !!r);
           await append(permitted); c.accounts = [];
         }
         continue;
@@ -126,7 +159,7 @@ export async function listAssigned(access: AccountAccess, model: string, args: R
       }
       continue;
     }
-    if (!await access.canAccount(c.account)) { advanceAccount(); continue; }
+    if (!await currentAccount(c.account)) { advanceAccount(); continue; }
     if (model === "Account" || naturalKey(model)) {
       const record = await access.get(model, c.account); await append(record ? [record] : []); advanceAccount(); continue;
     }

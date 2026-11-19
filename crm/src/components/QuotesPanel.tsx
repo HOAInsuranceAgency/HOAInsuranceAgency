@@ -1,7 +1,6 @@
 import { useAccountPermissions } from './AccountPermissions';
 import { assertGraphqlErrors } from '../lib/apiResponse';
 import { readBrokerFeeStatus, bindCommissionPolicy, type BrokerFeeStatus } from '../lib/brokerFees';
-import { serviceFinanceLoan } from '../lib/billingApi';
 import { useLiveUpdateBlock } from "../lib/useLiveUpdates";
 import { Button } from "./ui/Button";
 import { Table } from "./ui/Table";
@@ -559,79 +558,9 @@ function BindForm({
         carrierTermsVersion: paymentPreview.data!.carrierTermsVersion,
         carrierArrangementId: paymentPreview.data!.payment?.id,
       });
-      const policy = result.policy;
       policyCreated = true;
-
-      /**
-       * 2.5 (W8) The quote's billing follows it onto the policy: invoices
-       * re-anchor by gaining the policy id (they keep quoteId — the anchor
-       * scans match either), and live loans roll through the servicing
-       * action, since clients cannot write loans. This runs AFTER the
-       * policy exists and never aborts the bind — a rollover failure must
-       * not tempt anyone to click Bind twice and mint a second policy.
-       * Each item rolls independently, so one refusal doesn't strand the
-       * rest; the Financing tab carries the retry for a stuck loan.
-       */
-      const rollFailures: string[] = [];
-      try {
-        const quoteInvoices = await listAllPages((nextToken) =>
-          client.models.Invoice.list({
-            filter: { quoteId: { eq: quote.id } },
-            nextToken,
-          })
-        );
-        for (const inv of quoteInvoices) {
-          if (inv.policyId) continue;
-          const { errors } = await client.models.Invoice.update({
-            id: inv.id,
-            policyId: policy.id,
-          });
-          if (errors?.length) {
-            rollFailures.push(`invoice ${inv.number ?? inv.id}: ${errors[0].message}`);
-          }
-        }
-        // Documents linked to the quote follow it too — same rule as the
-        // invoice: the link gains the policy id and keeps the quote's.
-        const quoteDocs = await listAllPages((nextToken) =>
-          client.models.Document.list({
-            filter: { quoteId: { eq: quote.id } },
-            nextToken,
-          })
-        );
-        for (const doc of quoteDocs) {
-          if (doc.policyId) continue;
-          const { errors } = await client.models.Document.update({
-            id: doc.id,
-            policyId: policy.id,
-          });
-          if (errors?.length) {
-            rollFailures.push(`document ${doc.name}: ${errors[0].message}`);
-          }
-        }
-        const quoteLoans = await listAllPages((nextToken) =>
-          client.models.PfLoan.list({
-            filter: { quoteId: { eq: quote.id } },
-            nextToken,
-          })
-        );
-        for (const loan of quoteLoans) {
-          const live = ["QUOTED", "ACCEPTED", "ACTIVE", "DEFAULTED"].includes(loan.status);
-          if (!live || loan.policyId) continue;
-          try {
-            await serviceFinanceLoan({ loanId: loan.id, action: 'BIND_ROLLOVER', policyId: policy.id });
-          } catch (err) {
-            rollFailures.push(`loan ${loan.id.slice(0, 8)}: ${(err as Error).message}`);
-          }
-        }
-      } catch (err) {
-        rollFailures.push((err as Error).message);
-      }
-      if (rollFailures.length && live.current) {
-        onError(
-          `Policy bound, but some billing didn't roll onto it: ${rollFailures.join("; ")}. The Financing tab can re-run a stuck loan's rollover.`
-        );
-      }
-
+      // The bind service completes policy links with its captured authority.
+      // A shared lead may become inaccessible to this browser on conversion.
       if (live.current) onDone(result.account);
     } catch (err) {
       const message = friendlyError(err, "Bind failed");

@@ -33,6 +33,7 @@ import {
 } from '../../../../shared/commissions';
 import { db, get, commit, table, type Data, type Transaction } from './store';
 import type { Event } from './handler';
+import { bindLinkWrites } from './bind-links';
 
 /** Financial snapshot, policy, quote status and client conversion share one
  * transaction. Retrying the same quote returns its original policy. */
@@ -272,6 +273,8 @@ export async function bindPolicy(event: Event, input: Data) {
     // into that operation below instead of targeting the same item twice.
     ...capabilityGuards.filter(guard => !isAccountGuard(guard)),
     ...await brokerFeeBindWrites(quote,policyId,billType,initialFee?.version),
+    ...await bindLinkWrites(quote, policyId, at, { id: access.actor,
+      name: typeof event.identity?.claims?.email === 'string' ? event.identity.claims.email : access.actor }, initialFee),
     {
       Put: {
         TableName: tableName('Policy'),

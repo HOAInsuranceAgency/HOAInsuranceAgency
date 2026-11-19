@@ -357,3 +357,109 @@ it('lists shared leads and unassigned accounts through the stage index with revo
   await expect(listAssigned(producer(),'Account',{nextToken:firstToken})).rejects.toThrow('list changed');
   expect(await producer().canAccount('b')).toBe(false);
 });
+
+describe('shared listing discovery partitions', () => {
+  const producer = () => new AccountAccess({ sub: 'alice', groups: ['PRODUCER'] });
+  function configure(visibility: 'LEADS' | 'ALL' = 'LEADS') {
+    process.env.ACCESS_ACCOUNT_STAGE_INDEX = 'by_stage';
+    put('Communication', 'settings:salesperson-access:v1', { version: 1, data: { policy: {
+      visibility, level: 'READ', send: false, invoice: false, bind: false,
+    } } });
+    account('owned-client', 'alice'); h.records.get('Account:owned-client')!.stage = 'CLIENT';
+    account('private-client', 'bob'); h.records.get('Account:private-client')!.stage = 'CLIENT';
+    put('Account', 'unassigned', { id: 'unassigned', name: 'Unassigned', stage: 'LEAD' });
+  }
+  async function pages(model: string, filter?: RecordData, limit = 1) {
+    const items: RecordData[] = [];
+    let nextToken: string | null | undefined;
+    for (let pageNumber = 0; pageNumber < 100; pageNumber++) {
+      const before = h.db.mock.calls.filter(([command]) => command.input.IndexName).length;
+      const page = await listAssigned(producer(), model, { limit, filter, nextToken });
+      expect(h.db.mock.calls.filter(([command]) => command.input.IndexName).length - before).toBeLessThanOrEqual(80);
+      expect(page.items.length).toBeLessThanOrEqual(limit);
+      items.push(...page.items); nextToken = page.nextToken;
+      if (!nextToken) return items;
+    }
+    throw new Error('Shared pagination did not terminate');
+  }
+  const queries = () => h.db.mock.calls.map(([command]) => command.input).filter(input => input.IndexName);
+  const stages = () => queries().filter(input => input.TableName === 'Account' && input.IndexName === 'by_stage').map(input => input.ExpressionAttributeValues[':scope']);
+
+  it('uses global leads plus personal client assignments without querying or reading other clients', async () => {
+    configure();
+    for (let i = 0; i < 1000; i++) {
+      account(`private-${i}`, 'bob'); h.records.get(`Account:private-${i}`)!.stage = 'CLIENT';
+    }
+    expect((await pages('Account')).map(row => row.id)).toEqual(['a', 'b', 'unassigned', 'owned-client']);
+    expect(stages().every(stage => stage === 'LEAD')).toBe(true);
+    expect(queries().filter(input => input.IndexName === 'assignment').every(input => input.ExpressionAttributeValues[':scope'] === 'alice')).toBe(true);
+    const readKeys = h.db.mock.calls.flatMap(([command]) => command.input.RequestItems?.Account?.Keys ?? []);
+    expect(readKeys.some(key => String(key.id).startsWith('private'))).toBe(false);
+  });
+
+  it.each([
+    ['LEADS', { stage: { eq: 'LEAD' } }, ['a', 'b', 'unassigned'], ['LEAD'], false],
+    ['LEADS', { stage: { eq: 'CLIENT' } }, ['owned-client'], [], true],
+    ['ALL', { stage: { eq: 'LEAD' } }, ['a', 'b', 'unassigned'], ['LEAD'], false],
+    ['ALL', { stage: { eq: 'CLIENT' } }, ['owned-client', 'private-client'], ['CLIENT'], false],
+    ['ALL', { stage: { eq: 'OTHER' } }, [], [], false],
+    ['LEADS', { not: { stage: { eq: 'CLIENT' } } }, ['a', 'b', 'unassigned'], ['LEAD'], false],
+    ['LEADS', { and: [{ stage: { eq: 'CLIENT' } }, { name: { contains: 'owned' } }] }, ['owned-client'], [], true],
+  ] as const)('prunes impossible root partitions for %s with filter %j', async (visibility, filter, expected, expectedStages, assignment) => {
+    configure(visibility);
+    expect((await pages('Account', filter as unknown as RecordData)).map(row => row.id)).toEqual(expected);
+    expect([...new Set(stages())]).toEqual(expectedStages);
+    expect(queries().some(input => input.IndexName === 'assignment')).toBe(assignment);
+  });
+
+  it('keeps partitions whose non-stage OR/NOT predicates are still unknown', async () => {
+    configure();
+    const filter = { or: [{ stage: { eq: 'CLIENT' } }, { name: { eq: 'a' } }] };
+    expect((await pages('Account', filter)).map(row => row.id)).toEqual(['a', 'owned-client']);
+    expect([...new Set(stages())]).toEqual(['LEAD']);
+    expect(queries().some(input => input.IndexName === 'assignment')).toBe(true);
+  });
+
+  it.each(['Contact', 'InvoiceLine', 'Document'])('discovers %s roots through leads and personal clients without duplicate children', async model => {
+    configure();
+    for (const [key, accountId] of [['own-lead', 'a'], ['shared-lead', 'b'], ['own-client', 'owned-client'], ['hidden', 'private-client']]) {
+      if (model === 'Document') {
+        put('Policy', `${key}-policy`, { id: `${key}-policy`, accountId });
+        put('Document', key, { id: key, entityType: 'POLICY', entityId: `${key}-policy` });
+      } else if (model === 'InvoiceLine') {
+        put('Invoice', `${key}-invoice`, { id: `${key}-invoice`, accountId });
+        put('InvoiceLine', key, { id: key, invoiceId: `${key}-invoice` });
+      } else put(model, key, { id: key, accountId });
+    }
+    expect((await pages(model)).map(row => row.id)).toEqual(['own-lead', 'shared-lead', 'own-client']);
+    expect(stages().every(stage => stage === 'LEAD')).toBe(true);
+    expect(queries().some(input => input.IndexName === 'assignment')).toBe(true);
+    expect(queries().filter(input => input.TableName === model).some(input => String(input.ExpressionAttributeValues[':scope']).includes('hidden'))).toBe(false);
+  });
+
+  it('does not treat a child record stage filter as an account stage filter', async () => {
+    configure();
+    put('Quote', 'child-stage', { id: 'child-stage', accountId: 'b', stage: 'CLIENT' });
+    expect((await pages('Quote', { stage: { eq: 'CLIENT' } })).map(row => row.id)).toEqual(['child-stage']);
+    expect(stages().every(stage => stage === 'LEAD')).toBe(true);
+  });
+
+  it('rechecks queued root stages and ownership after a page boundary', async () => {
+    configure();
+    put('Contact', 'first', { id: 'first', accountId: 'b' });
+    put('Contact', 'later', { id: 'later', accountId: 'b' });
+    const first = await listAssigned(producer(), 'Contact', { limit: 1 });
+    expect(first.items.map(row => row.id)).toEqual(['first']);
+    h.records.get('Account:b')!.stage = 'CLIENT';
+    const second = await listAssigned(producer(), 'Contact', { limit: 1, nextToken: first.nextToken });
+    expect(second.items).toEqual([]);
+    expect(second.nextToken).toBeNull();
+  });
+
+  it('invalidates a cursor on policy version changes even when the policy values are unchanged', async () => {
+    configure();
+    const first = await listAssigned(producer(), 'Account', { limit: 1 });
+    h.records.get('Communication:settings:salesperson-access:v1')!.version = 2;
+    await expect(listAssigned(producer(), 'Account', { limit: 1, nextToken: first.nextToken })).rejects.toThrow('list changed');
+  });
+});

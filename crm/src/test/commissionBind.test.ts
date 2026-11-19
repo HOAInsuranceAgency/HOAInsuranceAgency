@@ -17,6 +17,7 @@ vi.mock('../../amplify/functions/commissions/store', () => ({
 vi.mock('../../amplify/functions/broker-fees/store', async original => ({
   ...await original<typeof import('../../amplify/functions/broker-fees/store')>(),
   accountAgreements: async () => [],
+  accountModels: async () => [],
 }));
 vi.mock('../../amplify/functions/crm-access/user-status', () => ({
   activeTeamUserCheck: (id: string) => ({
@@ -70,6 +71,8 @@ beforeEach(() => {
   vi.resetAllMocks();
   h.rows.clear();
   vi.stubEnv('COMMISSION_POLICY_ACCOUNT_INDEX', 'verified-account-index');
+  vi.stubEnv('ACCESS_INDEXES', JSON.stringify({ 'Document.entityId': 'document-entity' }));
+  vi.stubEnv('ACCESS_TABLES', JSON.stringify({ Document: 'Document' }));
   h.rows.set('Quote:q', quote);
   h.rows.set('Account:a', {
     id: 'a',
