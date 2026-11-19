@@ -76,7 +76,7 @@ export interface IntakeSettlement {
   review?: {
     token: string;
     policyVersions: Record<string, number>;
-    calculations: { policyId: string; lineRef: string; producerId: string; producerName: string; agencyCents: number; producerBps: number; shareBps?: number; amountCents: number; reviewOnly: boolean }[];
+    records: { id: string; hash: string; rowIds: string[] }[];
     approvedAt: string;
     approvedBy: string;
   };
@@ -94,6 +94,7 @@ export interface CarrierImportTemplate {
 }
 export interface IntakeWorkspace {
   historyCursor?: string;
+  receiptTotals?: Record<string, number>;
   deposits?: import("./commissionDeposits").CommissionDeposit[];
   intakes: StatementIntake[];
   settlements: IntakeSettlement[];

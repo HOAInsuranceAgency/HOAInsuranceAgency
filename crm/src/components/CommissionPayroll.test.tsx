@@ -550,3 +550,16 @@ it("opens stale off-cycle selection in its editor instead of navigating in a loo
   expect(navigate).not.toHaveBeenCalled();
   expect(h.action.mock.calls.every(([op])=>op==="payrollWorkspace")).toBe(true);
 });
+
+it('invalidates a checked review when the preview changes without a cycle version change',async()=>{
+ render(<CommissionPayroll owner refreshLedger={vi.fn()}/>);
+ const button=await screen.findByRole('button',{name:'Approve payroll cycle'});
+ fireEvent.click(screen.getByRole('checkbox',{name:/I reviewed carrier receipts/}));expect(button).toBeEnabled();
+ workspace.cycles[0].preview={...workspace.cycles[0].preview!,token:'changed-preview',totalCents:20000};
+ fireEvent.click(screen.getByRole('button',{name:'Refresh payroll'}));
+ await waitFor(()=>expect(button).toBeDisabled());
+ expect(screen.getByRole('checkbox',{name:/I reviewed carrier receipts/})).not.toBeChecked();
+ expect(h.action.mock.calls.some(([op])=>op==='approvePayrollCycle')).toBe(false);
+ fireEvent.click(screen.getByRole('checkbox',{name:/I reviewed carrier receipts/}));fireEvent.click(button);
+ await waitFor(()=>expect(h.action).toHaveBeenCalledWith('approvePayrollCycle',expect.objectContaining({previewToken:'changed-preview',confirmed:true})));
+});

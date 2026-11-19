@@ -1,3 +1,4 @@
+import { saveReviewRecords, readReviewCalculations } from './settlement-review';
 import { activeIntakeWork, activeSettlementWork, intakeSettlements, requireStatementIndexes } from './statement-reads';
 import { STATEMENT_INDEX_STATE } from './statement-index';
 import { noSavedDeposit, depositKey, holdReceiptPayroll } from "./deposits";
@@ -124,16 +125,19 @@ export async function intakeAction(
   if (operation === "intakeWorkspace") {
     await requireStatementIndexes();
     const [active, pending, templates, deposits, history] = await Promise.all([
-      activeIntakeWork(), activeSettlementWork(), store.list<CarrierImportTemplate>('CARRIER_IMPORT_TEMPLATE'),
+      activeIntakeWork(true), activeSettlementWork(true), store.list<CarrierImportTemplate>('CARRIER_IMPORT_TEMPLATE'),
       store.list<CommissionDeposit>('COMMISSION_DEPOSIT'),
       input.history === true ? store.page<StatementIntake>('STATEMENT_INTAKE', input.cursor) : Promise.resolve({items: [] as StatementIntake[], cursor: undefined}),
     ]);
-    const pendingIntakes = await store.getMany<StatementIntake>([...new Set(pending.map(s => s.intakeId))].map(id => ({kind:'STATEMENT_INTAKE',id})));
-    if (pendingIntakes.length !== new Set(pending.map(s => s.intakeId)).size) throw new Error('A pending receipt has a missing source statement. Review statement lookup records before proceeding.');
+    const knownIntakes = new Set([...active,...history.items].map(s=>s.id));
+    const missingIntakes = [...new Set(pending.map(s=>s.intakeId))].filter(id=>!knownIntakes.has(id));
+    const pendingIntakes = await store.getMany<StatementIntake>(missingIntakes.map(id => ({kind:'STATEMENT_INTAKE',id})));
+    if (pendingIntakes.length !== missingIntakes.length) throw new Error('A pending receipt has a missing source statement. Review statement lookup records before proceeding.');
     const intakes = [...new Map([...active, ...pendingIntakes, ...history.items].map(s => [s.id,s])).values()];
-    const settlements: IntakeSettlement[] = [];
-    for (let start=0;start<intakes.length;start+=10) settlements.push(...(await Promise.all(intakes.slice(start,start+10).map(s => intakeSettlements(s.id)))).flat());
-    return { ok: true, intakes: intakes.sort((a,b) => b.createdAt.localeCompare(a.createdAt)), settlements, templates, deposits, historyCursor: history.cursor };
+    const pendingTotals = new Map<string,number>();
+    for (const s of pending) pendingTotals.set(s.intakeId,sum([pendingTotals.get(s.intakeId)??0,s.totalCents,-sum(s.allocations.filter(a=>s.postedRows.includes(a.rowId)).map(a=>a.amountCents))]));
+    const receiptTotals = Object.fromEntries(intakes.map(s=>[s.id,sum([s.postedCents,pendingTotals.get(s.id)??0])]));
+    return { ok: true, intakes: intakes.sort((a,b) => b.createdAt.localeCompare(a.createdAt)), settlements:pending, receiptTotals, templates, deposits, historyCursor: history.cursor };
   }
   if (operation === "policyIntakeContext") {
     const access = new AccountAccess(event.identity, undefined, event.request);
@@ -657,11 +661,9 @@ export async function intakeAction(
       status: "DRAFT",
       lines,
     };
-    if (!settlement.review) throw new Error('Review the remaining employee calculations before posting this settlement.');
-    const expected = batch.flatMap((allocation, index) => {
-      const source = rows.find(row => row.id === allocation.rowId)!;
-      return settlement.review!.calculations.filter(c => c.lineRef === source.lineRef).map(c => ({ ...c, lineRef: lines[index].lineRef }));
-    });
+    if (!settlement.review?.records) throw new Error('Review the remaining employee calculations before posting this settlement.');
+    const reviewed = await readReviewCalculations(settlement.review, batch.map(a=>a.rowId));
+    const expected = batch.flatMap((allocation,index) => reviewed.get(allocation.rowId)!.map(c=>({...c,lineRef:lines[index].lineRef})));
     const changes = await statementPostingChanges(statement, actor, undefined, { policyVersions: settlement.review.policyVersions, calculations: expected });
     const nextPolicyVersions = { ...settlement.review.policyVersions };
     for (const c of changes) if (c.kind === 'POLICY') nextPolicyVersions[c.value.id] = Number(c.previous!.version) + 1;
@@ -868,11 +870,12 @@ export async function intakeAction(
     const token = hash(JSON.stringify([intake.version, settlement.version, allocations, rows.map(r => [r.id, r.version]).sort(), policyVersions, financialPreview]));
     if (operation === "previewIntakeSettlement") return { ok: true, ...financialPreview, token };
     if (input.previewToken !== token) throw new Error('The reviewed employee calculations or commission terms changed. Refresh the financial review and confirm again.');
+    const records = await saveReviewRecords(token, remainingAllocations.map(a=>({rowId:a.rowId,calculations:financialPreview.calculations.filter(c=>c.lineRef===rows.find(r=>r.id===a.rowId)!.lineRef)})),actor);
     await store.commit(
       [
         change(
           "INTAKE_SETTLEMENT",
-          { ...settlement, allocations, status: "POSTING", review: { token, policyVersions, calculations: financialPreview.calculations, approvedAt: new Date().toISOString(), approvedBy: actor } },
+          { ...settlement, allocations, status: "POSTING", review: { token, policyVersions, records, approvedAt: new Date().toISOString(), approvedBy: actor } },
           settlement,
         ),
         change("STATEMENT_INTAKE", intake, intake),

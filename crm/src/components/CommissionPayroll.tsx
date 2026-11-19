@@ -765,6 +765,10 @@ function CycleCard({
     [reference, setReference] = useState(""),
     [reason, setReason] = useState(""),
     [hrHeld, setHrHeld] = useState(false);
+  const [reviewedToken,setReviewedToken] = useState<string>();
+  useEffect(()=>{setConfirmed(false);setReviewedToken(undefined);},[c.preview?.token]);
+  const approvalConfirmed = confirmed && !!reviewedToken && reviewedToken === c.preview?.token;
+  useUnsavedChanges(c.status === 'OPEN' && confirmed);
   const paidCents = sum(
     workspace.batches
       .filter((b) => c.batchIds.includes(b.id))
@@ -949,24 +953,25 @@ function CycleCard({
           </Panel>
           <Action
             label="Approve payroll cycle"
-            disabled={!confirmed || !c.preview || !!issues.length}
-            disabledReason={reviewIssues.length ? 'Resolve ' + reviewIssues.length + ' review item' + (reviewIssues.length===1?'':'s') + ' before approval.' : cutoffWait ? 'Approval opens ' + approvalOpensOn(c.cutoff) + '. Review payroll dates above to make a correction.' : !confirmed ? 'Confirm the review above before approval.' : 'Refresh the payroll preview.'}
+            disabled={!approvalConfirmed || !c.preview || !!issues.length}
+            disabledReason={reviewIssues.length ? 'Resolve ' + reviewIssues.length + ' review item' + (reviewIssues.length===1?'':'s') + ' before approval.' : cutoffWait ? 'Approval opens ' + approvalOpensOn(c.cutoff) + '. Review payroll dates above to make a correction.' : !approvalConfirmed ? 'Confirm the review above before approval.' : 'Refresh the payroll preview.'}
             secondaryAction={canCancel && <Button type="button" variant="danger" className="payroll--button" onClick={()=>setCancelOpen(true)}>Cancel cycle…</Button>}
             refresh={refresh}
-            action={() =>
-              commissionAction("approvePayrollCycle", {
+            action={() => {
+              if (!approvalConfirmed) throw new Error('Review and confirm the current payroll amounts before approval.');
+              return commissionAction("approvePayrollCycle", {
                 id: c.id,
                 version: c.version,
-                previewToken: c.preview?.token,
-                confirmed,
-              })
-            }
+                previewToken: reviewedToken,
+                confirmed: approvalConfirmed,
+              });
+            }}
           >
             <label className="payroll-check">
               <Input
                 type="checkbox"
-                checked={confirmed}
-                onChange={(e) => setConfirmed(e.target.checked)}
+                checked={approvalConfirmed}
+                onChange={(e) => {setConfirmed(e.target.checked);setReviewedToken(e.target.checked?c.preview?.token:undefined);}}
               />{" "}
               I reviewed carrier receipts, eligibility, employee totals, prior
               commission payments, and payroll dates.
