@@ -68,7 +68,7 @@ export default function AccountPicker({
           ))}
         </select>
       </label>
-      {query && !page.items.length && !page.loading && (
+      {query && !page.items.length && !page.loading && !page.error && (
         <p className="muted small">
           {page.nextToken ? 'More accounts remain to search.' : 'No matching accounts.'}
         </p>
