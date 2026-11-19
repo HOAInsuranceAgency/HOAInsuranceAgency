@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { Asset } from "aws-cdk-lib/aws-s3-assets";
 import { Stack, CfnResource, AssetStaging } from "aws-cdk-lib";
 import { CfnFunctionConfiguration, CfnResolver } from "aws-cdk-lib/aws-appsync";
-import { PolicyStatement } from "aws-cdk-lib/aws-iam";
+import { Policy, PolicyStatement } from "aws-cdk-lib/aws-iam";
 import { grantAccountTableReads } from "./account-access-policies";
 import type { Table } from "aws-cdk-lib/aws-dynamodb";
 import type { backend as Backend } from "./backend";
@@ -21,7 +21,7 @@ export const LIVE_NOTIFY_RESPONSE = '$util.toJson($ctx.prev.result)';
  * every generated entry point, including secondary indexes and relationships.
  * Classification is exhaustive: a newly introduced resolver fails synthesis
  * until its access policy is chosen explicitly. */
-export function installAccountAccess(backend: typeof Backend, communicationTable: Table) {
+export function installAccountAccess(backend: typeof Backend, communicationTable: Table, permissionScope: Stack) {
   const api = backend.data.resources.graphqlApi, guard = backend.crmAccess;
   const resources = backend.data.resources.cfnResources;
   const tables: Record<string, string> = {};
@@ -65,19 +65,21 @@ export function installAccountAccess(backend: typeof Backend, communicationTable
   backend.commissions.addEnvironment("COMMISSION_POLICY_ACCOUNT_INDEX", indexes[modelIndexKey("Policy", "accountId")]!);
   const bindIndexes = ['Invoice.accountId', 'PfLoan.accountId', 'Document.entityId'] as const;
   backend.commissions.addEnvironment('ACCESS_INDEXES', JSON.stringify(Object.fromEntries(bindIndexes.map(key => [key, indexes[key]]))));
-  backend.commissions.resources.lambda.addToRolePolicy(new PolicyStatement({
-    actions: ['dynamodb:Query'], resources: bindIndexes.map(key => {
-      const [model] = key.split('.');
-      return `${Stack.of(api).formatArn({ service: 'dynamodb', resource: 'table', resourceName: tables[model] })}/index/${indexes[key]}`;
-    }),
-  }));
-  backend.commissions.resources.lambda.addToRolePolicy(new PolicyStatement({
-    actions: ['dynamodb:GetItem', 'dynamodb:UpdateItem', 'dynamodb:ConditionCheckItem'],
-    resources: ['Invoice', 'PfLoan'].map(model => Stack.of(api).formatArn({ service: 'dynamodb', resource: 'table', resourceName: tables[model] })),
-  }));
-  backend.commissions.resources.lambda.addToRolePolicy(new PolicyStatement({
-    actions: ['dynamodb:PutItem'], resources: [Stack.of(api).formatArn({ service: 'dynamodb', resource: 'table', resourceName: tables.PfComplianceLog })],
-  }));
+  // Attach the exact additional grants from the existing permissions stack;
+  // the generated data template has no room for these repeated ARN expressions.
+  const commissionAccessPolicy = new Policy(permissionScope, 'BindQuoteLinks', {
+    roles: [backend.commissions.resources.lambda.role!],
+    statements: [
+      new PolicyStatement({ actions: ['dynamodb:Query'], resources: bindIndexes.map(key => {
+        const [model] = key.split('.');
+        return `${Stack.of(api).formatArn({ service: 'dynamodb', resource: 'table', resourceName: tables[model] })}/index/${indexes[key]}`;
+      }) }),
+      new PolicyStatement({ actions: ['dynamodb:GetItem', 'dynamodb:UpdateItem', 'dynamodb:ConditionCheckItem'],
+        resources: ['Invoice', 'PfLoan'].map(model => Stack.of(api).formatArn({ service: 'dynamodb', resource: 'table', resourceName: tables[model] })) }),
+      new PolicyStatement({ actions: ['dynamodb:PutItem'],
+        resources: [Stack.of(api).formatArn({ service: 'dynamodb', resource: 'table', resourceName: tables.PfComplianceLog })] }),
+    ],
+  });
   // Lead deletion checks must query the account partition, rather than mistake
   // an empty filtered scan page's continuation token for a related record.
   const deletionIndexes = (["Policy", "Invoice"] as const).map(model => {
@@ -270,4 +272,5 @@ export function installAccountAccess(backend: typeof Backend, communicationTable
       prependResponse(resolver, `#if($ctx.arguments.enabled == false && !$util.isNull($ctx.prev.result.userId))\n${invalidate}\n#end\n`);
     }
   }
+  return commissionAccessPolicy;
 }
