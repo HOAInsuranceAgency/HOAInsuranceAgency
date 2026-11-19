@@ -47,8 +47,8 @@ export async function updateFeeQuoteAtomically(access: AccountAccess, context: N
   if(reparent)writes.push({ConditionCheck:{TableName:modelTable('Communication'),Key:{id:`deleted-account:${next.accountId}`},ConditionExpression:'attribute_not_exists(id)'}});
   if (!access.admin) {
     const workflow = await access.get('Communication', `workflow:${previous.accountId}`);
-    if (!workflow || object(workflow.data).salespersonId !== access.actor) throw new AccessDenied();
-    writes.push({ ConditionCheck: { TableName: modelTable('Communication'), Key: { id: workflow.id ?? `workflow:${previous.accountId}` }, ConditionExpression: '#data = :data', ExpressionAttributeNames: { '#data': 'data' }, ExpressionAttributeValues: { ':data': workflow.data } } });
+    writes.push(...await access.capabilityChecks(String(previous.accountId), 'edit'));
+    writes.push({ ConditionCheck: { TableName: modelTable('Communication'), Key: { id: workflow?.id ?? `workflow:${previous.accountId}` }, ...(workflow ? { ConditionExpression: '#data = :data', ExpressionAttributeNames: { '#data': 'data' }, ExpressionAttributeValues: { ':data': workflow.data } } : { ConditionExpression: 'attribute_not_exists(id)' }) } });
     if(reparent){const target=await access.get('Communication',`workflow:${next.accountId}`);if(!target||object(target.data).salespersonId!==access.actor)throw new AccessDenied();writes.push({ConditionCheck:{TableName:modelTable('Communication'),Key:{id:target.id??`workflow:${next.accountId}`},ConditionExpression:'#data = :data',ExpressionAttributeNames:{'#data':'data'},ExpressionAttributeValues:{':data':target.data}}});}
   }
   const history = await quoteSourceBillingHistory(previous,fee);

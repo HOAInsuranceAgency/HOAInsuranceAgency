@@ -10,6 +10,7 @@ const h = vi.hoisted(() => ({
   documentUpdate: vi.fn(),
   documentDelete: vi.fn(),
   upload: vi.fn(),
+  remove: vi.fn(),
   accountGet: vi.fn(),
 }));
 vi.mock("react-router-dom", () => ({ useNavigate: () => h.navigate, useSearchParams: () => [new URLSearchParams()] }));
@@ -21,7 +22,7 @@ vi.mock("../lib/googlePlaces", () => ({
     <input value={value} onChange={event => onChange(event.target.value)} />
   ),
 }));
-vi.mock("../lib/scopedStorage", () => ({ uploadData: h.upload }));
+vi.mock("../lib/scopedStorage", () => ({ uploadData: h.upload, remove: h.remove }));
 vi.mock("aws-amplify/auth", () => ({ getCurrentUser: async () => ({ userId: "actor" }) }));
 vi.mock("aws-amplify/data", () => ({
   generateClient: () => ({ models: {
@@ -38,9 +39,10 @@ beforeEach(() => {
     operation === "team" ? { team: [] } : { id: "new-lead" });
   h.contactCreate.mockReset().mockResolvedValue({ data: { id: "contact-1" } });
   h.documentCreate.mockReset().mockResolvedValue({ data: { id: "document-1" } });
-  h.documentUpdate.mockReset().mockResolvedValue({});
-  h.documentDelete.mockReset().mockResolvedValue({});
+  h.documentUpdate.mockReset().mockImplementation(async input => ({ data: { ...input } }));
+  h.documentDelete.mockReset().mockImplementation(async input => ({ data: { ...input } }));
   h.upload.mockReset().mockReturnValue({ result: Promise.resolve() });
+  h.remove.mockReset().mockResolvedValue({ path: "removed" });
   h.accountGet.mockReset().mockImplementation(async () => {
     const fields = h.request.mock.calls.filter(([operation]) => operation === "createLead").at(-1)?.[1]?.fields ?? {};
     return { data: { id: "new-lead", ...fields, propertyType: fields.propertyType ?? (fields.type === "PERSONAL" ? "INDIVIDUAL_UNIT_OWNER" : null) } };
@@ -291,6 +293,8 @@ describe("new lead form", () => {
     expect(h.documentCreate.mock.calls[0][0]).toMatchObject({ name: "_scan.pdf", uploadedName: "_scan.pdf" });
     expect(h.upload).toHaveBeenLastCalledWith({ path: "documents/ACCOUNT/new-lead/document-1/budget.pdf", data: retained, options: { contentType: "application/pdf" } });
     if (stage === "put") expect(h.upload.mock.calls[0][0].path).toBe("documents/ACCOUNT/new-lead/document-1/scan.pdf");
+    if (stage === "link") expect(h.remove).toHaveBeenCalledExactlyOnceWith({ path: "documents/ACCOUNT/new-lead/document-1/scan.pdf" });
+    else expect(h.remove).not.toHaveBeenCalled();
     expect(h.navigate).not.toHaveBeenCalled();
     expect(screen.queryByRole("button", { name: "Create lead" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Go to the lead" }));
@@ -314,7 +318,8 @@ describe("new lead form", () => {
     view.unmount();
     await act(async () => { finish({ data: { id: "started-doc" } }); });
 
-    expect(h.documentUpdate).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ id: "started-doc", s3Key: "documents/ACCOUNT/new-lead/started-doc/scan.pdf" }));
+    if (fails) expect(h.documentUpdate).not.toHaveBeenCalled();
+    else expect(h.documentUpdate).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ id: "started-doc", s3Key: "documents/ACCOUNT/new-lead/started-doc/scan.pdf" }));
     expect(h.upload).toHaveBeenCalledOnce();
     expect(h.documentDelete).toHaveBeenCalledTimes(fails ? 1 : 0);
     expect(h.documentCreate).toHaveBeenCalledOnce();

@@ -5,13 +5,15 @@ import { listAllPages } from "../../../shared/pagination";
 import type { Account } from "../lib/client";
 import { OwnerContext } from "../lib/auth";
 
-const h = vi.hoisted(() => ({ preview: vi.fn(), fee: vi.fn(), bind: vi.fn(), quotes: vi.fn(), update: vi.fn(), carriers: vi.fn(), getQuote: vi.fn(), policies: vi.fn(), createPolicy: vi.fn(), accountUpdate: vi.fn(), request: vi.fn(), children: vi.fn() }));
+const h = vi.hoisted(() => ({ preview: vi.fn(), fee: vi.fn(), bind: vi.fn(), quotes: vi.fn(), update: vi.fn(), carriers: vi.fn(), getQuote: vi.fn(), policies: vi.fn(), createPolicy: vi.fn(), accountUpdate: vi.fn(), request: vi.fn(), children: vi.fn(), invoiceUpdate: vi.fn(), documentUpdate: vi.fn(), finance: vi.fn(),
+  permissions: { assigned: true, level: 'OWN', edit: true, collaborate: true, send: true, invoice: true, bind: true } }));
+vi.mock('./AccountPermissions', () => ({ useAccountPermissions: () => h.permissions }));
 vi.mock("./QuotePackages", () => ({ default: () => null }));
 vi.mock("./CoverageForm", () => ({ default: () => null }));
 vi.mock("../lib/useAgencyDay", () => ({ useAgencyDay: () => "2026-11-03" }));
 vi.mock("../lib/communications", () => ({ communicationRequest: h.request }));
 vi.mock("../lib/client", () => ({
-  client: { queries: { carrierPaymentPreview: h.preview }, mutations: { bindCommissionPolicy: h.bind, brokerFeeAction: h.fee }, models: { Quote: { list: h.quotes, update: h.update, get: h.getQuote }, Carrier: { list: h.carriers }, Policy: { list: h.policies, create: h.createPolicy }, Account: { update: h.accountUpdate }, Invoice: { list: h.children }, Document: { list: h.children }, PfLoan: { list: h.children } } },
+  client: { queries: { carrierPaymentPreview: h.preview }, mutations: { bindCommissionPolicy: h.bind, brokerFeeAction: h.fee, servicePfLoan: h.finance }, models: { Quote: { list: h.quotes, update: h.update, get: h.getQuote }, Carrier: { list: h.carriers }, Policy: { list: h.policies, create: h.createPolicy }, Account: { update: h.accountUpdate }, Invoice: { list: h.children, update: h.invoiceUpdate }, Document: { list: h.children, update: h.documentUpdate }, PfLoan: { list: h.children } } },
   listAllPages: (...args: Parameters<typeof listAllPages>) => listAllPages(...args),
   friendlyError: (error: unknown, fallback: string) => error instanceof Error ? error.message : fallback,
   fmtDate: (value: string) => value || "—",
@@ -35,6 +37,7 @@ function pendingQuotes() {
 
 beforeEach(() => {
   vi.resetAllMocks();
+  Object.assign(h.permissions, { assigned: true, level: 'OWN', edit: true, collaborate: true, send: true, invoice: true, bind: true });
   h.preview.mockResolvedValue({ data: { ok: true, carrierTermsVersion: 4, basis: 'COLLECTED' } });
   h.fee.mockResolvedValue({ data: { ok: true, fees: [] } });
   h.bind.mockResolvedValue({ data: { ok: true, policy: { id: "policy-a" }, account: { ...account, stage: "CLIENT" } } });
@@ -293,6 +296,47 @@ describe("binding recovery", () => {
     await screen.findByText("This quote already has a policy.");
     expect(h.createPolicy).not.toHaveBeenCalled();
     expect(h.accountUpdate).not.toHaveBeenCalled();
+  });
+
+  it.each(['bind-only shared user', 'assigned user', 'administrator'])("uses server bind completion without browser link writes for a %s", async identity => {
+    const shared = identity === 'bind-only shared user';
+    if (shared) Object.assign(h.permissions, { assigned: false, level: 'READ', edit: false, collaborate: false, send: false, invoice: false, bind: true });
+    let converted = false;
+    const clientAccount = { ...account, stage: 'CLIENT' };
+    h.quotes.mockImplementation(async () => {
+      if (shared && converted) throw Object.assign(new Error('This client is outside your lead visibility.'), { name: 'Unauthorized' });
+      return { data: [quote] };
+    });
+    h.children.mockRejectedValue(Object.assign(new Error('No browser access to post-bind links.'), { name: 'Unauthorized' }));
+    h.invoiceUpdate.mockRejectedValue(new Error('Invoice edits are not allowed.'));
+    h.documentUpdate.mockRejectedValue(new Error('Document edits are not allowed.'));
+    h.finance.mockRejectedValue(new Error('Loan servicing is not allowed.'));
+    h.bind.mockImplementation(async () => {
+      converted = true;
+      return { data: { ok: true, policy: { id: 'policy-a' }, account: clientAccount } };
+    });
+    const changed = vi.fn();
+    render(<QuotesPanel account={account} onAccountChange={changed} />);
+    await screen.findByRole('button', { name: 'Bind' });
+    if (shared) {
+      expect(screen.getByRole('button', { name: '+ New quote' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Edit' })).toBeDisabled();
+      expect(screen.getByRole('combobox', { name: 'Quote status' })).toBeDisabled();
+    } else expect(screen.getByRole('button', { name: '+ New quote' })).toBeEnabled();
+    await openBind();
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm bind' }));
+    await waitFor(() => expect(changed).toHaveBeenCalledExactlyOnceWith(clientAccount));
+    expect(h.bind).toHaveBeenCalledTimes(1);
+    expect(h.children).not.toHaveBeenCalled();
+    expect(h.invoiceUpdate).not.toHaveBeenCalled();
+    expect(h.documentUpdate).not.toHaveBeenCalled();
+    expect(h.finance).not.toHaveBeenCalled();
+    expect(h.update).not.toHaveBeenCalled();
+    expect(h.createPolicy).not.toHaveBeenCalled();
+    expect(h.accountUpdate).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Confirm bind' })).toBeNull());
+    if (shared) await screen.findByText('This client is outside your lead visibility.');
+    else expect(screen.queryByText(/Policy bound, but|binding did not finish/)).toBeNull();
   });
 
   it("requires explicit confirmation of exact premium and commission before binding", async () => {

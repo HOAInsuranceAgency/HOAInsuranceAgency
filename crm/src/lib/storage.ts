@@ -8,12 +8,13 @@ import { assertGraphqlErrors } from './apiResponse';
  * ORDERING — the three orderings in the codebase are not interchangeable, and
  * this module keeps two of them rather than collapsing them into one:
  *
- *   create record → upload   (`uploadDocument`)
+ *   create pending record → upload → link   (`uploadDocument`)
  *     Required when the object key contains the record's own id, which is the
  *     case for documents/: the OCR Lambda parses the Document id back out of
  *     the key, so the record has to exist before the object lands. The failure
  *     mode is a ghost record pointing at nothing, which the UI *does* show —
- *     so a failed upload deletes the record.
+ *     so its key stays pending until upload completes and a failed upload
+ *     deletes the record.
  *
  *   upload → link record     (`uploadFile`, `uploadAndLink`)
  *     Correct everywhere the key is derived from an id that already exists.
@@ -137,9 +138,10 @@ export async function uploadAndLink<T>(opts: {
  * `documents/{entityType}/{entityId}/{documentId}/{filename}`, point the row
  * at it.
  *
- * Record-first is forced here — the key embeds the row's id. So a failed
- * upload leaves a row the Documents tab would render with a download button
- * that 404s; the row is deleted before the error is rethrown.
+ * Record-first is forced here — the key embeds the row's id. Keep the row
+ * pending until the object exists, so another view cannot download it while
+ * the upload is still running. Failed final linking removes the new row
+ * before its unique object; an uncertain row-removal result keeps the bytes.
  */
 export async function uploadDocument(opts: {
   entityType: DocumentEntityType;
@@ -166,35 +168,43 @@ export async function uploadDocument(opts: {
     sizeBytes: file.size,
     ocrStatus: "PENDING",
   });
+  let uploadedPath: string | undefined;
   try {
     assertGraphqlErrors({ errors });
     if (!doc) {
       throw new Error(`Couldn't record "${file.name}".`);
     }
     const path = assertGrantedPath(documentObjectKey(entityType, entityId, doc.id, file.name));
+    await uploadFile({ path, data: file, contentType: file.type });
+    uploadedPath = path;
     const { data: linked, errors: linkErrors } = await client.models.Document.update({
       id: doc.id,
       s3Key: path,
     });
     assertGraphqlErrors({ errors: linkErrors });
-
-    await uploadFile({ path, data: file, contentType: file.type });
-    return linked ?? { ...doc, s3Key: path };
+    if (!linked) throw new Error("Couldn't finish recording the uploaded file.");
+    return linked;
   } catch (err) {
     // Don't leave a ghost record behind for a file that never landed.
     // A partial GraphQL response may include the created row and errors.
     if (!doc?.id) {
       throw err;
     }
+    let rowRemoved = false;
     try {
-      const { errors: delErrors } = await client.models.Document.delete({ id: doc.id });
+      const { data: removed, errors: delErrors } = await client.models.Document.delete({ id: doc.id });
       assertGraphqlErrors({ errors: delErrors });
+      rowRemoved = removed?.id === doc.id;
+      if (uploadedPath && !rowRemoved) throw new Error("Record removal could not be confirmed; the uploaded file was retained.");
     } catch (cleanupErr) {
       console.warn(
-        `[storage] "${file.name}" failed to upload and its record ${doc.id} could not be ` +
-          `removed — it will show as a document with no file: ${describe(cleanupErr)}`
+        `[storage] "${file.name}" could not finish uploading and its record ${doc.id} could not be ` +
+          `removed — ${uploadedPath ? "the uploaded file was retained" : "it may show as a document with no file"}: ${describe(cleanupErr)}`
       );
     }
+    // Linking may have committed before its response failed. Never remove
+    // those bytes while a live row might still point at this unique key.
+    if (uploadedPath && rowRemoved) await deleteFile(uploadedPath);
     throw err;
   }
 }

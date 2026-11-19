@@ -23,6 +23,13 @@ import { MAX_FIELDS, sanitiseSuggestions, type Suggestion } from "../../../../sh
 
 const getDataClient = createDataClientGetter();
 
+// Leave time for the optional-fill response and monitoring flush before the
+// 29s Lambda limit (AppSync itself only waits 30s). This budget includes account
+// reads as well as the provider request and its complete response body.
+const RESPONSE_RESERVE_MS = 3_000;
+const MAX_FILL_MS = 25_000;
+const TIMEOUT_MESSAGE = "AI gap-fill took too long. Please fill the remaining blanks by hand.";
+
 /** Columns present on every row and interesting on none of them. */
 const DROP_KEYS = new Set([
   "createdAt",
@@ -64,7 +71,8 @@ function slimAll(rows: Row[]): Row[] {
  */
 async function accountBundle(
   client: DataClient,
-  accountId: string
+  accountId: string,
+  signal: AbortSignal
 ) {
   const byAccount = <T>(
     list: (args: {
@@ -72,11 +80,14 @@ async function accountBundle(
       nextToken?: string;
     }) => Promise<{ data: T[]; nextToken?: string | null }>
   ) =>
-    listAllPages<T>((nextToken) =>
-      list({ filter: { accountId: { eq: accountId } }, nextToken })
-    );
+    listAllPages<T>((nextToken) => {
+      signal.throwIfAborted();
+      return list({ filter: { accountId: { eq: accountId } }, nextToken });
+    });
 
+  signal.throwIfAborted();
   const { data: account } = await client.models.Account.get({ id: accountId });
+  signal.throwIfAborted();
   if (!account) throw new Error("Account not found.");
 
   const [
@@ -104,6 +115,7 @@ async function accountBundle(
     byAccount(client.models.Quote.list),
     byAccount(client.models.Policy.list),
   ]);
+  signal.throwIfAborted();
 
   return {
     account: slim(account as Row),
@@ -146,15 +158,28 @@ Omit fields you would answer with "". If you can answer none of them, return {"f
 async function suggest(
   accountId: string,
   formKey: string,
-  fieldNames: string[]
+  fieldNames: string[],
+  signal: AbortSignal,
+  deadlineAt: number
 ): Promise<{ values: Suggestion[]; skipped: number; usage: unknown }> {
   const client = await getDataClient();
-  const bundle = await accountBundle(client, accountId);
+  signal.throwIfAborted();
+  const bundle = await accountBundle(client, accountId, signal);
 
   const asked = fieldNames.slice(0, MAX_FIELDS);
   const skipped = fieldNames.length - asked.length;
 
-  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  const accountData = JSON.stringify(bundle, null, 1);
+  const fieldList = asked.join("\n");
+  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, maxRetries: 0 });
+  // Check after prompt construction too: synchronous serialization may use
+  // the remaining budget before the deadline timer gets a chance to run.
+  signal.throwIfAborted();
+  const requestMs = deadlineAt - Date.now();
+  if (requestMs <= 0) throw new Error(TIMEOUT_MESSAGE);
+
+  // The SDK's request timeout stops when headers arrive. The invocation's
+  // shared signal stays armed while the complete response body is read.
   const response = await anthropic.messages.create({
     model: CLAUDE_MODEL,
     max_tokens: 12000,
@@ -172,7 +197,7 @@ async function suggest(
         content: [
           {
             type: "text",
-            text: `ACCOUNT DATA (JSON):\n${JSON.stringify(bundle, null, 1)}`,
+            text: `ACCOUNT DATA (JSON):\n${accountData}`,
             // Generating a 125, a 126 and four 140s for one account is six
             // calls over this exact block. Cache it and only the field list
             // below is new each time.
@@ -180,12 +205,13 @@ async function suggest(
           },
           {
             type: "text",
-            text: `Form: ${formKey}\nBlank field names (${asked.length}):\n${asked.join("\n")}`,
+            text: `Form: ${formKey}\nBlank field names (${asked.length}):\n${fieldList}`,
           },
         ],
       },
     ],
-  });
+  }, { timeout: requestMs, signal });
+  signal.throwIfAborted();
 
   if (response.stop_reason === "refusal") {
     throw new Error("The model declined to complete this form.");
@@ -213,7 +239,8 @@ async function suggest(
 }
 
 export const handler: Schema["suggestFormFields"]["functionHandler"] = async (
-  event
+  event,
+  context
 ) => {
   const { accountId, formKey, fieldNames } = event.arguments;
   const names = (fieldNames ?? []).filter(
@@ -221,8 +248,26 @@ export const handler: Schema["suggestFormFields"]["functionHandler"] = async (
   );
   if (!names.length) return { ok: true, values: [], skipped: 0 };
 
+  const controller = new AbortController();
+  let deadline: ReturnType<typeof setTimeout> | undefined;
   try {
-    const { values, skipped, usage } = await suggest(accountId, formKey, names);
+    const remaining = context.getRemainingTimeInMillis();
+    const budget = Math.min(MAX_FILL_MS, Math.floor(remaining) - RESPONSE_RESERVE_MS);
+    if (!Number.isFinite(remaining) || budget <= 0) throw new Error(TIMEOUT_MESSAGE);
+    const deadlineAt = Date.now() + budget;
+    const expired = new Promise<never>((_, reject) => {
+      deadline = setTimeout(() => {
+        controller.abort();
+        reject(new Error(TIMEOUT_MESSAGE));
+      }, budget);
+    });
+    // Amplify model reads have no AbortSignal option. Bound our wait, then
+    // prevent any subsequent page/provider call if an in-flight read settles
+    // later. The model request itself is cancelled by the shared signal.
+    const { values, skipped, usage } = await Promise.race([
+      suggest(accountId, formKey, names, controller.signal, deadlineAt),
+      expired,
+    ]);
     console.log(
       `Form fill for ${accountId} (${formKey}): asked ${names.length - skipped}, ` +
         `returned ${values.length}`,
@@ -230,6 +275,10 @@ export const handler: Schema["suggestFormFields"]["functionHandler"] = async (
     );
     return { ok: true, values, skipped };
   } catch (err) {
+    const error = controller.signal.aborted ? TIMEOUT_MESSAGE : err instanceof Error ? err.message : String(err);
+    // A read failure may leave other parallel reads pending. Stop their next
+    // page/provider work when they settle, even though the timer is cleared.
+    controller.abort();
     // Never fatal to the generation. The deterministic PDF is already correct
     // and complete as far as the mapping goes; losing the gap-fill costs the
     // producer some typing, and the panel says so rather than failing the
@@ -239,7 +288,9 @@ export const handler: Schema["suggestFormFields"]["functionHandler"] = async (
       ok: false,
       values: [],
       skipped: 0,
-      error: err instanceof Error ? err.message : String(err),
+      error,
     };
+  } finally {
+    clearTimeout(deadline);
   }
 };

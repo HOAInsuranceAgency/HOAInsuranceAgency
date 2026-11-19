@@ -1,3 +1,6 @@
+import { AccountAccess } from '../crm-access/access';
+import { policyAllows } from '../../../../shared/salespersonAccess';
+import { DEFAULT_SALESPERSON_ACCESS, SALESPERSON_ACCESS_KEY, parseSalespersonAccess } from '../../../../shared/salespersonAccess';
 import { accountPath } from '../../../../shared/crmRoutes';
 import { agencyDay } from '../../../../shared/agencyTime';
 import { assertPreviewRead } from "../migration-readonly";
@@ -60,10 +63,11 @@ function safeCommunication(data: Communication): Communication {
 }
 export const handler = async (event: { arguments: { operation?: string; readOperation?: string; input?: unknown }; identity?: AppSyncIdentityCognito; request?: RoleRequest }) => {
   try {
-    const previewReads = new Set(["searchAccounts", "dashboardOpenQuotesPage", "dashboardBoundPoliciesPage", "dashboardQuotesPage", "dashboardQuoteStates", "dashboardInvoiceAnchors", "dashboardAssignments", "dashboardInterestPage", "dashboardPolicyAnchors", "dashboardLeadPlansPage", "commercialTable", "lastContacts", "accountSummary", "activity", "team", "teamSettings"]);
+    const previewReads = new Set(["accountPermissions", "salespersonAccessSettings", "searchAccounts", "dashboardOpenQuotesPage", "dashboardBoundPoliciesPage", "dashboardQuotesPage", "dashboardQuoteStates", "dashboardInvoiceAnchors", "dashboardAssignments", "dashboardInterestPage", "dashboardPolicyAnchors", "dashboardLeadPlansPage", "commercialTable", "lastContacts", "accountSummary", "activity", "team", "teamSettings"]);
     assertPreviewRead(!!event.arguments.readOperation && previewReads.has(event.arguments.readOperation));
     const actor = event.identity?.sub;
     if (!actor) throw new Error("Sign in to the CRM to continue");
+    const identity = { sub: actor, groups: event.identity?.groups ?? undefined, claims: event.identity?.claims };
     const admin = isActiveAdmin(event.identity, event.request);
     const input = object(event.arguments.input), op = event.arguments.readOperation ?? event.arguments.operation;
     const transport = communicationOperationMode(op);
@@ -73,9 +77,35 @@ export const handler = async (event: { arguments: { operation?: string; readOper
       return { ok: true, ...await relationshipOperation(op!, input, { sub: actor, groups: event.identity?.groups ?? undefined, claims: event.identity?.claims }, event.request) };
     }
     const requireAdmin = () => { if (!admin) throw new Error("Only an admin can change integration or team settings"); };
+    if (op === 'salespersonAccessSettings' || op === 'saveSalespersonAccessSettings') {
+      requireAdmin();
+      const previous = await get(SALESPERSON_ACCESS_KEY);
+      if (op === 'salespersonAccessSettings') return { ok: true, policy: previous ? parseSalespersonAccess(previous.data.policy) : DEFAULT_SALESPERSON_ACCESS, version: previous?.version ?? 0, updatedAt: previous?.updatedAt, updatedBy: previous?.data.updatedBy };
+      const policy = parseSalespersonAccess(input.policy);
+      if (version(input) !== (previous?.version ?? 0)) throw new Error('Access settings changed. Reload them before saving.');
+      const next = row('ACCESS_SETTINGS', SALESPERSON_ACCESS_KEY, { policy, updatedBy: actor }, { previous });
+      await commit([put(next, previous), put(row('ACCESS_SETTINGS_AUDIT', `access-settings-audit:${randomUUID()}`, { actor, before: previous?.data.policy ?? DEFAULT_SALESPERSON_ACCESS, after: policy }))]);
+      return { ok: true, policy, version: next.version, updatedAt: next.updatedAt, updatedBy: actor };
+    }
+    if (op === 'accountPermissions') {
+      const accountId = text(input, 'accountId');
+      const access = new AccountAccess(identity, async (model, key) => {
+        if (model === 'Communication') return get(key);
+        if (model === 'Account') {
+          const result = await (await dataClient()).models.Account.get({ id: key });
+          if (result.errors?.length) throw new Error('Could not load account permissions.');
+          return result.data ?? undefined;
+        }
+        return undefined;
+      }, event.request);
+      await access.requireAccount(accountId);
+      const assigned = admin || await access.ownsAccount(accountId), policy = await access.accessPolicy();
+      return { ok: true, assigned, level: assigned ? 'OWN' : policy.level,
+        ...Object.fromEntries((['edit','collaborate','send','invoice','bind'] as const).map(key => [key, assigned || policyAllows(policy,key)])) };
+    }
     if (event.arguments.readOperation) {
-      if (op === 'businessDeliveryContext') return { ok: true, context: await (await import('./businessDelivery')).businessDeliveryContext({ accountId: text(input, 'accountId') }, actor, { admin }) };
-      if (op === 'historyBusinessDeliveries') return { ok: true, ...await (await import('./businessDelivery')).historyBusinessDeliveries(input as unknown as Parameters<typeof import('./businessDelivery').historyBusinessDeliveries>[0], actor, { admin }) };
+      if (op === 'businessDeliveryContext') return { ok: true, context: await (await import('./businessDelivery')).businessDeliveryContext({ accountId: text(input, 'accountId') }, actor, { admin, identity, request: event.request }) };
+      if (op === 'historyBusinessDeliveries') return { ok: true, ...await (await import('./businessDelivery')).historyBusinessDeliveries(input as unknown as Parameters<typeof import('./businessDelivery').historyBusinessDeliveries>[0], actor, { admin, identity, request: event.request }) };
       if (op === "searchAccounts") return { ok: true, ...await (await import("./accountSearch")).searchAccounts(input, { actor, role: activeRole(event.identity, event.request) }) };
       if (op === 'dashboardOpenQuotesPage') { requireAdmin(); return { ok: true, ...await (await import('./dashboardLeadQueries')).dashboardOpenQuotesPage(input) }; }
       if (op === 'dashboardBoundPoliciesPage') { requireAdmin(); return { ok: true, ...await (await import('./dashboardLeadQueries')).dashboardBoundPoliciesPage(input) }; }
@@ -182,9 +212,9 @@ export const handler = async (event: { arguments: { operation?: string; readOper
     if (op === "saveCommercial") return { ok: true, plan: await (await import("./commercial")).saveCommercial(input, actor) };
     if (op === "saveLeadSnooze") return { ok: true, snooze: await saveLeadSnooze(input, actor, admin) };
     if (op === 'prepareLeadDeletion') { requireAdmin(); await (await import('./deletion')).prepareLeadDeletion(text(input, 'accountId'), text(input, 'name'), actor); return { ok: true }; }
-    if (op === 'previewBusinessDelivery') return { ok: true, preview: await (await import('./businessDelivery')).previewBusinessDelivery(input as unknown as Parameters<typeof import('./businessDelivery').previewBusinessDelivery>[0], actor, { admin }) };
-    if (op === 'prepareBusinessDraft') return { ok: true, attempt: await (await import('./businessDelivery')).prepareBusinessDraft(input as unknown as Parameters<typeof import('./businessDelivery').prepareBusinessDraft>[0], actor, { admin }) };
-    if (op === 'reconcileBusinessDraft') return { ok: true, attempt: await (await import('./businessDelivery')).reconcileBusinessDraft({ accountId: text(input, 'accountId'), attemptId: text(input, 'attemptId'), recoveryMessageId: text(input, 'recoveryMessageId') || undefined }, actor, { admin }) };
+    if (op === 'previewBusinessDelivery') return { ok: true, preview: await (await import('./businessDelivery')).previewBusinessDelivery(input as unknown as Parameters<typeof import('./businessDelivery').previewBusinessDelivery>[0], actor, { admin, identity, request: event.request }) };
+    if (op === 'prepareBusinessDraft') return { ok: true, attempt: await (await import('./businessDelivery')).prepareBusinessDraft(input as unknown as Parameters<typeof import('./businessDelivery').prepareBusinessDraft>[0], actor, { admin, identity, request: event.request }) };
+    if (op === 'reconcileBusinessDraft') return { ok: true, attempt: await (await import('./businessDelivery')).reconcileBusinessDraft({ accountId: text(input, 'accountId'), attemptId: text(input, 'attemptId'), recoveryMessageId: text(input, 'recoveryMessageId') || undefined }, actor, { admin, identity, request: event.request }) };
     if (op === "authorizeBind") {
       if (input.clientAuthorized !== true) throw new Error("Client authorization is required before requesting binding");
       const q = await (await dataClient()).models.Quote.get({ id: text(input, "quoteId") });
@@ -257,8 +287,10 @@ export const handler = async (event: { arguments: { operation?: string; readOper
       if (input.salesperson !== undefined && input.salesperson !== member.salesperson) throw new Error("Assign or remove the Producer role to change salesperson eligibility");
       if (input.receiveNewLeads !== undefined && typeof input.receiveNewLeads !== "boolean") throw new Error("Choose whether this Producer receives new website leads");
       if (input.receiveNewLeads !== undefined && !member.salesperson) throw new Error("Only a teammate with the Producer role can receive new website leads");
+      if (input.autoRepliesEnabled !== undefined && typeof input.autoRepliesEnabled !== "boolean") throw new Error("Choose whether autoreplies are enabled for this teammate");
       const next: TeamEligibility = { userId, name: member.name, email: member.email, enabled: member.enabled, salesperson: member.salesperson,
         receiveNewLeads: input.receiveNewLeads === undefined ? member.receiveNewLeads : input.receiveNewLeads,
+        autoRepliesEnabled: input.autoRepliesEnabled === undefined ? old?.data.autoRepliesEnabled ?? true : input.autoRepliesEnabled,
         frontId, dialpadId: connectionId("dialpadId", old?.data.dialpadId),
         frontChannelId: connectionId("frontChannelId", changedFront ? undefined : old?.data.frontChannelId),
         frontSignatureId: connectionId("frontSignatureId", changedFront ? undefined : old?.data.frontSignatureId) };

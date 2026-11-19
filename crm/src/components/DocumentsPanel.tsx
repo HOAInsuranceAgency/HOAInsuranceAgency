@@ -1,3 +1,4 @@
+import { useAccountPermissions } from './AccountPermissions';
 import { assertGraphqlErrors } from '../lib/apiResponse';
 import { useLiveUpdateBlock } from "../lib/useLiveUpdates";
 import { Select } from "./ui/Select";
@@ -132,6 +133,7 @@ function DocumentsPanelContent({
   const linkOptions = linkTargets.data.options;
   const linkLabel = (key: string) =>
     linkOptions.find((o) => o.key === key)?.label ?? "(deleted record)";
+  const permissions = useAccountPermissions();
   const [uploading, setUploading] = useState(false);
   const uploadLock = useRef(false);
   const [error, setError] = useState("");
@@ -395,6 +397,7 @@ function DocumentsPanelContent({
           <FileButton variant="primary"
             label={linkAccountId ? "Upload files" : "Choose files…"}
             multiple
+            disabled={!permissions.collaborate}
             busy={uploading}
             onFiles={handleUpload}
           />
@@ -479,7 +482,7 @@ function DocumentsPanelContent({
                         {(d.quoteIds?.length || d.policyIds?.length) ? <div className="small">{[...(d.policyIds ?? []).filter(Boolean).map(id => linkLabel(`policy:${id}`)), ...(d.quoteIds ?? []).filter(Boolean).map(id => linkLabel(`quote:${id}`))].join(" · ")}</div> : <Select
                           aria-label={`Link ${d.name}`}
                           value={linkKeyOf(d)}
-                          disabled={rowStatus.busy || linkTargets.loading || !!linkTargets.error}
+                          disabled={!permissions.assigned || rowStatus.busy || linkTargets.loading || !!linkTargets.error}
                           onChange={(e) => void relink(d, e.target.value)}
                         >
                           <option value="">—</option>
@@ -543,7 +546,7 @@ function DocumentsPanelContent({
                           {entityType === "ACCOUNT" && d.s3Key !== "pending" && isBusinessDeliveryFile(d) && <BusinessDraftButton accountId={entityId} kind="DOCUMENT" recordId={d.id} label="Prepare email in Front" disabled={rowStatus.busy || uploading} />}
                           <Button variant="link"
 
-                            disabled={rowStatus.busy || d.category === "BROKER_FEE_DISCLOSURE"}
+                            disabled={!permissions.assigned || rowStatus.busy || d.category === "BROKER_FEE_DISCLOSURE"}
                             onClick={() => startRename(d)}
                           >
                             Rename
@@ -559,7 +562,7 @@ function DocumentsPanelContent({
                             </Button>
                           )}
                           <ConfirmButton
-                            disabled={rowStatus.busy || d.category === "BROKER_FEE_DISCLOSURE"}
+                            disabled={!permissions.assigned || rowStatus.busy || d.category === "BROKER_FEE_DISCLOSURE"}
                             confirmLabel="Confirm delete"
                             cancelLabel="Keep"
                             onConfirm={() => deleteDoc(d)}

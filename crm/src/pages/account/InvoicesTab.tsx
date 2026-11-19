@@ -1,3 +1,4 @@
+import { useAccountPermissions } from '../../components/AccountPermissions';
 import { assertGraphqlErrors } from '../../lib/apiResponse';
 import { createGroupedInvoice, reserveInvoiceNumber } from '../../lib/billingApi';
 import { MoneyInput } from "../../components/inputs";
@@ -134,6 +135,7 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
     { initialData: null, errorMessage: "Failed to load invoices", clearDataOnError: isAuthorizationError , live: true }
   );
 
+  const permissions = useAccountPermissions();
   const createStatus = useSaveStatus();
   const creating = useRef(false);
   const [openId, setOpenId] = useState<string | null>(null);
@@ -373,7 +375,7 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
             <Button variant="primary"
               type="button"
 
-              disabled={createStatus.busy || editorBusy || combineOpen || waitingForGroup || !anchorAvailable}
+              disabled={!permissions.invoice || createStatus.busy || editorBusy || combineOpen || waitingForGroup || !anchorAvailable}
               onClick={() => void newInvoice()}
             >
               New invoice

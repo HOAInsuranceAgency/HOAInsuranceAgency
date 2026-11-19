@@ -1,3 +1,4 @@
+import { useAccountPermissions } from '../../components/AccountPermissions';
 import { useEffect, useRef, useState } from "react";
 import { feeAllocations } from "../../../../shared/brokerFees";
 import { billingContact, currentContacts } from "../../../../shared/contacts";
@@ -39,6 +40,7 @@ export function useInvoiceEditor({
   onBusyChange,
   onGroupedRestored,
 }: InvoiceEditorProps) {
+  const permissions = useAccountPermissions();
   const isOwner = useIsOwner();
   const { linesRes, legacyPolicyCharges } = useInvoiceLines(invoice);
 
@@ -74,7 +76,7 @@ export function useInvoiceEditor({
   const grouped = isGroupedInvoice(invoice);
   const canSendGroup = grouped && invoice.status === "DRAFT" && !invoice.sentAt && isOwner;
   const groupedPolicies = grouped ? policies.filter(policy => invoice.groupedPolicyIds?.includes(policy.id)) : [];
-  const locked = grouped || invoice.status === "VOID";
+  const locked = !permissions.invoice || grouped || invoice.status === "VOID";
   const issuedFee = feeAllocations(invoice.brokerFeeAllocations).length > 0;
   const adjustment = invoice.sourcePricingVersion === 2;
   const sourcePricing = grouped || invoice.sourcePricingVersion === 1 || adjustment;
@@ -445,6 +447,7 @@ export function useInvoiceEditor({
 
   const inputId = (part: string) => `inv-${part}-${invoice.id}`;
   return {
+    permissions,
     linesRes,
     invoice,
     saveStatus,

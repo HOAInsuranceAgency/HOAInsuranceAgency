@@ -3,7 +3,7 @@ import { AccountAccess } from "./access";
 import { AccessDenied, id, type RecordData } from "./policy";
 import { object } from '../api-input';
 import { retiredTaskOperation } from "../../../../shared/retiredTaskOperations";
-const adminCommunication = new Set(["dashboardOpenQuotesPage", "dashboardBoundPoliciesPage", "dashboardQuotesPage", "dashboardQuoteStates", "dashboardInvoiceAnchors", "dashboardAssignments", "dashboardInterestPage", "dashboardPolicyAnchors", "dashboardLeadPlansPage", "settings", "teamSettings", "prepareLeadDeletion", "setResponsibilities", "saveEligibility", "saveSettings", "restartReconciliation", "restartConversationHistory", "validateConnection", "activate", "reviewOperation", "backfill"]);
+const adminCommunication = new Set(["dashboardOpenQuotesPage", "dashboardBoundPoliciesPage", "dashboardQuotesPage", "dashboardQuoteStates", "dashboardInvoiceAnchors", "dashboardAssignments", "dashboardInterestPage", "dashboardPolicyAnchors", "dashboardLeadPlansPage", "settings", "teamSettings", "salespersonAccessSettings", "saveSalespersonAccessSettings", "prepareLeadDeletion", "setResponsibilities", "saveEligibility", "saveSettings", "restartReconciliation", "restartConversationHistory", "validateConnection", "activate", "reviewOperation", "backfill"]);
 const accountOperations = new Set(["context", "accountSummary", "saveCommercial", "saveLeadSnooze", "prepareBusinessDraft", "initializeLead", "reopenLead", "setLeadDisposition", "cancelAi", "linkConversation", "linkActivity", "archive", "addNote"]);
 const deliveryOperations = new Set(['businessDeliveryContext', 'previewBusinessDelivery', 'prepareBusinessDraft', 'historyBusinessDeliveries', 'reconcileBusinessDraft']);
 async function filterAccountItems(access: AccountAccess, input: unknown) {
@@ -21,6 +21,43 @@ async function communicationAccount(access: AccountAccess, key: string, expected
 }
 export async function authorizeCustom(access: AccountAccess, field: string, args: RecordData) {
   if (["communicationRead", "communicationWrite"].includes(field) && retiredTaskOperation(id(args.readOperation ?? args.operation), object(args.input))) throw new AccessDenied();
+  // Write capability is independent of read visibility. Unknown cross-account
+  // mutations remain denied, even when a future operation is added below.
+  if (!access.admin) {
+    const input = object(args.input), op = id(args.operation ?? args.readOperation);
+    if (field === 'communicationWrite' && op !== 'createLead') {
+      const accounts = new Set<string>();
+      if (id(input.accountId)) accounts.add(id(input.accountId));
+      if (input.quoteId) {
+        const quote = await access.get('Quote',id(input.quoteId));
+        if (quote?.accountId) accounts.add(id(quote.accountId));
+      }
+      const communicationIds = [input.communicationId, ...(['reviewIssue','refreshSeen','recordCallOutcome','linkActivity'].includes(op) ? [input.id] : [])];
+      if (input.conversationId && input.conversationId !== 'NEW') communicationIds.push(`front-link:${id(input.conversationId)}`);
+      for (const key of communicationIds.filter(Boolean)) {
+        const row = await access.get('Communication', id(key));
+        const accountId = id(row?.accountId) || id(object(row?.data).accountId);
+        if (accountId) accounts.add(accountId);
+      }
+      for (const accountId of accounts) {
+        await access.requireCapability(accountId,
+          ['addNote','saveAttachment'].includes(op) ? 'collaborate' :
+          ['saveCommercial','relationshipLink','relationshipEnd','relationshipChangeManagement'].includes(op) ? 'edit' :
+          ['previewBusinessDelivery','prepareBusinessDraft','reconcileBusinessDraft'].includes(op) ? 'send' :
+          op === 'authorizeBind' ? 'bind' : 'restricted');
+        if (op === 'addNote' && input.publishToFront === true) await access.requireCapability(accountId,'send');
+      }
+    }
+    if (field === 'bindCommissionPolicy') await access.requireRecordCapability('Quote', id(input.quoteId), 'bind');
+    if (['sendInvoice','voidInvoice'].includes(field)) await access.requireRecordCapability('Invoice', id(args.invoiceId), 'invoice');
+    if (field === 'brokerFeeAction' && !['saveJurisdiction','status'].includes(String(input.op))) {
+      if (input.invoiceId) await access.requireRecordCapability('Invoice', id(input.invoiceId), 'restricted');
+      else await access.requireCapability(id(input.accountId), 'restricted');
+    }
+    if (['startLeadExtraction','suggestFormFields','startHoneycombSubmission'].includes(field)) await access.requireCapability(id(args.accountId), 'edit');
+    const protectedModel = ({resolveHoneycombSubmission:['HoneycombSubmission','id'],issueFinanceQuote:['Policy','policyId'],generatePfAgreement:['PfLoan','loanId'],servicePfLoan:['PfLoan','loanId']} as Record<string,string[]>)[field];
+    if (protectedModel) await access.requireRecordCapability(protectedModel[0],id(args[protectedModel[1]]),'restricted');
+  }
   if (field === "brokerFeeAction") {
     const input = object(args.input);
     if (input.op === "saveJurisdiction") { if (!access.admin) throw new AccessDenied(); return; }
@@ -52,6 +89,7 @@ export async function authorizeCustom(access: AccountAccess, field: string, args
   }
   if (!["communicationRead", "communicationWrite"].includes(field)) throw new AccessDenied();
   const op = id(args.readOperation ?? args.operation), input = object(args.input);
+  if (field === 'communicationRead' && op === 'accountPermissions') { await access.requireAccount(id(input.accountId)); return; }
   if (adminCommunication.has(op)) throw new AccessDenied();
   if (field === "communicationRead" && DIRECTORY_READS.has(op)) return;
   // Relationship handlers authorize again and bind mutations to current assignment.
