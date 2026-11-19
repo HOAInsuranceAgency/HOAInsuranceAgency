@@ -1,10 +1,13 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import { HeadObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
-const h = vi.hoisted(() => ({ records: new Map<string, Record<string, unknown>>(), db: vi.fn(), s3: vi.fn(), sign: vi.fn() }));
+const h = vi.hoisted(() => ({ records: new Map<string, Record<string, unknown>>(), db: vi.fn(), s3: vi.fn(), sign: vi.fn(),
+  create: vi.fn(), update: vi.fn(), remove: vi.fn(), file: vi.fn(), fetch: vi.fn() }));
 vi.mock("@aws-sdk/lib-dynamodb", async load => ({ ...(await load<typeof import("@aws-sdk/lib-dynamodb")>()), DynamoDBDocumentClient: { from: () => ({ send: h.db }) } }));
 vi.mock("@aws-sdk/client-s3", async load => ({ ...(await load<typeof import("@aws-sdk/client-s3")>()), S3Client: class { send = h.s3; } }));
 vi.mock("@aws-sdk/s3-request-presigner", () => ({ getSignedUrl: h.sign }));
+vi.mock('../lib/client', () => ({ client: { models: { Document: { create: h.create, update: h.update, delete: h.remove } }, mutations: { crmFile: h.file } } }));
 import { handler } from "../../amplify/functions/crm-access/handler";
+import { uploadDocument } from '../lib/storage';
 import { ACCOUNT_MODELS, RETIRED_MODELS, LIST_PARENTS, type RecordData } from "../../amplify/functions/crm-access/policy";
 const identity = { sub: "alice" };
 it.each(["source", "leadSource", "leadAttribution"])("keeps %s immutable even when the caller can delete leads", async field => {
@@ -69,6 +72,48 @@ it("authorizes uploading a pending Document while refusing reads until its key i
   h.sign.mockClear();
   await expect(handler({ fieldName: "crmFile", identity, arguments: { operation: "read", path, validateObjectExistence: true } })).rejects.toThrow("not available");
   expect(h.s3).not.toHaveBeenCalled(); expect(h.sign).not.toHaveBeenCalled();
+});
+it("lets a collaborator upload the pending document before publishing its key, using create-only signing", async () => {
+  const sharedIdentity = { ...identity, groups: ['PRODUCER'] };
+  const path = 'documents/ACCOUNT/b/shared-upload/budget.pdf';
+  h.records.set('accounts:b', { id: 'b', stage: 'LEAD' });
+  h.records.set('communications:settings:salesperson-access:v1', { version: 1, data: { policy: {
+    visibility: 'LEADS', level: 'COLLABORATE', send: false, invoice: false, bind: false,
+  } } });
+  h.create.mockImplementation(async input => {
+    const record = { ...input, id: 'shared-upload', lastWriteBy: 'alice', createdAt: new Date().toISOString() };
+    await handler({ mode: 'write', model: 'Document', operation: 'create', identity: sharedIdentity, arguments: { input: record } });
+    h.records.set('documents:shared-upload', record);
+    return { data: { ...record } };
+  });
+  h.update.mockImplementation(async input => {
+    const stamped = { ...input, lastWriteBy: 'alice' };
+    await handler({ mode: 'write', model: 'Document', operation: 'update', identity: sharedIdentity, arguments: { input: stamped } });
+    const record = { ...h.records.get('documents:shared-upload'), ...stamped };
+    h.records.set('documents:shared-upload', record);
+    return { data: record };
+  });
+  h.file.mockImplementation(async args => ({ data: await handler({ fieldName: 'crmFile', identity: sharedIdentity, arguments: args }) }));
+  let finishUpload!: () => void;
+  h.fetch.mockReturnValue(new Promise<Response>(resolve => { finishUpload = () => resolve(new Response(null, { status: 200 })); }));
+  vi.stubGlobal('fetch', h.fetch);
+  try {
+    const uploading = uploadDocument({ entityType: 'ACCOUNT', entityId: 'b', category: 'BUDGET', file: new File(['budget'], 'budget.pdf', { type: 'application/pdf' }) });
+    await vi.waitFor(() => expect(h.fetch).toHaveBeenCalledOnce());
+    expect(h.records.get('documents:shared-upload')?.s3Key).toBe('pending');
+    expect(h.update).not.toHaveBeenCalled();
+    const [, command, options] = h.sign.mock.calls[0];
+    expect(command.input).toMatchObject({ Bucket: 'bucket', Key: path, IfNoneMatch: '*' });
+    expect(options.signableHeaders.has('if-none-match')).toBe(true);
+    expect(h.fetch).toHaveBeenCalledWith('https://files.example.test/signed', expect.objectContaining({
+      method: 'PUT', headers: { 'Content-Type': 'application/pdf', 'If-None-Match': '*' },
+    }));
+    await expect(handler({ fieldName: 'crmFile', identity: sharedIdentity, arguments: { operation: 'read', path } })).rejects.toThrow('not available');
+    finishUpload();
+    expect(await uploading).toMatchObject({ id: 'shared-upload', s3Key: path });
+    expect(h.update).toHaveBeenCalledOnce();
+    await expect(handler({ fieldName: 'crmFile', identity: sharedIdentity, arguments: { operation: 'read', path } })).resolves.toMatchObject({ url: 'https://files.example.test/signed' });
+  } finally { vi.unstubAllGlobals(); }
 });
 it("allows cleanup after the new Document row was deleted only within its authorized entity", async () => {
   h.records.delete("documents:doc");

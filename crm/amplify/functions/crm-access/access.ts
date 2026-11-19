@@ -19,6 +19,7 @@ import { modelKeyName, resolveModelTable, storedModel } from '../storage/models'
 import { ACCOUNT_MODELS, ACCOUNT_REFERENCES, LIST_PARENTS, SHARED_MODELS, RETIRED_MODELS, AccessDenied, id, type Identity, type RecordData } from "./policy";
 import { object } from '../api-input';
 import { activeRole, isActiveAdmin, type RoleRequest } from "./active-role";
+import { documentObjectKey } from '../../../../shared/storageKeys';
 export const db = DynamoDBDocumentClient.from(new DynamoDBClient());
 export function tableName(model: string) {
   const error = () => new Error('Account access is not configured');
@@ -405,7 +406,15 @@ export class AccountAccess {
         await this.requireCapability(root, operation === 'delete' ? 'restricted' : 'collaborate');
         if (operation === 'write' && !await this.ownsAccount(root) && !this.admin) {
           const existing = docId ? await this.get('Document', docId) : undefined;
-          if (!existing || existing.s3Key !== path) throw new AccessDenied();
+          const createdAt = typeof existing?.createdAt === 'string' ? Date.parse(existing.createdAt) : NaN;
+          const age = Date.now() - createdAt;
+          const filename = existing?.uploadedName ?? existing?.name;
+          // The browser publishes s3Key only after uploading. A collaborator
+          // may create only their own recent pending file at its exact key;
+          // the signed S3 request also refuses to replace an existing object.
+          if (!existing || existing.id !== docId || existing.s3Key !== 'pending' || existing.lastWriteBy !== this.actor
+            || !Number.isFinite(age) || age < 0 || age >= 10 * 60_000 || typeof filename !== 'string' || !filename
+            || path !== documentObjectKey(first, second, docId, filename)) throw new AccessDenied();
         }
       }
       const document = docId ? await this.get("Document", docId) : undefined;

@@ -31,6 +31,7 @@ vi.mock('../../amplify/functions/crm-access/access', () => ({
       return Promise.resolve(h.rows.get(`${model}:${id}`));
     }
     async requireRecordCapability(model: string, id: string, _capability: string) { return this.requireRecord(model, id); }
+    async capabilityChecks(_accountId: string, _capability: string) { return []; }
     async requireRecord(model: string, id: string) {
       const r = h.rows.get(`${model}:${id}`);
       if (!r) throw new Error('Not authorized');

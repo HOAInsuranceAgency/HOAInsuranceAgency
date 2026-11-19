@@ -632,6 +632,38 @@ describe('admin-controlled salesperson access', () => {
     await expect(producer().write('Document','delete',{id:'db'})).rejects.toThrow(AccessDenied);
     await expect(producer().write('Contact','create',{id:'c',accountId:'b'})).rejects.toThrow(AccessDenied);
   });
+  it('signs only the caller’s recent pending upload at its exact original filename', async () => {
+    configure({ level: 'COLLABORATE' });
+    Object.assign(records['Document:db'], { s3Key: 'pending', lastWriteBy: 'alice', createdAt: new Date().toISOString(),
+      name: 'Renamed by OCR.pdf', uploadedName: '../../budget.pdf' });
+    await expect(producer().path('documents/ACCOUNT/b/db/budget.pdf', 'write')).resolves.toBeUndefined();
+    await expect(producer().path('documents/ACCOUNT/b/db/Renamed by OCR.pdf', 'write')).rejects.toThrow(AccessDenied);
+    await expect(producer().path('documents/ACCOUNT/b/db/budget.pdf', 'read')).rejects.toThrow(AccessDenied);
+    expect(fileHead).not.toHaveBeenCalled();
+  });
+  it.each([
+    { lastWriteBy: 'bob' }, { lastWriteBy: undefined }, { createdAt: undefined }, { createdAt: 'invalid' },
+    { createdAt: new Date(Date.now() + 60_000).toISOString() }, { createdAt: new Date(Date.now() - 11 * 60_000).toISOString() },
+    { s3Key: 'documents/ACCOUNT/b/db/budget.pdf' }, { id: 'different-document' },
+    { name: undefined, uploadedName: undefined }, { entityId: 'a' }, { entityType: 'QUOTE' },
+  ])('denies shared upload signing for invalid or existing document metadata: %j', async patch => {
+    configure({ level: 'COLLABORATE' });
+    Object.assign(records['Document:db'], { name: 'budget.pdf', uploadedName: 'budget.pdf', s3Key: 'pending',
+      lastWriteBy: 'alice', createdAt: new Date().toISOString(), ...patch });
+    await expect(producer().path('documents/ACCOUNT/b/db/budget.pdf', 'write')).rejects.toThrow(AccessDenied);
+  });
+  it.each([
+    'documents/ACCOUNT/b/db/other.pdf', 'documents/ACCOUNT/b/db/budget.pdf/extra',
+    'documents/ACCOUNT/b/missing/budget.pdf', 'documents/ACCOUNT/a/db/budget.pdf',
+  ])('denies a pending upload outside its exact document key: %s', async path => {
+    configure({ level: 'COLLABORATE' });
+    Object.assign(records['Document:db'], { name: 'budget.pdf', s3Key: 'pending', lastWriteBy: 'alice', createdAt: new Date().toISOString() });
+    await expect(producer().path(path, 'write')).rejects.toThrow(AccessDenied);
+  });
+  it('keeps assigned and administrator upload signing behavior unchanged', async () => {
+    await expect(user().path('documents/ACCOUNT/a/da/file.pdf', 'write')).resolves.toBeUndefined();
+    await expect(admin().path('documents/ACCOUNT/b/db/file.pdf', 'write')).resolves.toBeUndefined();
+  });
   it('edit does not imply sending, invoicing, binding, deletion or reassignment', async () => {
     configure({level:'EDIT'});
     await expect(producer().write('Account','update',{id:'b',name:'Changed'})).resolves.toBeUndefined();

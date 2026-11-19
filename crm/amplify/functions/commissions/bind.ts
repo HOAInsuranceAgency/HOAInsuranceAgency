@@ -260,7 +260,17 @@ export async function bindPolicy(event: Event, input: Data) {
     carrierTerms: carrierSnapshotTerms,
     entries: [],
   };
+  const accountTable = tableName('Account');
+  const capabilityGuards = await access.capabilityChecks(accountId, 'bind');
+  const isAccountGuard = (guard: Transaction[number]) =>
+    guard.ConditionCheck?.TableName === accountTable && guard.ConditionCheck.Key.id === accountId;
+  const accountAccessCheck = capabilityGuards.find(isAccountGuard)?.ConditionCheck;
+  const accountCondition = 'updatedAt = :old' +
+    (accountAccessCheck?.ConditionExpression ? ` AND (${accountAccessCheck.ConditionExpression})` : '');
   const guards: Transaction = [
+    // Binding also updates/checks this Account. Fold the visibility-stage fence
+    // into that operation below instead of targeting the same item twice.
+    ...capabilityGuards.filter(guard => !isAccountGuard(guard)),
     ...await brokerFeeBindWrites(quote,policyId,billType,initialFee?.version),
     {
       Put: {
@@ -307,6 +317,7 @@ export async function bindPolicy(event: Event, input: Data) {
       },
     },
     activeTeamUserCheck(producerId),
+    ...(access.actor !== producerId ? [activeTeamUserCheck(access.actor)] : []),
   ];
   if (!firstBinding)
     guards.push({
@@ -348,13 +359,14 @@ export async function bindPolicy(event: Event, input: Data) {
   if (account.stage === 'LEAD')
     guards.push({
       Update: {
-        TableName: tableName('Account'),
+        TableName: accountTable,
         Key: { id: accountId },
         UpdateExpression:
           'SET #s = :client, convertedAt = :at, updatedAt = :at, lastWriteBy = :actor',
-        ConditionExpression: 'updatedAt = :old',
-        ExpressionAttributeNames: { '#s': 'stage' },
+        ConditionExpression: accountCondition,
+        ExpressionAttributeNames: { ...accountAccessCheck?.ExpressionAttributeNames, '#s': 'stage' },
         ExpressionAttributeValues: {
+          ...accountAccessCheck?.ExpressionAttributeValues,
           ':client': 'CLIENT',
           ':at': at,
           ':old': account.updatedAt,
@@ -365,10 +377,11 @@ export async function bindPolicy(event: Event, input: Data) {
   else
     guards.push({
       ConditionCheck: {
-        TableName: tableName('Account'),
+        TableName: accountTable,
         Key: { id: accountId },
-        ConditionExpression: 'updatedAt = :old',
-        ExpressionAttributeValues: { ':old': account.updatedAt },
+        ConditionExpression: accountCondition,
+        ...(accountAccessCheck?.ExpressionAttributeNames ? { ExpressionAttributeNames: accountAccessCheck.ExpressionAttributeNames } : {}),
+        ExpressionAttributeValues: { ...accountAccessCheck?.ExpressionAttributeValues, ':old': account.updatedAt },
       },
     });
   await commit(
