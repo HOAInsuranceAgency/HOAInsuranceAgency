@@ -62,6 +62,17 @@ beforeEach(() => {
   h.fees.set('fee:q',{id:'fee:q',kind:'FEE',accountId:'a',quoteId:'q',amountCents:50000,terms:authorizedQuoteTerms(quote()),version:4,agreementId:'old-agreement',signedAt:NOW,submittedCents:0,collectedCents:0,refundedCents:0,issuedLoanIds:['loan'],issuedInvoiceIds:['old']});
 });
 describe('atomic native fee-bearing Quote edits', () => {
+  it.each([false,true])('fences missing workflow rows on shared financial edits (concurrent assignment: %s)', async concurrent => {
+    process.env.COMMUNICATION_TABLE='Communication'; process.env.ACCESS_TABLES=JSON.stringify({Account:'Account'});
+    h.models.delete('Communication:workflow:a');
+    h.models.set('Account:a',{id:'a',stage:'LEAD'});
+    h.models.set('Communication:settings:salesperson-access:v1',{id:'settings:salesperson-access:v1',version:1,data:{policy:{visibility:'LEADS',level:'EDIT',send:false,invoice:false,bind:false}}});
+    if (concurrent) h.beforeCommit=()=>h.models.set('Communication:workflow:a',{id:'workflow:a',data:{salespersonId:'bob'}});
+    const result=updateFeeQuoteAtomically(access('alice',['PRODUCER']),{model:'Quote',field:'updateQuote',operation:'update',nativeConditions:[],arguments:{input:{id:'q',premium:12000}}});
+    if (concurrent) await expect(result).rejects.toThrow();
+    else await expect(result).resolves.toMatchObject({committed:true});
+    expect(h.transactions[0]).toEqual(expect.arrayContaining([{ConditionCheck:{TableName:'Communication',Key:{id:'workflow:a'},ConditionExpression:'attribute_not_exists(id)'}}]));
+  });
   it('commits Quote, consent reset and old offer invalidation together without losing issued history', async () => {
     const result = await save({id:'q',premium:12000,notes:null,lastWriteBy:'alice'});
     expect(result).toMatchObject({committed:true,quote:{premium:12000,createdAt:NOW,__typename:'Quote'}});

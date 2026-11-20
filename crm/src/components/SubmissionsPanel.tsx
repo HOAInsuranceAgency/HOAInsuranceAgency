@@ -1,3 +1,4 @@
+import { useAccountPermissions } from './AccountPermissions';
 import { Button, ButtonLink } from "./ui/Button";
 import { readSubmissionSettings, startCarrierSubmission, resolveCarrierSubmission } from '../lib/carrierSubmissions';
 import { Select } from "./ui/Select";
@@ -47,6 +48,7 @@ function SubmissionsPanelContent({ account, initialEstimateId }: { account: Acco
     const environment = settings.environment;
     return { submissions: submissions.sort((a, b) => b.createdAt.localeCompare(a.createdAt)), estimates: estimates.sort((a, b) => b.createdAt.localeCompare(a.createdAt)), environment, enabled: settings.enabled && isHoneycombEnvironment(environment) };
   }, [account.id], { clearDataOnError: isAuthorizationError, live: { protectEdits: false } });
+  const permissions = useAccountPermissions();
   const records = resource.data?.submissions ?? [];
   // Decide the initial empty-state composer once. Later history refreshes
   // must not close a draft just because another submission appeared.
@@ -69,20 +71,20 @@ function SubmissionsPanelContent({ account, initialEstimateId }: { account: Acco
   }, [pending, resource.loading, resource.refetch]);
   return <section className="hc-submissions" aria-label="Carrier submissions">
     <div className="hc-heading"><div><h2>Submissions</h2><p className="muted">Create a Honeycomb partial submission, then finish it in the carrier portal.</p></div>
-      {resource.data?.enabled && account.type === "ASSOCIATION" && <Button variant="primary"  onClick={() => { setRetry(undefined); setOpen(true); }}>New submission</Button>}
+      {resource.data?.enabled && account.type === "ASSOCIATION" && <Button variant="primary" disabled={!permissions.edit} onClick={() => { setRetry(undefined); setOpen(true); }}>New submission</Button>}
     </div>
     <p className="hc-notice">{resource.data?.environment === "staging" && "Staging · For testing. "}Partial submissions stay on this account; they do not create a bindable quote or change a Lead to a Client.</p>
     {(resource.error || resource.refreshError) && <p role="alert" className="error-text">{resource.error || resource.refreshError} <Button variant="secondary"  onClick={() => void resource.refetch()}>Retry submissions</Button></p>}
     {!resource.loaded && <p role="status">Loading submissions…</p>}
     {resource.data && !resource.data.enabled && <p>Honeycomb submissions are not enabled in this environment.</p>}
     {account.type !== "ASSOCIATION" && <p>This Honeycomb workflow supports association accounts.</p>}
-    {resource.data?.enabled && account.type === "ASSOCIATION" && (open ?? (!records.length && !queuedId)) && <Composer
+    {resource.data?.enabled && account.type === "ASSOCIATION" && permissions.edit && (open ?? (!records.length && !queuedId)) && <Composer
       key={retry ? `${retry.id}:${retry.attempt}` : "new"} staging={resource.data.environment === "staging"} blocked={!!resource.error || !!resource.refreshError || resource.loading || !!resource.refreshing} account={account} estimates={resource.data.estimates} records={records} retry={retry}
       initialEstimateId={retry?.sourceEstimateId ?? initialEstimateId} onCancel={() => { setOpen(false); setRetry(undefined); }}
       onQueued={id => { setQueuedId(id); setOpen(false); setRetry(undefined); void resource.refetch(); }} />}
     {queuedId && !records.some(r => r.id === queuedId) && <p role="status">Request saved. Loading its status… <Button variant="secondary"  onClick={() => void resource.refetch()}>Check status</Button></p>}
     {resource.loaded && <div className="hc-heading"><h3>Submission history</h3></div>}
-    {records.map(record => <SubmissionCard key={record.id} record={record} environment={resource.data?.environment} enabled={resource.data?.enabled === true} refresh={resource.refetch}
+    {records.map(record => <SubmissionCard key={record.id} record={record} environment={resource.data?.environment} enabled={resource.data?.enabled === true && permissions.edit} refresh={resource.refetch}
       onRetry={() => { setRetry(record); setOpen(true); }} />)}
   </section>;
 }
@@ -140,6 +142,7 @@ function formatInput(value: string | number | undefined, year: boolean) {
   return integer.replace(/\B(?=(\d{3})+(?!\d))/g, ",") + (decimal === undefined ? "" : `.${decimal}`);
 }
 function SubmissionCard({ record, enabled, refresh, onRetry, environment }: { record: Submission; enabled: boolean; refresh: () => Promise<void>; onRetry: () => void; environment: unknown }) {
+  const permissions = useAccountPermissions();
   const status = submissionStatus(record), pending = ["PENDING", "RUNNING"].includes(status);
   const link = record.submissionId ? portalUrl(record.submissionId, environment) : undefined;
   const declined = record.submissionStatus?.toLowerCase() === "declined";
@@ -149,7 +152,7 @@ function SubmissionCard({ record, enabled, refresh, onRetry, environment }: { re
     {pending && <p role="status">{status === "PENDING" ? "Your request is saved and waiting to be processed." : "Honeycomb is creating the partial submission. This may take about a minute."} You can leave this tab and return.</p>}
     {link && <><p><strong>Honeycomb status: {record.submissionStatus}</strong>{record.readableSubmissionId ? ` · ${record.readableSubmissionId}` : ""}</p><p><ButtonLink variant="secondary"  href={link} target="_blank" rel="noopener noreferrer">Open in Honeycomb ↗</ButtonLink></p><p className="small muted">Complete and review the remaining application in Honeycomb. Status shown here is from creation or manual review.</p></>}
     {status === "REJECTED" && <><p>Honeycomb did not create this submission. Review the response and correct the details before retrying.</p>{enabled && record.attempt < 5 && <Button variant="secondary"  onClick={onRetry}>Review and retry</Button>}</>}
-    {status === "UNKNOWN" && <><p>Honeycomb may have created this submission. Check the Honeycomb portal or confirm with Honeycomb before recording an outcome below.</p>{enabled && <Recovery record={record} refresh={refresh} />}</>}
+    {status === "UNKNOWN" && <><p>Honeycomb may have created this submission. Check the Honeycomb portal or confirm with Honeycomb before recording an outcome below.</p>{enabled && permissions.assigned && <Recovery record={record} refresh={refresh} />}</>}
     {record.issue && <p className="small muted">Result: {record.issue}</p>}
     {record.resolutionNote && <p className="small">Review note: {record.resolutionNote}</p>}
     {record.result && <details><summary>Carrier response</summary><pre>{pretty(record.result)}</pre></details>}

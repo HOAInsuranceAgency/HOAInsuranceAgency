@@ -73,6 +73,8 @@ export async function handler(event: Event) {
   if (operation === "write" && (!Number.isSafeInteger(args.sizeBytes) || Number(args.sizeBytes) <= 0 || Number(args.sizeBytes) > 100 * 1024 * 1024)) throw new Error("Upload a file between 1 byte and 100 MB");
   // Authorize before probing S3 so existence checks cannot reveal other accounts' files.
   if (operation === "read" && args.validateObjectExistence === true) await s3.send(new HeadObjectCommand({ Bucket, Key: path }));
-  const command = operation === "read" ? new GetObjectCommand({ Bucket, Key: path, ResponseContentDisposition: downloadContentDisposition(args.downloadAs) }) : new PutObjectCommand({ Bucket, Key: path, ContentLength: Number(args.sizeBytes), ContentType: id(args.contentType) || "application/octet-stream" });
-  return { url: await getSignedUrl(s3, command, fileSigningOptions), expiresAt: new Date(Date.now() + 60_000).toISOString() };
+  const documentRoot = path.startsWith('documents/') ? await access.root('Document', { entityType: path.split('/')[1], entityId: path.split('/')[2] }) : null;
+  const createOnly = operation === 'write' && !!documentRoot && !access.admin && !await access.ownsAccount(documentRoot);
+  const command = operation === "read" ? new GetObjectCommand({ Bucket, Key: path, ResponseContentDisposition: downloadContentDisposition(args.downloadAs) }) : new PutObjectCommand({ Bucket, Key: path, ...(createOnly ? { IfNoneMatch: '*' } : {}), ContentLength: Number(args.sizeBytes), ContentType: id(args.contentType) || "application/octet-stream" });
+  return { url: await getSignedUrl(s3, command, { ...fileSigningOptions, signableHeaders: new Set([...fileSigningOptions.signableHeaders, ...(createOnly ? ['if-none-match'] : [])]) }), ...(createOnly ? { createOnly: true } : {}), expiresAt: new Date(Date.now() + 60_000).toISOString() };
 }

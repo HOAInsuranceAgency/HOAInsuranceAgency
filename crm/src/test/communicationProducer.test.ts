@@ -1,24 +1,30 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 const h = vi.hoisted(() => ({ state: "WAITING", operation: undefined as any, submission: undefined as any,
-  accountState: "MA", accountName: "Willow Condominium Association", contacts: [] as any[], workflow: undefined as any, producer: vi.fn(),
+  accountState: "MA", accountName: "Willow Condominium Association", contacts: [] as any[], workflow: undefined as any, producer: vi.fn(), autoRepliesEnabled: undefined as boolean | undefined,
+  uploadCount: 0, documents: [] as any[], extractionStatus: undefined as string | undefined, invoke: vi.fn(),
   resolveIssue: vi.fn(), waitProjectionError: false, projectError: false, workerWins: false, model: vi.fn(), update: vi.fn(), issue: vi.fn(), queue: vi.fn() }));
 vi.mock("aws-amplify", () => ({ Amplify: { configure: vi.fn() } }));
 vi.mock("@aws-amplify/backend/function/runtime", () => ({ getAmplifyDataClientConfig: async () => ({ resourceConfig: {}, libraryOptions: {} }) }));
 vi.mock("aws-amplify/data", () => ({ generateClient: () => ({ models: {
-  LeadReply: { leadRepliesByStatusAndDueAt: async ({ status }: any) => ({ data: status === "WAITING" ? [{ id: "r1", accountId: "a1", submissionId: "submission-1", contactEmail: "test@example.com", status: "WAITING", dueAt: "2026-01-01T14:00:00Z", uploadCount: 0 }] : [] }), update: h.update },
-  Account: { get: async () => ({ data: { id: "a1", name: h.accountName, state: h.accountState } }) },
-  Document: { list: async () => ({ data: [] }) }, Contact: { list: async () => ({ data: h.contacts }) },
+  LeadReply: { leadRepliesByStatusAndDueAt: async ({ status }: any) => ({ data: status === "WAITING" ? [{ id: "r1", accountId: "a1", submissionId: "submission-1", contactEmail: "test@example.com", status: "WAITING", dueAt: "2026-01-01T14:00:00Z", uploadCount: h.uploadCount }] : [] }), update: h.update },
+  Account: { get: async () => ({ data: { id: "a1", name: h.accountName, state: h.accountState, extractionStatus: h.extractionStatus } }) },
+  Document: { list: async () => ({ data: h.documents }) }, Contact: { list: async () => ({ data: h.contacts }) },
   UploadPortal: { list: async () => ({ data: [{ token: "preview-token", expiresAt: "2099-01-01T00:00:00Z" }] }) },
 } }) }));
 vi.mock("@anthropic-ai/sdk", () => ({ default: class { messages = { create: h.model }; } }));
+vi.mock("@aws-sdk/client-lambda", async importOriginal => ({ ...(await importOriginal<typeof import("@aws-sdk/client-lambda")>()), LambdaClient: class { send = h.invoke; } }));
 vi.mock("../../amplify/functions/communications/store", () => ({
-  get: async (id: string) => id.startsWith("workflow:") ? h.workflow : id.startsWith("submission:") ? h.submission : h.operation, issue: h.issue,
+  get: async (id: string) => id.startsWith("workflow:") ? h.workflow : id.startsWith("submission:") ? h.submission : id.startsWith("eligibility:") ? { data: { autoRepliesEnabled: h.autoRepliesEnabled } } : h.operation, issue: h.issue,
   db: { send: async ({ input }: any) => {
     if (input.ExpressionAttributeValues[":queued"]) {
       const expected = input.ConditionExpression?.match(/^#s = (:\w+)$/)?.[1];
       if (expected && h.state !== input.ExpressionAttributeValues[expected]) throw Object.assign(new Error("Already confirmed"), { name: "ConditionalCheckFailedException" });
       if (h.projectError) throw new Error("Status projection failed after durable queue");
       h.state = "QUEUED";
+    } else if (input.ExpressionAttributeValues[":suppressed"]) {
+      const expected = input.ConditionExpression?.match(/^#s = (:\w+)$/)?.[1];
+      if (expected && h.state !== input.ExpressionAttributeValues[expected]) throw Object.assign(new Error("Already claimed"), { name: "ConditionalCheckFailedException" });
+      h.state = "SUPPRESSED";
     } else if (input.ExpressionAttributeValues[":retry"]) {
       if (h.waitProjectionError) throw new Error("Temporary storage failure");
       if (h.state !== "WAITING") throw Object.assign(new Error("Already claimed"), { name: "ConditionalCheckFailedException" });
@@ -31,7 +37,9 @@ import { handler } from "../../amplify/functions/lead-reply/handler";
 beforeEach(() => {
   vi.clearAllMocks(); h.waitProjectionError = false; h.state = "WAITING"; h.operation = undefined; h.projectError = false; h.workerWins = false; delete process.env.SITE_BASE_URL;
   h.workflow = { data: { disposition: "ACTIVE", humanTakeover: false, salespersonId: "jake" } };
-  h.producer.mockReset().mockResolvedValue({ producerId: "jake", producerName: "Jake Greasley", emailIdentity: { frontId: "tea_jake", channelId: "cha_jake", senderEmail: "jake@protectmyhoa.com", signatureId: "sig_jake", signatureMode: "FRONT" } });
+  h.autoRepliesEnabled = undefined;
+  h.uploadCount = 0; h.documents = []; h.extractionStatus = undefined; h.invoke.mockResolvedValue({});
+  h.producer.mockReset().mockResolvedValue({ member: { data: {} }, producerId: "jake", producerName: "Jake Greasley", emailIdentity: { frontId: "tea_jake", channelId: "cha_jake", senderEmail: "jake@protectmyhoa.com", signatureId: "sig_jake", signatureMode: "FRONT" } });
   h.submission = undefined; h.accountState = "MA"; h.accountName = "Willow Condominium Association"; h.contacts = [];
   h.update.mockResolvedValue({ data: {} }); h.issue.mockResolvedValue(undefined);
   h.model.mockResolvedValue({ content: [{ type: "tool_use", input: { subject: "Your HOA insurance enquiry", body: "I'll review what you shared about your association's insurance." } }] });
@@ -94,6 +102,57 @@ describe("personal, concise first-contact emails", () => {
   });
 });
 describe("producer and delivery ownership", () => {
+  it.each(["MA", "CA"])("suppresses %s opted-out users before checking their role, mailbox, signature, or generating copy", async state => {
+    h.accountState = state;
+    h.autoRepliesEnabled = false;
+    h.producer.mockRejectedValue(new Error("This user is now Admin-only with no mailbox"));
+    const result = await handler();
+    expect(result).toMatchObject({ queued: 0, failed: 0 });
+    expect(h.state).toBe("SUPPRESSED"); expect(h.update).not.toHaveBeenCalled();
+    expect(h.producer).not.toHaveBeenCalled(); expect(h.model).not.toHaveBeenCalled(); expect(h.queue).not.toHaveBeenCalled();
+  });
+  it.each(["MA", "CA"])("honors a %s opt-out discovered while verifying the producer", async state => {
+    h.accountState = state;
+    h.producer.mockResolvedValue({ member: { data: { autoRepliesEnabled: false } } });
+    await handler();
+    expect(h.state).toBe("SUPPRESSED"); expect(h.update).not.toHaveBeenCalled();
+    expect(h.model).not.toHaveBeenCalled(); expect(h.queue).not.toHaveBeenCalled();
+  });
+  it("continues waiting for OCR on an opted-out lead without checking email setup", async () => {
+    h.autoRepliesEnabled = false; h.uploadCount = 1;
+    h.documents = [{ name: "policy.pdf", ocrStatus: "PENDING" }];
+    const result = await handler();
+    expect(result).toMatchObject({ extracting: 0, queued: 0, failed: 0 });
+    expect(h.state).toBe("WAITING"); expect(h.update).not.toHaveBeenCalled();
+    expect(h.invoke).not.toHaveBeenCalled(); expect(h.producer).not.toHaveBeenCalled(); expect(h.model).not.toHaveBeenCalled(); expect(h.queue).not.toHaveBeenCalled();
+  });
+  it("still starts automatic extraction for an opted-out lead after OCR completes", async () => {
+    h.autoRepliesEnabled = false; h.uploadCount = 1;
+    h.documents = [{ name: "policy.pdf", ocrStatus: "COMPLETE" }];
+    const result = await handler();
+    expect(result).toMatchObject({ extracting: 1, queued: 0, failed: 0 });
+    expect(h.invoke).toHaveBeenCalledOnce();
+    const invocation = h.invoke.mock.calls[0][0].input;
+    expect(invocation.InvocationType).toBe("Event");
+    expect(JSON.parse(Buffer.from(invocation.Payload).toString())).toEqual({ arguments: { accountId: "a1" } });
+    expect(h.state).toBe("WAITING"); expect(h.update).not.toHaveBeenCalled();
+    expect(h.producer).not.toHaveBeenCalled(); expect(h.model).not.toHaveBeenCalled(); expect(h.queue).not.toHaveBeenCalled();
+  });
+  it("suppresses only the email after an opted-out lead's document extraction completes", async () => {
+    h.autoRepliesEnabled = false; h.uploadCount = 1; h.extractionStatus = "COMPLETE";
+    h.documents = [{ name: "policy.pdf", ocrStatus: "COMPLETE" }];
+    const result = await handler();
+    expect(result).toMatchObject({ extracting: 0, queued: 0, failed: 0 });
+    expect(h.state).toBe("SUPPRESSED"); expect(h.update).not.toHaveBeenCalled();
+    expect(h.invoke).not.toHaveBeenCalled(); expect(h.producer).not.toHaveBeenCalled(); expect(h.model).not.toHaveBeenCalled(); expect(h.queue).not.toHaveBeenCalled();
+  });
+  it.each(["SENDING", "QUEUED", "SENT"])("does not overwrite another sweep's %s delivery when opting out a stale waiting row", async state => {
+    h.autoRepliesEnabled = false;
+    h.resolveIssue.mockImplementationOnce(async () => { h.state = state; });
+    const result = await handler();
+    expect(h.state).toBe(state); expect(result.failed).toBe(0);
+    expect(h.update).not.toHaveBeenCalled(); expect(h.model).not.toHaveBeenCalled(); expect(h.queue).not.toHaveBeenCalled();
+  });
   it("uses the assigned salesperson in the prompt and queues their verified Front identity without a duplicate signature", async () => {
     await handler();
     expect(h.producer).toHaveBeenCalledWith("jake", { includeVerifiedSignatureHtml: true });
@@ -122,7 +181,7 @@ describe("producer and delivery ownership", () => {
     expect(h.model).not.toHaveBeenCalled(); expect(h.queue).not.toHaveBeenCalled(); expect(h.update).not.toHaveBeenCalled();
     expect(h.issue).toHaveBeenCalledWith("generation-assignment:r1", expect.stringContaining("Initial email is waiting:"), "a1");
     h.workflow = { data: { disposition: "ACTIVE", humanTakeover: false, salespersonId: "jake" } };
-    h.producer.mockResolvedValue({ producerId: "jake", producerName: "Jake Greasley", emailIdentity: { frontId: "tea_jake", channelId: "cha_jake", senderEmail: "jake@protectmyhoa.com", signatureId: "sig_jake", signatureMode: "FRONT" } });
+    h.producer.mockResolvedValue({ member: { data: {} }, producerId: "jake", producerName: "Jake Greasley", emailIdentity: { frontId: "tea_jake", channelId: "cha_jake", senderEmail: "jake@protectmyhoa.com", signatureId: "sig_jake", signatureMode: "FRONT" } });
     await handler();
     expect(h.queue).toHaveBeenCalledTimes(1);
     expect(h.resolveIssue).toHaveBeenCalledWith("generation-assignment:r1");
@@ -154,7 +213,7 @@ describe("producer and delivery ownership", () => {
 
 it("freezes California's branded personal signature and state into the queued email", async () => {
   h.accountState = "CA";
-  h.producer.mockResolvedValue({ producerId: "jake", producerName: "Jake Greasley", emailIdentity: {
+  h.producer.mockResolvedValue({ member: { data: {} }, producerId: "jake", producerName: "Jake Greasley", emailIdentity: {
     frontId: "tea_jake", channelId: "cha_jake", senderEmail: "jake@protectmyhoa.com", signatureId: "sig_jake", signatureMode: "FRONT",
     verifiedSignatureHtml: "<div>Jake Greasley<br>CA License No. TEST123<br>jake@protectmyhoa.com<br>508-233-2261<br>HOA Insurance Agency LLC</div>",
   } });
@@ -169,7 +228,7 @@ it("freezes California's branded personal signature and state into the queued em
   expect(email.emailIdentity.verifiedSignatureHtml).toBeUndefined();
 });
 
-const californiaProducer = () => ({ producerId: "jake", producerName: "Jake Greasley", emailIdentity: {
+const californiaProducer = () => ({ member: { data: {} }, producerId: "jake", producerName: "Jake Greasley", emailIdentity: {
   frontId: "tea_jake", channelId: "cha_jake", senderEmail: "jake@protectmyhoa.com", signatureId: "sig_jake", signatureMode: "FRONT",
   verifiedSignatureHtml: "<div>Jake Greasley<br>CA License No. TEST123<br>jake@protectmyhoa.com<br>508-233-2261<br>HOA Insurance Agency LLC</div>",
 } });

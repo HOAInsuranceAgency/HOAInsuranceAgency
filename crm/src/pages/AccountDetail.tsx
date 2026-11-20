@@ -1,3 +1,4 @@
+import { AccountPermissions, AccountEditBoundary } from '../components/AccountPermissions';
 import { assertGraphqlErrors } from '../lib/apiResponse';
 import { Button } from "../components/ui/Button";
 import { Tabs, TabPanel } from "../components/ui/Tabs";
@@ -231,15 +232,15 @@ function AccountDetailPage({ profile }: { profile: UserProfile }) {
       </p>
 
       <Tabs id="account-detail" label="Account views" items={tabs.map(([value, label]) => ({ value, label }))} value={activeTab} onChange={selectTab} />
-      <TabPanel tabsId="account-detail" value={activeTab}>
+      <AccountPermissions accountId={account.id}><TabPanel tabsId="account-detail" value={activeTab}>
       {activeTab === "overview" && (
         <div className="account-overview">
           {isAdmin && account.stage === "LEAD" && <LeadAssignment key={account.id} account={account} />}
-          <OverviewTab key={account.id} account={account} onChange={setAccount} />
+          <AccountEditBoundary><OverviewTab key={account.id} account={account} onChange={setAccount} /></AccountEditBoundary>
           <AccountRelationships key={account.id} accountId={account.id} onChanged={() => setContactRevision(n => n + 1)} />
           <div id="contacts"><ContactsCard key={`${account.id}:${contactRevision}`} accountId={account.id} /></div>
           <PropertyPanel key={account.id} account={account} onChange={setAccount} />
-          {account.stage === "LEAD" && <DeleteLeadZone account={account} />}
+          {account.stage === "LEAD" && <AccountEditBoundary permission="assigned"><DeleteLeadZone account={account} /></AccountEditBoundary>}
         </div>
       )}
       {activeTab === "property" && <PropertyCoveragePanel key={account.id} accountId={account.id} />}
@@ -274,7 +275,7 @@ function AccountDetailPage({ profile }: { profile: UserProfile }) {
         <CertificatesTab account={account} profile={profile} sourceCommunicationId={searchParams.get("request") ?? undefined} />
       )}
       {activeTab === "activity" && <ActivityTab key={account.id} accountId={account.id} />}
-      </TabPanel>
+      </TabPanel></AccountPermissions>
     </>
   );
 }

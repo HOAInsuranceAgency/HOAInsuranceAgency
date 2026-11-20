@@ -1,3 +1,4 @@
+import { useAccountPermissions } from '../AccountPermissions';
 import { Select } from "../ui/Select";
 import { Button } from "../ui/Button";
 import { Table } from "../ui/Table";
@@ -76,6 +77,7 @@ export default function DirectorsOfficersCard({
 }: {
   accountId: string;
 }) {
+  const permissions = useAccountPermissions();
   const app = useSingletonChild<DoApplication, DoForm>(
     client.models.DoApplication,
     {
@@ -154,7 +156,7 @@ export default function DirectorsOfficersCard({
           </div>
 
           <div className="form-actions">
-            <Button variant="primary"  disabled={app.status.busy} onClick={app.save}>
+            <Button variant="primary"  disabled={!permissions.edit || app.status.busy} onClick={app.save}>
               {app.status.busy ? "Saving…" : "Save D&O terms"}
             </Button>
             <SaveStatus {...app.status.status} />
@@ -178,6 +180,7 @@ export default function DirectorsOfficersCard({
  * was asked about B and C.
  */
 function CoverageParts({ accountId }: { accountId: string }) {
+  const permissions = useAccountPermissions();
   const res = useAsyncResource(
     () =>
       listAllPages((nextToken) =>
@@ -339,7 +342,7 @@ function CoverageParts({ accountId }: { accountId: string }) {
         </Table>
       </div>
       <div className="form-actions">
-        <Button variant="primary"  disabled={status.busy} onClick={save}>
+        <Button variant="primary"  disabled={!permissions.edit || status.busy} onClick={save}>
           {status.busy ? "Saving…" : "Save coverage parts"}
         </Button>
         <SaveStatus {...status.status} />

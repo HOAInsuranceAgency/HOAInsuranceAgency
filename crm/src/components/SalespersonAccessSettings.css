@@ -1,0 +1,35 @@
+.salesperson-access h2 { margin-bottom: 4px; }
+.salesperson-access > p { margin: 0 0 16px; line-height: 1.5; }
+.salesperson-access-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+  gap: 20px;
+}
+.salesperson-access-section { min-width: 0; }
+.salesperson-access-section + .salesperson-access-section { border-left: 1px solid var(--border); padding-left: 20px; }
+.salesperson-access-section h3 { margin: 0 0 10px; }
+.salesperson-access-label { display: block; color: var(--muted); font-size: 12px; line-height: 1.5; margin-bottom: 6px; }
+.salesperson-access-section select { width: 100%; }
+.salesperson-access-section p { margin: 8px 0 0; line-height: 1.5; }
+.salesperson-access-check { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; line-height: 1.5; padding: 5px 0; cursor: pointer; }
+.salesperson-access-check input { flex: 0 0 auto; margin: 3px 0 0; accent-color: var(--accent); }
+.salesperson-access-footer { border-top: 1px solid var(--border); margin-top: 16px; padding-top: 12px; }
+.salesperson-access-summary { margin: 0 0 12px; max-width: 100ch; line-height: 1.5; }
+.salesperson-access-actions { margin-bottom: 0; }
+.salesperson-access-updated { margin: 8px 0 0; }
+@media (max-width: 1000px) {
+  .salesperson-access-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+  .salesperson-access-section:last-child { grid-column: 1 / -1; border-left: 0; border-top: 1px solid var(--border); padding: 12px 0 0; }
+  .salesperson-access-section:last-child { display: flex; flex-wrap: wrap; gap: 0 20px; }
+  .salesperson-access-section:last-child h3 { width: 100%; margin-bottom: 4px; }
+}
+@media (max-width: 600px) {
+  .salesperson-access-grid { grid-template-columns: minmax(0, 1fr); }
+  .salesperson-access-section + .salesperson-access-section { border-left: 0; border-top: 1px solid var(--border); padding: 12px 0 0; }
+  .salesperson-access-section:last-child { display: block; }
+  .salesperson-access-actions { gap: 8px; }
+}

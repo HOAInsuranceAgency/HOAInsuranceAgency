@@ -10,8 +10,8 @@ import { DynamoDBDocumentClient, GetCommand } from "@aws-sdk/lib-dynamodb";
  * it is owed to.
  *
  * Read straight from the tables, like everything else in this function. Three
- * GetItems by primary key, issued together — see `readInvoice` for why this
- * function has no data client to ask instead.
+ * GetItems by primary key: account and policy together, then the policy's
+ * carrier. See `readInvoice` for why this function has no data client.
  *
  * Every lookup fails soft. A missing name costs a line of detail in an email;
  * a throw here would happen *after* the payment state was written, so the
@@ -28,35 +28,37 @@ export interface PaidInvoiceContext {
   carrierName: string | null;
 }
 
-async function attr(
+async function readRecord(
   tableName: string | undefined,
-  id: string | null,
-  field: string
-): Promise<string | null> {
+  id: string | null
+): Promise<Record<string, unknown> | null> {
   if (!tableName || !id) return null;
   try {
     const res = await ddb.send(
       new GetCommand({ TableName: tableName, Key: { id } })
     );
-    const v = res.Item?.[field];
-    return typeof v === "string" && v.trim() ? v : null;
+    return res.Item ?? null;
   } catch (err) {
-    console.warn(`stripe-webhook could not read ${field} from ${tableName}`, err);
+    console.warn(`stripe-webhook could not read from ${tableName}`, err);
     return null;
   }
+}
+
+function attr(record: Record<string, unknown> | null, field: string): string | null {
+  const value = record?.[field];
+  return typeof value === "string" && value.trim() ? value : null;
 }
 
 export async function readPaidContext(opts: {
   accountId: string | null;
   policyId: string | null;
 }): Promise<PaidInvoiceContext> {
-  const [associationName, policyNumber, carrierId] = await Promise.all([
-    attr(process.env.ACCOUNT_TABLE, opts.accountId, "name"),
-    attr(process.env.POLICY_TABLE, opts.policyId, "policyNumber"),
-    attr(process.env.POLICY_TABLE, opts.policyId, "carrierId"),
+  const [account, policy] = await Promise.all([
+    readRecord(process.env.ACCOUNT_TABLE, opts.accountId),
+    readRecord(process.env.POLICY_TABLE, opts.policyId),
   ]);
   // Serial only because the carrier id comes off the policy. One extra hop,
   // and only on invoices that name a policy.
-  const carrierName = await attr(process.env.CARRIER_TABLE, carrierId, "name");
-  return { associationName, policyNumber, carrierName };
+  const carrier = await readRecord(process.env.CARRIER_TABLE, attr(policy, "carrierId"));
+  return { associationName: attr(account, "name"), policyNumber: attr(policy, "policyNumber"), carrierName: attr(carrier, "name") };
 }

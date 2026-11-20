@@ -132,8 +132,8 @@ export async function relationshipOperation(
     const workflow = await get(`workflow:${accountId}`);
     accountWorkflow = workflow;
     // Recheck the exact workflow used by the write, not a cached earlier assignment.
-    if (!access.admin && workflow?.data.salespersonId !== actor)
-      throw new Error('This account is no longer assigned to you.');
+    await access.requireCapability(accountId, RELATIONSHIP_READS.has(op) ? 'read' : 'edit');
+    if (!RELATIONSHIP_READS.has(op)) accountWrites.push(...await access.capabilityChecks(accountId, 'edit'));
     accountWrites.push(
       workflow ? check(workflow) : absent(`workflow:${accountId}`),
       absent(`deleted-account:${accountId}`),

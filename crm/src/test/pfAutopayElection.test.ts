@@ -475,7 +475,8 @@ describe("quotes can answer the screens the offer runs on (W8 review)", () => {
     expect(PANEL).toContain('await bindCommissionPolicy(');
     expect(read('src/lib/brokerFees.ts')).toContain('privateApiCall(client.mutations.bindCommissionPolicy');
     expect(read("amplify/functions/commissions/bind.ts")).toContain("This quote already has a policy.");
-    expect(PANEL).toMatch(/action:\s*["']BIND_ROLLOVER["']/);
+    expect(PANEL).not.toContain('serviceFinanceLoan');
+    expect(read('amplify/functions/commissions/bind.ts')).toContain('await bindLinkWrites(');
   });
 
   it("bind stamps datePolicyBound automatically — never typed", () => {
@@ -491,9 +492,9 @@ describe("quotes can answer the screens the offer runs on (W8 review)", () => {
   it("bind rolls document links alongside invoices and loans", () => {
     // A quote's paper follows it onto the policy — the link gains the
     // policy id and keeps the quote's, same as every other anchor.
-    const PANEL = read("src/components/QuotesPanel.tsx");
-    expect(PANEL).toContain("client.models.Document.list");
-    expect(PANEL).toContain("client.models.Document.update");
+    const links = read('amplify/functions/commissions/bind-links.ts');
+    expect(links).toContain("attach('Document'");
+    expect(links).toContain('quoteSourceBillingHistory');
   });
 
 

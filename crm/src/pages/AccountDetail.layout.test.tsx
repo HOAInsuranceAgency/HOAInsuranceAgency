@@ -1,3 +1,5 @@
+// AccountPermissions is independently tested; layout tests keep their existing workflow mocks.
+vi.mock('../components/AccountPermissions', () => ({ AccountPermissions: ({children}: {children: import('react').ReactNode}) => children, AccountEditBoundary: ({children}: {children: import('react').ReactNode}) => children, useAccountPermissions: () => ({assigned:true, edit:true, collaborate:true, send:true, invoice:true, bind:true}) }));
 import { useState } from "react";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { Link, MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
