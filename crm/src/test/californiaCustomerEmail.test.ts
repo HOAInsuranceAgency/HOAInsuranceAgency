@@ -135,3 +135,17 @@ it("keeps underscore characters in the complete linked mailbox destination", () 
   expect(reply.html).toContain('href="mailto:sample_name@protectmyhoa.com"');
   expect(reply.html).not.toContain('href="mailto:name@protectmyhoa.com"');
 });
+
+it.each([..."!#$%&'*+-/=?^_`{|}~", "."])("keeps %s in the mailbox instead of URI query or fragment syntax", character => {
+  const mailbox = `sample${character}name@protectmyhoa.com`;
+  const reply = renderReply({ generated, lead, producerName: "Sample Producer", signatureMode: "FRONT",
+    producerSignatureHtml: signature.replaceAll("sample@protectmyhoa.com", mailbox.replaceAll("&", "&amp;")),
+  });
+  const href = reply.html.match(/href="(mailto:[^"]+)"/)?.[1];
+  expect(href).toBeDefined();
+  const destination = new URL(href!);
+  expect(decodeURIComponent(destination.pathname)).toBe(mailbox);
+  expect(destination.search).toBe("");
+  expect(destination.hash).toBe("");
+  expect(reply.text).toContain(mailbox);
+});
