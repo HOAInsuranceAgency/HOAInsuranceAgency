@@ -23,7 +23,8 @@ export function californiaSignature(signatureHtml: string, producerName: string)
   let html = "", position = 0;
   for (const match of text.matchAll(destinations)) {
     const label = match[0];
-    const href = /^(?:https?:|tel:)/i.test(label) ? label : `mailto:${label}`;
+    const at = label.lastIndexOf("@");
+    const href = /^(?:https?:|tel:)/i.test(label) ? label : `mailto:${encodeURIComponent(label.slice(0, at))}@${label.slice(at + 1)}`;
     html += escape(text.slice(position, match.index)) + `<a href="${escape(href)}">${escape(label)}</a>`;
     position = match.index + label.length;
   }
