@@ -1,6 +1,7 @@
 import type { FrontMessage } from "./providers";
 
 interface QueuedEmail {
+  customerEmailState?: "CA";
   recipient?: string;
   subject?: string;
   text?: string;
@@ -38,6 +39,7 @@ export function matchesQueuedEmail(message: FrontMessage, queued: QueuedEmail): 
 
   const body = lineEndings(queued.text).trim();
   const delivered = lineEndings(message.text).trim();
+  if (queued.customerEmailState === "CA") return Boolean(body) && delivered === body;
   if (!body || !delivered.startsWith(body)) return false;
   const signature = delivered.slice(body.length);
   // Front appends its signature. Match all original prose exactly, permitting

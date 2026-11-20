@@ -1,3 +1,4 @@
+import { customerEmailIdentity } from "../../../../shared/customerEmailIdentity";
 import { createDataClientGetter, type LambdaDataClient as DataClient } from "../data-client";
 import { captureHandledFailure } from "../monitoring";
 import { initialQuotePublicationWrites } from "../quote-source-billing";
@@ -812,6 +813,8 @@ async function deliverInvoice({ invoice, view, to, tracked, split, allocations, 
 }) {
   const invoiceId = invoice.id;
   const { subject, text, html } = renderInvoice(view);
+  const identity = customerEmailIdentity(view.propertyState);
+  const from = identity.california ? `${identity.name} <${MAILBOX}>` : FROM;
 
   /**
    * The PDF, which is the document they will actually forward.
@@ -845,7 +848,7 @@ async function deliverInvoice({ invoice, view, to, tracked, split, allocations, 
    * with the message and is visible to everyone who receives it.
    */
   const raw = buildMimeMessage({
-    from: FROM,
+    from,
     // Everyone in the To header, so each recipient can see the others were
     // sent it too — an invoice is not correspondence to keep private from
     // the board members copied on it.
@@ -857,7 +860,7 @@ async function deliverInvoice({ invoice, view, to, tracked, split, allocations, 
     attachment,
   });
   const command = new SendEmailCommand({
-    FromEmailAddress: FROM,
+    FromEmailAddress: from,
     Destination: { ToAddresses: to, ...(selfAddressed ? {} : { BccAddresses: [MAILBOX] }) },
     Content: { Raw: { Data: Buffer.from(raw, "utf8") } },
   });
@@ -1041,7 +1044,7 @@ export const handler = async (event: {
       const address = [group.account.address ?? "", cityStateZip].filter(line => line.trim());
       const addressee = contacts.find(contact => to.includes((contact.email ?? "").trim()));
       const view: InvoiceView = {
-        number: invoice.number, associationName: group.account.name, contactFirstName: primary?.name?.trim().split(/\s+/)[0],
+        number: invoice.number, associationName: group.account.name, propertyState: group.account.state, contactFirstName: primary?.name?.trim().split(/\s+/)[0],
         billToLines: [...(addressee?.name ? [`Attn: ${addressee.name}`] : []), ...address], riskLocation: address,
         effectiveDate: first?.effectiveDate, expirationDate: first?.expirationDate, coverageBound: true,
         issuedAt: invoice.issuedAt, financeOnly: true, finance, lines: group.lines,
@@ -1303,6 +1306,7 @@ export const handler = async (event: {
     const view = {
       number: invoice.number,
       associationName: account.data.name,
+      propertyState: account.data.state,
       contactFirstName: primary?.name?.trim().split(/\s+/)[0] ?? null,
       billToLines,
       policyNumber: policy?.policyNumber ?? null,

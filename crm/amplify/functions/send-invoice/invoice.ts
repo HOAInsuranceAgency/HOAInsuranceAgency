@@ -1,3 +1,4 @@
+import { customerEmailIdentity } from "../../../../shared/customerEmailIdentity";
 import { AGENCY, AGENCY_FMT } from "../../../../shared/agency";
 import { formatMoney, invoiceTotals, type LineLike } from "../../../../shared/invoiceTotals";
 import { initialPaymentTotals } from "../../../../shared/premiumFinance/initialPayment";
@@ -30,6 +31,8 @@ export interface InvoiceLineView extends LineLike {
 export interface InvoiceView {
   number?: string | null;
   associationName: string;
+  /** Insured property state, separate from billing/contact addresses. */
+  propertyState?: string | null;
   /** The person it is addressed to, if we know one. */
   contactFirstName?: string | null;
   /**
@@ -140,6 +143,7 @@ export function groupedFinanceSummary(finance: NonNullable<InvoiceView["finance"
 }
 
 export function renderInvoice(inv: InvoiceView): RenderedInvoice {
+  const identity = customerEmailIdentity(inv.propertyState);
   const totals = invoiceTotals(inv.lines);
   const credit = totals.retail < 0, payable = totals.retail > 0;
   const due = formatMoney(Math.abs(totals.retail));
@@ -152,9 +156,9 @@ export function renderInvoice(inv: InvoiceView): RenderedInvoice {
     ? `Hi ${inv.contactFirstName.trim()},`
     : "Hello,";
 
-  const subject = inv.financeOnly ? `Financing for invoice${number ? ` ${number}` : ""} from ${AGENCY_FMT.displayName}` : number
-    ? `Invoice ${number} from ${AGENCY_FMT.displayName} — ${due} ${credit ? 'credit' : 'due'}`
-    : `Invoice from ${AGENCY_FMT.displayName} — ${due} ${credit ? 'credit' : 'due'}`;
+  const subject = inv.financeOnly ? `Financing for invoice${number ? ` ${number}` : ""} from ${identity.displayName}` : number
+    ? `Invoice ${number} from ${identity.displayName} — ${due} ${credit ? 'credit' : 'due'}`
+    : `Invoice from ${identity.displayName} — ${due} ${credit ? 'credit' : 'due'}`;
 
   const meta: [string, string][] = [
     ["Invoice", number],
@@ -199,7 +203,8 @@ export function renderInvoice(inv: InvoiceView): RenderedInvoice {
         ]
       : []),
     "",
-    `${AGENCY.name}`,
+    identity.name,
+    ...(identity.disclosure ? [identity.disclosure] : []),
     `${AGENCY.phone} · ${AGENCY.email}`,
   ].join("\n");
 
@@ -214,7 +219,7 @@ export function renderInvoice(inv: InvoiceView): RenderedInvoice {
       <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:600px;max-width:100%;background:#ffffff;border-radius:10px;overflow:hidden">
 
         <tr><td style="padding:24px 28px 0">
-          <img src="${AGENCY_FMT.logoUrl}" width="230" height="45" alt="${escapeHtml(AGENCY_FMT.displayName)}" style="display:block;border:0;max-width:100%;height:auto">
+          ${identity.california ? `<div style="font:800 22px/1.2 ${font};color:#1a365d">${escapeHtml(identity.displayName)}</div>` : `<img src="${AGENCY_FMT.logoUrl}" width="230" height="45" alt="${escapeHtml(AGENCY_FMT.displayName)}" style="display:block;border:0;max-width:100%;height:auto">`}
         </td></tr>
 
         <tr><td style="padding:22px 28px 6px">
@@ -275,7 +280,8 @@ ${
 
         <tr><td style="padding:22px 28px 26px">
           <div style="border-top:1px solid #e2e8f0;padding-top:14px;font:400 12.5px/1.7 ${font};color:#94a3b8">
-            ${escapeHtml(AGENCY.name)}<br>
+            ${escapeHtml(identity.name)}<br>
+            ${identity.disclosure ? `${escapeHtml(identity.disclosure)}<br>` : ""}
             ${escapeHtml(AGENCY.addressLine1)}, ${escapeHtml(AGENCY_FMT.addressLine2)}<br>
             ${escapeHtml(AGENCY.phone)} · <a href="${AGENCY_FMT.emailHref}" style="color:#94a3b8">${escapeHtml(AGENCY.email)}</a>
           </div>

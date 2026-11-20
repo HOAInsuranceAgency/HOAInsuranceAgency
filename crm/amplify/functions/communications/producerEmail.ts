@@ -4,7 +4,7 @@ import { frontPersonalResource, ProviderError } from "./providers";
 
 export interface ProducerEmailIdentity {
   frontId: string; channelId: string; senderEmail: string; signatureId: string; signatureMode: "FRONT";
-  /** Server-only opt-in for frozen handoff proof; never part of the public sender DTO. */
+  /** Server-only opt-in for frozen handoff proof and California email signatures; never part of the public sender DTO. */
   verifiedSignatureHtml?: string;
 }
 interface OwnedResource { id?: unknown; _links?: { related?: { owner?: unknown } } }
