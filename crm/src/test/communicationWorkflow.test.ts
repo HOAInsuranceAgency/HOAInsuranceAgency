@@ -2988,3 +2988,18 @@ describe("batched issue-source visibility", () => {
     expect(sourceBatches()).toHaveLength(failure === "outage" ? 1 : 4);
   });
 });
+
+it("sends the frozen California body without re-appending the non-California Front signature", async () => {
+  await lead();
+  const op = await enqueueOperation("op:ai:reply:california", { type: "EMAIL", accountId: "a1", producerId: "brian", producerName: "Brian Cole",
+    emailIdentity: emailIdentity(), recipient: "prospect@example.com", customerEmailState: "CA",
+    text: "Thanks,\nBrian Cole\nCondo Insurance Agency\nHOA Insurance Agency LLC does business in California as Condo Insurance Agency.",
+    html: "<p>Brian Cole<br>Condo Insurance Agency</p>" });
+  h.front.mockImplementation(async (_path, method) => method === "POST" ? { message_uid: "uid_ca" } : { _results: [] });
+  await runOperation(op);
+  const body = h.front.mock.calls.find(([, method]) => method === "POST")?.[2];
+  expect(body).toMatchObject({ channel_id: "cha_brian", author_id: "tea_brian",
+    sender_name: "Brian Cole | Condo Insurance Agency", should_add_default_signature: false, text: op.data.text });
+  expect(body).not.toHaveProperty("signature_id");
+  expect(record(op.id).data.state).toBe("ACCEPTED");
+});

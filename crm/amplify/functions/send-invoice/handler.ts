@@ -1,3 +1,4 @@
+import { customerEmailIdentity } from "../../../../shared/customerEmailIdentity";
 import { currentContacts, billingContact } from "../../../src/lib/contacts";
 import { randomUUID } from "node:crypto";
 import { SESv2Client, SendEmailCommand } from "@aws-sdk/client-sesv2";
@@ -887,6 +888,7 @@ export const handler = async (event: {
     const view = {
       number: invoice.number,
       associationName: account.data.name,
+      propertyState: account.data.state,
       contactFirstName: primary?.name?.trim().split(/\s+/)[0] ?? null,
       billToLines,
       policyNumber: policy?.policyNumber ?? null,
@@ -910,6 +912,8 @@ export const handler = async (event: {
       lines: [...lines].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)),
     };
     const { subject, text, html } = renderInvoice(view);
+    const identity = customerEmailIdentity(view.propertyState);
+    const from = identity.california ? `${identity.name} <${MAILBOX}>` : FROM;
 
     /**
      * The PDF, which is the document they will actually forward.
@@ -942,7 +946,7 @@ export const handler = async (event: {
      * with the message and is visible to everyone who receives it.
      */
     const raw = buildMimeMessage({
-      from: FROM,
+      from,
       // Everyone in the To header, so each recipient can see the others were
       // sent it too — an invoice is not correspondence to keep private from
       // the board members copied on it.
@@ -955,7 +959,7 @@ export const handler = async (event: {
     });
     await ses.send(
       new SendEmailCommand({
-        FromEmailAddress: FROM,
+        FromEmailAddress: from,
         Destination: {
           ToAddresses: to,
           ...(selfAddressed ? {} : { BccAddresses: [MAILBOX] }),
