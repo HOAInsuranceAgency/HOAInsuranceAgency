@@ -100,16 +100,29 @@ it.each([
   '<div>Sample Producer<br>sample@protectmyhoa.com<br>508-233-2261</div><img src="https://example.invalid/license.png">',
   '<div>Sample Producer<br>CA License No. TEST123<br>508-233-2261</div><img src="https://example.invalid/email.png">',
   '<div>Sample Producer<br>CA License No. TEST123<br>sample@protectmyhoa.com</div><img src="https://example.invalid/phone.png">',
+  '<div>Sample Producer<br>License No.<br><img src="https://example.invalid/license.png"><br>508-233-2261<br>sample@protectmyhoa.com</div>',
 ])("holds mixed signatures whose essential details exist only in images", signatureHtml => {
   expect(() => renderReply({ generated, lead, producerName: "Sample Producer", signatureMode: "FRONT", producerSignatureHtml: signatureHtml })).toThrow("text signature");
 });
 
 it("retains phone and email destinations when their link labels differ", () => {
-  const linked = '<div>Sample Producer<br>CA License No. TEST123<br>HOA Insurance Agency LLC<br><a href="mailto:sample@protectmyhoa.com">Email me</a><br><a href="tel:5082332261">Call me</a></div>';
+  const linked = '<div>Sample Producer<br>CA License No. TEST123<br>HOA Insurance Agency LLC<br><a href="mailto:sample@protectmyhoa.com">Email me</a><br><a href="tel:5082332261">Call me</a><br><a href="https://example.invalid/license?id=TEST123&amp;state=CA">License details</a></div>';
   const reply = renderReply({ generated, lead, producerName: "Sample Producer", signatureMode: "FRONT", producerSignatureHtml: linked });
   for (const part of [reply.text, reply.html]) {
     expect(part).toContain("sample@protectmyhoa.com");
     expect(part).toContain("5082332261");
     expect(part).toContain("CA License No. TEST123");
   }
+  expect(reply.html).toContain('href="mailto:sample@protectmyhoa.com"');
+  expect(reply.html).toContain('href="tel:5082332261"');
+  expect(reply.html).toContain('href="https://example.invalid/license?id=TEST123&amp;state=CA"');
+  expect(reply.html).not.toContain("&amp;amp;");
+});
+
+it("escapes signature markup and leaves unsafe link protocols inert", () => {
+  const unsafe = signature + '<a href="javascript:alert(1)" onclick="alert(2)">Unsafe &amp; &quot;label&quot;</a><a href="data:text/html,unsafe">Data link</a><span>&lt;script&gt;alert(3)&lt;/script&gt;</span>';
+  const reply = renderReply({ generated, lead, producerName: "Sample Producer", signatureMode: "FRONT", producerSignatureHtml: unsafe });
+  expect(reply.html).toContain('Unsafe &amp; &quot;label&quot;');
+  expect(reply.html).toContain('&lt;script&gt;alert(3)&lt;/script&gt;');
+  expect(reply.html).not.toMatch(/href="(?:javascript|data):|onclick=|<script|<img/);
 });

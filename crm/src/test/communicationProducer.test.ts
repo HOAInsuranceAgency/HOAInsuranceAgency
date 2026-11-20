@@ -247,10 +247,13 @@ it("retries a temporary signature lookup failure without claiming California gen
   expect(h.producer).toHaveBeenCalledTimes(2);
 });
 
-it("keeps an incomplete California signature waiting until its text details are fixed", async () => {
+it.each([
+  '<div>Jake Greasley</div><img src="https://example.invalid/contact.png">',
+  '<div>Jake Greasley<br>License No.<br><img src="https://example.invalid/license.png"><br>508-233-2261<br>jake@protectmyhoa.com</div>',
+])("keeps an incomplete California signature waiting until its text details are fixed (%s)", async signatureHtml => {
   h.accountState = "CA";
   const incomplete = californiaProducer();
-  incomplete.emailIdentity.verifiedSignatureHtml = '<div>Jake Greasley</div><img src="https://example.invalid/contact.png">';
+  incomplete.emailIdentity.verifiedSignatureHtml = signatureHtml;
   h.producer.mockResolvedValueOnce(incomplete).mockResolvedValue(californiaProducer());
   const first = await handler();
   expect(first.failed).toBe(0);
