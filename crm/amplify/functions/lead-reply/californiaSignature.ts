@@ -9,7 +9,7 @@ export function californiaSignature(signatureHtml: string, producerName: string)
     selectors: [{ selector: "img", format: "skip" }, { selector: "a", options: { hideLinkHrefIfSameAsText: true } }],
   });
   // A mixed text/image signature can otherwise pass with just the producer's name.
-  const email = /[A-Z0-9.!#$%&'*+/=?^`{|}~-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i.test(original);
+  const email = /[A-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i.test(original);
   const phone = /(?:\+?1[\s.-]*)?\(?\d{3}\)?[\s.-]*\d{3}[\s.-]*\d{4}/.test(original);
   // A phone on the next line cannot stand in for an image-only license number.
   const license = /\b(?:licen[sc]e|lic\.?)(?:[ \t]+(?:no\.?|number))?[ \t]*[:#]?[ \t]*[A-Z0-9-]*\d[A-Z0-9-]*\b/i.test(original);
@@ -19,7 +19,7 @@ export function californiaSignature(signatureHtml: string, producerName: string)
   if (!/Condo Insurance Agency/i.test(text)) text += "\n" + identity.displayName;
   const escape = (value: string) => value.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
   // Rebuild only safe visible destinations; never reuse Front's HTML or attributes.
-  const destinations = /https?:\/\/[^\s<>"\[\]]+|tel:\+?[0-9][0-9(). -]*[0-9]|[A-Z0-9.!#$%&'*+/=?^`{|}~-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
+  const destinations = /https?:\/\/[^\s<>"\[\]]+|tel:\+?[0-9][0-9(). -]*[0-9]|[A-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
   let html = "", position = 0;
   for (const match of text.matchAll(destinations)) {
     const label = match[0];
