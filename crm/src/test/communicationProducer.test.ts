@@ -102,7 +102,8 @@ describe("personal, concise first-contact emails", () => {
   });
 });
 describe("producer and delivery ownership", () => {
-  it("suppresses opted-out users before checking their role, mailbox, or generating copy", async () => {
+  it.each(["MA", "CA"])("suppresses %s opted-out users before checking their role, mailbox, signature, or generating copy", async state => {
+    h.accountState = state;
     h.autoRepliesEnabled = false;
     h.producer.mockRejectedValue(new Error("This user is now Admin-only with no mailbox"));
     const result = await handler();
@@ -110,7 +111,8 @@ describe("producer and delivery ownership", () => {
     expect(h.state).toBe("SUPPRESSED"); expect(h.update).not.toHaveBeenCalled();
     expect(h.producer).not.toHaveBeenCalled(); expect(h.model).not.toHaveBeenCalled(); expect(h.queue).not.toHaveBeenCalled();
   });
-  it("honors an opt-out discovered while verifying the producer", async () => {
+  it.each(["MA", "CA"])("honors a %s opt-out discovered while verifying the producer", async state => {
+    h.accountState = state;
     h.producer.mockResolvedValue({ member: { data: { autoRepliesEnabled: false } } });
     await handler();
     expect(h.state).toBe("SUPPRESSED"); expect(h.update).not.toHaveBeenCalled();
@@ -153,7 +155,7 @@ describe("producer and delivery ownership", () => {
   });
   it("uses the assigned salesperson in the prompt and queues their verified Front identity without a duplicate signature", async () => {
     await handler();
-    expect(h.producer).toHaveBeenCalledWith("jake");
+    expect(h.producer).toHaveBeenCalledWith("jake", { includeVerifiedSignatureHtml: true });
     expect(h.model.mock.calls[0][0].system).toContain("writing as Jake Greasley");
     const email = h.queue.mock.calls[0][1];
     expect(email).toMatchObject({ producerId: "jake", producerName: "Jake Greasley", emailIdentity: { frontId: "tea_jake", channelId: "cha_jake", senderEmail: "jake@protectmyhoa.com", signatureId: "sig_jake", signatureMode: "FRONT" } });
@@ -213,7 +215,7 @@ it("freezes California's branded personal signature and state into the queued em
   h.accountState = "CA";
   h.producer.mockResolvedValue({ member: { data: {} }, producerId: "jake", producerName: "Jake Greasley", emailIdentity: {
     frontId: "tea_jake", channelId: "cha_jake", senderEmail: "jake@protectmyhoa.com", signatureId: "sig_jake", signatureMode: "FRONT",
-    verifiedSignatureHtml: "<div>Jake Greasley<br>CA License No. SAMPLE<br>HOA Insurance Agency LLC</div>",
+    verifiedSignatureHtml: "<div>Jake Greasley<br>CA License No. TEST123<br>jake@protectmyhoa.com<br>508-233-2261<br>HOA Insurance Agency LLC</div>",
   } });
   await handler();
   const email = h.queue.mock.calls[0][1];
@@ -221,7 +223,45 @@ it("freezes California's branded personal signature and state into the queued em
   expect(h.model.mock.calls[0][0].system).toContain("a licensed producer at Condo Insurance Agency.");
   expect(email.customerEmailState).toBe("CA");
   expect(email.text).toContain("Thank you for contacting Condo Insurance Agency.");
-  expect(email.text).toContain("CA License No. SAMPLE");
+  expect(email.text).toContain("CA License No. TEST123");
   expect(email.text).toContain("does business in California as Condo Insurance Agency.");
   expect(email.emailIdentity.verifiedSignatureHtml).toBeUndefined();
+});
+
+const californiaProducer = () => ({ member: { data: {} }, producerId: "jake", producerName: "Jake Greasley", emailIdentity: {
+  frontId: "tea_jake", channelId: "cha_jake", senderEmail: "jake@protectmyhoa.com", signatureId: "sig_jake", signatureMode: "FRONT",
+  verifiedSignatureHtml: "<div>Jake Greasley<br>CA License No. TEST123<br>jake@protectmyhoa.com<br>508-233-2261<br>HOA Insurance Agency LLC</div>",
+} });
+
+it("retries a temporary signature lookup failure without claiming California generation", async () => {
+  h.accountState = "CA";
+  h.producer.mockRejectedValueOnce(new Error("Front is temporarily rate limited")).mockResolvedValue(californiaProducer());
+  const first = await handler();
+  expect(first.failed).toBe(0);
+  expect(h.state).toBe("WAITING");
+  expect(h.model).not.toHaveBeenCalled();
+  expect(h.queue).not.toHaveBeenCalled();
+  expect(h.update).not.toHaveBeenCalled();
+  await handler();
+  expect(h.queue).toHaveBeenCalledTimes(1);
+  expect(h.producer).toHaveBeenCalledTimes(2);
+});
+
+it.each([
+  '<div>Jake Greasley</div><img src="https://example.invalid/contact.png">',
+  '<div>Jake Greasley<br>License No.<br><img src="https://example.invalid/license.png"><br>508-233-2261<br>jake@protectmyhoa.com</div>',
+])("keeps an incomplete California signature waiting until its text details are fixed (%s)", async signatureHtml => {
+  h.accountState = "CA";
+  const incomplete = californiaProducer();
+  incomplete.emailIdentity.verifiedSignatureHtml = signatureHtml;
+  h.producer.mockResolvedValueOnce(incomplete).mockResolvedValue(californiaProducer());
+  const first = await handler();
+  expect(first.failed).toBe(0);
+  expect(h.state).toBe("WAITING");
+  expect(h.model).not.toHaveBeenCalled();
+  expect(h.queue).not.toHaveBeenCalled();
+  expect(h.issue).toHaveBeenCalledWith("generation-signature:r1", expect.stringContaining("text signature"), "a1");
+  await handler();
+  expect(h.queue).toHaveBeenCalledTimes(1);
+  expect(h.producer).toHaveBeenCalledTimes(2);
 });

@@ -1,3 +1,4 @@
+import { californiaSignature } from "./californiaSignature";
 import { customerEmailIdentity } from "../../../../shared/customerEmailIdentity";
 import { migrationPendingCutoff, migrationPendingHeld } from "../migration-pending";
 import { currentContacts } from "../../../src/lib/contacts";
@@ -156,7 +157,7 @@ export const handler = async () => {
         if (!workflow.data.humanTakeover && workflow.data.disposition === "ACTIVE") {
           autoRepliesOff = await autoRepliesDisabled(workflow.data.salespersonId);
           if (!autoRepliesOff) {
-            producer = await assignedEmailProducer(workflow.data.salespersonId);
+            producer = await assignedEmailProducer(workflow.data.salespersonId, { includeVerifiedSignatureHtml: true });
             // The preference may have changed while the producer was verified.
             autoRepliesOff = producer.member.data.autoRepliesEnabled === false;
           }
@@ -269,6 +270,26 @@ export const handler = async () => {
         continue;
       }
 
+      // Validate California's text signature before claiming generation. Setup failures stay retryable.
+      if (customerEmailIdentity(account.data.state).california) {
+        try {
+          californiaSignature(producer!.emailIdentity.verifiedSignatureHtml ?? "", producer!.producerName);
+          await resolveIssue(`generation-signature:${reply.id}`);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "The California signature could not be verified";
+          try {
+            await db.send(new UpdateCommand({ TableName: process.env.LEAD_REPLY_TABLE, Key: { id: reply.id },
+              UpdateExpression: "SET dueAt = :retry, note = :note, updatedAt = :now", ConditionExpression: "#s = :waiting",
+              ExpressionAttributeNames: { "#s": "status" }, ExpressionAttributeValues: { ":waiting": "WAITING", ":retry": new Date(Date.now() + 60_000).toISOString(), ":note": message.slice(0, 500), ":now": now },
+            }));
+            await issue(`generation-signature:${reply.id}`, message, reply.accountId);
+          } catch (recordError) {
+            console.warn("lead-reply signature waiting", reply.id, recordError instanceof Error ? recordError.message : "Could not record signature wait");
+          }
+          continue;
+        }
+      }
+
       await db.send(new UpdateCommand({
         TableName: process.env.LEAD_REPLY_TABLE, Key: { id: reply.id },
         UpdateExpression: "SET #s = :sending, updatedAt = :now, frontGenerationClaimedAt = :now",
@@ -297,9 +318,6 @@ export const handler = async () => {
         console.warn(
           `[lead-reply] association name looks off: "${account.data.name}" (${lead.nameProblem})`
         );
-      }
-      if (customerEmailIdentity(lead.state).california) {
-        producer = await assignedEmailProducer(workflow.data.salespersonId, { includeVerifiedSignatureHtml: true });
       }
       const generated = await generate(lead, producer!.producerName);
       const { subject, text, html } = renderReply({
