@@ -126,3 +126,12 @@ it("escapes signature markup and leaves unsafe link protocols inert", () => {
   expect(reply.html).toContain('&lt;script&gt;alert(3)&lt;/script&gt;');
   expect(reply.html).not.toMatch(/href="(?:javascript|data):|onclick=|<script|<img/);
 });
+
+it("keeps underscore characters in the complete linked mailbox destination", () => {
+  const reply = renderReply({ generated, lead, producerName: "Sample Producer", signatureMode: "FRONT",
+    producerSignatureHtml: signature.replaceAll("sample@", "sample_name@"),
+  });
+  expect(reply.text).toContain("sample_name@protectmyhoa.com");
+  expect(reply.html).toContain('href="mailto:sample_name@protectmyhoa.com"');
+  expect(reply.html).not.toContain('href="mailto:name@protectmyhoa.com"');
+});
