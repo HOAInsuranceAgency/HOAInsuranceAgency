@@ -1,4 +1,3 @@
-import { contactProgress, contactAt, sameContact } from "./contactProgress";
 import type { Communication, LeadTask } from "./leadWorkflow";
 /** Only the new portion of a message can describe the current request/result. */
 export function currentMessage(text = "") {
@@ -17,8 +16,4 @@ export function interimResponse(comm: Communication) {
   if (/\b(will (?:check|look|follow up|review|get back|ask)|looking into|working on|forward(?:ed|ing) (?:this|your)|awaiting|waiting (?:on|for)|received your request|let me (?:check|look|ask))\b/i.test(body)) return true;
   const plain = body.replace(/^(?:hi|hello|dear) [^\n,]+[,\n]\s*/i, "").replace(/\n(?:thanks|regards|best|sincerely)[\s\S]*$/i, "").trim();
   return /^(?:(?:thank(?:s| you)|received|got it|noted|okay|ok)[\s!.,]*)+$/i.test(plain);
-}
-export function deliveredServiceResponse(source: Communication, response: Communication) {
-  return contactProgress(response) === "CONTACT" && response.actorId !== "crm:initial-ai"
-    && sameContact(source, response) && contactAt(response) > source.at && !interimResponse(response);
 }
