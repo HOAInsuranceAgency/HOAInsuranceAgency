@@ -1,4 +1,4 @@
-import { normalizePhone, type Communication, type LeadTask } from "./leadWorkflow";
+import { normalizePhone, type Communication } from "./leadWorkflow";
 
 /** Provider activity is the evidence. A draft, failed send or ringing call is not contact. */
 export function contactProgress(c: Communication): "CONTACT" | "ATTEMPT" | undefined {
@@ -35,8 +35,4 @@ export function sameContact(a: Communication, b: Communication, contacts: Contac
     const pair = [c.email?.trim().toLowerCase(), c.phone ? normalizePhone(c.phone) : undefined].filter(Boolean);
     return left.some(s => pair.includes(s)) && right.some(s => pair.includes(s));
   });
-}
-
-export function automaticContactTask(task: LeadTask) {
-  return !task.milestone && (task.kind === "DOCUMENTS" && !!task.parentTaskId || ["RESPONSE", "CALLBACK", "CARRIER"].includes(task.kind) || !task.custom && ["FOLLOW_UP", "FIRST_CONTACT", "ANNUAL_RETURN", "PROSPECT_UPDATE"].includes(task.kind));
 }
