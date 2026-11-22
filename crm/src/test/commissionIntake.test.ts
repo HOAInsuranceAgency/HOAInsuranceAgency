@@ -781,8 +781,8 @@ it('puts a linked bank deposit and the affected payroll hold in the same receipt
 });
 it('posts an ordinary receipt without querying unrelated earnings history',async()=>{
   seed('STATEMENT_INTAKE',intake());await save();const s=await allocate(await payment());
-  const list=h.approvedCycles.getMockImplementation()!;
-  h.approvedCycles.mockImplementation(async (...args)=>{if(args[0]==='EARNING')throw new Error('History exceeds 5000 rows');return list(...args);});
+  const list=h.list.getMockImplementation()!;
+  h.list.mockImplementation(async (...args)=>{if(args[0]==='EARNING')throw new Error('History exceeds 5000 rows');return list(...args);});
   expect(await post(s)).toMatchObject({ok:true,complete:true});
   expect(get<CommissionPolicy>('POLICY','p').entries).toHaveLength(1);
 });
