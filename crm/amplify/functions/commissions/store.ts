@@ -80,7 +80,7 @@ export async function approvedPayrollCycles(minimumCutoff?: string): Promise<Pay
   const incomplete = () => new Error(indexed
     ? 'Approved payroll cycles could not be completely loaded. Retry before proceeding.'
     : 'Complete the approved payroll lookup backfill and retry.');
-  const rows = await collectCompletePages<Data>(async cursor => {
+  const readRows = <T>() => collectCompletePages<T>(async cursor => {
     const result = await db.send(new QueryCommand({
       TableName: table(),
       ConsistentRead: true,
@@ -103,17 +103,17 @@ export async function approvedPayrollCycles(minimumCutoff?: string): Promise<Pay
         FilterExpression: '#status = :approved' + (minimumCutoff ? ' AND #cutoff >= :date' : ''),
       }),
     }));
-    return { items: result.Items ?? [], next: result.LastEvaluatedKey };
+    return { items: (result.Items ?? []) as T[], next: result.LastEvaluatedKey };
   }, {
     maxPages: 100,
     maxRows: 5000,
     error: incomplete,
     sizeError: () => new Error('Too many active payroll approvals. Review outstanding cycles before proceeding.'),
   });
-  if (!indexed) return rows as PayrollCycle[];
-  const ids = rows.map(row => row.id as string);
-  const current = await getMany<PayrollCycle>(ids.map(id => ({kind: 'PAYROLL_CYCLE', id})));
-  if (current.length !== ids.length) throw new Error('An approved payroll cycle is missing. Review its source record before proceeding.');
+  if (!indexed) return readRows<PayrollCycle>();
+  const refs = await readRows<Pick<PayrollCycle, 'id'>>();
+  const current = await getMany<PayrollCycle>(refs.map(({id}) => ({kind: 'PAYROLL_CYCLE', id})));
+  if (current.length !== refs.length) throw new Error('An approved payroll cycle is missing. Review its source record before proceeding.');
   return current.filter(c => c.status === 'APPROVED' && (!minimumCutoff || c.cutoff >= minimumCutoff));
 }
 export async function commit(changes: Change[], actor: string, extras: Transaction = []) {
