@@ -1,6 +1,7 @@
-import { workspaceEarnings } from "./earnings";
+import { policyReceiptEarnings, workspaceEarnings } from "./earnings";
 import { agencyDay } from '../../../../shared/agencyTime';
-import { type CommissionEarning } from '../../../../shared/commissionExceptions';
+import { payrollRevenueKind } from '../../../../shared/commissionPayroll';
+import { allocationFor, receiptEarnings, type CommissionEarning } from '../../../../shared/commissionExceptions';
 import { exceptionAction, exceptionOperations } from './exceptions';
 import { assertPreviewRead } from "../migration-readonly";
 import { apiFailure } from '../../../../shared/apiResponse';
@@ -58,7 +59,7 @@ import { holdApprovedPayroll, payrollAction, payrollOperations } from './payroll
 import { planAction, planOperations } from './plans';
 import { statementPostingChanges } from './posting';
 import { intakeAction, intakeOperations } from './intake';
-import { depositAction, depositOperations, noSavedDeposit } from './deposits';
+import { depositAction, depositOperations, holdReceiptPayroll, noSavedDeposit } from './deposits';
 
 const agencyToday = () =>
   agencyDay(new Date());
@@ -169,12 +170,12 @@ export async function handler(event: Event) {
           asOf,
           isTest: !!process.env.COMMISSION_PAYROLL_ENV && process.env.COMMISSION_PAYROLL_ENV !== 'main',
           policies,
-          earnings: ownEarnings.map(e => ({id:e.id,version:e.version,producerId:e.producerId,producerName:e.producerName,policyId:e.policyId,policyNumber:e.policyNumber,accountName:e.accountName,transaction:e.transaction,entryId:e.entryId,receivedOn:e.receivedOn,agencyCents:e.shareBps===undefined?e.agencyCents:ratio(e.agencyCents,e.shareBps,10000),producerBps:e.producerBps,shareBps:e.shareBps,amountCents:e.amountCents,source:e.source,status:e.status,batchId:e.batchId})),
+          earnings: ownEarnings.map(e => ({id:e.id,version:e.version,producerId:e.producerId,producerName:e.producerName,policyId:e.policyId,policyNumber:e.policyNumber,accountName:e.accountName,transaction:e.transaction,entryId:e.entryId,revenueKind:payrollRevenueKind(e),receivedOn:e.receivedOn,agencyCents:e.shareBps===undefined?e.agencyCents:ratio(e.agencyCents,e.shareBps,10000),producerBps:e.producerBps,shareBps:e.shareBps,amountCents:e.amountCents,source:e.source,status:e.status,batchId:e.batchId})),
           batches: ownBatches.map(b => ({
             id: b.id, version: b.version, producerId: b.producerId, producerName: b.producerName,
             cutoff: b.cutoff, payDate: b.payDate, actualPaidOn: b.actualPaidOn, status: b.status, totalCents: b.totalCents, paidCents: batchPaidCents(b),
             payments: b.payments?.map((p,i) => ({ id: String(i+1), amountCents: p.amountCents, paidOn: p.paidOn })),
-            lines: b.lines.map(l => ({ earningId: l.earningId, source: l.source, shareBps: l.shareBps, policyId: l.policyId, entryId: l.entryId, accountName: l.accountName,
+            lines: b.lines.map(l => ({ earningId: l.earningId, source: l.source, revenueKind: payrollRevenueKind(l), shareBps: l.shareBps, policyId: l.policyId, entryId: l.entryId, accountName: l.accountName,
               policyNumber: l.policyNumber, receivedOn: l.receivedOn, transaction: l.transaction,
               agencyCents: l.agencyCents, producerBps: l.producerBps, amountCents: l.amountCents })),
           })),
@@ -551,14 +552,23 @@ export async function handler(event: Event) {
       if (kind === 'RECEIPT' && amount > balances.outstanding)
         throw new Error('The receipt exceeds the outstanding IPFS fee. Verify the agreement amount and allocation.');
       const original = originalId ? policy.entries.find(entry => entry.id === originalId) : undefined;
-      const eligible = original?.eligible ?? (policy.eligibility?.eligible !== false && (!policy.receiptsFrom || receivedOn >= policy.receiptsFrom));
+      // A dated shared allocation carries its participants' own eligible rates and receipt cutoffs.
+      const split = kind === 'RECEIPT' && allocationFor(policy, { receivedOn });
+      const eligible = original?.eligible ?? (!!split || (policy.eligibility?.eligible !== false && (!policy.receiptsFrom || receivedOn >= policy.receiptsFrom)));
       const entryId = `ipfs:${id}`;
       const next = appendEntry(policy, {
         policyId, lineRef, kind, originalId, eligible, revenueKind: 'IPFS_FEE',
         agencyCents: kind === 'REVERSAL' ? -amount : amount,
         eligibilityNote: `IPFS settlement ${settlementRef} · agreement ${policy.ipfsAgreementRef}`,
       }, { id: entryId, receivedOn }, entryId);
+      const entry = next.entries[next.entries.length - 1];
+      const shared = entry.allocationId ? receiptEarnings(next, entry, await policyReceiptEarnings([policy])) : [];
+      const reconciliation = await store.get<{ id: string; version: number }>('PAYROLL_STATE', 'reconciliation');
+      const holds = await holdReceiptPayroll(receivedOn, { policy: next, entry, earnings: shared });
       await store.commit([
+        ...holds,
+        ...shared.map(earning => change('EARNING', earning)),
+        change('PAYROLL_STATE', { id: 'reconciliation' }, reconciliation),
         change('IPFS_TRANSACTION', allocation),
         change('IPFS_SETTLEMENT', { id: settlementId, receivedOn, totalCents: settlementTotalCents, allocatedCents }, settlement),
         change('POLICY', next, policy),

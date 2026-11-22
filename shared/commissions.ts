@@ -429,10 +429,10 @@ export function selectCommissionTerms(
 }
 /** Append, never rewrite posted history. Negative producer amounts are proposed
  * recoveries only; they do not reduce unpaid wages or enter payroll batches. */
-export function appendEntry(
+export function appendEntry<T extends Pick<CommissionStatement, 'receivedOn' | 'id'>>(
   policy: CommissionPolicy,
   line: StatementLine,
-  statement: Pick<CommissionStatement, 'receivedOn' | 'id'>,
+  statement: T,
   entryId: string,
 ): CommissionPolicy {
   if (policy.entries.length >= 500)

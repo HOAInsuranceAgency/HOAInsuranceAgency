@@ -6,6 +6,7 @@ import {
   ratio,
   MONEY_MAX,
   batchPaidCents,
+  isCarrierReceipt,
   type CommissionPolicy,
   type CommissionEntry,
   type CommissionBatch,
@@ -41,6 +42,7 @@ export interface CommissionEarning {
   accountName: string;
   transaction: "NEW" | "RENEWAL";
   entryId: string;
+  revenueKind?: CommissionEntry['revenueKind'];
   receivedOn: string;
   agencyCents: number;
   producerBps: number;
@@ -232,6 +234,7 @@ export function receiptEarnings(
       accountName: policy.accountName,
       transaction: policy.transaction,
       entryId: entry.id,
+      ...(entry.revenueKind ? { revenueKind: entry.revenueKind } : {}),
       receivedOn: entry.receivedOn,
       agencyCents: entry.agencyCents,
       producerBps: p.producerBps,
@@ -386,20 +389,16 @@ export function departureWorklist(
           a.participants.some((p) => p.producerId === c.producerId),
         ),
     )
+    .filter(p => !c.pendingResolutions?.some(r => r.policyId === p.id &&
+      r.receiptCount <= p.entries.length && !p.entries.slice(r.receiptCount).some(isCarrierReceipt)))
     .map((p) => ({
       policyId: p.id,
       policyNumber: p.policyNumber,
       receiptCount: p.entries.length,
       expectedAgencyCents: ratio(p.premiumCents, p.agencyRateUnits, 1_000_000),
-      receivedAgencyCents: sum(p.entries.map((e) => e.agencyCents)),
+      receivedAgencyCents: sum(p.entries.filter(isCarrierReceipt).map((e) => e.agencyCents)),
     }))
-    .filter(
-      (p) =>
-        p.expectedAgencyCents > p.receivedAgencyCents &&
-        !c.pendingResolutions?.some(
-          (r) => r.policyId === p.policyId && r.receiptCount === p.receiptCount,
-        ),
-    );
+    .filter(p => p.expectedAgencyCents > p.receivedAgencyCents);
   return {
     rows,
     pending,

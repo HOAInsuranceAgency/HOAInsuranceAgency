@@ -33,6 +33,10 @@ function preview(cycle: PayrollCycle, policies: CommissionPolicy[], settings: Pa
   return { token, rows, blockers: [...(payrollCutoffIssue(cycle) ? [payrollCutoffIssue(cycle)] : []), ...payrollBlockers(cycle, policies, statements, earnings, departures), ...adjustments.filter(a=>a.status==='DRAFT'&&a.adjustmentType==='UNPAID_CORRECTION'&&a.effectiveOn<=cycle.payDate&&(!cycle.producerIds||cycle.producerIds.includes(a.producerId))).map(a=>'Resolve unpaid compensation correction '+a.id+' before payroll approval.')], totalCents: sum(rows.map(r => r.amountCents)), entryCount: rows.length, employees: [...new Set(rows.map(r => r.producerId))].map(producerId => ({ producerId, name: rows.find(r => r.producerId === producerId)!.producerName, amountCents: sum(rows.filter(r => r.producerId === producerId).map(r => r.amountCents)) })) };
 }
 
+function assertPaymentReady(cycle: PayrollCycle, batches: CommissionBatch[]) {
+  if (cycle.reviewRequired && !batches.some(b => batchPaidCents(b) > 0)) throw new Error(cycle.reviewRequired);
+}
+
 export async function payrollAction(_event: Event, actor: string, owner: boolean, operation: string, input: store.Data) {
   if (!owner) throw new Error('Not authorized: only the active Owner can manage commission payroll.');
   const settings = await payrollSettings();
@@ -158,6 +162,7 @@ export async function payrollAction(_event: Event, actor: string, owner: boolean
       if (!input.paymentId && input.amountCents === undefined && batch.actualPaidOn === paidOn && batch.reference === reference) return { ok: true };
       throw new Error('This employee payment was already recorded.');
     }
+    assertPaymentReady(cycle, batches);
     version(input, cycle);
     const balance = batch.totalCents - batchPaidCents(batch);
     const amountCents = input.amountCents === undefined ? balance : integer(input.amountCents, 1, balance, 'payment amount within the unpaid balance');
@@ -195,6 +200,7 @@ export async function payrollAction(_event: Event, actor: string, owner: boolean
     const paidOn = day(input.paidOn), paymentReference = required(input.paymentReference, 'the payroll payment reference');
     if (paidOn > payrollDay()) throw new Error('Confirm payment only after it occurs.');
     const batches = cycleBatches(cycle, await store.getMany<CommissionBatch>(cycle.batchIds.map(id => ({ kind: 'BATCH', id }))));
+    assertPaymentReady(cycle, batches);
     const lastPaid = [paidOn, ...batches.flatMap(b => [b.actualPaidOn ?? '', ...(b.payments ?? []).map(p => p.paidOn)])].sort().at(-1)!;
     await store.commit([...batches.filter(b => b.status === 'APPROVED').map(b => change('BATCH', { ...b, status: 'PAID', reference: paymentReference, actualPaidOn: [paidOn, ...(b.payments ?? []).map(p => p.paidOn)].sort().at(-1), payments: [...(b.payments ?? []), { id: `cycle:${cycle.id}:${cycle.revision}`, amountCents: b.totalCents - batchPaidCents(b), paidOn, reference: paymentReference, recordedAt: new Date().toISOString(), recordedBy: actor }] }, b)), change('PAYROLL_CYCLE', { ...cycle, status: 'PAID', paidOn: lastPaid, confirmationPaidOn: paidOn, paymentReference }, cycle)], actor);
     return { ok: true };

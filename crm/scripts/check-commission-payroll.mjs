@@ -526,6 +526,38 @@ test('tampered archived PDF bytes and snapshot totals are rejected',async()=>{
   await assert.rejects(ownerAction('downloadPayrollCycle',{id:'2026-11'}));report.cycle.totalCents++;
   await assert.rejects(ownerAction('downloadPayrollCycle',{id:'2026-11'}),/integrity/);
 });
+test('replaces and pays a held payroll with its original earnings and the late IPFS fee exactly once', async () => {
+  seed();
+  const policy = () => state.records.get('POLICY:p');
+  assert.deepEqual(await ownerApi('saveIpfsFee', { policyId: 'p', version: policy().version, expectedCents: 10000, agreementRef: 'IPFS-TEST' }), { ok: true });
+  const original = await approve();
+  assert.equal(original.totalCents, 16000);
+  const fee = { policyId: 'p', version: policy().version, kind: 'RECEIPT', amountCents: 10000, receivedOn: original.cutoff, settlementRef: 'TEST-DEPOSIT', lineRef: 'TEST-FEE' };
+  assert.deepEqual(await ownerApi('postIpfsFee', fee), { ok: true });
+  const held = currentCycle();
+  assert.match(held.reviewRequired, /IPFS/);
+  await assert.rejects(ownerAction('confirmPayrollCycle', { id: held.id, version: held.version, paidOn: '2026-11-20', paymentReference: 'TEST-PAY', confirmed: true }), /IPFS/);
+  await ownerAction('reopenPayrollCycle', { id: held.id, version: held.version, reason: 'Include late IPFS fee at cutoff' });
+  const { cycles } = await ownerAction('payrollWorkspace');
+  const replacement = cycles.find(c => c.id === held.id);
+  assert.equal(replacement.revision, 2);
+  assert.equal(replacement.preview.totalCents, 17600);
+  const expectedEarnings = [['CARRIER_COMMISSION', 16000], ['IPFS_FEE', 1600]];
+  const sources = rows => rows.map(l => [l.revenueKind ?? 'CARRIER_COMMISSION', l.amountCents]).sort(([a], [b]) => a.localeCompare(b));
+  assert.deepEqual(sources(replacement.preview.rows), expectedEarnings);
+  await ownerAction('approvePayrollCycle', { id: replacement.id, version: replacement.version, previewToken: replacement.preview.token, confirmed: true });
+  assert.deepEqual(sources(currentBatch().lines), expectedEarnings);
+  assert.equal(state.records.get('BATCH:' + original.batchIds[0]).status, 'CANCELLED');
+  const pay = { id: held.id, version: currentCycle().version, paidOn: '2026-11-20', paymentReference: 'TEST-PAY', confirmed: true };
+  await ownerAction('confirmPayrollCycle', pay);
+  await ownerAction('confirmPayrollCycle', pay);
+  assert.deepEqual(await ownerApi('postIpfsFee', fee), { ok: true });
+  assert.equal(currentCycle().status, 'PAID');
+  assert.equal(currentBatch().payments.length, 1);
+  assert.equal(batchPaidCents(currentBatch()), 17600);
+  assert.deepEqual((await ownerAction('payrollWorkspace')).availableEarnings, []);
+});
+
 test('sent report correction requires HR hold and retains old PDFs through a new approval',async()=>{
   seed();await approve();await runWorker(scheduleEvent());const old=(await ownerAction('downloadPayrollCycle',{id:'2026-11'})).files;
   const input={id:'2026-11',version:currentCycle().version,reason:'Late receipt correction'};
