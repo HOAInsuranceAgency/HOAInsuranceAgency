@@ -1,6 +1,6 @@
 import type { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import { TransactWriteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
-import { parseScheduleJson } from "../../src/lib/premiumFinance/quote";
+import { parseScheduleJson } from "../../../shared/premiumFinance/schedule";
 
 /**
  * The one way an installment posts.

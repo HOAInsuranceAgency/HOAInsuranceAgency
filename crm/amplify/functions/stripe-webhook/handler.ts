@@ -17,7 +17,7 @@ import {
   remittanceSubject,
   remittanceText,
 } from "./remittance";
-import { PF_CONFIG_SHA256 } from "../../../src/lib/premiumFinance/jurisdictions";
+import { PF_CONFIG_SHA256 } from "../../../../shared/premiumFinance/auditConfig";
 
 /**
  * Stripe → invoice status. See resource.ts for why this is a Function URL.

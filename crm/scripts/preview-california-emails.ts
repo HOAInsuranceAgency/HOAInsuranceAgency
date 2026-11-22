@@ -27,13 +27,10 @@ const invoice: InvoiceView = {
   paymentUrl: "https://example.invalid/test-payment",
   lines: [{ description: "Sample property premium - TEST ONLY", kind: "PREMIUM", retailAmount: 1200 }],
 };
-const financed: InvoiceView = { ...invoice, number: "TEST-CA-002",
-  finance: { url: "https://example.invalid/test-financing", downPayment: 300, monthly: 100, months: 9, apr: 5 } };
 const fixtures = [
   { id: "lead-reply", label: "Initial lead reply", mail: renderReply(common), producer: true },
   { id: "lead-reply-documents", label: "Initial lead reply with document request", mail: renderReply({ ...common, uploadUrl: "https://example.invalid/test-document-upload" }), producer: true },
   { id: "invoice", label: "Invoice with payment link and PDF", mail: renderInvoice(invoice), invoice },
-  { id: "invoice-financing", label: "Invoice with financing option and PDF", mail: renderInvoice(financed), invoice: financed },
 ];
 const messages = [];
 for (const fixture of fixtures) {

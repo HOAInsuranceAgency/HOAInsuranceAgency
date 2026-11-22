@@ -53,8 +53,8 @@ describe("shared California customer email identity", () => {
     expect(reply.text).not.toContain(disclosure);
     expect(renderInvoice({ ...invoice, propertyState: "MA" })).toEqual(renderInvoice({ ...invoice, propertyState: undefined }));
   });
-  it.each([null, { url: "https://example.invalid/finance", downPayment: 300, monthly: 100, months: 9, apr: 5 }])("brands invoices, including the financing variant %j, from the risk state", finance => {
-    const rendered = renderInvoice({ ...invoice, finance });
+  it("brands invoices from the risk state", () => {
+    const rendered = renderInvoice(invoice);
     expect(rendered.subject).toContain("Condo Insurance Agency");
     for (const part of [rendered.text, rendered.html]) {
       expect(part).toContain(disclosure);
@@ -62,7 +62,6 @@ describe("shared California customer email identity", () => {
       expect(part).not.toContain("$900");
     }
     expect(rendered.html).not.toContain(AGENCY_FMT.logoUrl);
-    if (finance) expect(rendered.text).toContain(finance.url);
   });
   it("uses a California PDF wordmark and disclosure on every page without fetching the HOA logo", async () => {
     const fetch = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Should not load the other wordmark"));
@@ -84,21 +83,12 @@ describe("shared California customer email identity", () => {
       ...invoice,
       lines: [{ description: "Adjustment", retailAmount: amount, costAmount: 0 }],
       paymentUrl: "https://example.invalid/pay",
-      finance: { url: "https://example.invalid/finance", downPayment: 100, monthly: 25, months: 9, apr: 5 },
     });
     expect(rendered.subject).toContain("Condo Insurance Agency");
     expect(rendered.text).toContain("No payment is due");
     expect(rendered.text).not.toContain("https://example.invalid/pay");
     expect(rendered.html).not.toContain("https://example.invalid/finance");
     if (amount < 0) expect(rendered.subject).toContain("$250.00 credit");
-  });
-  it("retains the separately payable broker fee in California financing correspondence", () => {
-    const rendered = renderInvoice({ ...invoice,
-      finance: { url: "https://example.invalid/finance", downPayment: 300, brokerFee: 75, monthly: 100, months: 9, apr: 5 },
-    });
-    expect(rendered.text).toContain("$75.00 broker fee paid in full");
-    expect(rendered.html).toContain("broker fee paid in full");
-    expect(rendered.text).toContain(disclosure);
   });
 });
 

@@ -6,7 +6,7 @@ import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import type { Schema } from "../../data/resource";
 import { listAllPages } from "../../../src/lib/pagination";
-import { PF_CONFIG_SHA256 } from "../../../src/lib/premiumFinance/jurisdictions";
+import { PF_CONFIG_SHA256 } from "../../../../shared/premiumFinance/auditConfig";
 
 /** Daily: an ACTIVE loan past its next due date is in default. See resource.ts. */
 

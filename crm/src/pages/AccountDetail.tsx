@@ -74,34 +74,9 @@ const VALID_TABS: Tab[] = [
  */
 const LEAD_ONLY_TABS: ReadonlySet<Tab> = new Set<Tab>(["priorcarrier"]);
 
-/**
- * Tabs that only mean something once the account is a client.
- *
- * A lead has no policy — a policy exists because a quote bound, and binding is
- * what makes the account a client. The Policies tab on a lead could therefore
- * only ever say "No policies", which reads as data missing rather than data
- * that cannot exist yet. Invoices USED to follow it, until the W8 E2E caught
- * the contradiction: billing a quote before bind is the new-business flow,
- * and new business is a lead — hiding the money tabs from leads hid the
- * feature from its audience. So Invoices and Financing show at every stage
- * now, and only Policies waits for the bind that makes it true.
- *
- * Not enforced anywhere but the tab bar. The rows are still reachable and
- * still load — this hides a panel that has nothing to show, it does not make
- * the records conditional.
- */
 const CLIENT_ONLY_TABS: ReadonlySet<Tab> = new Set<Tab>(["policies"]);
 
-/**
- * The tabs an account of this stage offers, in display order.
- *
- * Financing used to be conditional on the premium-finance module flag, and
- * both functions took it as an option so a bookmarked `?tab=financing` on a
- * disabled module fell back to Overview. The module is always on as of
- * 2026-08-25, so the tab is simply a tab; stage is the only thing that
- * still decides what an account offers.
- */
-export function tabsFor(stage: string | null | undefined): [Tab, string][] {
+export function tabsFor(stage: string | null | undefined, showLegacyLoans = false): [Tab, string][] {
   const isLead = stage !== "CLIENT";
   return [
     ["overview", "Overview"],
@@ -112,14 +87,9 @@ export function tabsFor(stage: string | null | undefined): [Tab, string][] {
     ["losses", "Losses"],
     ["submissions", "Submissions"],
     ["quotes", "Quotes"],
-    // Policies stay client-only — a lead by definition has none. Invoices
-    // and Financing do NOT (since the W8 E2E caught them hidden): billing
-    // a QUOTE before bind is new business, and new business is a lead —
-    // the invoice and its loan roll onto the policy when the bind
-    // converts them.
     ...(isLead ? [] : ([["policies", "Policies"]] as [Tab, string][])),
     ["invoices", "Invoices"],
-    ["financing", "Financing"],
+    ...(showLegacyLoans ? ([["financing", "Legacy financing"]] as [Tab, string][]) : []),
     ["documents", "Documents"],
     ["certificates", "Certificates"],
     ["activity", "Activity"],
@@ -202,6 +172,14 @@ function AccountDetailPage({ profile }: { profile: UserProfile }) {
     [id],
     { initialData: null as Account | null, errorMessage: "Failed to load account" }
   );
+  const legacyLoans = useAsyncResource(async () => {
+    if (!id) return false;
+    const result = await client.models.PfLoan.listPfLoanByAccountIdAndQuotedAt(
+      { accountId: id }, { limit: 1, selectionSet: ["id"] }
+    );
+    if (result.errors?.length) throw new Error(result.errors[0].message);
+    return result.data.length > 0;
+  }, [id], { initialData: false, errorMessage: "Could not check legacy financing" });
   const account = res.data;
   const setAccount = res.setData;
   useEffect(() => {
@@ -230,7 +208,7 @@ function AccountDetailPage({ profile }: { profile: UserProfile }) {
   if (notFound) return <p>Account not found.</p>;
   if (!account) return <p className="muted">Loading…</p>;
 
-  const tabs = tabsFor(account.stage);
+  const tabs = tabsFor(account.stage, legacyLoans.data || tab === "financing");
   const activeTab = resolveTab(tab, account.stage);
 
   return (

@@ -12,7 +12,6 @@ const models = vi.hoisted(() => ({
 }));
 const mutations = vi.hoisted(() => ({
   issueFinanceQuote: vi.fn(),
-  generatePfAgreement: vi.fn(),
   servicePfLoan: vi.fn(),
 }));
 vi.mock("aws-amplify/data", () => ({
@@ -183,7 +182,7 @@ describe("servicing reliability", () => {
     await userEvent.click(screen.getByRole("button", { name: "Post payment 3 of 12" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Payment status is unconfirmed");
     expect(screen.getByRole("button", { name: "Post payment 3 of 12" })).toBeDisabled();
-    expect(screen.queryByText(/No financing on this association/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/No legacy loans for this association/)).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Refresh financing" }));
     expect(await screen.findByRole("button", { name: "Post payment 4 of 12" })).toBeEnabled();
     expect(mutations.servicePfLoan).toHaveBeenCalledTimes(1);
@@ -244,7 +243,7 @@ describe("servicing reliability", () => {
       .mockResolvedValueOnce({ data: [activeLoan] });
     render(<FinancingTab account={account} />);
     expect(await screen.findByRole("alert")).toHaveTextContent("Loan read failed");
-    expect(screen.queryByText(/No financing on this association/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/No legacy loans for this association/)).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Retry financing" }));
     expect(await screen.findByText("$68,570.32")).toBeInTheDocument();
   });
@@ -257,7 +256,7 @@ describe("servicing reliability", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Service" }));
     await userEvent.click(screen.getByRole("button", { name: "Post payment 3 of 12" }));
     view.rerender(<FinancingTab account={{ ...account, id: "a2" }} />);
-    expect(await screen.findByText(/No financing on this association/)).toBeInTheDocument();
+    expect(await screen.findByText(/No legacy loans for this association/)).toBeInTheDocument();
     await act(async () => pending.resolve({ data: JSON.stringify({ ok: true }) }));
     expect(screen.queryByText("$68,570.32")).not.toBeInTheDocument();
     expect(screen.queryByText("Servicing")).not.toBeInTheDocument();
@@ -275,7 +274,7 @@ describe("automatic enrollment", () => {
   it("shows pending settlement without requiring staff activation or a document upload", async () => {
     models.PfLoan.list.mockImplementation(() => page([{ ...quotedLoan, downPaymentIntentId: "pi_pending" }]));
     await openServicing();
-    expect(await screen.findByText(/Initial payment is processing/)).toBeInTheDocument();
+    expect(await screen.findByText(/initial payment was submitted/i)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Activate loan" })).not.toBeInTheDocument();
     expect(models.Document.list).not.toHaveBeenCalled();
     expect(mutations.servicePfLoan).not.toHaveBeenCalled();
@@ -311,17 +310,17 @@ describe("origination has no UI — servicing reaches every loan", () => {
     );
   });
 
-  it("points an empty account at the invoice flow instead of a form", async () => {
+  it("shows the empty legacy account without advertising new financing", async () => {
     models.PfLoan.list.mockImplementation(() => page([]));
     render(<FinancingTab account={account} />);
     expect(
-      await screen.findByText(/Offers originate automatically\s+when an invoice is sent/)
+      await screen.findByText(/No legacy loans for this association/)
     ).toBeInTheDocument();
   });
 });
 
 describe("ACCEPTED loans and autopay", () => {
-  it("shows automatic enrollment on a legacy ACCEPTED loan", async () => {
+  it("shows the receipt on a legacy accepted loan", async () => {
     models.PfLoan.list.mockImplementation(() =>
       page([
         {
@@ -340,7 +339,7 @@ describe("ACCEPTED loans and autopay", () => {
     expect(
       screen.getByText(/down payment received.*autopay\s+mandate on file/i)
     ).toBeInTheDocument();
-    expect(screen.getByText(/Monthly collections are enabled automatically/)).toBeInTheDocument();
+    expect(screen.getByText(/Monthly collections are closed for this agreement/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Activate loan" })).not.toBeInTheDocument();
     expect(models.Document.list).not.toHaveBeenCalled();
   });

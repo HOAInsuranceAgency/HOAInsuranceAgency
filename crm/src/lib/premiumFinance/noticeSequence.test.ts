@@ -289,23 +289,6 @@ describe("servicing idempotency (the review findings)", () => {
   });
 });
 
-describe("origination rechecks the flag at the last moment", () => {
-  it("a disable landing mid-evaluation blocks the create", () => {
-    const SRC = readFileSync(
-      // W8: the origination invariants live in the shared core both loan
-      // writers (pf-originate, the invoice send) delegate to.
-      resolve(process.cwd(), "amplify/functions/pfOrigination.ts"),
-      "utf8"
-    );
-    // Stronger than ordering now: the flag check and the loan Put are one
-    // TransactWriteItems — no window exists between them at all.
-    expect(SRC).toContain("TransactWriteCommand");
-    expect(SRC).toContain('ConditionExpression: "premiumFinanceEnabled = :on"');
-    expect(SRC).toContain("TransactionCanceledException");
-    expect(SRC).not.toContain("client.models.PfLoan.create");
-  });
-});
-
 describe("a cured default retires its notices", () => {
   it("an old episode's intent cannot authorize this cancellation", () => {
     // Default → intent + cert → cured → re-default: the expired clock from

@@ -75,8 +75,8 @@ describe("invoice creation reliability", () => {
     expect(screen.getByText("Editing inv1")).toBeInTheDocument();
     expect(api.models.Invoice.create).toHaveBeenCalledTimes(1);
   });
-  it("surfaces account read errors with a usable retry", async () => {
-    api.models.Account.get.mockResolvedValueOnce({ data: null, errors: [{ message: "Account unavailable" }] });
+  it("surfaces invoice read errors with a usable retry", async () => {
+    api.models.Invoice.list.mockResolvedValueOnce({ data: [], errors: [{ message: "Invoices unavailable" }] });
     render(<InvoicesTab accountId="a1" />);
     await userEvent.click(await screen.findByRole("button", { name: "Retry invoices" }));
     expect(await screen.findByRole("combobox")).toBeInTheDocument();

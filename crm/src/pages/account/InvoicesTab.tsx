@@ -4,7 +4,6 @@ import {
   fmtDate,
   fmtMoney,
   listAllPages,
-  type Account,
   type Contact,
   type Invoice,
   type InvoiceLine,
@@ -78,7 +77,7 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
        * know which policies are already billed. Fetching them per-invoice would
        * be one round trip per row to render a summary.
        */
-      const [invoices, lines, policies, quotes, contacts, account] = await allWithAuthorizationPriority([
+      const [invoices, lines, policies, quotes, contacts] = await allWithAuthorizationPriority([
         listAllPages((nextToken) =>
           client.models.Invoice.list({
             filter: { accountId: { eq: accountId } },
@@ -97,8 +96,7 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
             nextToken,
           })
         ),
-        // W8: quotes are invoiceable before bind — premium billed, financing
-        // offered, everything rolling onto the policy at bind.
+        // Pre-bind invoices move to the policy when the quote binds.
         listAllPages((nextToken) =>
           client.models.Quote.list({
             filter: { accountId: { eq: accountId } },
@@ -111,13 +109,6 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
             nextToken,
           })
         ),
-        // The financing hint predicts the send's origination, which reads
-        // the account's state, type and incorporation.
-        client.models.Account.get({ id: accountId }).then((r) => {
-          if (r.errors?.length) throw r.errors.find(isAuthorizationError) ?? r.errors[0];
-          if (!r.data) throw new Error("Couldn't load the account for billing.");
-          return r.data;
-        }),
       ]);
       return {
         invoices: invoices as Invoice[],
@@ -125,7 +116,6 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
         policies: policies as Policy[],
         quotes: quotes as Quote[],
         contacts: contacts as Contact[],
-        account: account as Account | null,
       };
     },
     [accountId],
@@ -275,7 +265,7 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
   const readError = res.error && <p className="error-text">{res.error} <button type="button" disabled={res.loading} onClick={() => void res.refetch()}>Retry invoices</button></p>;
   if (!res.data) return readError || null;
 
-  const { invoices, lines, policies, quotes, contacts, account } = res.data;
+  const { invoices, lines, policies, quotes, contacts } = res.data;
   // Newest first: the one someone came here for is almost always the last made.
   const ordered = [...invoices].sort((a, b) =>
     (b.createdAt ?? "").localeCompare(a.createdAt ?? "")
@@ -405,7 +395,6 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
           onBusyChange={setEditorBusy}
           policies={policies}
           quotes={quotes}
-          account={account}
           contacts={contacts}
           onChange={(next) =>
             res.setData((cur) =>

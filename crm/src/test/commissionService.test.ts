@@ -1,8 +1,12 @@
+import type { CommissionEarning } from '../../../shared/commissionExceptions';
 import { payrollPreview } from '../../../shared/commissionPayroll';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { commissionPolicy, commissionAccount, line, statement } from './commissionFixtures';
 import {
   appendEntry,
+  ipfsFeeBalances,
+  carrierReconciliationBalances,
+  policyTotals,
   receiptOnlyCarrierTerms,
   type CarrierPaymentArrangement,
   type CommissionPolicy,
@@ -138,6 +142,8 @@ it.each([
     'getAccountClassification',
     'saveCarrier',
     'saveReceiptForecast',
+    'saveIpfsFee',
+    'postIpfsFee',
     'file',
     'saveStatement',
     'postStatement',
@@ -907,4 +913,98 @@ it('cannot void a posted receipt or overwrite a different void decision', async 
   records.set('STATEMENT:s', {...statement(),status:'VOID',voidReason:'Original reason',voidedBy:'producer'});
   expect(await handler(request('voidStatement',{id:'s',version:1,reason:'New reason',confirmed:true}))).toMatchObject({ok:false});
   expect(h.commit).not.toHaveBeenCalled();
+});
+
+it('matches partial IPFS receipts once, preserves carrier balances and uses the bound producer rate in payroll', async () => {
+  const policy = commissionPolicy();
+  records.set('POLICY:p', policy);
+  const current = () => records.get('POLICY:p') as CommissionPolicy;
+  const expected = { policyId: 'p', version: 1, expectedCents: 30000, agreementRef: 'IPFS-123' };
+  expect(await handler(request('saveIpfsFee', expected))).toEqual({ ok: true });
+  expect(policyTotals(current())).toMatchObject({ expectedAgency: 1230000, receivedAgency: 0, earned: 0 });
+  const receipt = { policyId: 'p', version: 2, kind: 'RECEIPT', amountCents: 12345, receivedOn: '2026-10-01',
+    lineRef: 'Alloc-1', settlementRef: 'Deposit-1', settlementTotalCents: 30000 };
+  const post = (patch = {}) => handler(request('postIpfsFee', { ...receipt, ...patch }));
+  expect(await post()).toEqual({ ok: true });
+  expect(await post({ lineRef: 'alloc-1' })).toEqual({ ok: true });
+  expect(await post({ amountCents: 12346 })).toMatchObject({ ok: false });
+  records.set('POLICY:other', { ...policy, id: 'other', accountId: 'another-account', ipfsAgreementRef: 'IPFS-123', ipfsFeeCents: 30000 });
+  expect(await post({ policyId: 'other', version: 1 })).toMatchObject({ ok: false });
+  expect(await post({ policyId: 'other', version: 1, lineRef: 'Alloc-X', amountCents: 17656 })).toMatchObject({ ok: false, error: expect.stringMatching(/exceed the verified/) });
+  expect(await post({ policyId: 'other', version: 1, lineRef: 'Alloc-X', settlementTotalCents: 50000 })).toMatchObject({ ok: false });
+  const originalId = current().entries[0].id;
+  expect(await post({ kind: 'REVERSAL', lineRef: 'Refund-1', receivedOn: '2026-10-02',
+    amountCents: 1000, settlementTotalCents: 1000, originalId, version: 3 })).toEqual({ ok: true });
+  expect(ipfsFeeBalances(current())).toEqual({ expected: 30000, collected: 12345, refunded: 1000, net: 11345, outstanding: 17655 });
+  expect(await post({ lineRef: 'Alloc-2', version: 4, amountCents: 17656 })).toMatchObject({ ok: false });
+  expect(await post({ lineRef: 'Alloc-2', version: 4, amountCents: 17655 })).toEqual({ ok: true });
+  expect(carrierReconciliationBalances(current(), '2026-10-30')).toMatchObject({ receivedToDate: 0, adjustmentReview: false });
+  expect(policyTotals(current())).toMatchObject({ receivedAgency: 29000, earned: 4800, proposedRecovery: 160 });
+  const payable = payrollPreview([current()], '2026-10-12');
+  expect(payable.reduce((total, row) => total + row.amountCents, 0)).toBe(4800);
+  const refundId = current().entries[1].id;
+  expect(await post({ kind: 'RESTORATION', lineRef: 'Restored-1', receivedOn: '2026-10-03',
+    amountCents: 1000, settlementTotalCents: 1000, originalId: refundId, version: current().version })).toEqual({ ok: true });
+  expect(ipfsFeeBalances(current())).toEqual({ expected: 30000, collected: 30000, refunded: 0, net: 30000, outstanding: 0 });
+  expect(policyTotals(current())).toMatchObject({ earned: 4800, proposedRecovery: 0 });
+  expect(await handler(request('saveIpfsFee', { ...expected, version: current().version, agreementRef: 'Other' }))).toMatchObject({ ok: false });
+});
+
+it('isolates IPFS adjustments and enforces frozen receipt eligibility and valid settlement dates', async () => {
+  const policy = appendEntry(commissionPolicy(), line(), statement(), 'carrier-receipt');
+  records.set('POLICY:p', { ...policy, ipfsAgreementRef: 'Test', ipfsFeeCents: 20000, receiptsFrom: '2026-10-01' });
+  const receipt = { policyId: 'p', version: 1, kind: 'RECEIPT', amountCents: 10000, receivedOn: '2026-09-30',
+    lineRef: 'Fee-1', settlementRef: 'Deposit-1' };
+  const post = (patch = {}) => handler(request('postIpfsFee', { ...receipt, ...patch }));
+  expect(await post({ receivedOn: '2099-01-01' })).toMatchObject({ ok: false });
+  expect(await post({ kind: 'REVERSAL', originalId: 'carrier-receipt' })).toMatchObject({ ok: false });
+  expect(await post()).toEqual({ ok: true });
+  const updated = records.get('POLICY:p') as CommissionPolicy;
+  expect(updated.entries[1]).toMatchObject({ producerCents: 0, eligible: false, revenueKind: 'IPFS_FEE' });
+  const carrierReversal = line({ kind: 'REVERSAL', agencyCents: -100, originalId: updated.entries[1].id });
+  expect(() => appendEntry(updated, carrierReversal, statement(), 'carrier-reversal')).toThrow(/original/);
+});
+
+it('serializes concurrent allocations of one IPFS remittance across different policy terms and accounts', async () => {
+  for (const id of ['p1', 'p2'])
+    records.set(`POLICY:${id}`, { ...commissionPolicy(), id, accountId: `account-${id}`, ipfsFeeCents: 7500, ipfsAgreementRef: 'Package' });
+  const post = (policyId: string, amountCents: number) => handler(request('postIpfsFee', {
+    policyId, version: 1, kind: 'RECEIPT', receivedOn: '2026-10-01', amountCents,
+    settlementTotalCents: 10000, settlementRef: 'Deposit', lineRef: `Deposit/${policyId}`,
+  }));
+  const result = await Promise.all([post('p1', 7500), post('p2', 7500)]);
+  const posted = result.map(outcome => typeof outcome === 'object' && outcome !== null && 'ok' in outcome && outcome.ok === true);
+  expect(posted.filter(Boolean)).toHaveLength(1);
+  const loser = posted[0] ? 'p2' : 'p1';
+  expect(await post(loser, 7500)).toMatchObject({ ok: false, error: expect.stringMatching(/exceed the verified/) });
+  expect(await post(loser, 2500)).toEqual({ ok: true });
+  const entries = ['p1', 'p2'].flatMap(id => (records.get(`POLICY:${id}`) as CommissionPolicy).entries);
+  expect(entries).toHaveLength(2);
+  expect(entries.reduce((total, entry) => total + entry.agencyCents, 0)).toBe(10000);
+  expect(entries.reduce((total, entry) => total + entry.producerCents, 0)).toBe(1600);
+});
+
+it('posts IPFS fee cash once and applies each participant’s frozen share through retained payroll', async () => {
+  const policy: CommissionPolicy = {
+    ...commissionPolicy(), receiptsFrom: '2026-11-01', ipfsFeeCents: 10000, ipfsAgreementRef: 'IPFS-A',
+    allocations: [{ id: 'split', from: '2026-01-01', agreement: 'A', approvedBy: 'Owner', approvedAt: '2026-01-01',
+      method: 'INDIVIDUAL_PLAN_RATE', houseBps: 0, participants: [
+        { producerId: 'one', producerName: 'One', shareBps: 6000, producerBps: 2000, eligible: true, planVersion: 1, agreement: 'B' },
+        { producerId: 'two', producerName: 'Two', shareBps: 4000, producerBps: 1000, eligible: true, planVersion: 1, agreement: 'C' },
+      ] }],
+  };
+  records.set('POLICY:p', policy);
+  const fee = { policyId: 'p', version: 1, kind: 'RECEIPT', amountCents: 10000, receivedOn: '2026-10-01', lineRef: 'A-1', settlementRef: 'D-1' };
+  expect(await handler(request('postIpfsFee', fee))).toEqual({ ok: true });
+  const current = () => records.get('POLICY:p') as CommissionPolicy;
+  expect(current().entries).toMatchObject([{ revenueKind: 'IPFS_FEE', agencyCents: 10000, producerCents: 0, allocationId: 'split' }]);
+  const earnings = () => [...records].filter(([key]) => key.startsWith('EARNING:')).map(([,value]) => value as CommissionEarning);
+  expect(payrollPreview([current()], '2026-10-01', undefined, earnings()).map(line => [line.producerId, line.amountCents]))
+    .toEqual([['one', 1200], ['two', 400]]);
+  const refund = { ...fee, version: 2, kind: 'REVERSAL', amountCents: 5000, originalId: current().entries[0].id, receivedOn: '2026-10-03', lineRef: 'Refund', settlementRef: 'D-2' };
+  expect(await handler(request('postIpfsFee', refund))).toEqual({ ok: true });
+  expect(await handler(request('postIpfsFee', refund))).toEqual({ ok: true });
+  expect(earnings().filter(e => e.status === 'REVIEW').map(e => e.amountCents)).toEqual([-600, -200]);
+  expect(earnings()).toHaveLength(4);
+  expect(records.get('PAYROLL_STATE:reconciliation')).toMatchObject({ version: 2 });
 });

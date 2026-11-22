@@ -22,7 +22,7 @@ export function installBrokerFees(backend: typeof Backend, communicationTable: D
   // This stack depends on the roles/tables; neither depends on these policies.
   const permissions = backend.createStack('BrokerFeePermissions');
   const api = backend.data.resources.graphqlApi;
-  const writers = [backend.brokerFees,backend.communications,backend.commissions,backend.stripeWebhook,backend.sendInvoice,backend.voidInvoice,backend.pfElection];
+  const writers = [backend.brokerFees,backend.communications,backend.commissions,backend.stripeWebhook,backend.sendInvoice,backend.voidInvoice];
   const functions = [...writers,backend.crmAccess];
   const grants = new Map<typeof functions[number],PolicyStatement[]>();
   const add = (fn:typeof functions[number],actions:string[],resources:string[]) => {
@@ -39,7 +39,7 @@ export function installBrokerFees(backend: typeof Backend, communicationTable: D
     fn.addEnvironment('ACCESS_API_ID',api.apiId);
     add(fn,[...reads,...writes],[commissionTable.tableArn,`${commissionTable.tableArn}/index/*`]);
   }
-  for(const fn of [backend.brokerFees,backend.sendInvoice,backend.pfElection,backend.communications]) {
+  for(const fn of [backend.brokerFees,backend.sendInvoice,backend.communications]) {
     fn.addEnvironment('ACCESS_API_ID',api.apiId);
     fn.addEnvironment('COMMUNICATION_TABLE',communicationTable.tableName);
     add(fn,reads,[communicationTable.tableArn,`${communicationTable.tableArn}/index/*`]);
@@ -49,11 +49,11 @@ export function installBrokerFees(backend: typeof Backend, communicationTable: D
   backend.brokerFees.addEnvironment('DOCUMENT_BUCKET',backend.storage.resources.bucket.bucketName);
   add(backend.brokerFees,['s3:GetObject','s3:PutObject'],[backend.storage.resources.bucket.arnForObjects('documents/*')]);
   const modelArn=(model:string)=>Stack.of(api).formatArn({service:'dynamodb',resource:'table',resourceName:`${model}-${api.apiId}-NONE`});
-  for(const fn of [backend.brokerFees,backend.communications,backend.stripeWebhook,backend.commissions,backend.sendInvoice,backend.pfElection,backend.voidInvoice]) {
+  for(const fn of [backend.brokerFees,backend.communications,backend.stripeWebhook,backend.commissions,backend.sendInvoice,backend.voidInvoice]) {
     fn.addEnvironment('ACCESS_API_ID',api.apiId);
     const models=fn===backend.brokerFees?['Account','Quote','Policy','Invoice','InvoiceLine','Document','AgencySettings','PfLoan']
       :fn===backend.voidInvoice?['Quote','Policy','Invoice']
-      :[backend.communications,backend.sendInvoice,backend.pfElection].includes(fn as typeof backend.communications)?['AgencySettings','Quote','Account','Policy','Invoice','PfLoan',...(fn===backend.sendInvoice?['InvoiceLine']:[])]
+      :[backend.communications,backend.sendInvoice].includes(fn as typeof backend.communications)?['AgencySettings','Quote','Account','Policy','Invoice','PfLoan',...(fn===backend.sendInvoice?['InvoiceLine']:[])]
       :['Quote','Policy','Document','AgencySettings'];
     add(fn,reads,models.flatMap(model=>[modelArn(model),`${modelArn(model)}/index/*`]));
     const writable=fn===backend.brokerFees?['Account','Invoice','Document','Policy','AgencySettings']:fn===backend.stripeWebhook?['Policy']:fn===backend.commissions?['Document']:fn===backend.voidInvoice?['Invoice']:[];
@@ -64,7 +64,7 @@ export function installBrokerFees(backend: typeof Backend, communicationTable: D
   add(backend.crmAccess,['dynamodb:UpdateItem','dynamodb:ConditionCheckItem'],['Quote','PfLoan'].map(modelArn));
   add(backend.crmAccess,['dynamodb:ConditionCheckItem'],[modelArn('Invoice'),communicationTable.tableArn]);
   add(backend.crmAccess,['dynamodb:UpdateItem'],[modelArn('Invoice')]);
-  for(const fn of [backend.sendInvoice,backend.pfElection])add(fn,['dynamodb:UpdateItem'],[modelArn('Quote')]);
+  for(const fn of [backend.sendInvoice])add(fn,['dynamodb:UpdateItem'],[modelArn('Quote')]);
   let index=0;
   for(const [fn,statements]of grants)new ManagedPolicy(permissions,`BrokerFeeAccess${index++}`,{roles:[fn.resources.lambda.role!],statements});
   new Rule(Stack.of(backend.brokerFees.resources.lambda),'BrokerFeeReceiptRecovery',{
