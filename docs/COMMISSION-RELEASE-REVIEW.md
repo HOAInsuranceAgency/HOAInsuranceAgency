@@ -40,7 +40,7 @@ Run `npm run verify` from the repository root. This includes the offline commiss
 
 ## PR 167 review corrections
 
-- Direct and linked late receipts hold affected approved payroll in the receipt transaction. Reconciliation is read before cycle discovery so a concurrent approval forces a retry; stale reports cannot authorize payment.
+- Late IPFS fees, broker fees and carrier receipts hold affected, wholly unpaid approvals in the same transaction that posts the receipt. This applies to both guided and manual carrier statements. If payment has already started, the existing approval keeps its payment history and the new earnings can go through supplemental payroll. Each shared fee uses the eligibility and rate of the individual producer.
 - Empty or unreadable sources offer **Enter source rows manually**. Review and posting confirmations are still required.
 - Receipt posting and financial workspaces load exact policy receipt and approved adjustment identities with consistent, bounded reads. Missing history fails closed. Earnings display in pages of 50; totals and exports use the complete snapshot. Existing per-scope complete-read and transaction limits remain in effect.
 - Intake read authorization failures invalidate parent caches. Earlier audit pages filter current-format records after the bounded database query and retain continuation through empty pages.

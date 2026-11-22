@@ -248,47 +248,6 @@ export function receiptEarnings(
     };
   });
 }
-export function validateEarnings(
-  earnings: readonly CommissionEarning[],
-  batches: readonly CommissionBatch[],
-) {
-  const fail = () => {
-    throw new Error(
-      "Employee earnings allocations changed or are incomplete. Refresh before proceeding.",
-    );
-  };
-  for (const e of earnings)
-    if (e.batchId) {
-      const b = batches.find((b) => b.id === e.batchId);
-      if (
-        !b ||
-        b.status === "CANCELLED" ||
-        b.producerId !== e.producerId ||
-        e.status !== "PAYABLE" ||
-        !b.lines.some(
-          (l) =>
-            l.earningId === e.id &&
-            l.policyId === e.policyId &&
-            l.amountCents === e.amountCents,
-        )
-      )
-        fail();
-    }
-  for (const b of batches.filter((b) => b.status !== "CANCELLED"))
-    for (const l of b.lines)
-      if (l.earningId) {
-        const e = earnings.find((e) => e.id === l.earningId);
-        if (
-          !e ||
-          e.batchId !== b.id ||
-          e.producerId !== b.producerId ||
-          e.status !== "PAYABLE" ||
-          e.amountCents !== l.amountCents ||
-          e.policyId !== l.policyId
-        )
-          fail();
-      }
-}
 export function departureDecision(
   c: CommissionDeparture,
   policyId: string,
