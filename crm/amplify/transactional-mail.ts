@@ -71,7 +71,7 @@ export function installTransactionalMail(backend: any, alerts: any) {
       statements: [new PolicyStatement({ actions: ['dynamodb:ConditionCheckItem'], resources: [tableArn], conditions: invoiceKeys })],
     });
   }
-  const senderNames = ["magicLinkVerify", "teamAdmin", "sendInvoice", "marketingReportWorker", "stripeWebhook", "mailVerification", "mailRecovery"];
+  const senderNames = ["magicLinkVerify", "teamAdmin", "sendInvoice", "marketingReportWorker", "commissionPayrollWorker", "stripeWebhook", "mailVerification", "mailRecovery"];
   for (const name of senderNames) {
     const fn = backend[name];
     for (const [key, value] of Object.entries({ HOA_TRANSACTIONAL_MAIL_PROVIDER: "ses", HOA_TRANSACTIONAL_MAIL_TABLE: table, HOA_TRANSACTIONAL_MAIL_BUCKET: bucket, HOA_TRANSACTIONAL_MAIL_RELEASE: process.env.HOA_TRANSACTIONAL_MAIL_RELEASE ?? "false", HOA_SES_IDENTITY_ARN: SES_IDENTITY_ARN, HOA_SES_CONFIGURATION_SET: configurationSet, HOA_SES_DAILY_LIMIT: String(sesDailyLimit), HOA_SES_MONTHLY_LIMIT: String(sesMonthlyLimit) })) fn.addEnvironment(key, value);

@@ -28,3 +28,12 @@ describe('live client write boundaries', () => {
     await client.mutations.brokerFeeAction({input:JSON.stringify({op:'futureOperation'})}); expect(invalidate).toHaveBeenCalledTimes(1);
   });
 });
+
+it('commission workspace reads do not produce write notifications or block their own refresh', async () => {
+  api.command.mockResolvedValue({data:'{}'});
+  const invalidate=vi.spyOn(liveUpdates,'invalidate'), before=liveUpdates.getSnapshot();
+  for(const operation of ['intakeWorkspace','getStatementIntake','previewIntakeSettlement','policyIntakeContext','getIntakeWorkingDraft','payrollWorkspace','payrollAudit','commissionExceptions']) await client.mutations.commissionAction({operation,input:'{}'});
+  expect(invalidate).not.toHaveBeenCalled();expect(liveUpdates.canPublish(before)).toBe(true);
+  for(const operation of ['allocateIntakeSettlement','saveIntakeWorkingDraft','unknownFutureAction']) await client.mutations.commissionAction({operation,input:'{}'});
+  expect(invalidate).toHaveBeenCalledTimes(3);
+});

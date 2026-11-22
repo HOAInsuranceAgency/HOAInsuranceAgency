@@ -1,24 +1,30 @@
+import { payrollSourceLabel, payrollRevenueKind } from '../../../../shared/commissionPayroll';
 import { useState } from 'react';
 import {
-  ACCOUNT_COMMISSION_CLASSES,
-  carrierReconciliationBalances,
-  commissionRevenueLabel,
-  decimal,
-  policyTotals,
-  recoveryBalances,
-  sum,
-  type CommissionOverview,
-  type CommissionPolicy,
-  type CommissionReconciliationBalances
+ACCOUNT_COMMISSION_CLASSES,
+batchPaidCents,
+carrierReconciliationBalances,
+commissionRevenueLabel,
+COMMISSION_REVIEW_CATEGORIES,
+decimal,
+policyTotals,
+recoveryBalances,
+sum,
+type CommissionOverview,
+type CommissionPolicy,
+type CommissionReconciliationBalances
 } from '../../../../shared/commissions';
+import CommissionPanel from '../../components/CommissionPanel';
 import { ReportDownload } from '../../components/ReportDownload';
-import { Button } from "../../components/ui/Button";
-import { Input } from "../../components/ui/Input";
-import { Select } from "../../components/ui/Select";
-import { Table } from "../../components/ui/Table";
-import { commissionAction } from '../../lib/commissions';
-import { ActionForm, Field } from './CommissionForm';
-import { money, today } from './format';
+import { Button } from '../../components/ui/Button';
+import { Input } from '../../components/ui/Input';
+import { Select } from '../../components/ui/Select';
+import { Table } from '../../components/ui/Table';
+import { commissionWorkflowAction as commissionAction } from '../../lib/commissions';
+import { CommissionTarget,useCommissionWorkflow } from '../../lib/commissionWorkflow';
+
+import { ActionForm,Field } from './CommissionForm';
+import { money,today } from './format';
 
 export function Ledger({
   data,
@@ -30,10 +36,19 @@ export function Ledger({
   refresh: () => Promise<void>;
 }) {
   const [asOf, setAsOf] = useState(today);
+  const { target, navigate } = useCommissionWorkflow();
+  const [search, setSearch] = useState('');
+  const [earningsPage, setEarningsPage] = useState(0);
+  const displayed = data.policies.filter(p => (!target.policyId || p.id === target.policyId) && (p.policyNumber + ' ' + p.accountName + ' ' + p.producerName + ' ' + p.entries.map(e => e.lineRef + ' ' + commissionRevenueLabel(e.revenueKind)).join(' ')).toLowerCase().includes(search.toLowerCase()));
   const totals = data.policies.map(policyTotals),
     recoveries = data.policies.map((p) => recoveryBalances(p, data.batches)),
-    paid = sum(data.batches.filter((b) => b.status === 'PAID').map((b) => b.totalCents));
-  const earned = sum(totals.map((t) => t.earned));
+    paid = sum(data.batches.map(batchPaidCents));
+  const earningRows = data.earnings ?? [];
+  const filteredEarnings = earningRows.filter(e => (!target.policyId || e.policyId === target.policyId) && [e.producerName,e.policyNumber,e.accountName,e.entryId,payrollSourceLabel(e)].join(' ').toLowerCase().includes(search.toLowerCase()));
+  const pageCount = Math.max(1, Math.ceil(filteredEarnings.length / 50));
+  const page = Math.min(earningsPage, pageCount - 1);
+  const visibleEarnings = filteredEarnings.slice(page * 50, (page + 1) * 50);
+  const earned = sum([...totals.map((t) => t.earned), ...earningRows.filter(e=>e.status==='PAYABLE').map(e=>e.amountCents)]);
   return (
     <>
       <div className="stat-row">
@@ -42,8 +57,9 @@ export function Ledger({
           ['Producer earned', earned],
           ['Paid', paid],
           ['Unpaid earnings', earned - paid],
-          ['Proposed paid recoveries', sum(recoveries.map((t) => t.paidRecovery))],
+          ['Proposed paid recoveries', sum([...recoveries.map((t) => t.paidRecovery),...earningRows.filter(e=>e.source==='ADJUSTMENT'&&e.status==='REVIEW'&&e.amountCents<0).map(e=>-e.amountCents)])],
           ['Unpaid adjustments to review', sum(recoveries.map((t) => t.unpaidAdjustment))],
+          ['Partially paid adjustments to review', sum(recoveries.map(t => t.partialAdjustment ?? 0))],
         ].map(([label, value]) => (
           <div className="stat" key={label}>
             <span className="l">{label}</span>
@@ -60,6 +76,15 @@ export function Ledger({
       <ReportDownload
         report={{
           title: 'Producer commission ledger',
+          commissionLedger: {
+            scope: owner ? 'All displayed employees' : 'Your displayed earnings',
+            isTest: data.isTest,
+            agencyReceivedCents: sum(totals.map(t => t.receivedAgency)),
+            earnedCents: earned, paidCents: paid,
+            proposedPaidRecoveryCents: sum([...recoveries.map(t => t.paidRecovery), ...earningRows.filter(e => e.source === 'ADJUSTMENT' && e.status === 'REVIEW' && e.amountCents < 0).map(e => -e.amountCents)]),
+            unpaidAdjustmentCents: sum(recoveries.map(t => t.unpaidAdjustment)),
+            partialAdjustmentCents: sum(recoveries.map(t => t.partialAdjustment ?? 0)),
+          },
           filters:
             'USD · actual receipts and frozen producer rates · proposed recoveries excluded from payroll',
           sections: [
@@ -76,6 +101,7 @@ export function Ledger({
                 'Producer rate (%)',
                 'Producer amount (USD)',
                 'Payment batch',
+                'Carrier transaction reference',
               ],
               rows: data.policies.flatMap((p) =>
                 p.entries.map((e) => [
@@ -83,19 +109,33 @@ export function Ledger({
                   p.accountName,
                   p.policyNumber,
                   e.receivedOn,
-                  e.kind,
+                  e.kind + (e.allocationId ? ' · shared allocation' : '') + (e.supersededBy ? ' · corrected' : '') + (e.excludedByCase ? ' · excluded' : ''),
                   commissionRevenueLabel(e.revenueKind),
                   e.agencyCents / 100,
-                  p.producerBps / 100,
-                  e.producerCents / 100,
+                  e.allocationId ? '' : p.producerBps / 100,
+                  e.allocationId ? '' : e.producerCents / 100,
                   e.batchId ?? '',
+                  e.lineRef,
                 ]),
               ),
+            },
+            {
+              title: 'Employee earnings allocations (agency cash is recorded above)',
+              columns: ['Employee', 'Account', 'Policy', 'Date', 'Source', 'Policy share (%)', 'Plan rate (%)', 'Employee amount (USD)', 'Status', 'Payment batch', 'Earning ID', 'Original receipt / adjustment ID'],
+              rows: earningRows.map(e => [e.producerName, e.accountName, e.policyNumber, e.receivedOn, payrollRevenueKind(e) ? payrollSourceLabel(e) : e.source, e.shareBps === undefined ? '' : e.shareBps / 100, e.source === 'ADJUSTMENT' ? '' : e.producerBps / 100, e.amountCents / 100, e.status, e.batchId ?? '', e.id, e.entryId]),
+            },
+            {
+              title: 'Recorded payments',
+              columns: ['Employee','Payroll cycle / batch','Payment date','Amount paid (USD)','Reference'],
+              rows: data.batches.filter(b=>b.status!=='CANCELLED').flatMap(b=>(b.payments?.length ? b.payments.map(p=>[b.producerName,b.cycleId??b.id,p.paidOn,p.amountCents/100,owner?p.reference:'Recorded payment']) : b.status==='PAID' ? [[b.producerName,b.cycleId??b.id,b.actualPaidOn??b.payDate,batchPaidCents(b)/100,owner?(b.reference??'Recorded payment'):'Recorded payment']] : [])),
             },
           ],
         }}
       />
-      {!data.policies.length && (
+      {!!earningRows.length && <section className="card"><h2>Shared commission & adjustment earnings</h2><div className="commission-scroll"><Table><thead><tr>{owner&&<th>Employee</th>}<th>Policy</th><th>Date</th><th>Source</th><th>Share / rate</th><th>Employee amount</th><th>Status</th></tr></thead><tbody>{visibleEarnings.map(e=><tr key={e.id}>{owner&&<td>{e.producerName}</td>}<td>{e.accountName}<div className="small muted">{e.policyNumber}</div></td><td>{e.receivedOn}</td><td>{payrollSourceLabel(e)}</td><td>{e.shareBps===undefined?'—':e.shareBps/100+'% share · '+e.producerBps/100+'% rate'}</td><td>{money(e.amountCents)}</td><td>{e.batchId?(data.batches.find(b=>b.id===e.batchId)?.status??'Allocated'):e.status}
+      {owner && e.status==='PAYABLE' && !e.batchId && e.amountCents>0 && <Button variant="secondary" onClick={()=>navigate({tab:'payroll',earningKeys:[JSON.stringify(['earning',e.id])],producerId:e.producerId})}>Prepare off-cycle payment</Button>}
+      {owner && <Button variant="secondary" onClick={()=>navigate(payrollRevenueKind(e)==='IPFS_FEE' && !e.adjustmentId ? {tab:'ipfs',policyId:e.policyId} : {tab:'exceptions',...(e.adjustmentId?{adjustmentId:e.adjustmentId}:{policyId:e.policyId}),producerId:e.producerId})}>Review source & decisions</Button>}</td></tr>)}</tbody></Table></div>{pageCount > 1 && <nav aria-label="Earnings history pages"><Button variant="secondary" disabled={page === 0} onClick={()=>setEarningsPage(page-1)}>Previous earnings</Button><span> Page {page+1} of {pageCount} · {filteredEarnings.length} earnings </span><Button variant="secondary" disabled={page+1 === pageCount} onClick={()=>setEarningsPage(page+1)}>Next earnings</Button></nav>}<p className="small muted">Totals and downloads include the complete ledger. Shared earnings reference one carrier receipt. Compensation adjustments do not change agency cash received.</p></section>}
+      {!data.policies.length && !earningRows.length && (
         <div className="card">
           No commission snapshots yet.{' '}
           {owner
@@ -114,10 +154,15 @@ export function Ledger({
           />
         </label>
       )}
-      {data.policies.map((p) => {
+      <label className="field">Search ledger<Input type="search" value={search} onChange={e => {setSearch(e.target.value);setEarningsPage(0);}} placeholder="Policy, employee or transaction reference" /></label>
+      {target.policyId && <Button variant="secondary" onClick={() => navigate({ tab: 'ledger' })}>Show all policies</Button>}
+      {displayed.map((p) => {
         const t = policyTotals(p);
+        const allocatedEarnings = earningRows.filter(e => e.policyId === p.id && e.status === 'PAYABLE');
+        const employeeEarned = t.earned + sum(allocatedEarnings.map(e => e.amountCents));
+        const hasSharedReceipts = p.entries.some(e => e.allocationId);
         return (
-          <section className="card" key={p.id}>
+          <CommissionTarget kind="policyId" id={p.id} key={p.id}><section className="card">
             <h2>
               {p.accountName} · {p.policyNumber}
             </h2>
@@ -126,8 +171,9 @@ export function Ledger({
               {p.transaction === 'NEW' ? 'New business' : 'Renewal'} · {p.producerName}
             </p>
             <p>
-              Premium {money(p.premiumCents)} · Agency {p.agencyRateUnits / 10000}% · Producer{' '}
+              Premium {money(p.premiumCents)} · Agency {p.agencyRateUnits / 10000}% · {hasSharedReceipts ? 'Original producer rate' : 'Producer'}{' '}
               {p.producerBps / 100}% of agency commission
+              {hasSharedReceipts && ' · Shared receipts use the individual shares and rates shown above.'}
             </p>
             {p.eligibility && (
               <p className="small">
@@ -146,21 +192,22 @@ export function Ledger({
             )}
             <p className="small">
               Full-term agency estimate {money(t.expectedAgency)} · Agency received{' '}
-              {money(t.receivedAgency)} · Producer earned {money(t.earned)} · Proposed adjustments{' '}
+              {money(t.receivedAgency)} · {owner ? 'Employee earnings' : 'Your earnings'} {money(employeeEarned)} · Proposed adjustments{' '}
               {money(t.proposedRecovery)}
             </p>
             {owner ? (
               <>
+                <div className="commission-action-bar"><Button variant="secondary" onClick={() => navigate({ tab: 'exceptions', policyId: p.id, producerId: p.producerId })}>Review shares, adjustments & employee decisions</Button></div>
                 <CarrierBalances balances={carrierReconciliationBalances(p, asOf)} />
-                <details className="commission-forecast-editor">
-                  <summary>Manage expected receipts</summary>
+                <CommissionPanel title="Manage expected receipts">
                   <ReceiptForecastEditor
                     key={`${p.id}:${p.version}`}
                     policy={p}
                     refresh={refresh}
                   />
-                </details>
+                </CommissionPanel>
                 <PolicyNumber key={`${p.id}:${p.version}`} policy={p} refresh={refresh} />
+                <PolicyReview key={`review:${p.id}:${p.version}`} policy={p} refresh={refresh} />
               </>
             ) : p.reconciliationBalances ? (
               <CarrierBalances balances={p.reconciliationBalances} />
@@ -183,14 +230,14 @@ export function Ledger({
                       <tr key={e.id}>
                         <td>{e.receivedOn}</td>
                         <td>
-                          {e.kind}
+                          {e.kind}{e.allocationId ? ' · shared allocation' : ''}{e.supersededBy ? ' · corrected' : ''}{e.excludedByCase ? ' · excluded' : ''}
                           <div className="small">{commissionRevenueLabel(e.revenueKind)}</div>
                           <div className="small muted">{e.lineRef}</div>
                         </td>
                         <td>{money(e.agencyCents)}</td>
-                        <td>{money(e.producerCents)}</td>
+                        <td>{e.allocationId ? 'See employee allocations' : money(e.producerCents)}</td>
                         <td>
-                          {e.kind !== 'RECEIPT'
+                          {e.supersededBy ? 'Replaced by correction' : e.excludedByCase ? 'Excluded by approved review' : e.allocationId ? 'See employee allocations' : e.kind !== 'RECEIPT'
                             ? 'Proposed adjustment'
                             : e.batchId
                               ? (data.batches.find((b) => b.id === e.batchId)?.status ??
@@ -199,7 +246,8 @@ export function Ledger({
                                 ? 'Unpaid'
                                 : 'Not commissionable'}
                         </td>
-                        {owner && <td>{e.eligibilityNote}</td>}
+                        {owner && <td><details><summary>Evidence</summary>{e.eligibilityNote}</details>
+                          {!e.batchId && !e.supersededBy && !e.excludedByCase && !e.allocationId && e.kind === 'RECEIPT' && e.producerCents > 0 && <Button variant="secondary" onClick={() => navigate({ tab: 'payroll', earningKeys: [JSON.stringify(['receipt', p.id, e.id])], producerId: p.producerId })}>Prepare off-cycle payment</Button>}</td>}
                       </tr>
                     ))}
                   </tbody>
@@ -210,11 +258,30 @@ export function Ledger({
                 Awaiting carrier commission, broker fee, or IPFS fee receipts. Binding alone does not create payable earnings.
               </p>
             )}
-          </section>
+          </section></CommissionTarget>
         );
       })}
     </>
   );
+}
+
+export function PolicyReview({ policy, refresh }: { policy: CommissionPolicy; refresh: () => Promise<void> }) {
+  const [category, setCategory] = useState<string>('DOCUMENTATION'), [note, setNote] = useState(''), [dueOn, setDueOn] = useState(today());
+  const [resolutions, setResolutions] = useState<Record<string, string>>({});
+  const holds = policy.reviewHolds ?? [];
+  return <CommissionPanel open={holds.some(h => h.status === 'OPEN')} title={<>Commission review items ({holds.filter(h => h.status === 'OPEN').length} open)</>}>
+    <p>Open items require review before including this policy in new payroll. Record agreement evidence for licensing, documentation, splits, cancellation, separation, or disputes. A new item also holds affected approved cycles for fresh approval. Check delivery history and coordinate with HR if a report already started sending. Resolving an item does not change a rate or collect a recovery.</p>
+    {holds.map(h => <section className="commission-review-item" key={h.id}>
+      <p><strong>{h.category} / {h.status}</strong> — Due {h.dueOn}</p><p>{h.note}</p>
+      {h.status === 'RESOLVED' ? <p>Resolution: {h.resolution}</p> : <ActionForm title="Resolve review item" button="Resolve with evidence" onDone={refresh} submit={() => commissionAction('resolveCommissionReview', { id: policy.id, version: policy.version, holdId: h.id, resolution: resolutions[h.id] ?? '' })}>
+        <Field label={`Resolution for ${h.category}`} value={resolutions[h.id] ?? ''} change={value => setResolutions(r => ({ ...r, [h.id]: value }))} />
+      </ActionForm>}
+    </section>)}
+    <ActionForm title="Add commission review item" onDone={refresh} submit={() => commissionAction('addCommissionReview', { id: policy.id, version: policy.version, category, note, dueOn })}>
+      <label className="field">Review category<Select value={category} onChange={e => setCategory(e.target.value)}>{COMMISSION_REVIEW_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}</Select></label>
+      <Field label="Issue and supporting evidence" value={note} change={setNote} /><Field label="Review due date" type="date" value={dueOn} change={setDueOn} />
+    </ActionForm>
+  </CommissionPanel>;
 }
 
 export function CarrierBalances({ balances: b }: { balances: CommissionReconciliationBalances }) {
@@ -292,7 +359,7 @@ export function CarrierBalances({ balances: b }: { balances: CommissionReconcili
   );
 }
 
-function ReceiptForecastEditor({
+export function ReceiptForecastEditor({
   policy,
   refresh,
 }: {
@@ -368,18 +435,18 @@ function ReceiptForecastEditor({
             value={item.amount}
             change={(v) => setItems(items.map((r, j) => (i === j ? { ...r, amount: v } : r)))}
           />
-          <Button variant="secondary"
+          <Button
             type="button"
-
+            variant="secondary"
             onClick={() => setItems(items.filter((_, j) => i !== j))}
           >
             Remove expected receipt {i + 1}
           </Button>
         </div>
       ))}
-      <Button variant="secondary"
+      <Button
         type="button"
-
+        variant="secondary"
         disabled={items.length >= 100}
         onClick={() => setItems([...items, { dueOn: '', amount: '' }])}
       >
@@ -390,7 +457,7 @@ function ReceiptForecastEditor({
   );
 }
 
-function PolicyNumber({
+export function PolicyNumber({
   policy,
   refresh,
 }: {
@@ -401,11 +468,10 @@ function PolicyNumber({
     policy.policyNumber === policy.id ? '' : policy.policyNumber,
   );
   return (
-    <details>
-      <summary>Update carrier policy number</summary>
+    <CommissionPanel title="Update carrier policy number">
       <ActionForm
         title="Carrier policy number"
-        draft={number}
+      draft={number}
         onDone={refresh}
         submit={() =>
           commissionAction('updatePolicyNumber', {
@@ -417,6 +483,6 @@ function PolicyNumber({
       >
         <Field label="Carrier policy number" value={number} change={setNumber} />
       </ActionForm>
-    </details>
+    </CommissionPanel>
   );
 }

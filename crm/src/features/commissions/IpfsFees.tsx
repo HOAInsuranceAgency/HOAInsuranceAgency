@@ -9,8 +9,8 @@ import { money, today } from './format';
 
 type Refresh = () => Promise<void>;
 
-export function IpfsFees({ policies, refresh }: { policies: CommissionPolicy[]; refresh: Refresh }) {
-  const [policyId, setPolicyId] = useState('');
+export function IpfsFees({ policies, refresh, initialPolicyId }: { policies: CommissionPolicy[]; refresh: Refresh; initialPolicyId?: string }) {
+  const [policyId, setPolicyId] = useState(initialPolicyId ?? '');
   const policy = policies.find(row => row.id === policyId);
   const fees = policies.filter(row => (row.ipfsFeeCents ?? 0) > 0);
   return (

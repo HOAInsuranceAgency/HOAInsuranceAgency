@@ -1,3 +1,6 @@
+import type { PayrollCycle } from '../../../../shared/commissionPayroll';
+import { APPROVED_PAYROLL_KIND, APPROVED_PAYROLL_INDEX_STATE, approvedPayrollIndexWrites } from './payroll-index';
+import { statementIndexWrites } from './statement-index';
 import { randomUUID } from 'node:crypto';
 import { sendCommissionWrite } from '../live-write';
 import { batchGetComplete } from '../storage/batchGet';
@@ -67,6 +70,52 @@ export async function list<T>(kind: string, producer = false, recordKind?: strin
     sizeError: () => new Error('Commission history exceeds this view’s limit. Narrow or archive the reporting scope before proceeding.'),
     error: () => new Error('Commission history could not be completely loaded. No partial totals are available.') });
 }
+/**
+ * Before the active lookup is ready, stream matching approvals from the authoritative
+ * partition. Closed history cannot consume the active-row limit. The cycle key starts
+ * with its payday month; the inclusive receipt cutoff can never come after payday.
+ */
+export async function approvedPayrollCycles(minimumCutoff?: string): Promise<PayrollCycle[]> {
+  const indexed = !!await get('INDEX_STATE', APPROVED_PAYROLL_INDEX_STATE);
+  const incomplete = () => new Error(indexed
+    ? 'Approved payroll cycles could not be completely loaded. Retry before proceeding.'
+    : 'Complete the approved payroll lookup backfill and retry.');
+  const readRows = <T>() => collectCompletePages<T>(async cursor => {
+    const result = await db.send(new QueryCommand({
+      TableName: table(),
+      ConsistentRead: true,
+      Limit: 100,
+      ExclusiveStartKey: cursor,
+      KeyConditionExpression: '#kind = :kind' + (minimumCutoff ? ' AND #id >= :month' : ''),
+      ExpressionAttributeNames: {
+        '#kind': 'kind',
+        ...(minimumCutoff || indexed ? { '#id': 'id' } : {}),
+        ...(!indexed ? { '#status': 'status' } : {}),
+        ...(!indexed && minimumCutoff ? { '#cutoff': 'cutoff' } : {}),
+      },
+      ExpressionAttributeValues: {
+        ':kind': indexed ? APPROVED_PAYROLL_KIND : 'PAYROLL_CYCLE',
+        ...(minimumCutoff ? { ':month': minimumCutoff.slice(0, 7) } : {}),
+        ...(!indexed ? { ':approved': 'APPROVED' } : {}),
+        ...(!indexed && minimumCutoff ? { ':date': minimumCutoff } : {}),
+      },
+      ...(indexed ? { ProjectionExpression: '#id' } : {
+        FilterExpression: '#status = :approved' + (minimumCutoff ? ' AND #cutoff >= :date' : ''),
+      }),
+    }));
+    return { items: (result.Items ?? []) as T[], next: result.LastEvaluatedKey };
+  }, {
+    maxPages: 100,
+    maxRows: 5000,
+    error: incomplete,
+    sizeError: () => new Error('Too many active payroll approvals. Review outstanding cycles before proceeding.'),
+  });
+  if (!indexed) return readRows<PayrollCycle>();
+  const refs = await readRows<Pick<PayrollCycle, 'id'>>();
+  const current = await getMany<PayrollCycle>(refs.map(({id}) => ({kind: 'PAYROLL_CYCLE', id})));
+  if (current.length !== refs.length) throw new Error('An approved payroll cycle is missing. Review its source record before proceeding.');
+  return current.filter(c => c.status === 'APPROVED' && (!minimumCutoff || c.cutoff >= minimumCutoff));
+}
 export async function commit(changes: Change[], actor: string, extras: Transaction = []) {
   const at = new Date().toISOString();
   const items: Transaction = changes.map((c) => ({
@@ -95,13 +144,14 @@ export async function commit(changes: Change[], actor: string, extras: Transacti
         TableName: table(),
         Item: {
           kind: 'AUDIT',
-          id: randomUUID(),
+          id: `audit#${at}#${randomUUID()}`,
           actor,
           at,
           changes: changes.map((c) => ({
             kind: c.kind,
             id: c.value.id,
             previousVersion: c.previous?.version ?? 0,
+            newVersion: ((c.previous?.version as number) ?? 0) + 1,
             value:
               c.kind === 'POLICY'
                 ? {
@@ -109,16 +159,50 @@ export async function commit(changes: Change[], actor: string, extras: Transacti
                     entries: undefined,
                     entryIds: (c.value.entries as { id: string }[]).map((e) => e.id),
                   }
+                : (c.kind === 'PAYROLL_REPORT_FILE' || c.kind === 'DEPARTURE_REPORT') ? { ...c.value, content: undefined }
+                : c.kind === 'PAYROLL_REPORT' ? { contentHash: c.value.contentHash, cycleId: (c.value.cycle as Data).id, revision: (c.value.cycle as Data).revision, documents: c.value.documents }
                 : c.value,
           })),
         },
       },
     },
     ...extras,
+    ...changes.flatMap(c => statementIndexWrites(table(), c)),
+    ...changes.flatMap(c => approvedPayrollIndexWrites(table(), c)),
   );
   assertTransactionEnvelope(items, { maxBytes: 3_500_000, maxItemBytes: 300_000, keyFields: name => name === table() ? ['kind', 'id'] : undefined,
     error: () => new Error('This operation is too large. Use a smaller statement or payroll batch.') });
   const producers = changes.flatMap(change => [change.value.producerId, change.previous?.producerId])
     .filter((id): id is string => typeof id === 'string' && !!id);
   await sendCommissionWrite(db.send(new TransactWriteCommand({ TransactItems: items })), producers);
+}
+export async function auditPage(token?: unknown) {
+  let cursor: Data | undefined;
+  let legacy = false;
+  if (token !== undefined) {
+    if (typeof token !== 'string' || token.length > 1000) throw new Error('Invalid audit page.');
+    let page: { phase?: string; key?: Data };
+    try { page = JSON.parse(Buffer.from(token, 'base64url').toString('utf8')); } catch { throw new Error('Invalid audit page.'); }
+    if (!page || !['current','legacy'].includes(page.phase ?? '') || Object.keys(page).some(k => !['phase','key'].includes(k))) throw new Error('Invalid audit page.');
+    legacy = page.phase === 'legacy'; cursor = page.key;
+    if (cursor && (cursor.kind !== 'AUDIT' || typeof cursor.id !== 'string' || Object.keys(cursor).length !== 2)) throw new Error('Invalid audit page.');
+  }
+  const result = await db.send(new QueryCommand({ TableName: table(), ConsistentRead: true,
+    KeyConditionExpression: legacy ? '#kind = :kind' : '#kind = :kind AND begins_with(id, :prefix)', ExpressionAttributeNames: { '#kind': 'kind' },
+    ExpressionAttributeValues: { ':kind': 'AUDIT', ...(!legacy ? { ':prefix': 'audit#' } : {}) }, ScanIndexForward: false, Limit: 25, ExclusiveStartKey: cursor }));
+  const next = result.LastEvaluatedKey ? { phase: legacy ? 'legacy' : 'current', key: result.LastEvaluatedKey } : legacy ? undefined : { phase: 'legacy' };
+  return { entries: (result.Items ?? []).filter(row => !legacy || !String(row.id).startsWith('audit#')), legacy, cursor: next ? Buffer.from(JSON.stringify(next)).toString('base64url') : undefined };
+}
+
+/** One scoped history page. The cursor cannot choose another partition or index. */
+export async function page<T>(kind: string, token?: unknown, limit = 25): Promise<{items: T[]; cursor?: string}> {
+  let key: Data | undefined;
+  if (token !== undefined) {
+    if (typeof token !== 'string' || token.length > 1000) throw new Error('Invalid statement history page.');
+    try { key = JSON.parse(Buffer.from(token, 'base64url').toString('utf8')); } catch { throw new Error('Invalid statement history page.'); }
+    if (!key || key.kind !== kind || typeof key.id !== 'string' || Object.keys(key).length !== 2) throw new Error('Invalid statement history page.');
+  }
+  const response = await db.send(new QueryCommand({ TableName: table(), ConsistentRead: true, KeyConditionExpression: '#kind = :kind',
+    ExpressionAttributeNames: { '#kind': 'kind' }, ExpressionAttributeValues: { ':kind': kind }, ExclusiveStartKey: key, Limit: limit }));
+  return { items: (response.Items ?? []) as T[], ...(response.LastEvaluatedKey ? { cursor: Buffer.from(JSON.stringify(response.LastEvaluatedKey)).toString('base64url') } : {}) };
 }

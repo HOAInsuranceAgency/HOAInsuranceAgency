@@ -6,6 +6,9 @@ import { assertBrokerFeeAgencyBilling, brokerFeeCents, feeAllocations, type Brok
 import { authorizedQuoteTerms } from '../../../../shared/quoteAuthorization';
 import { appendEntry, type CommissionPolicy, type CommissionStatement, type StatementLine } from '../../../../shared/commissions';
 import * as commissions from '../commissions/store';
+import { policyReceiptEarnings } from '../commissions/earnings';
+import { holdReceiptPayroll, type ReceiptPayrollPosting } from '../commissions/deposits';
+import { feeReceiptEligible, receiptEarnings } from '../../../../shared/commissionExceptions';
 import { db, table, getRow, getFee, getModel, feePut, transact, versionCheck, type Write, modelTable } from './store';
 
 export interface BrokerFeePaymentInput {
@@ -243,6 +246,7 @@ async function allocatePayment(id: string) {
     if (!payment || !payment.receivedOn || !['PAID','REFUNDED'].includes(payment.status)) return;
     const posted={...payment.posted};
     const changes:commissions.Change[]=[], extras:commissions.Transaction=[];
+    const postings: ReceiptPayrollPosting[] = [];
     let refundAllocated=0, changed=false;
     const total=payment.allocations.reduce((s,a)=>s+a.amountCents,0);
     for (let i=0;i<payment.allocations.length;i++) {
@@ -254,7 +258,7 @@ async function allocatePayment(id: string) {
       if (!policy || policy.accountId!==payment.accountId || policy.quoteId!==a.quoteId) throw new Error('Broker fee producer attribution is incomplete.');
       const old=policy; let next=policy;
       const receiptId=`fee-receipt:${digest(`${payment.sourceId}:${a.quoteId}`)}`;
-      const eligible=policy.eligibility?.eligible!==false && (!policy.receiptsFrom||payment.receivedOn>=policy.receiptsFrom);
+      const eligible = feeReceiptEligible(policy, payment.receivedOn);
       const statement={id:payment.id,receivedOn:payment.receivedOn} as CommissionStatement;
       if (!posted[a.quoteId]) {
         if (!next.entries.some(e=>e.id===receiptId)) next=applyStatementLine(next,statement,{policyId:policy.id,lineRef:payment.sourceId,kind:'RECEIPT',revenueKind:'BROKER_FEE',agencyCents:a.amountCents,eligible,eligibilityNote:'Verified broker fee settlement; policy producer terms apply.'} satisfies StatementLine,receiptId);
@@ -263,10 +267,22 @@ async function allocatePayment(id: string) {
       const priorRefund=posted[a.quoteId].refundedCents;
       if (refund>priorRefund) {
         const reversalId=`fee-refund:${digest(`${payment.sourceId}:${a.quoteId}:${refund}`)}`;
-        if(!next.entries.some(e=>e.id===reversalId)) next=applyStatementLine(next,{...statement,receivedOn:payment.refundedOn??day()}, {policyId:policy.id,lineRef:`${payment.sourceId}:refund:${refund}`,kind:'REVERSAL',revenueKind:'BROKER_FEE',agencyCents:-(refund-priorRefund),originalId:receiptId,eligible,eligibilityNote:'Actual broker fee refund; original producer allocation retained.'},reversalId);
+        if(!next.entries.some(e=>e.id===reversalId)) next=applyStatementLine(next,{...statement,receivedOn:payment.refundedOn??day()}, {policyId:policy.id,lineRef:`${payment.sourceId}:refund:${refund}`,kind:'REVERSAL',revenueKind:'BROKER_FEE',agencyCents:-(refund-priorRefund),originalId:receiptId,eligible:next.entries.find(e=>e.id===receiptId)?.eligible ?? eligible,eligibilityNote:'Actual broker fee refund; original producer allocation retained.'},reversalId);
         posted[a.quoteId]={refundedCents:refund}; changed=true;
       }
-      if(next!==old) changes.push({kind:'POLICY',value:next as unknown as commissions.Data&{id:string},previous:old as unknown as commissions.Data});
+      if(next!==old) {
+        const added = next.entries.filter(entry => !old.entries.some(previous => previous.id === entry.id));
+        const earnings = added.some(e => e.allocationId) ? await policyReceiptEarnings([old]) : [];
+        for (const entry of added) {
+          // Use the cumulative snapshot as of each individual receipt or refund.
+          const throughEntry = { ...next, entries: next.entries.slice(0, next.entries.indexOf(entry) + 1) };
+          const allocated = receiptEarnings(throughEntry, entry, earnings);
+          earnings.push(...allocated);
+          changes.push(...allocated.map(value => ({ kind: 'EARNING', value: value as unknown as commissions.Data & { id: string } })));
+          postings.push({ policy: throughEntry, entry, earnings: allocated });
+        }
+        changes.push({kind:'POLICY',value:next as unknown as commissions.Data&{id:string},previous:old as unknown as commissions.Data});
+      }
       extras.push({ConditionCheck:{TableName:table(),Key:{id:fee.id},ConditionExpression:'#v = :v',ExpressionAttributeNames:{'#v':'version'},ExpressionAttributeValues:{':v':fee.version}}});
       extras.push({Update:{TableName:modelTable('Policy'),Key:{id:policy.id},UpdateExpression:'SET brokerFeeCollected = :gross, brokerFeeRefunded = :refund, brokerFeeCollectedAt = :at',ConditionExpression:'accountId = :account AND quoteId = :quote',ExpressionAttributeValues:{':gross':fee.collectedCents/100,':refund':fee.refundedCents/100,':at':`${payment.receivedOn}T12:00:00Z`,':account':payment.accountId,':quote':a.quoteId}}});
     }
@@ -274,6 +290,8 @@ async function allocatePayment(id: string) {
       if(payment.pending && payment.allocations.every(a=>posted[a.quoteId]))await transact([feePut({...payment,pending:undefined},payment)]);
       return;
     }
+    const reconciliation = await commissions.get<{ id: string; version: number }>('PAYROLL_STATE', 'reconciliation');
+    changes.push(...await holdReceiptPayroll(postings), {kind:'PAYROLL_STATE',value:{id:'reconciliation'},...(reconciliation ? {previous:reconciliation} : {})});
     const complete=payment.allocations.every(a=>posted[a.quoteId]);
     extras.push(feePut({...payment,posted,pending:complete?undefined:'PENDING'},payment));
     try { await sendCrmWrite(commissions.commit(changes,'broker-fee-payment',extras));return; }

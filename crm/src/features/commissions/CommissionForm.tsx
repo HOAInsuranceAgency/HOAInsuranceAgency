@@ -1,3 +1,5 @@
+import { isAuthorizationError } from '../../../../shared/authorizationError';
+import { CommissionAccessContext } from './context';
 import { useContext, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
@@ -28,6 +30,7 @@ export function ActionForm({
     [saved, setSaved] = useState(false);
   const lock = useRef(false);
   const stale = useContext(FinancialStale);
+  const invalidate = useContext(CommissionAccessContext);
   const serialized = JSON.stringify(draft);
   const baseline = useRef(serialized);
   useLiveUpdateBlock(busy || serialized !== baseline.current);
@@ -46,16 +49,17 @@ export function ActionForm({
       setSaved(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not save.');
+      if (isAuthorizationError(err)) invalidate(err);
     } finally {
       lock.current = false;
       setBusy(false);
     }
   }
   return (
-    <form className="card" onSubmit={(e) => void run(e)}>
+    <form className="card commission-form" onSubmit={(e) => void run(e)}>
       <h2>{title}</h2>
       <fieldset disabled={busy || stale}>
-        {children}
+        <div className="commission-form-body">{children}</div>
         <div className="form-actions">
           <Button variant="primary" type="submit" disabled={disabled}>
             {busy ? 'Saving…' : button}
@@ -67,7 +71,7 @@ export function ActionForm({
           {error}
         </p>
       )}
-      {saved && <p role="status">Saved.</p>}
+      {saved && <p className="commission-saved" role="status">Saved.</p>}
     </form>
   );
 }

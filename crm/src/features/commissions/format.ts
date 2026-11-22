@@ -1,6 +1,4 @@
-import { fmtMoney } from "../../lib/client";
-import { agencyDay } from "../../../../shared/agencyTime";
-
-export const money = (cents: number) => fmtMoney(cents / 100);
-
+import { formatUsdCents } from '../../../../shared/money';
+import { agencyDay } from '../../../../shared/agencyTime';
+export const money = formatUsdCents;
 export const today = () => agencyDay(new Date());

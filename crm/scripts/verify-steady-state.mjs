@@ -81,11 +81,43 @@ export function verifySteadyState(namespace, contract, aws) {
       "existing stream cursor is not healthy or has changed scope");
   }
   const schedules = inventory.filter(r => r.ResourceType === "AWS::Scheduler::Schedule");
-  need(schedules.length === 8 && contract.schedules.length === 8, "exact eight schedules required");
-  for (const expected of contract.schedules) {
+  const expectedSchedules = [...contract.schedules];
+  need(expectedSchedules.length === 8, "exact eight original schedules required");
+  // Before the payroll rollout the nested stack is absent. Once present, its
+  // disabled schedule must point at its own worker, role and failure queue.
+  const payrollStack = inventory.find(r => r.stack === contract.backendRoot &&
+    r.ResourceType === "AWS::CloudFormation::Stack" && r.LogicalResourceId === "commissionpayrollC11FCD08");
+  let payroll;
+  if (payrollStack) {
+    const resource = (type, logical) => {
+      const found = inventory.find(r => r.stack === payrollStack.PhysicalResourceId &&
+        r.ResourceType === type && r.LogicalResourceId === logical);
+      need(found?.PhysicalResourceId, "incomplete payroll scheduler stack");
+      return found.PhysicalResourceId;
+    };
+    const name = resource("AWS::Scheduler::Schedule", "CommissionPayrollScheduleFB5DD3E9");
+    const rootName = contract.backendRoot.split("/")[1].replace(/[^A-Za-z0-9]/g, "");
+    need(name === `commission-payroll-${rootName.slice(-40)}`, "payroll scheduler name differs");
+    const functionArn = `arn:aws:lambda:${contract.region}:${contract.account}:function:${resource("AWS::Lambda::Function", "commissionpayrollworkerlambda7964D062")}`;
+    const role = resource("AWS::IAM::Role", "SchedulerRoleForTarget8840c435C2EB1B");
+    const queue = resource("AWS::SQS::Queue", "PayrollScheduleFailures5C1240BA").split("/").at(-1);
+    payroll = {
+      logical: "CommissionPayrollScheduleFB5DD3E9", name, functionArn, state: "DISABLED",
+      scheduleExpression: "cron(0 8-17 * * ? *)", scheduleExpressionTimezone: "America/New_York",
+      flexibleTimeWindow: { Mode: "OFF" }, target: {
+        Arn: functionArn, RoleArn: `arn:aws:iam::${contract.account}:role/${role}`,
+        DeadLetterConfig: { Arn: `arn:aws:sqs:${contract.region}:${contract.account}:${queue}` },
+        RetryPolicy: { MaximumEventAgeInSeconds: 3600, MaximumRetryAttempts: 2 },
+        Input: JSON.stringify({ trigger: "scheduled", scheduleArn: "<aws.scheduler.schedule-arn>", scheduledAt: "<aws.scheduler.scheduled-time>" }),
+      },
+    };
+    expectedSchedules.push(payroll);
+  }
+  need(schedules.length === expectedSchedules.length, "unexpected scheduler inventory");
+  for (const expected of expectedSchedules) {
     need(schedules.some(r => r.LogicalResourceId === expected.logical && r.PhysicalResourceId === expected.name), "schedule identity changed");
     const actual = aws("scheduler", "get-schedule", "--name", expected.name, "--group-name", "default");
-    const expectedState = contract.backendBranch === "staging" ? expected.state : "ENABLED";
+    const expectedState = expected === payroll || contract.backendBranch === "staging" ? expected.state : "ENABLED";
     need(["ENABLED", "DISABLED"].includes(expectedState)
       && actual.Name === expected.name && actual.State === expectedState && expected.state === expectedState
       && actual.Target?.Arn === expected.functionArn && canonical(actual.Target) === canonical(expected.target)

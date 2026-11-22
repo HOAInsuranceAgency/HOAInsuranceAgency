@@ -1,16 +1,18 @@
+import { departureWorklist, type CommissionDeparture, type CommissionEarning } from '../../../shared/commissionExceptions';
+import { buildPayrollApproval, defaultPayrollSettings, payrollPreview, payrollRowKey, validatePayrollCycle, type PayrollCycle } from '../../../shared/commissionPayroll';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { commissionPolicy, commissionAccount, line, statement } from './commissionFixtures';
 import {
   appendEntry,
-  carrierReconciliationBalances,
-  ipfsFeeBalances,
-  policyTotals,
+  ipfsFeeBalances, carrierReconciliationBalances, policyTotals,
+  receiptOnlyCarrierTerms,
   type CarrierPaymentArrangement,
   type CommissionPolicy,
 } from '../../../shared/commissions';
 const h = vi.hoisted(() => ({
   get: vi.fn(),
   getMany: vi.fn(),
+  approvedCycles: vi.fn(),
   list: vi.fn(),
   commit: vi.fn(),
   session: vi.fn(),
@@ -22,6 +24,7 @@ const h = vi.hoisted(() => ({
 vi.mock('../../amplify/functions/commissions/store', () => ({
   get: h.get,
   getMany: h.getMany,
+  approvedPayrollCycles: h.approvedCycles,
   list: h.list,
   commit: h.commit,
   table: () => 'private-ledger',
@@ -87,6 +90,9 @@ beforeEach(() => {
   h.getMany.mockImplementation(async (refs: { kind: string; id: string }[]) =>
     structuredClone(refs.map((r) => records.get(`${r.kind}:${r.id}`)).filter(Boolean)),
   );
+  h.approvedCycles.mockImplementation(async (minimumCutoff?: string) => structuredClone([...records.entries()]
+    .filter(([key]) => key.startsWith('PAYROLL_CYCLE:')).map(([, v]) => v as PayrollCycle)
+    .filter(c => c.status === 'APPROVED' && (!minimumCutoff || c.cutoff >= minimumCutoff))));
   h.list.mockImplementation(async (k, producer, recordKind) =>
     structuredClone(
       [...records.entries()]
@@ -144,6 +150,7 @@ it.each([
     'file',
     'saveStatement',
     'postStatement',
+    'voidStatement',
     'preparePayroll',
     'payPayroll',
     'adoptPolicy',
@@ -169,6 +176,20 @@ it('preserves the access-denial type for live commission refreshes after revocat
     ok: false, errorType: 'Unauthorized', error: expect.stringContaining('Unauthorized:'),
   });
   expect(h.get).not.toHaveBeenCalled(); expect(h.commit).not.toHaveBeenCalled();
+});
+it('keeps monthly payroll operations within existing Owner access', async () => {
+  for (const operation of ['payrollWorkspace', 'downloadPayrollCycle', 'confirmPayrollCycle', 'approvePayrollCycle', 'savePayrollSettings']) {
+    const event = request(operation, {}, 'STAFF');
+    expect(await handler(event)).toMatchObject({ ok: false });
+  }
+  expect(h.get).not.toHaveBeenCalled();
+  expect(h.commit).not.toHaveBeenCalled();
+});
+it('does not expose a separate HR payroll endpoint', async () => {
+  const event = request('payrollWorkspace', {}, 'STAFF');
+  event.fieldName = 'commissionPayroll';
+  expect(await handler(event)).toMatchObject({ ok: false, error: expect.stringMatching(/Unknown commission request/) });
+  expect(h.list).not.toHaveBeenCalled();
 });
 it('posts a statement atomically with source deduplication and safely retries', async () => {
   const s = { ...statement(), lines: [line()] };
@@ -231,55 +252,16 @@ it('rechecks aggregate reversal limits at posting and makes no partial write', a
   ).toMatchObject({ ok: false, error: expect.stringMatching(/exceed/) });
   expect(h.commit).not.toHaveBeenCalled();
 });
-it('prepares positive earned payroll only, locks entries, cancels safely and confirms payment', async () => {
-  const p = appendEntry(
-    appendEntry(commissionPolicy(), line(), statement(), 'original'),
-    line({ kind: 'REVERSAL', originalId: 'original', agencyCents: -10000 }),
-    statement(),
-    'reversal',
-  );
+it('releases unpaid legacy allocations but cannot bypass approved payroll reports', async () => {
+  const p = appendEntry(commissionPolicy(), line(), statement(), 'original');
+  p.entries[0].batchId = 'legacy';
   records.set('POLICY:p', p);
-  const input = {
-    producerId: 'producer',
-    cutoff: '2026-10-01',
-    payDate: '2026-10-15',
-    requestId: 'batch',
-  };
-  expect(await handler(request('preparePayroll', input))).toEqual({ ok: true });
-  expect(records.get('BATCH:batch')).toMatchObject({
-    totalCents: 16000,
-    status: 'APPROVED',
-  });
-  expect(await handler(request('preparePayroll', { ...input, requestId: 'other' }))).toMatchObject({
-    ok: false,
-  });
-  expect(
-    await handler(
-      request('cancelPayroll', {
-        id: 'batch',
-        version: 1,
-        reference: 'Export rejected',
-      }),
-    ),
-  ).toEqual({ ok: true });
+  records.set('BATCH:legacy', { id: 'legacy', version: 1, producerId: 'producer', producerName: 'Avery', cutoff: '2026-10-01', payDate: '2026-10-15', status: 'APPROVED', totalCents: 16000, lines: [{ policyId: 'p', entryId: 'original', amountCents: 16000 }] });
+  expect(await handler(request('preparePayroll', { producerId: 'producer', cutoff: '2026-10-01', payDate: '2026-10-15', requestId: 'new' }))).toMatchObject({ ok: false, error: expect.stringMatching(/off-cycle/) });
+  expect(await handler(request('payPayroll', { id: 'legacy', version: 1, reference: 'PAY', payDate: '2026-10-15' }))).toMatchObject({ ok: false, error: expect.stringMatching(/off-cycle/) });
+  expect(await handler(request('cancelPayroll', { id: 'legacy', version: 1, reference: 'Move to reviewed off-cycle report' }))).toEqual({ ok: true });
   expect((records.get('POLICY:p') as CommissionPolicy).entries[0].batchId).toBeUndefined();
-  expect(await handler(request('preparePayroll', { ...input, requestId: 'replacement' }))).toEqual({
-    ok: true,
-  });
-  expect(
-    await handler(
-      request('payPayroll', {
-        id: 'replacement',
-        version: 1,
-        reference: 'PAY-10',
-        payDate: '2026-10-15',
-      }),
-    ),
-  ).toEqual({ ok: true });
-  expect(records.get('BATCH:replacement')).toMatchObject({
-    status: 'PAID',
-    totalCents: 16000,
-  });
+  expect(records.get('BATCH:legacy')).toMatchObject({ status: 'CANCELLED' });
 });
 it('returns only the authenticated producer’s records and excludes reconciliation data', async () => {
   const own = commissionPolicy();
@@ -417,30 +399,12 @@ it('retains carrier-reported comparison values and refuses an unbalanced settlem
   expect(h.commit).not.toHaveBeenCalled();
 });
 
-it('prepares payroll from only the selected producer partition with fresh batched records', async () => {
+it('refuses the retired manual approval endpoint without reserving any earnings', async () => {
   const own = appendEntry(commissionPolicy(), line(), statement(), 'e');
   records.set('POLICY:p', own);
-  records.set('POLICY:other', {
-    ...own,
-    id: 'other',
-    producerId: 'someone-else',
-  });
-  records.set('PLAN:producer', { id: 'producer', producerId: 'producer' });
-  expect(
-    await handler(
-      request('preparePayroll', {
-        producerId: 'producer',
-        cutoff: '2026-10-01',
-        payDate: '2026-10-15',
-        requestId: 'batch',
-      }),
-    ),
-  ).toEqual({ ok: true });
-  expect(h.list).toHaveBeenCalledExactlyOnceWith('producer', true, 'POLICY');
-  expect(h.getMany).toHaveBeenCalledExactlyOnceWith([{ kind: 'POLICY', id: 'p' }]);
-  expect(records.get('BATCH:batch')).toMatchObject({
-    lines: [{ policyId: 'p' }],
-  });
+  expect(await handler(request('preparePayroll', { producerId: 'producer', cutoff: '2026-10-01', payDate: '2026-10-15', requestId: 'batch' }))).toMatchObject({ ok: false });
+  expect(h.commit).not.toHaveBeenCalled();
+  expect(records.get('POLICY:p')).toEqual(own);
 });
 it('updates shared and private policy numbers in the same version-guarded transaction', async () => {
   records.set('POLICY:p', commissionPolicy());
@@ -528,24 +492,26 @@ it('saves Owner account classification with an audit version and rejects stale e
     await handler(request('saveAccountClassification', { ...input, id: 'nonexistent' })),
   ).toMatchObject({ ok: false });
 });
-it('loads only the selected classification for the Owner and excludes classifications from overview', async () => {
+it('shows saved account classifications in the Owner overview and keeps them private to Owners', async () => {
   records.set('ACCOUNT:a', commissionAccount());
   h.sources.set('Account:a', { id: 'a', name: 'Cedar HOA' });
   expect(await handler(request('getAccountClassification', { id: 'a' }))).toMatchObject({
-    classification: { id: 'a', version: 2 },
-    accountName: 'Cedar HOA',
+    classification: { id: 'a', version: 2 }, accountName: 'Cedar HOA',
   });
-  expect(h.get).toHaveBeenCalledExactlyOnceWith('ACCOUNT', 'a');
   const owner = request('');
   owner.fieldName = 'commissionOverview';
-  const response = await handler(owner);
-  expect(response).not.toHaveProperty('accounts');
+  expect(await handler(owner)).toMatchObject({ accounts: [{ id: 'a', version: 2, periods: commissionAccount().periods }] });
+  expect(h.list).toHaveBeenCalledWith('ACCOUNT');
+  h.list.mockClear();
+  const producer = request('', {}, 'PRODUCER');
+  producer.fieldName = 'commissionOverview';
+  const result = await handler(producer);
+  expect(result).not.toHaveProperty('accounts');
   expect(h.list.mock.calls.some(([kind]) => kind === 'ACCOUNT')).toBe(false);
-  expect(JSON.stringify(response)).not.toContain('Owner reviewed account source');
-  expect(await handler(request('getAccountClassification', { id: 'a' }, 'PRODUCER'))).toMatchObject(
-    { ok: false },
-  );
+  expect(JSON.stringify(result)).not.toContain('Owner reviewed account source');
+  expect(await handler(request('getAccountClassification', { id: 'a' }, 'PRODUCER'))).toMatchObject({ ok: false });
 });
+
 it.each(['NEW', 'RENEWAL'] as const)(
   'adopts historical GIM %s with original dated classification and concurrency guard',
   async (transaction) => {
@@ -796,10 +762,7 @@ it('revises only the receipt forecast and records which receipt history the Owne
     policyId: 'p', version: 1, receiptForecast,
   }))).toMatchObject({ ok: false, error: expect.stringMatching(/changed/) });
   expect(h.commit).toHaveBeenCalledTimes(1);
-  expect(await handler(request('preparePayroll', {
-    producerId: 'producer', cutoff: '2026-10-01', payDate: '2026-10-15', requestId: 'actual-earnings',
-  }))).toEqual({ ok: true });
-  expect(records.get('BATCH:actual-earnings')).toMatchObject({ totalCents: 16000 });
+  expect(payrollPreview([records.get('POLICY:p') as CommissionPolicy], '2026-10-01')).toMatchObject([{ amountCents: 16000 }]);
 });
 
 it.each([
@@ -884,6 +847,84 @@ it('adopts the carrier arrangement applicable to historical term facts, not curr
   });
 });
 
+it('saves receipt-only tracking with authoritative identity and a versioned audit, without inventing timing', async () => {
+  h.sources.set('Carrier:c', { id: 'c', name: 'Authoritative carrier' });
+  const input = { id: 'c', version: 0, receiptOnly: true, name: 'Untrusted name' };
+  expect(await handler(request('saveCarrier', input))).toEqual({ ok: true });
+  expect(records.get('CARRIER:c')).toEqual({
+    ...receiptOnlyCarrierTerms({ id: 'c', name: 'Authoritative carrier', version: 1 }),
+  });
+  expect(h.commit.mock.calls[0][1]).toBe('producer');
+  expect(await handler(request('saveCarrier', input))).toMatchObject({ ok: false, error: expect.stringMatching(/changed/) });
+  expect(h.commit).toHaveBeenCalledTimes(1);
+});
+it('changes tracking mode only for future snapshots and allows a later confirmed forecast', async () => {
+  h.sources.set('Carrier:c', { id: 'c', name: 'Carrier' });
+  const prior = { ...commissionPolicy().carrierTerms, arrangements: [paymentArrangement()] };
+  records.set('CARRIER:c', prior);
+  const policy = commissionPolicy();
+  records.set('POLICY:p', policy);
+  expect(await handler(request('saveCarrier', { id: 'c', version: 1, receiptOnly: true }))).toEqual({ ok: true });
+  expect(records.get('CARRIER:c')).toMatchObject({ version: 2, receiptOnly: true, basis: 'UNSPECIFIED' });
+  expect(records.get('CARRIER:c')).not.toHaveProperty('arrangements');
+  expect(h.commit.mock.calls[0][0][0].previous).toEqual(prior);
+  expect(records.get('POLICY:p')).toEqual(policy);
+  expect(await handler(request('saveCarrier', { id: 'c', version: 2, arrangements: [paymentArrangement()] }))).toEqual({ ok: true });
+  expect(records.get('CARRIER:c')).toMatchObject({ version: 3, basis: 'WRITTEN', arrangements: [paymentArrangement()] });
+  expect(records.get('CARRIER:c')).not.toHaveProperty('receiptOnly');
+  expect(records.get('POLICY:p')).toEqual(policy);
+});
+it('rejects contradictory receipt-only and forecast setup without writing', async () => {
+  h.sources.set('Carrier:c', { id: 'c', name: 'Carrier' });
+  expect(await handler(request('saveCarrier', { id: 'c', version: 0, receiptOnly: true, arrangements: [paymentArrangement()] }))).toMatchObject({ ok: false });
+  expect(h.commit).not.toHaveBeenCalled();
+});
+it('adopts a historical policy with receipt-only tracking and preserves its eligibility checks', async () => {
+  h.sources.set('Account:a', { id: 'a', name: 'Cedar HOA' });
+  h.sources.set('Policy:old', { id: 'old', accountId: 'a', carrierId: 'c', updatedAt: 'before' });
+  records.set('ACCOUNT:a', commissionAccount());
+  records.set('PLAN:producer', { id: 'producer', producerId: 'producer', name: 'Producer', version: 1,
+    terms: [{ from: '2020-01-01', newBps: 2000, renewalBps: 1000, agreement: 'Signed agreement' }] });
+  records.set('CARRIER:c', receiptOnlyCarrierTerms({ id: 'c', name: 'Carrier', version: 4 }));
+  expect(await handler(request('adoptPolicy', {
+    policyId: 'old', producerId: 'producer', transaction: 'NEW', boundOn: '2026-01-01',
+    effectiveDate: '2026-01-01', expirationDate: '2027-01-01', premium: '10000', agencyRate: '10',
+    evidence: 'Original binder and agency agreement',
+  }))).toEqual({ ok: true });
+  expect(records.get('POLICY:old')).toMatchObject({ producerBps: 2000, planVersion: 1,
+    carrierTerms: { version: 4, receiptOnly: true, basis: 'UNSPECIFIED' }, entries: [] });
+});
+
+it('voids only a reviewed draft and retains its evidence without creating earnings', async () => {
+  const original = { ...statement(), lines: [line()] };
+  records.set('STATEMENT:s', original);
+  records.set('POLICY:p', commissionPolicy());
+  const input = { id: 's', version: 1, reason: 'TEST duplicate; do not post', confirmed: true };
+  expect(await handler(request('voidStatement', input))).toEqual({ ok: true });
+  expect(records.get('STATEMENT:s')).toMatchObject({ ...original, status: 'VOID', version: 2, voidReason: input.reason, voidedBy: 'producer', voidedAt: expect.any(String) });
+  expect((records.get('POLICY:p') as CommissionPolicy).entries).toEqual([]);
+  expect(h.commit.mock.calls[0][0].map((c: {kind: string})=>c.kind)).toEqual(['STATEMENT','PAYROLL_STATE']);
+  expect(await handler(request('voidStatement', input))).toEqual({ ok: true });
+  expect(h.commit).toHaveBeenCalledTimes(1);
+  expect(await handler(request('postStatement', {id:'s',version:2,confirmed:true}))).toMatchObject({ok:false,error:expect.stringMatching(/Only a draft/)});
+});
+it.each([
+  [{ confirmed: false }, /Confirm/],
+  [{ reason: ' ' }, /reason/],
+  [{ version: 0 }, /changed/i],
+])('rejects invalid void requests without changing history: %j', async (patch, error) => {
+  records.set('STATEMENT:s', {...statement(),lines:[line()]});
+  expect(await handler(request('voidStatement', {id:'s',version:1,reason:'Duplicate',confirmed:true,...patch}))).toMatchObject({ok:false,error:expect.stringMatching(error)});
+  expect(h.commit).not.toHaveBeenCalled();
+});
+it('cannot void a posted receipt or overwrite a different void decision', async () => {
+  records.set('STATEMENT:s', {...statement(),status:'POSTED'});
+  expect(await handler(request('voidStatement',{id:'s',version:1,reason:'Wrong draft',confirmed:true}))).toMatchObject({ok:false});
+  records.set('STATEMENT:s', {...statement(),status:'VOID',voidReason:'Original reason',voidedBy:'producer'});
+  expect(await handler(request('voidStatement',{id:'s',version:1,reason:'New reason',confirmed:true}))).toMatchObject({ok:false});
+  expect(h.commit).not.toHaveBeenCalled();
+});
+
 it('matches partial IPFS receipts once, preserves carrier balances and uses the bound producer rate in payroll', async () => {
   const policy = commissionPolicy();
   records.set('POLICY:p', policy);
@@ -909,9 +950,9 @@ it('matches partial IPFS receipts once, preserves carrier balances and uses the 
   expect(await post({ lineRef: 'Alloc-2', version: 4, amountCents: 17655 })).toEqual({ ok: true });
   expect(carrierReconciliationBalances(current(), '2026-10-30')).toMatchObject({ receivedToDate: 0, adjustmentReview: false });
   expect(policyTotals(current())).toMatchObject({ receivedAgency: 29000, earned: 4800, proposedRecovery: 160 });
-  expect(await handler(request('preparePayroll', { producerId: 'producer', payDate: '2026-10-15',
-    cutoff: '2026-10-12', requestId: 'ipfs-pay' }))).toEqual({ ok: true });
-  expect(records.get('BATCH:ipfs-pay')).toMatchObject({ totalCents: 4800, lines: [{ revenueKind: 'IPFS_FEE' }, { revenueKind: 'IPFS_FEE' }] });
+  const payable = payrollPreview([current()], '2026-10-12');
+  expect(payable.reduce((total, row) => total + row.amountCents, 0)).toBe(4800);
+  expect(payable.map(row => row.revenueKind)).toEqual(['IPFS_FEE', 'IPFS_FEE']);
   const refundId = current().entries[1].id;
   expect(await post({ kind: 'RESTORATION', lineRef: 'Restored-1', receivedOn: '2026-10-03',
     amountCents: 1000, settlementTotalCents: 1000, originalId: refundId, version: current().version })).toEqual({ ok: true });
@@ -933,6 +974,15 @@ it('isolates IPFS adjustments and enforces frozen receipt eligibility and valid 
   expect(updated.entries[1]).toMatchObject({ producerCents: 0, eligible: false, revenueKind: 'IPFS_FEE' });
   const carrierReversal = line({ kind: 'REVERSAL', agencyCents: -100, originalId: updated.entries[1].id });
   expect(() => appendEntry(updated, carrierReversal, statement(), 'carrier-reversal')).toThrow(/original/);
+  records.set('CARRIER:c', policy.carrierTerms);
+  const rejectedStatement = {
+    ...statement(), version: 0, source: 'statements/00000000-0000-0000-0000-000000000000',
+    totalCents: -100, lines: [carrierReversal],
+  };
+  expect(await handler(request('saveStatement', rejectedStatement))).toMatchObject({ ok: false, error: expect.stringMatching(/original/) });
+  records.set('STATEMENT:s', { ...rejectedStatement, version: 1 });
+  expect(await handler(request('postStatement', { id: 's', version: 1, confirmed: true }))).toMatchObject({ ok: false, error: expect.stringMatching(/original/) });
+  expect(records.get('POLICY:p')).toEqual(updated);
 });
 
 it('serializes concurrent allocations of one IPFS remittance across different policy terms and accounts', async () => {
@@ -943,12 +993,169 @@ it('serializes concurrent allocations of one IPFS remittance across different po
     settlementTotalCents: 10000, settlementRef: 'Deposit', lineRef: `Deposit/${policyId}`,
   }));
   const result = await Promise.all([post('p1', 7500), post('p2', 7500)]);
-  expect(result.filter(outcome => outcome.ok)).toHaveLength(1);
-  const loser = result[0].ok ? 'p2' : 'p1';
+  const posted = result.map(outcome => typeof outcome === 'object' && outcome !== null && 'ok' in outcome && outcome.ok === true);
+  expect(posted.filter(Boolean)).toHaveLength(1);
+  const loser = posted[0] ? 'p2' : 'p1';
   expect(await post(loser, 7500)).toMatchObject({ ok: false, error: expect.stringMatching(/exceed the verified/) });
   expect(await post(loser, 2500)).toEqual({ ok: true });
   const entries = ['p1', 'p2'].flatMap(id => (records.get(`POLICY:${id}`) as CommissionPolicy).entries);
   expect(entries).toHaveLength(2);
   expect(entries.reduce((total, entry) => total + entry.agencyCents, 0)).toBe(10000);
   expect(entries.reduce((total, entry) => total + entry.producerCents, 0)).toBe(1600);
+});
+
+it('posts IPFS fee cash once and applies each participant’s frozen share through retained payroll', async () => {
+  const policy: CommissionPolicy = {
+    ...commissionPolicy(), receiptsFrom: '2026-11-01', ipfsFeeCents: 10000, ipfsAgreementRef: 'IPFS-A',
+    allocations: [{ id: 'split', from: '2026-01-01', agreement: 'A', approvedBy: 'Owner', approvedAt: '2026-01-01',
+      method: 'INDIVIDUAL_PLAN_RATE', houseBps: 0, participants: [
+        { producerId: 'one', producerName: 'One', shareBps: 6000, producerBps: 2000, eligible: true, planVersion: 1, agreement: 'B' },
+        { producerId: 'two', producerName: 'Two', shareBps: 4000, producerBps: 1000, eligible: true, planVersion: 1, agreement: 'C' },
+      ] }],
+  };
+  records.set('POLICY:p', policy);
+  const fee = { policyId: 'p', version: 1, kind: 'RECEIPT', amountCents: 10000, receivedOn: '2026-10-01', lineRef: 'A-1', settlementRef: 'D-1' };
+  expect(await handler(request('postIpfsFee', fee))).toEqual({ ok: true });
+  const current = () => records.get('POLICY:p') as CommissionPolicy;
+  expect(current().entries).toMatchObject([{ revenueKind: 'IPFS_FEE', agencyCents: 10000, producerCents: 0, allocationId: 'split' }]);
+  const earnings = () => [...records].filter(([key]) => key.startsWith('EARNING:')).map(([,value]) => value as CommissionEarning);
+  expect(earnings().map(row => row.revenueKind)).toEqual(['IPFS_FEE', 'IPFS_FEE']);
+  const cycle = validatePayrollCycle({
+    id: '2026-10', version: 0, revision: 1, cutoff: '2026-10-23', reviewOn: '2026-10-24',
+    hrDueOn: '2026-10-26', processingOn: '2026-10-26', payDate: '2026-10-30', status: 'OPEN', batchIds: [], totalCents: 0,
+  });
+  // Older shared earnings can be identified from the original IPFS receipt ID.
+  const restoredEarnings = earnings().map(e => e.producerId === 'one' ? { ...e, revenueKind: undefined } : e);
+  const approved = buildPayrollApproval(cycle, [current()], [], defaultPayrollSettings(), 'owner', '2026-10-24T12:00:00Z', restoredEarnings);
+  expect(approved.batches.map(b => [b.producerId, b.lines[0].revenueKind, b.totalCents])).toEqual([
+    ['one', 'IPFS_FEE', 1200], ['two', 'IPFS_FEE', 400],
+  ]);
+  for (const e of approved.earnings) records.set('EARNING:' + e.id, e);
+  for (const b of approved.batches) records.set('BATCH:' + b.id, { ...b, status: 'PAID' });
+  const member = request('', {}, 'PRODUCER');
+  member.identity = { sub: 'one', groups: ['PRODUCER'] };
+  member.fieldName = 'commissionOverview';
+  expect(await handler(member)).toMatchObject({
+    ok: true, policies: [], earnings: [{ producerId: 'one', revenueKind: 'IPFS_FEE', amountCents: 1200 }],
+    batches: [{ status: 'PAID', paidCents: 1200, lines: [{ source: 'SHARED_RECEIPT', revenueKind: 'IPFS_FEE' }] }],
+  });
+  const refund = { ...fee, version: 2, kind: 'REVERSAL', amountCents: 5000, originalId: current().entries[0].id, receivedOn: '2026-10-03', lineRef: 'Refund', settlementRef: 'D-2' };
+  expect(await handler(request('postIpfsFee', refund))).toEqual({ ok: true });
+  expect(await handler(request('postIpfsFee', refund))).toEqual({ ok: true });
+  expect(earnings().filter(e => e.status === 'REVIEW').map(e => e.amountCents)).toEqual([-600, -200]);
+  expect(earnings()).toHaveLength(4);
+  expect(records.get('PAYROLL_STATE:reconciliation')).toMatchObject({ version: 2 });
+  const restore = { ...refund, version: 3, kind: 'RESTORATION', originalId: current().entries.at(-1)!.id, lineRef: 'Restore', settlementRef: 'D-3' };
+  expect(await handler(request('postIpfsFee', restore))).toEqual({ ok: true });
+  expect(await handler(request('postIpfsFee', restore))).toEqual({ ok: true });
+  expect(earnings().filter(e => e.entryId === current().entries.at(-1)!.id).map(e => [e.status, e.amountCents, e.revenueKind]))
+    .toEqual([['REVIEW', 600, 'IPFS_FEE'], ['REVIEW', 200, 'IPFS_FEE']]);
+  expect(payrollPreview([current()], '2026-10-23', undefined, earnings())).toEqual([]);
+});
+
+const feeCutoff = '2026-10-23';
+const feeReceipt = { policyId: 'p', version: 1, kind: 'RECEIPT', amountCents: 10000,
+  receivedOn: feeCutoff, settlementRef: 'IPFS-D1', lineRef: 'IPFS-L1' };
+
+function seedFeePayroll() {
+  const policy = appendEntry({ ...commissionPolicy(), ipfsFeeCents: 10000, ipfsAgreementRef: 'Fee agreement' }, line(), statement(), 'carrier');
+  const cycle = validatePayrollCycle({
+    id: '2026-10', version: 0, revision: 1, cutoff: feeCutoff, reviewOn: '2026-10-24',
+    hrDueOn: '2026-10-26', processingOn: '2026-10-26', payDate: '2026-10-30', status: 'OPEN', batchIds: [], totalCents: 0,
+  });
+  const approval = buildPayrollApproval(cycle, [policy], [], defaultPayrollSettings(), 'owner', '2026-10-24T12:00:00Z');
+  const approved = { ...approval.cycle, version: 1 }, batch = { ...approval.batches[0], version: 1 };
+  records.set('POLICY:p', approval.policies[0]);
+  records.set('PAYROLL_CYCLE:' + cycle.id, approved);
+  records.set('BATCH:' + batch.id, batch);
+  records.set('PAYROLL_STATE:reconciliation', { id: 'reconciliation', version: 1 });
+  return { approved, batch };
+}
+
+it('holds an approved unpaid payroll for a newly posted fee at its exact cutoff, and rejects new payment confirmations', async () => {
+  const { approved, batch } = seedFeePayroll();
+  const otherCycles: Record<string, Partial<PayrollCycle>> = {
+    earlier: { cutoff: '2026-10-22' }, paid: { status: 'PAID' }, cancelled: { status: 'CANCELLED' },
+    open: { status: 'OPEN' }, other: { producerIds: ['other'] }, chosen: { selectedEarningKeys: [payrollRowKey({ policyId: 'p', entryId: 'carrier' })] },
+    held: { reviewRequired: 'Existing payroll review' },
+  };
+  for (const [id, patch] of Object.entries(otherCycles)) records.set('PAYROLL_CYCLE:' + id, { ...approved, id, ...patch });
+  expect(await handler(request('postIpfsFee', feeReceipt))).toEqual({ ok: true });
+  const cycle = records.get('PAYROLL_CYCLE:' + approved.id) as PayrollCycle;
+  expect(cycle).toMatchObject({ version: 2, status: 'APPROVED', totalCents: batch.totalCents, reviewRequired: expect.stringMatching(/IPFS/) });
+  for (const [id, patch] of Object.entries(otherCycles)) expect(records.get('PAYROLL_CYCLE:' + id)).toMatchObject({ version: 1, ...patch });
+  const payment = { id: approved.id, version: cycle.version, paidOn: '2026-10-30', paymentReference: 'pay', confirmed: true };
+  expect(await handler(request('confirmPayrollCycle', payment))).toMatchObject({ ok: false, error: cycle.reviewRequired });
+  expect(await handler(request('confirmPayrollEmployee', { ...payment, batchId: batch.id }))).toMatchObject({ ok: false, error: cycle.reviewRequired });
+  expect(await handler(request('postIpfsFee', feeReceipt))).toEqual({ ok: true });
+  expect(h.commit).toHaveBeenCalledTimes(1);
+  expect(records.get('BATCH:' + batch.id)).toEqual(batch);
+});
+
+it('preserves a partial payment and leaves a late fee available for supplemental payroll', async () => {
+  const { approved, batch } = seedFeePayroll();
+  const payment = { id: approved.id, version: approved.version, batchId: batch.id, paymentId: 'part-1',
+    amountCents: 1000, paidOn: '2026-10-30', paymentReference: 'pay', confirmed: true };
+  expect(await handler(request('confirmPayrollEmployee', payment))).toEqual({ ok: true });
+  expect(await handler(request('postIpfsFee', feeReceipt))).toEqual({ ok: true });
+  const cycle = records.get('PAYROLL_CYCLE:' + approved.id) as PayrollCycle;
+  expect(cycle.reviewRequired).toBeUndefined();
+  expect(await handler(request('confirmPayrollEmployee', payment))).toEqual({ ok: true });
+  expect(await handler(request('confirmPayrollCycle', { ...payment, version: cycle.version }))).toEqual({ ok: true });
+  expect(records.get('BATCH:' + batch.id)).toMatchObject({ status: 'PAID', totalCents: 16000, payments: [{ amountCents: 1000 }, { amountCents: 15000 }] });
+  expect(payrollPreview([records.get('POLICY:p') as CommissionPolicy], feeCutoff)).toMatchObject([{ revenueKind: 'IPFS_FEE', amountCents: 1600 }]);
+});
+
+it('retries without any fee postings when approval wins the race after the cycle lookup', async () => {
+  const { approved } = seedFeePayroll();
+  records.delete('PAYROLL_CYCLE:' + approved.id);
+  const list = h.approvedCycles.getMockImplementation()!;
+  h.approvedCycles.mockImplementation(async (...args) => {
+    const result = await list(...args);
+    if (!records.has('PAYROLL_CYCLE:' + approved.id)) {
+      records.set('PAYROLL_CYCLE:' + approved.id, approved);
+      records.set('PAYROLL_STATE:reconciliation', { id: 'reconciliation', version: 2 });
+    }
+    return result;
+  });
+  expect(await handler(request('postIpfsFee', feeReceipt))).toMatchObject({ ok: false });
+  expect((records.get('POLICY:p') as CommissionPolicy).entries).toHaveLength(1);
+  expect([...records.keys()].some(k => k.startsWith('IPFS_'))).toBe(false);
+  expect(await handler(request('postIpfsFee', feeReceipt))).toEqual({ ok: true });
+  expect(records.get('PAYROLL_CYCLE:' + approved.id)).toMatchObject({ version: 2, reviewRequired: expect.stringMatching(/IPFS/) });
+});
+
+it('holds a selected original fee for linked reversals and restorations, without creating new payable earnings', async () => {
+  const { approved } = seedFeePayroll();
+  records.delete('PAYROLL_CYCLE:' + approved.id);
+  const current = () => records.get('POLICY:p') as CommissionPolicy;
+  expect(await handler(request('postIpfsFee', { ...feeReceipt, receivedOn: '2026-10-01' }))).toEqual({ ok: true });
+  const receipt = current().entries.at(-1)!;
+  const cycle = { ...approved, selectedEarningKeys: [payrollRowKey({ policyId: 'p', entryId: receipt.id })] };
+  records.set('PAYROLL_CYCLE:' + approved.id, cycle);
+  const refund = { ...feeReceipt, version: current().version, amountCents: 5000, kind: 'REVERSAL', originalId: receipt.id, lineRef: 'refund' };
+  expect(await handler(request('postIpfsFee', refund))).toEqual({ ok: true });
+  expect(records.get('PAYROLL_CYCLE:' + approved.id)).toMatchObject({ reviewRequired: expect.stringMatching(/IPFS/) });
+  records.set('PAYROLL_CYCLE:' + approved.id, { ...cycle, version: 3, revision: 2 });
+  const restore = { ...refund, version: current().version, kind: 'RESTORATION', originalId: current().entries.at(-1)!.id, lineRef: 'restored' };
+  expect(await handler(request('postIpfsFee', restore))).toEqual({ ok: true });
+  expect(records.get('PAYROLL_CYCLE:' + approved.id)).toMatchObject({ version: 4, reviewRequired: expect.stringMatching(/IPFS/) });
+  expect(await handler(request('postIpfsFee', restore))).toEqual({ ok: true });
+  expect(policyTotals(current())).toMatchObject({ earned: 17600, proposedRecovery: 0 });
+});
+
+it('keeps fee cash separate from a departing employee’s pending carrier balance and its resolution', () => {
+  const departure: CommissionDeparture = {
+    id: 'producer', producerId: 'producer', producerName: 'Avery', version: 1, employmentEndOn: '2026-10-31',
+    reviewOn: '2026-10-31', paymentDueOn: '2026-11-01', laterReceipts: 'REVIEW', renewals: 'REVIEW', status: 'APPROVED',
+    agreement: 'Signed plan', evidence: 'Departure notice', decisions: [],
+  };
+  const policy = { ...commissionPolicy(), premiumCents: 100000, agencyRateUnits: 100000 };
+  const fee = appendEntry(policy, line({ revenueKind: 'IPFS_FEE', agencyCents: 10000 }), statement(), 'fee');
+  const pending = (p: CommissionPolicy) => departureWorklist(departure, [p], [], []).pending;
+  expect(pending(fee)).toMatchObject([{ expectedAgencyCents: 10000, receivedAgencyCents: 0 }]);
+  departure.pendingResolutions = [{ policyId: policy.id, receiptCount: 0, reason: 'Carrier confirmed', at: '2026-09-30', by: 'Owner' }];
+  expect(pending(fee)).toEqual([]);
+  const carrier = appendEntry(fee, line({ agencyCents: 1000 }), statement(), 'carrier');
+  expect(pending(carrier)).toMatchObject([{ expectedAgencyCents: 10000, receivedAgencyCents: 1000 }]);
 });
