@@ -42,8 +42,7 @@ export function splitExtension(filename: string): { stem: string; ext: string } 
 /**
  * Everything a name must survive before it is stored: control characters and
  * path separators (which would make the value unsafe to echo anywhere a path
- * is expected), the quotes a model sometimes wraps its answer in, and the
- * length cap.
+ * is expected), and the quotes a model sometimes wraps its answer in.
  */
 function clean(raw: string): string {
   return raw
@@ -52,7 +51,6 @@ function clean(raw: string): string {
     .replace(/\s+/g, " ")
     .replace(/^["'`\s]+/, "")
     .replace(/["'`\s.]+$/, "")
-    .slice(0, MAX_NAME_CHARS)
     .trim();
 }
 
@@ -80,6 +78,8 @@ export function withExtension(
   if (ext && stem.toLowerCase().endsWith(ext.toLowerCase())) {
     stem = clean(stem.slice(0, -ext.length));
   }
+  // Remove the full extension before capping the stem, so a partial suffix cannot survive.
+  stem = stem.slice(0, MAX_NAME_CHARS).trim();
   if (!stem) return null;
   return stem + ext;
 }
