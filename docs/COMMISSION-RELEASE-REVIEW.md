@@ -7,7 +7,7 @@ This release brings the commission workflow tested on staging into the current m
 - Work queue identifies the next review action. Guided workflow follows a statement from import through employee payment without requiring separate reconciliation and payroll tabs.
 - Saved carrier mappings, exact policy matches and payment allocations can be suggested. A person confirms source values, eligibility, matching, posting, payroll approval and payment.
 - A carrier deposit can be recorded before its remittance arrives. Matching carries the bank date, amount, reference and evidence into the selected statement. One deposit can match one statement, including a partial payment; deposits spanning several statements remain unresolved.
-- Payroll uses actual carrier receipt dates. The workflow distinguishes future cutoff dates, unresolved receipts, missing historical agreements, held earnings and completed payments, with links to the relevant record.
+- Payroll uses actual receipt dates for carrier commissions and IPFS fees. Owners enter expected IPFS fees and reconcile remittances under **IPFS fees**. Payroll applies each eligible producer's approved share and rate and retains the fee source in earnings, batches and reports.
 - Plans, effective employee assignments, shared commissions, departure reviews, adjustments and archived reports remain available to authorized Owners. Producer views retain their restricted scope.
 - Source documents and recoverable working drafts remain private. Restoring a draft does not restore approval checkboxes.
 
@@ -29,6 +29,7 @@ Merging main triggers the configured production builds. Keep the pull request un
 6. For a separate fictional bank deposit, record it before uploading remittance. Verify it remains Awaiting remittance and blocks relevant payroll until resolved. Select a suggested statement and confirm; the bank details must carry forward without re-entry.
 7. Verify duplicate references, stale versions, ambiguous mappings, excessive allocations and incomplete reconciliation fail without partial financial writes. A noncommission deposit requires an explicit reason and confirmation; it must create no employee earnings.
 8. Edit a form while a live update arrives, fail a save, reopen a private working draft and switch roles. Verify edits remain protected, confirmations reset, and unauthorized data disappears. Inspect desktop and 390-pixel layouts.
+9. Record a fictional $100 IPFS fee received on the cutoff after approving an unpaid payroll. Verify the applicable approval requires review, payment confirmation is blocked, and replaying the same remittance adds no earnings. A 60% share at a 20% rate earns $12 and a 40% share at a 10% rate earns $4. Both payroll lines should identify the IPFS fee, and the carrier collection balance should stay unchanged.
 
 Use new fictional references for each run. Do not repeat payments against completed cycles. Real statement review details belong in private records, never in this repository.
 
@@ -53,6 +54,8 @@ Review regression exercise: start an empty fictional statement, choose manual en
 ### Statement lookup upgrade (required before release)
 
 Active work and per-statement references commit with each source record. Archived statements are paged; the complete-read limit stays at 5,000 records. Existing ledgers fail closed with an upgrade message until their lookup backfill completes. New empty ledgers initialize the marker with the first statement.
+
+Existing IPFS policy entries, transaction references, settlement allocations and payroll batch IDs carry forward directly. The statement lookup upgrade operates on carrier statement intake and settlement references. Keep previously reconciled IPFS remittances in their original ledger.
 
 After deploying the new commission writer, run the dry-run backfill against the explicitly verified staging ledger and region, then run the same command with `--apply` and verify `ready: true`. Production requires a separately authorized release. Do not run maintenance from the original working copy.
 

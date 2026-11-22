@@ -131,6 +131,43 @@ describe("read-only existing backend admission", () => {
   });
 });
 
+describe('commission payroll scheduler rollout', () => {
+  it('accepts only the additional disabled scheduler owned by the payroll stack', () => {
+    const f = liveFixture(), { account, region, backendRoot } = f.c;
+    const childArn = `arn:aws:cloudformation:${region}:${account}:stack/payroll/sample`;
+    const name = 'commission-payroll-mplifyd1nuh9rw1hcuxomainbranch0e4fdbd849';
+    const resource = (LogicalResourceId: string, ResourceType: string, PhysicalResourceId: string) =>
+      ({ LogicalResourceId, ResourceType, PhysicalResourceId, ResourceStatus: 'CREATE_COMPLETE' });
+    const root = [...f.resources, resource('commissionpayrollC11FCD08', 'AWS::CloudFormation::Stack', childArn)];
+    const child = [
+      resource('commissionpayrollworkerlambda7964D062', 'AWS::Lambda::Function', 'payroll-worker'),
+      resource('SchedulerRoleForTarget8840c435C2EB1B', 'AWS::IAM::Role', 'payroll-invoker'),
+      resource('PayrollScheduleFailures5C1240BA', 'AWS::SQS::Queue', `https://sqs.${region}.amazonaws.com/${account}/failures`),
+      resource('CommissionPayrollScheduleFB5DD3E9', 'AWS::Scheduler::Schedule', name),
+    ];
+    const actual = {
+      Name: name, State: 'DISABLED', ScheduleExpression: 'cron(0 8-17 * * ? *)', ScheduleExpressionTimezone: 'America/New_York',
+      FlexibleTimeWindow: { Mode: 'OFF' }, Target: {
+        Arn: `arn:aws:lambda:${region}:${account}:function:payroll-worker`, RoleArn: `arn:aws:iam::${account}:role/payroll-invoker`,
+        DeadLetterConfig: { Arn: `arn:aws:sqs:${region}:${account}:failures` },
+        RetryPolicy: { MaximumEventAgeInSeconds: 3600, MaximumRetryAttempts: 2 },
+        Input: '{"trigger":"scheduled","scheduleArn":"<aws.scheduler.schedule-arn>","scheduledAt":"<aws.scheduler.scheduled-time>"}',
+      },
+    };
+    const aws = (...args: string[]) => {
+      if (args[1] === 'list-stack-resources') return { StackResourceSummaries: args[3] === backendRoot ? root : child };
+      if (args[1] === 'get-schedule' && args[3] === name) return actual;
+      return f.aws(...args);
+    };
+    const verify = () => verifySteadyState(f.namespace, f.c, aws);
+    expect(verify).not.toThrow();
+    actual.State = 'ENABLED'; expect(verify).toThrow('schedule timing/target/eligibility changed');
+    actual.State = 'DISABLED';
+    actual.Target.Arn += '-different'; expect(verify).toThrow('schedule timing/target/eligibility changed');
+    child.pop(); expect(verify).toThrow('incomplete payroll scheduler stack');
+  });
+});
+
 describe('scoped broker fee ledger addition', () => {
   it.each([contract, stagingContract])('allows exactly the new protected ledger while retaining the original $backendBranch inventory hash', source => {
     const f = liveFixture('', source, true), originalHash = f.c.statefulInventorySha256;
