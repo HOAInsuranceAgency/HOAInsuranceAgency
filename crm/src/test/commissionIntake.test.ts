@@ -170,7 +170,7 @@ const all = <T>(kind: string): T[] =>
   [...records.entries()]
     .filter(([k]) => k.startsWith(kind + ":"))
     .map(([, v]) => structuredClone(v)) as T[];
-const seed = (kind: string, v: { id: string }) =>
+const seed = <T extends { id: string }>(kind: string, v: T) =>
   records.set(kind + ":" + v.id, structuredClone(v));
 const row = (p: Partial<IntakeRow> = {}): IntakeRow => ({
   id: "row1",
