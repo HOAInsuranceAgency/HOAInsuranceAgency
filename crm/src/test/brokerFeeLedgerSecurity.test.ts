@@ -26,6 +26,9 @@ vi.mock('../../amplify/functions/broker-fees/store', async original => ({
 vi.mock('../../amplify/functions/commissions/store', () => ({
   get: async (kind: string, id: string) => structuredClone(kind === 'POLICY' ? h.ledger.get(id) : h.commissionRows.get(kind + ':' + id)),
   list: h.listCommission, getMany: h.getManyCommission,
+  approvedPayrollCycles: async (minimumCutoff?: string) => structuredClone([...h.commissionRows.entries()]
+    .filter(([k, c]) => k.startsWith('PAYROLL_CYCLE:') && c.status === 'APPROVED' && (!minimumCutoff || c.cutoff >= minimumCutoff))
+    .map(([, c]) => c)),
   commit: h.commit,
 }));
 vi.mock('../../amplify/functions/crm-access/user-status', async original => ({ ...await original<typeof import('../../amplify/functions/crm-access/user-status')>(), assertUserSession: h.session }));

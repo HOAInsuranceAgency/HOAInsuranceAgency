@@ -3,7 +3,7 @@ import { batchPaidCents, commissionRevenueLabel, required, type CommissionBatch,
 import { depositReference, validateDeposit, type CommissionDeposit } from '../../../../shared/commissionDeposits';
 import type { IntakeSettlement } from '../../../../shared/commissionIntake';
 import { departureDecision, receiptEarningId, type CommissionDeparture, type CommissionEarning } from '../../../../shared/commissionExceptions';
-import { payrollDay, payrollRowKey, type PayrollCycle } from '../../../../shared/commissionPayroll';
+import { payrollDay, payrollRowKey } from '../../../../shared/commissionPayroll';
 import * as store from './store';
 
 export const depositOperations = new Set(['recordUnmatchedDeposit', 'resolveUnmatchedDeposit']);
@@ -42,8 +42,7 @@ export async function holdReceiptPayroll(postings: string | readonly ReceiptPayr
   const receiptDates = typeof postings === 'string' ? [postings] : postings.map(p => p.entry.receivedOn);
   if (!receiptDates.length || targets?.length === 0) return [];
   const earliestDate = receiptDates.reduce((earliest, date) => date < earliest ? date : earliest);
-  const cycles = (await store.list<PayrollCycle>('PAYROLL_CYCLE')).filter(c =>
-    c.status === 'APPROVED' && earliestDate <= c.cutoff && !c.reviewRequired);
+  const cycles = (await store.approvedPayrollCycles(earliestDate)).filter(c => !c.reviewRequired);
   const reviewReason = 'A carrier receipt was recorded within this payroll cutoff after approval. Reconcile it and review a replacement payroll approval before payment.';
   let holds = cycles.map(cycle => ({ cycle, reviewReason }));
   if (targets && holds.length) {

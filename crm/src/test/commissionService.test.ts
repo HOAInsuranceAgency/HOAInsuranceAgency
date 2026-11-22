@@ -14,6 +14,7 @@ import {
 const h = vi.hoisted(() => ({
   get: vi.fn(),
   getMany: vi.fn(),
+  approvedCycles: vi.fn(),
   list: vi.fn(),
   commit: vi.fn(),
   session: vi.fn(),
@@ -25,6 +26,7 @@ const h = vi.hoisted(() => ({
 vi.mock('../../amplify/functions/commissions/store', () => ({
   get: h.get,
   getMany: h.getMany,
+  approvedPayrollCycles: h.approvedCycles,
   list: h.list,
   commit: h.commit,
   table: () => 'private-ledger',
@@ -90,6 +92,9 @@ beforeEach(() => {
   h.getMany.mockImplementation(async (refs: { kind: string; id: string }[]) =>
     structuredClone(refs.map((r) => records.get(`${r.kind}:${r.id}`)).filter(Boolean)),
   );
+  h.approvedCycles.mockImplementation(async (minimumCutoff?: string) => structuredClone([...records.entries()]
+    .filter(([key]) => key.startsWith('PAYROLL_CYCLE:')).map(([, v]) => v as PayrollCycle)
+    .filter(c => c.status === 'APPROVED' && (!minimumCutoff || c.cutoff >= minimumCutoff))));
   h.list.mockImplementation(async (k, producer, recordKind) =>
     structuredClone(
       [...records.entries()]
@@ -1139,11 +1144,11 @@ describe('late IPFS remittances and approved payroll', () => {
   });
 
   it('rejects a racing payroll approval without saving money or earnings and re-evaluates the cycle on retry', async () => {
-    const list = h.list.getMockImplementation()!;
+    const list = h.approvedCycles.getMockImplementation()!;
     let racing = true;
-    h.list.mockImplementation(async (...args) => {
+    h.approvedCycles.mockImplementation(async (...args) => {
       const found = await list(...args);
-      if (racing && args[0] === 'PAYROLL_CYCLE') {
+      if (racing) {
         racing = false;
         cycle('2026-10');
         records.set('PAYROLL_STATE:reconciliation', {id: 'reconciliation', version: 1});
