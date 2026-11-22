@@ -67,3 +67,9 @@ Regression acceptance: more than 5,000 archived settlements do not block opening
 Approval snapshots are stored in immutable records of at most 24 KB rather than embedding every employee calculation on the settlement. Each snapshot and its audit use the existing transaction limits. The settlement retains the snapshot references, hashes, reviewed policy versions, and approver; posting reads only the records for its next five rows. Preparing snapshots alone cannot post earnings, and failed/conflicting allocation attempts can leave unreferenced snapshots that authorize nothing.
 
 The inbox reuses durable posted totals plus the unposted portion of pending receipts. It checks index readiness once and does not query full settlement history for each active statement. Payroll confirmations retain the exact reviewed preview token and clear when that preview changes, even when the cycle version is unchanged.
+
+### Approved payroll lookup
+
+Receipt posting looks up current payroll approvals across monthly and off-cycle runs. The writer adds or removes a cycle ID when the approval status changes. During rollout the receipt reader can still find approvals created by the previous version.
+
+After all commission writers in each environment are live, run `npx tsx scripts/backfill-approved-payroll.ts --table <verified-ledger-table> --region <verified-region>` from `crm`. The dry run counts examined cycles and approved cycles. If `ready` is false, repeat with `--apply` to write the approved IDs and mark the lookup ready, including on an empty ledger. Repeat the dry run to verify `ready: true`. A concurrent payment or cancellation takes precedence, and an interrupted run can restart.
