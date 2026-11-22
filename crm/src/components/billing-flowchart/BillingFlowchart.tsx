@@ -22,9 +22,9 @@ export function BillingFlowchart() {
           <dt>IPFS with no broker fee or a fee at or below the cap → IPFS only</dt>
           <dd>IPFS collects the down payment and installments. HOA collects $0 from the client.</dd>
           <dt>IPFS with a broker fee above the cap → HOA CRM for the excess fee</dt>
-          <dd>Invoice only the excess fee when the down payment is due. IPFS collects the regular down payment and all installments.</dd>
+          <dd>HOA is owed only the excess when the down payment is due. Hold the standard HOA CRM invoice for billing review. Sending it can restore the full broker fee. IPFS collects the regular down payment and all installments.</dd>
         </dl>
-        <p>The cap is 30% of the IPFS amount financed. On $10,000 financed, the cap is $3,000. For a $3,500 broker fee, bill $500 in HOA CRM and finance $3,000 through IPFS.</p>
+        <p>The cap is 30% of the IPFS amount financed. On $10,000 financed, the cap is $3,000. For a $3,500 broker fee, HOA is owed $500 and IPFS finances $3,000.</p>
       </div>
       <a href={printableChart} target="_blank" rel="noopener noreferrer">Open printable flowchart (PDF)</a>
     </details>
