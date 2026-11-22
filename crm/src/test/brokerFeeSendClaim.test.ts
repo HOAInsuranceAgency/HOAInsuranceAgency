@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createHash } from 'node:crypto';
 import { authorizedQuoteTerms } from '../../../shared/quoteAuthorization';
 const h = vi.hoisted(() => ({
   invoice: {} as Record<string, any>, quote: {} as Record<string, any>, models: {} as Record<string, any>, order: [] as string[],
   db: vi.fn(), mail: vi.fn(), begin: vi.fn(), finish: vi.fn(), reserve: vi.fn(), publish: vi.fn(), complete: vi.fn(),
-  price: vi.fn(), link: vi.fn(), retrieve: vi.fn(), deactivate: vi.fn(), close: vi.fn(), getFee: vi.fn(), pdf: vi.fn(),
+  price: vi.fn(), link: vi.fn(), retrieve: vi.fn(), deactivate: vi.fn(), close: vi.fn(), getFee: vi.fn(), getRow: vi.fn(), pdf: vi.fn(),
   sessions: vi.fn(), expire: vi.fn(), intent: vi.fn(), prepare: vi.fn(), realClose: undefined as undefined | ((...args: any[]) => Promise<void>),
   records: new Map<string, Record<string, any>>(), model: vi.fn(), storeDb: vi.fn(), accountModels: vi.fn(),
 }));
@@ -15,9 +16,9 @@ vi.mock('../../amplify/functions/transactional-mail/client', () => ({ Transactio
 vi.mock('../../amplify/functions/send-invoice/sendOperation', () => ({ beginInvoiceSend: h.begin, completeInvoiceSend: h.finish, InvoiceSendBlocked: class extends Error {} }));
 vi.mock('../../amplify/functions/broker-fees/store', async original => ({
   ...await original<typeof import('../../amplify/functions/broker-fees/store')>(),
-  getFee: h.getFee, getModel: h.model, accountModels: h.accountModels, db: { send: h.storeDb },
+  getFee: h.getFee, getRow: h.getRow, getModel: h.model, accountModels: h.accountModels, db: { send: h.storeDb },
 }));
-vi.mock('../../amplify/functions/broker-fees/payments', () => ({ reserveFeeInvoice: h.reserve, publishFeeInvoiceLink: h.publish, completeFeeInvoiceSend: h.complete }));
+vi.mock('../../amplify/functions/broker-fees/payments', async original => ({ ...await original<typeof import('../../amplify/functions/broker-fees/payments')>(), reserveFeeInvoice: h.reserve, publishFeeInvoiceLink: h.publish, completeFeeInvoiceSend: h.complete }));
 vi.mock('../../amplify/functions/broker-fees/bindValidation', () => ({ assertBrokerFeeSigned: async () => ({}) }));
 vi.mock('../../amplify/functions/broker-fees/agreements', () => ({ prepareBrokerFeeAgreement: h.prepare }));
 vi.mock('../../amplify/functions/send-invoice/pdf', () => ({ pdfFilename: () => 'invoice.pdf', renderInvoicePdf: h.pdf }));
@@ -121,6 +122,56 @@ it.each(["PAID", "PROCESSING"] as const)("sends the existing %s invoice without 
   expect(h.reserve).not.toHaveBeenCalled();
   expect(h.link).not.toHaveBeenCalled();
   expect(h.retrieve).not.toHaveBeenCalled();
+});
+
+function settledFeeInvoice(status: 'PAID' | 'PROCESSING') {
+  Object.assign(h.invoice, { status, stripePaymentIntentId: 'pi-here', stripePaymentLinkId: 'old-link',
+    paymentUrl: 'https://buy.stripe.com/old', brokerFeeAllocations: JSON.stringify([{ quoteId: 'q', amountCents: 50000 }]),
+    remittanceBrokerFeeCents: 50000 });
+  h.getFee.mockResolvedValue({ issuedInvoiceIds: ['i'], submittedCents: status === 'PROCESSING' ? 50000 : 0,
+    collectedCents: status === 'PAID' ? 50000 : 0, refundedCents: 0 });
+}
+
+it.each(['PAID', 'PROCESSING'] as const)('sends only the recorded broker fee receipt for a %s payment', async status => {
+  settledFeeInvoice(status);
+  // The invoice retains its issued fee even if the historical quote subsequently closed.
+  h.quote.status = 'BOUND';
+  h.models.Invoice.list = async () => ({ data: [{ ...h.invoice, id: 'next-bill', status: 'SENT' }] });
+  await expect(send()).resolves.toMatchObject({ ok: true, subject: expect.stringContaining(status === 'PAID' ? 'Payment received' : 'Payment processing') });
+  expect(h.pdf.mock.calls[0][0]).toMatchObject({ paymentStatus: status, paymentUrl: null });
+  expect(h.mail).toHaveBeenCalledOnce();
+  expect(h.getRow).not.toHaveBeenCalled();
+  for (const method of [h.prepare, h.reserve, h.publish, h.complete, h.price, h.link, h.retrieve, h.deactivate, h.close, h.storeDb]) expect(method).not.toHaveBeenCalled();
+  expect(h.db).toHaveBeenCalledOnce();
+  const names = Object.values(h.db.mock.calls[0][0].input.ExpressionAttributeNames);
+  expect(names).toEqual(expect.arrayContaining(['sentAt', 'sentTo']));
+  expect(names).not.toEqual(expect.arrayContaining(['brokerFeeAllocations']));
+  expect(names).not.toContain('remittanceBrokerFeeCents');
+});
+
+it.each([
+  ['missing', []], ['wrong quote', [{ quoteId: 'another', amountCents: 50000 }]],
+  ['wrong amount', [{ quoteId: 'q', amountCents: 12345 }]],
+  ['wrong policy', [{ quoteId: 'q', policyId: 'other-policy', amountCents: 50000 }]],
+])('refuses to report a processing fee with %s proof', async (_label, allocations) => {
+  settledFeeInvoice('PROCESSING');
+  h.invoice.brokerFeeAllocations = JSON.stringify(allocations);
+  await expect(send()).resolves.toMatchObject({ ok: false, error: expect.stringContaining('recorded for this invoice') });
+  expect(h.mail).not.toHaveBeenCalled();
+  expect(h.reserve).not.toHaveBeenCalled();
+  expect(h.db).not.toHaveBeenCalled();
+});
+
+it.each(['i', 'other'])('requires the same invoice for an outside fee payment receipt (%s)', async paidInvoiceId => {
+  settledFeeInvoice('PAID');
+  delete h.invoice.brokerFeeAllocations; delete h.invoice.remittanceBrokerFeeCents; delete h.invoice.stripePaymentIntentId;
+  const id = 'payment:' + createHash('sha256').update('manual-invoice:i').digest('hex');
+  h.getRow.mockResolvedValue({ kind: 'PAYMENT', accountId: 'a', status: 'PAID', sourceId: 'manual-invoice:' + paidInvoiceId,
+    allocations: [{ quoteId: 'q', amountCents: 50000 }] });
+  expect((await send()).ok).toBe(paidInvoiceId === 'i');
+  expect(h.getRow).toHaveBeenCalledWith(id);
+  expect(h.mail).toHaveBeenCalledTimes(paidInvoiceId === 'i' ? 1 : 0);
+  expect(h.reserve).not.toHaveBeenCalled(); expect(h.link).not.toHaveBeenCalled();
 });
 
 it.each(["ENDORSEMENT", "CARRIER_FEE"])("blocks an unverified %s on a financed term before email or payment setup", async kind => {

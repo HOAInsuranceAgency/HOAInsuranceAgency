@@ -179,6 +179,15 @@ export async function feeInvoiceVoidWrites(invoice:Record<string,unknown>):Promi
   return writes;
 }
 
+/** A manual payment on an unsent draft can precede its first issued allocation. */
+export async function manualReceiptFeeAllocations(invoiceId: string, accountId: string): Promise<BrokerFeeAllocation[]> {
+  const source = `manual-invoice:${invoiceId}`;
+  const payment = await getRow<Payment>(paymentId(source));
+  if (payment?.kind !== 'PAYMENT' || payment.sourceId !== source || payment.accountId !== accountId ||
+      (payment.status !== 'PAID' && payment.status !== 'REFUNDED')) return [];
+  return feeAllocations(payment.allocations);
+}
+
 /** Only trusted payment handlers can submit processor states. */
 export async function syncBrokerFeePayment(input: BrokerFeePaymentInput, extraWrites: Write[] = [], expectedFeeVersions: Record<string, number> = {}) {
   const allocations = feeAllocations(input.allocations);

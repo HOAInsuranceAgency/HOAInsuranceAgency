@@ -1,10 +1,10 @@
 import { assertPremiumNotFinanced, LegacyPremiumBillingBlocked } from "../legacy-premium-billing";
 import { captureHandledFailure } from "../monitoring";
 import { initialQuotePublicationWrites } from "../quote-source-billing";
-import { reserveFeeInvoice, publishFeeInvoiceLink, completeFeeInvoiceSend } from "../broker-fees/payments";
+import { manualReceiptFeeAllocations, reserveFeeInvoice, publishFeeInvoiceLink, completeFeeInvoiceSend } from "../broker-fees/payments";
 import { closeInvoiceCheckoutSessions } from "../invoiceCheckout";
 import { assertBrokerFeeSigned } from "../broker-fees/bindValidation";
-import { invoiceBrokerFeeAllocations, brokerFeeInvoiceRefresh } from "./brokerFeeInvoice";
+import { assertReceiptBrokerFee, invoiceBrokerFeeAllocations, brokerFeeInvoiceRefresh } from "./brokerFeeInvoice";
 import { isPositiveNonBrokerCharge } from "../../../../shared/invoiceAdjustments";
 import { validateInvoiceSourceCharges } from "./passThroughInvoice";
 import { assertAdjustmentInvoiceProof, assertInitialInvoiceAvailable } from "./adjustmentInvoice";
@@ -513,6 +513,7 @@ export const handler = async (event: {
     const linePolicyIds = [
       ...new Set(lines.map((l) => l.policyId).filter((id): id is string => !!id)),
     ];
+    const paymentStatus = invoice.status === "PAID" || invoice.status === "PROCESSING" ? invoice.status : undefined;
     const headerPolicyId =
       invoice.policyId ?? (linePolicyIds.length === 1 ? linePolicyIds[0] : null);
     const policy = headerPolicyId
@@ -547,7 +548,7 @@ export const handler = async (event: {
      * policy — and a lost or declined quote bills coverage that will never
      * exist.
      */
-    if (quoteAnchor && !isOpenQuoteStatus(quoteAnchor.status)) {
+    if (!paymentStatus && quoteAnchor && !isOpenQuoteStatus(quoteAnchor.status)) {
       return {
         ok: false,
         error:
@@ -556,7 +557,6 @@ export const handler = async (event: {
             : `This quote is ${(quoteAnchor.status ?? "closed").toLowerCase()} — there is no coverage to bill. Void the invoice.`,
       };
     }
-    const paymentStatus = invoice.status === "PAID" || invoice.status === "PROCESSING" ? invoice.status : undefined;
     if (!paymentStatus && invoice.sourcePricingVersion !== 2 && lines.some(isPositiveNonBrokerCharge)) {
       await assertPremiumNotFinanced(invoice.accountId, headerPolicyId ? [...linePolicyIds, headerPolicyId] : linePolicyIds,
         policy?.quoteId ?? invoice.quoteId, policy?.sourcePricingLoanId ?? quoteAnchor?.sourcePricingLoanId);
@@ -581,13 +581,13 @@ export const handler = async (event: {
             ...(policy?.quoteId ? [{ quoteId: { eq: policy.quoteId } }] : []),
           ]
         : [{ quoteId: { eq: anchor.id } }];
-    const siblingInvoices = await listAllPages((nextToken) =>
+    const siblingInvoices = paymentStatus ? [] : await listAllPages((nextToken) =>
       client.models.Invoice.list({
         filter: siblingFilters.length === 1 ? siblingFilters[0] : { or: siblingFilters },
         nextToken,
       })
     );
-    if (anchor.kind === "policy") {
+    if (!paymentStatus && anchor.kind === "policy") {
       const anchorLines = await listAllPages((nextToken) =>
         client.models.InvoiceLine.list({
           filter: { policyId: { eq: anchor.id } },
@@ -616,10 +616,10 @@ export const handler = async (event: {
     }
 
     await assertInitialInvoiceAvailable(invoice);
-    const adjustmentProof=await assertAdjustmentInvoiceProof(invoice);
+    const adjustmentProof=paymentStatus ? undefined : await assertAdjustmentInvoiceProof(invoice);
     const feeSource = policy ?? quoteAnchor;
     const sourceQuoteId = policy?.quoteId ?? quoteAnchor?.id;
-    const expectedFeeCents = brokerFeeCents(feeSource?.brokerFee);
+    const expectedFeeCents = paymentStatus ? 0 : brokerFeeCents(feeSource?.brokerFee);
     const existingFee = sourceQuoteId && expectedFeeCents > 0 ? await getFee(sourceQuoteId) : null;
     const feeAlreadySubmitted = !!existingFee && (existingFee.submittedCents > 0 || existingFee.collectedCents > 0 || existingFee.refundedCents > 0);
     const issuedAllocations = feeAllocations(invoice.brokerFeeAllocations);
@@ -642,9 +642,18 @@ export const handler = async (event: {
     }
     if (!lines.length) return { ok: false, error: "This invoice no longer has a charge. Review its source quote." };
     let allocations: BrokerFeeAllocation[];
-    try { allocations = invoiceBrokerFeeAllocations({ invoice, source: feeSource, quoteId: sourceQuoteId, policyId: headerPolicyId, lines, alreadySubmitted: feeAlreadySubmitted }); }
-    catch (error) { return { ok: false, error: error instanceof Error ? error.message : "The broker fee invoice could not be verified." }; }
-    validateInvoiceSourceCharges({ invoice, source: adjustmentProof?{id:String(adjustmentProof.policy.id),accountId:String(adjustmentProof.policy.accountId),billType:adjustmentProof.policy.billType as string|undefined}:feeSource, lines });
+    try {
+      if (paymentStatus) {
+        allocations = paymentStatus === "PAID" && !issuedAllocations.length && lines.some(line => line.kind === "BROKER_FEE")
+          ? await manualReceiptFeeAllocations(invoice.id, invoice.accountId) : issuedAllocations;
+        assertReceiptBrokerFee(invoice, lines, allocations, sourceQuoteId, headerPolicyId);
+      } else {
+        allocations = invoiceBrokerFeeAllocations({ invoice, source: feeSource, quoteId: sourceQuoteId, policyId: headerPolicyId, lines, alreadySubmitted: feeAlreadySubmitted });
+      }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : "The invoice charges could not be verified." };
+    }
+    if (!paymentStatus) validateInvoiceSourceCharges({ invoice, source: adjustmentProof?{id:String(adjustmentProof.policy.id),accountId:String(adjustmentProof.policy.accountId),billType:adjustmentProof.policy.billType as string|undefined}:feeSource, lines });
     const split = remittanceSplit(lines);
     const carrierId = policy?.carrierId ?? quoteAnchor?.carrierId ?? null;
     const carrier = carrierId
