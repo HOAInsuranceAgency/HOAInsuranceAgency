@@ -15,6 +15,7 @@ import { isAuthorizationError } from "../../lib/authorizationError";
 import { allWithAuthorizationPriority } from "../../lib/allWithAuthorizationPriority";
 import { useAsyncResource } from "../../lib/useAsyncResource";
 import { SaveStatus, useSaveStatus } from "../../components/SaveStatus";
+import { BillingFlowchart } from "../../components/billing-flowchart/BillingFlowchart";
 import { InvoiceEditor } from "../../components/InvoiceEditor";
 import { invoiceTotals, premiumLineFromPolicy } from "../../lib/invoiceTotals";
 import {
@@ -60,7 +61,12 @@ export function addDays(isoDay: string, days: number): string {
 export const DEFAULT_TERM_DAYS = 14;
 
 export function InvoicesTab({ accountId }: { accountId: string }) {
-  return <InvoicesTabContent key={accountId} accountId={accountId} />;
+  return (
+    <>
+      <BillingFlowchart />
+      <InvoicesTabContent key={accountId} accountId={accountId} />
+    </>
+  );
 }
 
 function InvoicesTabContent({ accountId }: { accountId: string }) {
