@@ -269,8 +269,3 @@ export function missingRemittanceCost(lines: readonly LineLike[]): boolean {
   return lines.some(line => ["PREMIUM", "ENDORSEMENT"].includes(line.kind ?? "")
     && (line.costAmount == null || !Number.isFinite(line.costAmount)));
 }
-
-/** Broker fees are due in full at inception and never financed. */
-export function financeableInvoiceTotal(lines: readonly LineLike[]): number {
-  return invoiceTotals(lines.filter(line => line.kind !== "BROKER_FEE")).retail;
-}

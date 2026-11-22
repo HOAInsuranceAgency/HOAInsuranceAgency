@@ -2,7 +2,7 @@
 export const NOINDEX_ROUTE_PREFIXES = [
   /** Tokenised document portal. The URL carries a live upload secret. */
   "/documents/",
-  /** Tokenised premium-finance election. Same reason. */
+  /** Retired financing link retained for visitors with earlier correspondence. */
   "/finance/",
   /** Tokenised client broker-fee consent and signed records. */
   "/broker-fee/",

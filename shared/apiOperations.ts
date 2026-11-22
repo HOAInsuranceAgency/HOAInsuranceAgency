@@ -77,6 +77,8 @@ export const COMMISSION_OPERATION_NAMES = [
   'saveAccountClassification',
   'saveCarrier',
   'saveReceiptForecast',
+  'saveIpfsFee',
+  'postIpfsFee',
   'saveStatement',
   'postStatement',
   'preparePayroll',

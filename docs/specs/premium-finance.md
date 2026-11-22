@@ -1,9 +1,9 @@
 # SPEC — In-house premium financing
 
-Status: approved for implementation (W0–W1 firm; W2–W6 approved subject to the
-decisions below).
-Target: `crm/` — a `premium_finance` module, feature-flagged off by default.
-Written against `staging` @ f3ba3df.
+**Historical specification.** The agency retired new in-house financing on November 22,
+2026. IPFS handles new business. The CRM services the outstanding signed loan using
+its frozen payment schedule and retains the historical agreements and compliance
+records. The original requirements below describe the former origination program.
 
 ## Rate revision (Jake, 2026-11-07)
 

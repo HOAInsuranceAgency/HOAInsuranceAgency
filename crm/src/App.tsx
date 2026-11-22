@@ -42,7 +42,6 @@ import Carriers from "./pages/Carriers";
 import CarrierDetail from "./pages/CarrierDetail";
 import Onboarding from "./pages/Onboarding";
 import Settings from "./pages/Settings";
-import Financing from "./pages/Financing";
 import SearchResults from "./pages/SearchResults";
 import UniversalSearch from "./components/UniversalSearch";
 import QuotesList from "./pages/QuotesList";
@@ -399,18 +398,12 @@ function Shell({ profile, signOut, activeRole, roles, onRoleChange }: {
   const isOwner = useIsOwner();
   const homePath = isAdmin ? "/" : "/leads";
   const [menuOpen, setMenuOpen] = useState(false);
-  /**
-   * Financing sits between Documents' old slot and Settings for everyone:
-   * the module is always on, so there is no longer a state in which the page
-   * has nothing to say.
-   */
   const navItems = [
     ...NAV_ITEMS.slice(0, 1),
     ...(isOwner ? [{ to: "/owner", label: "Profitability", icon: <IconGrid /> }] : []),
     { to: "/commissions", label: "Commissions", icon: <IconCoin /> },
     ...NAV_ITEMS.slice(1, 4),
     { to: "/relationships", label: "Relationships", icon: <IconUsers /> },
-    { to: "/financing", label: "Financing", icon: <IconCoin /> } as const,
     ...NAV_ITEMS.slice(4),
   ].filter((item) => item.to !== "/" || isAdmin);
 
@@ -482,7 +475,7 @@ function Shell({ profile, signOut, activeRole, roles, onRoleChange }: {
             {/* The old document-search page — redirect, don't 404, the
                 bookmarks people made of it. */}
             <Route path="/documents" element={<Navigate to="/search" replace />} />
-            <Route path="/financing" element={<Financing />} />
+            <Route path="/financing" element={<Navigate to={isAdmin ? "/?tab=finance" : "/leads"} replace />} />
             <Route path="/settings" element={<Settings profile={profile} />} />
             <Route path="*" element={<NotFound />} />
           </Routes>

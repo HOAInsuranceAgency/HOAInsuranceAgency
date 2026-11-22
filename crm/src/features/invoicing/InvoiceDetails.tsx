@@ -69,8 +69,7 @@ export function InvoiceDetails({ editor }: { editor: InvoiceDetailsState }) {
           <p className="muted small">Agency bill — we collect and remit.</p>
         ) : quote ? (
           <p className="muted small">
-            Bills a quote — binding rolls this invoice (and any financing)
-            onto the new policy.
+            This invoice follows the quote onto the policy when coverage binds.
           </p>
         ) : null}
       </div>

@@ -3,7 +3,7 @@ import {
   carrierReconciliationBalances,
   COMMISSION_BASES,
   decimal,
-  policyTotals,
+  isCarrierReceipt,
   ratio,
   type CommissionOverview,
   type CommissionPolicy,
@@ -231,6 +231,7 @@ function StatementEditor({
       </p>
       {lines.map((l, i) => {
         const p = data.policies.find((p) => p.id === l.policyId);
+        const balances = p ? carrierReconciliationBalances(p, receivedOn || today()) : undefined;
         return (
           <div className="commission-period" key={i}>
             <h3>Statement line {i + 1}</h3>
@@ -284,19 +285,19 @@ function StatementEditor({
                 change={(v) => update(i, { amount: v })}
               />
             </div>
-            {p && (
+            {p && balances && (
               <p className="small">
-                CRM expectation: {money(policyTotals(p).expectedAgency)} for the full term · Premium{' '}
+                CRM expectation: {money(balances.fullTermEstimate)} for the full term · Premium{' '}
                 {money(p.premiumCents)} at {p.agencyRateUnits / 10000}% · Received so far{' '}
-                {money(policyTotals(p).receivedAgency)} ·{' '}
+                {money(balances.receivedToDate)} ·{' '}
                 {COMMISSION_BASES[p.carrierTerms.payment?.basis ?? p.carrierTerms.basis]} ·{' '}
                 {p.carrierTerms.payment
                   ? `${p.carrierTerms.payment.payor} · ${p.carrierTerms.payment.cadence.toLowerCase()} remittance · ${p.carrierTerms.payment.lagDays} additional lag days`
                   : `Legacy timing: ${p.carrierTerms.schedule}`}
               </p>
             )}
-            {p && (
-              <CarrierBalances balances={carrierReconciliationBalances(p, receivedOn || today())} />
+            {balances && (
+              <CarrierBalances balances={balances} />
             )}
             <div className="form-grid">
               <label className="field">
@@ -326,7 +327,7 @@ function StatementEditor({
                   onChange={(e) => update(i, { originalId: e.target.value })}
                 >
                   <option value="">Choose the original transaction…</option>
-                  {p?.entries
+                  {p?.entries.filter(isCarrierReceipt)
                     .filter((e) =>
                       l.kind === 'REVERSAL'
                         ? ['RECEIPT', 'RESTORATION'].includes(e.kind)

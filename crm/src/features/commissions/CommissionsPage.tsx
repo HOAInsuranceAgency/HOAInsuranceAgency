@@ -9,6 +9,7 @@ import { Ledger } from './CommissionLedger';
 import { Settings } from './CommissionSettings';
 import { FinancialStale } from './context';
 import { BatchList, Payroll } from './Payroll';
+import { IpfsFees } from './IpfsFees';
 import { Statements } from './StatementReconciliation';
 
 export default function Commissions() {
@@ -42,6 +43,7 @@ function CommissionView({ owner }: { owner: boolean }) {
             <Tabs id="commissions" label="Commission views" value={tab} onChange={setTab} items={[
               { value: 'ledger', label: 'Ledger' },
               { value: 'statements', label: 'Reconciliation' },
+              { value: 'ipfs', label: 'IPFS fees' },
               { value: 'payroll', label: 'Payroll' },
               { value: 'settings', label: 'Agreements & carriers' },
             ]} />
@@ -63,6 +65,7 @@ function CommissionView({ owner }: { owner: boolean }) {
                 {owner && tab === 'statements' && (
                   <Statements data={snapshot} refresh={resource.refetch} />
                 )}
+                {owner && tab === 'ipfs' && <IpfsFees policies={snapshot.policies} refresh={resource.refetch} />}
                 {owner && tab === 'payroll' && <Payroll data={snapshot} refresh={resource.refetch} />}
                 {!owner && <BatchList batches={snapshot.batches} />}
               </>

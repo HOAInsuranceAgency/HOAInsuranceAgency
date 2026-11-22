@@ -55,7 +55,7 @@ export async function authorizeCustom(access: AccountAccess, field: string, args
       else await access.requireCapability(id(input.accountId), 'restricted');
     }
     if (['startLeadExtraction','suggestFormFields','startHoneycombSubmission'].includes(field)) await access.requireCapability(id(args.accountId), 'edit');
-    const protectedModel = ({resolveHoneycombSubmission:['HoneycombSubmission','id'],issueFinanceQuote:['Policy','policyId'],generatePfAgreement:['PfLoan','loanId'],servicePfLoan:['PfLoan','loanId']} as Record<string,string[]>)[field];
+    const protectedModel = ({resolveHoneycombSubmission:['HoneycombSubmission','id'],servicePfLoan:['PfLoan','loanId']} as Record<string,string[]>)[field];
     if (protectedModel) await access.requireRecordCapability(protectedModel[0],id(args[protectedModel[1]]),'restricted');
   }
   if (field === "brokerFeeAction") {
@@ -78,7 +78,7 @@ export async function authorizeCustom(access: AccountAccess, field: string, args
     }
     return;
   }
-  const model = ({ resolveHoneycombSubmission: ["HoneycombSubmission", "id"], sendInvoice: ["Invoice", "invoiceId"], voidInvoice: ["Invoice", "invoiceId"], issueFinanceQuote: ["Policy", "policyId"], generatePfAgreement: ["PfLoan", "loanId"], servicePfLoan: ["PfLoan", "loanId"] } as Record<string, string[]>)[field];
+  const model = ({ resolveHoneycombSubmission: ["HoneycombSubmission", "id"], sendInvoice: ["Invoice", "invoiceId"], voidInvoice: ["Invoice", "invoiceId"], servicePfLoan: ["PfLoan", "loanId"] } as Record<string, string[]>)[field];
   if (model) {
     const record = await access.requireRecord(model[0], id(args[model[1]]));
     for (const [key, target] of Object.entries({ policyId: "Policy", noticeId: "PfNotice", boardResolutionDocumentId: "Document" })) if (args[key]) {

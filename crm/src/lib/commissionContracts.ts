@@ -14,6 +14,8 @@ export interface CommissionContracts {
   getAccountClassification: Operation<{ id: string }, { classification: CommissionAccount | null; accountName: string }>;
   saveAccountClassification: Operation<{ id: string; version: number; bindingEvidence: string; periods: (Omit<CommissionAccount['periods'][number], 'classification'> & { classification: AccountCommissionClass | '' })[]; firstBoundOn?: string; neverBound?: boolean }>;
   saveCarrier: Operation<{ id: string; version: number; basis: CommissionBasis | '' | undefined; schedule: string; evidence: string | undefined; arrangements: CarrierArrangementInput[] }>;
+  saveIpfsFee: Operation<{ policyId: string; version: number; expectedCents: number; agreementRef: string }>;
+  postIpfsFee: Operation<{ policyId: string; version: number; kind: StatementLine['kind']; amountCents: number; settlementTotalCents?: number; receivedOn: string; lineRef: string; settlementRef: string; originalId?: string }>;
   saveReceiptForecast: Operation<{ policyId: string; version: number; receiptForecast: Pick<CommissionReceiptForecast, 'items' | 'evidence' | 'confirmed' | 'complete'> }>;
   saveStatement: Operation<{ version: number; carrierId: string; reference: string; source: string; receivedOn: string; settlementRef: string; settlementType: string; totalCents: number; lines: StatementLine[] }>;
   postStatement: Operation<{ id: string; version: number; confirmed: boolean }>;

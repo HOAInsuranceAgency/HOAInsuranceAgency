@@ -20,13 +20,9 @@ website editorial copy, map geometry, and signed jurisdiction rules stay separat
 `articleText.mjs` owns Markdown prose word counting for blog automation, website
 publication validation, reading time, and article metadata.
 
-`premiumFinance/initialPayment.ts` owns upfront-payment component composition.
-Checkout rounds down payment and origination dollars separately to cents and accepts
-broker fees already in cents. Agreement PDFs retain their combined-dollar rounding;
-legacy public offers missing an explicit server total retain their raw dollar sum.
-These policies intentionally differ for fractional-cent historical inputs. Existing
-cent-valued quotes agree, and an explicit server total (including zero) stays
-authoritative. Billing versions and actual-receipt compatibility remain server-owned.
+`premiumFinance/` contains the frozen schedule reader, cancellation notice timing
+and initial receipt calculation used to service existing in-house loans. Compliance
+records reference the fingerprint of the archived jurisdiction rules.
 
 `storageKeys.ts` owns the normalized five-segment document key used by staff and
 public uploads. Browser file attachments use `uploadDocument` in `crm/src/lib/storage.ts`

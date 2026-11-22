@@ -57,12 +57,3 @@ describe("full payment supersedes quoted loans", () => {
     expect(BACKEND).toContain("bindPremiumFinanceTables(backend, 'webhookSettlement')");
   });
 });
-
-describe("initial election closes pay-in-full paths", () => {
-  const ELECTION = read("amplify/functions/pf-election/handler.ts");
-  it("refuses a processing invoice and closes sent links before checkout", () => {
-    expect(ELECTION).toContain('i.status === "PROCESSING"');
-    expect(ELECTION).toContain("voidInvoice({");
-    expect(ELECTION.indexOf("voidInvoice({")).toBeLessThan(ELECTION.indexOf("stripe.checkout.sessions.create"));
-  });
-});

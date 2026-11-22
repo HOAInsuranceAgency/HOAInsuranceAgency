@@ -1,7 +1,5 @@
 import { initialPaymentTotals, type InitialPaymentLoan } from "../../../shared/premiumFinance/initialPayment";
 
-export const PF_CHECKOUT_BILLING_VERSION = 3;
-
 /** Preserve what older in-flight checkouts actually collected; never invent fee receipts. */
 export function initialPaymentReceipt(loan: InitialPaymentLoan, amount: number | null, billingVersion: number | null) {
   const expected = initialPaymentTotals(loan);

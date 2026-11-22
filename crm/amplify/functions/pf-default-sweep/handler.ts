@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { listAllPages } from "../../../../shared/pagination";
-import { PF_CONFIG_SHA256 } from "../../../../shared/premiumFinance/jurisdictions";
+import { PF_CONFIG_SHA256 } from "../../../../shared/premiumFinance/auditConfig";
 
 /** Daily: an ACTIVE loan past its next due date is in default. See resource.ts. */
 

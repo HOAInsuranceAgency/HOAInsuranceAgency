@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import {
+  commissionRevenueLabel,
   type CommissionBatch,
   type CommissionOverview
 } from '../../../../shared/commissions';
@@ -108,6 +109,7 @@ function BatchCard({
               columns: [
                 'Account',
                 'Policy',
+                'Revenue source',
                 'Agency received (USD)',
                 'Producer rate (%)',
                 'Producer commission (USD)',
@@ -115,6 +117,7 @@ function BatchCard({
               rows: b.lines.map((l) => [
                 l.accountName,
                 l.policyNumber,
+                l.revenueKind ? commissionRevenueLabel(l.revenueKind) : 'See original ledger entry',
                 l.agencyCents / 100,
                 l.producerBps / 100,
                 l.amountCents / 100,

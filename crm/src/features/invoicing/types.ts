@@ -1,12 +1,10 @@
-import type { Account, Contact, Invoice, InvoiceLine, Policy, Quote } from '../../lib/client';
+import type { Contact, Invoice, InvoiceLine, Policy, Quote } from '../../lib/client';
 export type InvoiceEditorProps = {
   invoice: Invoice;
   /** The account's policies, so the invoice can say which one it bills. */
   policies: Policy[];
   /** The account's quotes — a W8 invoice may bill one before bind. */
   quotes: Quote[];
-  /** The account row: the financing hint reads its state and incorporation. */
-  account: Account | null;
   /** The account's contacts — who the invoice can be addressed to. */
   contacts: Contact[];
   onChange: (next: Invoice) => void;

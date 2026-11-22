@@ -1,50 +1,38 @@
 import { customerEmailIdentity } from "../../../../shared/customerEmailIdentity";
-import { createDataClientGetter, type LambdaDataClient as DataClient } from "../data-client";
+import { createDataClientGetter } from "../data-client";
 import { captureHandledFailure } from "../monitoring";
 import { initialQuotePublicationWrites } from "../quote-source-billing";
-import { reserveFeeInvoice, reserveFeeLoan, publishFeeInvoiceLink, completeFeeInvoiceSend } from "../broker-fees/payments";
+import { manualReceiptFeeAllocations, reserveFeeInvoice, publishFeeInvoiceLink, completeFeeInvoiceSend } from "../broker-fees/payments";
 import { closeInvoiceCheckoutSessions } from "../invoiceCheckout";
 import { assertBrokerFeeSigned } from "../broker-fees/bindValidation";
-import { invoiceBrokerFeeAllocations, brokerFeeInvoiceRefresh } from "./brokerFeeInvoice";
+import { assertReceiptBrokerFee, invoiceBrokerFeeAllocations, brokerFeeInvoiceRefresh } from "./brokerFeeInvoice";
+import { isPositiveNonBrokerCharge } from "../../../../shared/invoiceAdjustments";
 import { validateInvoiceSourceCharges } from "./passThroughInvoice";
 import { assertAdjustmentInvoiceProof, assertInitialInvoiceAvailable } from "./adjustmentInvoice";
 import { isNonpayableAdjustmentStatement } from "../../../../shared/invoicePaymentStatus";
 import { isGroupedInvoice } from "../../../../shared/groupedInvoiceGuard";
-import { assertStandalonePolicyBilling, claimStandalonePolicyLoan, GroupedDraftBillingBlocked, readTrackedPolicyLoan, standalonePolicyBillingGuard, type BillingPolicy } from "../grouped-draft-billing";
-import { loadGroupedFinance } from "../grouped-finance";
+import { assertPremiumNotFinanced, assertStandalonePolicyBilling, GroupedDraftBillingBlocked, standalonePolicyBillingGuard } from "../grouped-draft-billing";
 import { prepareBrokerFeeAgreement } from "../broker-fees/agreements";
 import { authorizedQuoteTerms } from "../../../../shared/quoteAuthorization";
 import { brokerFeeCents, feeAllocations, type BrokerFeeAllocation, type BrokerFeeInvoiceSendClaim } from "../../../../shared/brokerFees";
 import { getFee, getModel, type Write } from "../broker-fees/store";
 import { TransactionalMailClient } from "../transactional-mail/client";
-import { hash, MailDeliveryError, payload } from "../transactional-mail/contract";
+import { MailDeliveryError } from "../transactional-mail/contract";
 import { currentContacts, billingContact } from "../../../../shared/contacts";
-import { randomUUID } from "node:crypto";
 import { SendEmailCommand } from "@aws-sdk/client-sesv2";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, GetCommand, PutCommand, UpdateCommand, TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, UpdateCommand, TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
 import { listAllPages } from "../../../../shared/pagination";
 import { isOpenQuoteStatus } from "../../../../shared/quoteStatus";
-import { usStateCode } from "../../../../shared/usStates";
 import { AGENCY, AGENCY_FMT } from "../../../../shared/agency";
 import Stripe from "stripe";
-import { invoiceTotals, remittanceSplit, financeableInvoiceTotal, type RemittanceSplit } from "../../../../shared/invoiceTotals";
-import { electionExpiry, mintElectionToken } from "../pfElectionToken";
-import { originateLoan } from "../pfOrigination";
-import { canUseGroupedOffer } from "../pfOrigination";
-import type { OriginationAnchor } from "../pfOrigination";
-import {
-  PF_DEFAULT_DOWN_PCT,
-  PF_DEFAULT_MONTHS,
-} from "../../../../shared/premiumFinance/quote";
-import { PF_CONFIG_SHA256, PF_JURISDICTIONS } from "../../../../shared/premiumFinance/jurisdictions";
-import { financePricing, financeRateDates } from "../../../../shared/premiumFinance/pricing";
+import { invoiceTotals, remittanceSplit, type RemittanceSplit } from "../../../../shared/invoiceTotals";
 import { renderInvoice, type InvoiceView } from "./invoice";
 import { createPaymentLink, InactivePaymentLink, toCents } from "./stripeLink";
 import { buildMimeMessage } from "./mime";
 import { pdfFilename, renderInvoicePdf } from "./pdf";
 import { beginInvoiceSend, completeInvoiceSend, InvoiceSendBlocked } from "./sendOperation";
-import { prepareGroupedDelivery, reconcileAcceptedGroupedSend } from "./groupedDelivery";
+import { reconcileAcceptedGroupedSend } from "./groupedDelivery";
 import type { Schema } from "../../data/resource";
 
 /**
@@ -68,371 +56,6 @@ const ddb = DynamoDBDocumentClient.from(new DynamoDBClient());
  * rather than the generic apology, because "try again" is the actual remedy.
  */
 class SendBlocked extends Error {}
-
-type FinanceAnchor = OriginationAnchor;
-type GroupedSendClaim = Awaited<ReturnType<typeof loadGroupedFinance>> & { leaseId: string };
-type Loan = Schema["PfLoan"]["type"];
-
-function groupedInvoiceCondition(group: GroupedSendClaim, loanId?: string) {
-  const guard = group.invoiceGuard.ConditionCheck;
-  if (!guard?.ConditionExpression) throw new SendBlocked("The grouped invoice could not be reserved.");
-  return {
-    ...guard,
-    ConditionExpression: `${guard.ConditionExpression} AND #groupStatus = :groupDraft AND #groupSend.#groupLease = :groupLease AND ` +
-      (loanId ? "groupedFinanceLoanId = :groupOldLoan" : "attribute_not_exists(groupedFinanceLoanId)"),
-    ExpressionAttributeNames: { ...guard.ExpressionAttributeNames, "#groupStatus": "status", "#groupSend": "invoiceSendOperation", "#groupLease": "leaseId" },
-    ExpressionAttributeValues: { ...guard.ExpressionAttributeValues, ":groupDraft": "DRAFT", ":groupLease": group.leaseId, ...(loanId ? { ":groupOldLoan": loanId } : {}) },
-  };
-}
-
-function groupedLoanWrites(group: GroupedSendClaim, loanTable: string, loanId: string, priorLoanId?: string): Write[] {
-  const invoice = groupedInvoiceCondition(group, priorLoanId);
-  return [
-    ...group.guards,
-    { Update: { ...invoice, UpdateExpression: "SET groupedFinanceLoanId = :groupNewLoan",
-      ExpressionAttributeValues: { ...invoice.ExpressionAttributeValues, ":groupNewLoan": loanId } } },
-    ...(priorLoanId ? [{ ConditionCheck: {
-      TableName: loanTable, Key: { id: priorLoanId }, ConditionExpression: "#s = :cancelled",
-      ExpressionAttributeNames: { "#s": "status" }, ExpressionAttributeValues: { ":cancelled": "CANCELLED" },
-    } }] : []),
-  ];
-}
-
-/** A fresh attempt with no reserved loan and no mail call can be retried or restored. */
-async function releaseUnfundedGroupedSend(group: Awaited<ReturnType<typeof loadGroupedFinance>>, operation: Awaited<ReturnType<typeof beginInvoiceSend>>["operation"]) {
-  const table = process.env.INVOICE_TABLE;
-  if (!table || group.invoice.invoiceSendOperation || group.invoice.groupedFinanceLoanId) return;
-  try {
-    await ddb.send(new UpdateCommand({
-      TableName: table, Key: { id: group.invoice.id }, UpdateExpression: "REMOVE #op",
-      ConditionExpression: "#op = :operation AND #status = :draft AND attribute_not_exists(groupedFinanceLoanId) AND attribute_not_exists(sentAt)",
-      ExpressionAttributeNames: { "#op": "invoiceSendOperation", "#status": "status" },
-      ExpressionAttributeValues: { ":operation": operation, ":draft": "DRAFT" },
-    }));
-  } catch (error) {
-    if ((error as { name?: string }).name !== "ConditionalCheckFailedException") console.error("[send-invoice] could not release an unoffered grouped send", error);
-  }
-}
-
-/**
- * W8: the financing side of the fork, or null — and since origination moved
- * into the send, this is where loans are BORN. Fixed terms (25% down as
- * payment 1 of 12, 11 installments), automatic state pricing, financed amount = the
- * invoiced total, schedule anchored at the send date. The core runs every
- * gate and logs every rule; a block means a plain bill, never a stopped
- * send. Null on any failure for the same reason ensurePaymentLink is: a
- * bill that arrives beats an offer that stopped it.
- *
- * Re-pricing supersedes: a QUOTED loan whose premium no longer matches the
- * billed total is conditionally cancelled (`superseded-by-repricing`,
- * logged) and a fresh one originates at the new figure. A loan the
- * association has already committed to — ACCEPTED onward — suppresses any
- * new origination and any offer: the choice was made.
- */
-export async function financeOffer(
-  client: DataClient,
-  account: {
-    id: string;
-    state: string | null | undefined;
-    type: string | null | undefined;
-    incorporated: boolean | null | undefined;
-  },
-  anchor: FinanceAnchor | null,
-  retailTotal: number,
-  recipientEmail: string | null,
-  allocations: BrokerFeeAllocation[] = [],
-  policy?: BillingPolicy | null,
-  grouped?: GroupedSendClaim
-): Promise<(NonNullable<InvoiceView["finance"]> & { groupDelivery?: { loanId: string; tokenHash: string } }) | null> {
-  if (!anchor || retailTotal <= 0) return null;
-  if ((anchor.kind === "groupedInvoice") !== !!grouped) return null;
-  if (grouped && allocations.length) return null;
-  const brokerFeeTotalCents = allocations.reduce((sum, allocation) => sum + allocation.amountCents, 0);
-  const sameFee = (loan: { brokerFeeCents?: number | null; brokerFeeAllocations?: unknown }) => (loan.brokerFeeCents ?? 0) === brokerFeeTotalCents && JSON.stringify(feeAllocations(loan.brokerFeeAllocations)) === JSON.stringify(allocations);
-  const sameState = (loan: { state?: string | null }) => usStateCode(loan.state) === usStateCode(account.state);
-  // Legacy offers have no frozen coverage date. Its absence alone is not
-  // evidence that the policy changed after the offer was issued.
-  const sameCoverageDate = (loan: { coverageEffectiveDate?: string | null }) => !loan.coverageEffectiveDate || loan.coverageEffectiveDate === (anchor.coverageEffectiveDate ?? null);
-  const loanTable = process.env.PF_LOAN_TABLE;
-  const siteUrl = process.env.SITE_URL;
-  if (!loanTable || !siteUrl) return null;
-  try {
-    const { data: settings } = await client.models.AgencySettings.get({ id: "AGENCY" });
-    if (settings?.premiumFinanceEnabled !== true) return null;
-    const listOpinions = async (code: string) => {
-      const rows = await listAllPages(nextToken => client.models.PfCounselOpinion.list({
-        filter: { jurisdiction: { eq: code } }, nextToken,
-      }));
-      return rows.map(o => ({ effectiveAt: o.effectiveAt, reviewBy: o.reviewBy }));
-    };
-
-    const anchorFilter =
-      anchor.kind === "policy"
-        ? { policyId: { eq: anchor.id } }
-        : { quoteId: { eq: anchor.id } };
-    const listed = grouped ? [] : await listAllPages((nextToken) =>
-      client.models.PfLoan.list({ filter: anchorFilter, nextToken })
-    );
-    const priorGroupLoan = grouped?.invoice.groupedFinanceLoanId ?? undefined;
-    const tracked = grouped
-      ? priorGroupLoan ? (await ddb.send(new GetCommand({ TableName: loanTable, Key: { id: priorGroupLoan }, ConsistentRead: true }))).Item as Loan | undefined : undefined
-      : policy ? await readTrackedPolicyLoan<(typeof listed)[number]>(policy) : undefined;
-    if (grouped && priorGroupLoan && (!tracked || tracked.id !== priorGroupLoan || tracked.groupedInvoiceId !== grouped.invoice.id ||
-        tracked.accountId !== account.id || tracked.policyId || tracked.quoteId ||
-        JSON.stringify(tracked.groupedPolicyIds) !== JSON.stringify(grouped.invoice.groupedPolicyIds) ||
-        !["QUOTED", "CANCELLED"].includes(tracked.status))) return null;
-    const loans = tracked ? [...listed.filter(loan => loan.id !== tracked.id), tracked] : listed;
-    if (
-      loans.some((l) =>
-        ["ACCEPTED", "ACTIVE", "DEFAULTED", "PAID"].includes(l.status ?? "")
-      )
-    ) {
-      return null;
-    }
-    // Annotated: the backend tsconfig lacks noUncheckedIndexedAccess, so
-    // `[0] ?? null` would otherwise infer the element type WITHOUT null.
-    let loan: (typeof loans)[number] | null =
-      [...loans]
-        .filter((l) => l.status === "QUOTED")
-        .sort((a, b) => (b.quotedAt ?? "").localeCompare(a.quotedAt ?? ""))[0] ?? null;
-
-    /**
-     * An election is COMMITTED before the loan leaves QUOTED: the customer
-     * signs and accepts, their down payment can be clearing for days
-     * (ACH), and only settlement flips the status. A committed loan is
-     * never superseded and never quietly replaced — cancelling it would
-     * land the customer's money on a CANCELLED loan. Committed means money
-     * is in flight or could be within minutes: a stamped down-payment
-     * intent, or a live Checkout session/claim the customer may be sitting
-     * on right now. A bill re-priced over a committed election is a human's
-     * knot to untie; the email goes out with pay-in-full only.
-     */
-    const nowIso = new Date().toISOString();
-    const committed =
-      loan &&
-      (loan.agreementSignedAt || loan.electedAt || loan.downPaymentIntentId ||
-        (loan.electionCheckoutUrl &&
-          loan.electionCheckoutExpiresAt &&
-          loan.electionCheckoutExpiresAt > nowIso));
-    if (grouped && committed) return null;
-    if (loan && committed && (loan.premium !== retailTotal || !sameFee(loan) || !sameState(loan) || !sameCoverageDate(loan))) {
-      console.error(
-        `[send-invoice] invoice re-priced to ${retailTotal} over committed election on loan ${loan.id} (quoted ${loan.premium}) — offering nothing; resolve by hand`
-      );
-      return null;
-    }
-    const today = new Date().toISOString().slice(0, 10);
-    const stale = loan && (loan.effectiveDate ?? today) < today;
-    let needsReplacement = !!loan && (loan.premium !== retailTotal || !sameFee(loan) || !sameState(loan) || !sameCoverageDate(loan) || !!stale ||
-      (grouped && (loan.coverageEffectiveDate !== anchor.coverageEffectiveDate ||
-        JSON.stringify(loan.groupedPolicyAgreementLines) !== JSON.stringify(grouped.agreementLines))));
-    if (loan && !committed) {
-      const jurisdiction = PF_JURISDICTIONS.find(row => row.code === usStateCode(account.state));
-      if (!jurisdiction || jurisdiction.status === "closed" || jurisdiction.maxAprVerified !== true) return null;
-      if (jurisdiction.maxAddOnApr !== null && !loan.coverageEffectiveDate) needsReplacement = true;
-      // A changed or stale offer is priced afresh by the origination core.
-      // Its old schedule need not support the replacement's coverage period.
-      if (!needsReplacement) {
-        const currentPrice = financePricing(jurisdiction, {
-          premium: loan.premium,
-          downPct: loan.downPct,
-          months: loan.months,
-          effectiveDate: loan.effectiveDate,
-          coverageEffectiveDate: anchor.coverageEffectiveDate,
-        }, financeRateDates(jurisdiction, new Date()));
-        if (!currentPrice) return null;
-        needsReplacement = loan.apr > currentPrice.apr;
-      }
-    }
-
-    if (loan && !committed && needsReplacement) {
-      /**
-       * The bill changed under the offer, or the offer aged past its send
-       * day (the spec anchors the schedule at the send date — a resend
-       * weeks later must not offer a schedule already in arrears). The old
-       * quote's terms are dead, so it cancels — conditionally on still
-       * being QUOTED at the premium the decision read AND still
-       * uncommitted at write time, because the customer can be electing in
-       * this very second — and a fresh quote takes its place.
-       */
-      try {
-        await ddb.send(
-          new UpdateCommand({
-            TableName: loanTable,
-            Key: { id: loan.id },
-            UpdateExpression: "SET #s = :c, closedAt = :now, updatedAt = :now",
-            ConditionExpression:
-              "#s = :q AND premium = :seen AND attribute_not_exists(agreementSignedAt) AND attribute_not_exists(electedAt) AND attribute_not_exists(downPaymentIntentId) AND (attribute_not_exists(electionCheckoutUrl) OR electionCheckoutExpiresAt < :now)",
-            ExpressionAttributeNames: { "#s": "status" },
-            ExpressionAttributeValues: {
-              ":c": "CANCELLED",
-              ":q": "QUOTED",
-              ":seen": loan.premium,
-              ":now": nowIso,
-            },
-          })
-        );
-        await logSupersession(loan, retailTotal, account.id, account.state);
-      } catch (err) {
-        if ((err as { name?: string }).name !== "ConditionalCheckFailedException") throw err;
-        // The loan moved mid-send — a payment landed, or an election
-        // committed under this write. Offer nothing; the next send
-        // re-reads the world.
-        return null;
-      }
-      loan = null;
-    }
-
-    if (loan && anchor.kind === "groupedInvoice" &&
-        !await canUseGroupedOffer(account, anchor.members, loan.amountFinanced, { listOpinions }, today)) return null;
-
-    if (!loan) {
-      const policyLoanClaim = policy ? await claimStandalonePolicyLoan(policy) : undefined;
-      const result = await originateLoan(
-        ddb,
-        { listOpinions },
-        settings?.premiumFinanceEnabled === true,
-        {
-          account,
-          anchor,
-          premium: retailTotal,
-          brokerFeeCents: brokerFeeTotalCents,
-          brokerFeeAllocations: allocations,
-          ...(policyLoanClaim ? { policyLoanClaim } : {}),
-          ...(grouped ? { groupedLoanClaim: (loanId: string) => groupedLoanWrites(grouped, loanTable, loanId, priorGroupLoan) } : {}),
-          downPct: PF_DEFAULT_DOWN_PCT,
-          months: PF_DEFAULT_MONTHS,
-          effectiveDate: today,
-          actor: "send-invoice",
-          actorName: "send-invoice (auto-origination)",
-        }
-      );
-      if (!result.ok || !result.loanId) {
-        if (result.ok) {
-          console.log(
-            `[send-invoice] financing not offered on ${anchor.kind} ${anchor.id}: ${result.blocks
-              .map((b) => b.rule)
-              .join(", ")}`
-          );
-        } else {
-          console.warn(`[send-invoice] origination failed: ${result.error}`);
-        }
-        return null;
-      }
-      /**
-       * Straight off the table, strongly: the AppSync read is eventually
-       * consistent and a miss here would drop the offer from the very email
-       * that originated the loan.
-       */
-      const created = await ddb
-        .send(
-          new GetCommand({ TableName: loanTable, Key: { id: result.loanId }, ConsistentRead: true })
-        )
-        .then((r) => r.Item as typeof loan | undefined);
-      loan = created ?? null;
-      if (!loan) return null;
-    }
-
-    for (const allocation of allocations) await reserveFeeLoan(allocation.quoteId, loan.id);
-    let token = loan.electionToken ?? null;
-    const fresh =
-      token &&
-      loan.electionTokenExpiresAt &&
-      new Date(loan.electionTokenExpiresAt).getTime() > Date.now() + 7 * 24 * 60 * 60 * 1000;
-    if (!fresh) {
-      const seenToken = token;
-      token = mintElectionToken();
-      // Conditional on the token this decision read: two concurrent sends
-      // must not last-write-win each other's mint, or the first email
-      // carries a link that is already dead. The loser's email goes out
-      // without the offer — honest, and the next send self-heals.
-      await ddb.send(
-        new UpdateCommand({
-          TableName: loanTable,
-          Key: { id: loan.id },
-          UpdateExpression:
-            "SET electionToken = :tok, electionTokenExpiresAt = :exp, electionEmail = :email, updatedAt = :now",
-          ConditionExpression: seenToken
-            ? "#s = :quoted AND electionToken = :seenTok"
-            : "#s = :quoted AND attribute_not_exists(electionToken)",
-          ExpressionAttributeNames: { "#s": "status" },
-          ExpressionAttributeValues: {
-            ":tok": token,
-            ":exp": electionExpiry(new Date()),
-            ":email": recipientEmail ?? null,
-            ":quoted": "QUOTED",
-            ":now": new Date().toISOString(),
-            ...(seenToken ? { ":seenTok": seenToken } : {}),
-          },
-        })
-      );
-    }
-    let finalPayment: number | undefined;
-    if (grouped) {
-      const schedule = typeof loan.schedule === "string" ? JSON.parse(loan.schedule) : loan.schedule;
-      finalPayment = Array.isArray(schedule) ? schedule[schedule.length - 1]?.payment : undefined;
-      if (typeof finalPayment !== "number" || !Number.isFinite(finalPayment) || finalPayment <= 0) return null;
-      await ddb.send(new TransactWriteCommand({ TransactItems: [
-        ...grouped.guards,
-        { ConditionCheck: groupedInvoiceCondition(grouped, loan.id) },
-      ] }));
-    }
-    if (!token) return null;
-    return {
-      url: `${siteUrl}/finance/?t=${token}`,
-      downPayment: loan.downPayment,
-      originationFee: loan.originationFee,
-      brokerFee: (loan.brokerFeeCents ?? 0) / 100,
-      monthly: loan.payment,
-      months: loan.months,
-      apr: loan.apr,
-      ...(finalPayment !== undefined ? { finalPayment } : {}),
-      ...(grouped ? { groupDelivery: { loanId: loan.id, tokenHash: hash(token) } } : {}),
-    };
-  } catch (err) {
-    console.warn("[send-invoice] financing offer omitted", err);
-    return null;
-  }
-}
-
-/** The supersession's audit row — same shape every pf writer uses. */
-async function logSupersession(
-  loan: { id: string; premium: number; state?: string | null },
-  retailTotal: number,
-  accountId: string,
-  state: string | null | undefined
-) {
-  const table = process.env.PF_COMPLIANCE_LOG_TABLE;
-  if (!table) return;
-  const now = new Date().toISOString();
-  try {
-    await ddb.send(
-      new PutCommand({
-        TableName: table,
-        Item: {
-          id: randomUUID(),
-          __typename: "PfComplianceLog",
-          createdAt: now,
-          updatedAt: now,
-          accountId,
-          jurisdiction: loan.state ?? "UNKNOWN",
-          rule: "superseded-by-repricing",
-          outcome: "BLOCK",
-          reason: usStateCode(loan.state) !== usStateCode(state)
-            ? `Quote superseded: the account state changed from ${loan.state ?? "UNKNOWN"} to ${state ?? "UNKNOWN"}.`
-            : `Quote for $${loan.premium.toLocaleString("en-US")} superseded: the invoice now bills $${retailTotal.toLocaleString("en-US")}.`,
-          inputs: JSON.stringify({ loanId: loan.id, was: loan.premium, now: retailTotal, wasState: loan.state ?? null, nowState: state ?? null }),
-          configSha256: PF_CONFIG_SHA256,
-          actor: "send-invoice",
-          actorName: "send-invoice (auto-origination)",
-          occurredAt: now,
-        },
-      })
-    );
-  } catch (err) {
-    console.error("[send-invoice] supersession log write failed", err);
-  }
-}
 
 /** Invoices come from the mailbox the agency actually reads, not from sales. */
 const MAILBOX = process.env.AGENCY_MAILBOX || AGENCY_FMT.emailLower;
@@ -799,7 +422,7 @@ async function recordSend(
   return false;
 }
 
-async function deliverInvoice({ invoice, view, to, tracked, split, allocations, feeSendClaim, financeUrl, groupDelivery, onAccepted }: {
+async function deliverInvoice({ invoice, view, to, tracked, split, allocations, feeSendClaim, onAccepted }: {
   invoice: Schema["Invoice"]["type"];
   view: InvoiceView;
   to: string[];
@@ -807,8 +430,6 @@ async function deliverInvoice({ invoice, view, to, tracked, split, allocations, 
   split: RemittanceSplit;
   allocations: BrokerFeeAllocation[];
   feeSendClaim?: BrokerFeeInvoiceSendClaim;
-  financeUrl?: string | null;
-  groupDelivery?: { loanId: string; tokenHash: string };
   onAccepted: () => void;
 }) {
   const invoiceId = invoice.id;
@@ -831,7 +452,6 @@ async function deliverInvoice({ invoice, view, to, tracked, split, allocations, 
       content: await renderInvoicePdf(view),
     };
   } catch (err) {
-    if (view.financeOnly) throw new SendBlocked("The combined invoice PDF could not be prepared. No email was sent.");
     console.error("[send-invoice] could not render the PDF; sending without it", err);
   }
 
@@ -866,21 +486,8 @@ async function deliverInvoice({ invoice, view, to, tracked, split, allocations, 
   });
   const details = { idempotencyKey: tracked?.operation.key ?? `invoice:${invoiceId}:${invoice.updatedAt ?? invoice.sentAt ?? "initial"}:${to.join(",")}`,
     subject, text, html, replyTo: MAILBOX, attachments: attachment ? [attachment] : [] };
-  if (view.financeOnly) {
-    if (!groupDelivery || !tracked) throw new SendBlocked("The grouped delivery could not be reserved. No email was sent.");
-    await prepareGroupedDelivery(invoiceId, tracked.operation, {
-      ...groupDelivery, payloadHash: hash(JSON.stringify(payload(command.input, details))), sentTo: to.join(", "), subject,
-      carrierCents: split.carrierCents, commissionCents: split.commissionCents,
-    }, ddb);
-  }
   const accepted = await ses.send(command, details);
   if (tracked) onAccepted();
-  if (groupDelivery) {
-    const reconciled = await reconcileAcceptedGroupedSend(invoiceId, { loanId: groupDelivery.loanId, providerId: accepted.MessageId, to }, ddb);
-    if (!reconciled) throw new SendBlocked("The financing email was accepted, but its send details need review. Do not send a replacement.");
-    return reconciled;
-  }
-
   /**
    * DRAFT becomes SENT; a resend of an already-SENT or PAID invoice leaves
    * the status alone. Marking a paid invoice back to SENT because someone
@@ -910,7 +517,7 @@ async function deliverInvoice({ invoice, view, to, tracked, split, allocations, 
     sentTo: to.join(", "),
     ...(invoice.status === "PAID" || invoice.status === "PROCESSING" ? {} : {
       remittanceCarrierCents: split.carrierCents, remittanceCommissionCents: split.commissionCents, remittanceInterestCents: split.interestCents,
-      remittanceBrokerFeeCents: split.brokerFeeCents, brokerFeeAllocations: JSON.stringify(allocations), brokerFeeFinanceUrl: financeUrl ?? null,
+      remittanceBrokerFeeCents: split.brokerFeeCents, brokerFeeAllocations: JSON.stringify(allocations), brokerFeeFinanceUrl: null,
     }),
     // Named, because this write does not go through the browser's actor
     // proxy. Without it the activity log would say "System" sent the bill,
@@ -951,15 +558,20 @@ export const handler = async (event: {
     if (initial.status === "VOID") {
       return { ok: false, error: "That invoice has been voided." };
     }
-    const grouped = isGroupedInvoice(initial);
-    const group = grouped && initial.status === "DRAFT" ? await loadGroupedFinance(client, invoiceId).catch(error => {
-      throw new SendBlocked(error instanceof Error ? error.message : "The combined invoice could not be verified.");
-    }) : null;
-    const invoice = group?.invoice ?? initial;
+    const invoice = initial;
+    if (isGroupedInvoice(invoice)) {
+      // A delivery accepted before cutover may still need its original receipt.
+      // Reconciliation never sends mail or creates a new loan or payment link.
+      if (initial.status === "DRAFT" && invoice.groupedFinanceLoanId && !invoice.sentAt) {
+        const recovered = await reconcileAcceptedGroupedSend(invoiceId, event.arguments?.expectedSentAt, ddb);
+        if (recovered) return recovered;
+      }
+      throw new SendBlocked("In-house financing has ended. This combined financing invoice cannot be sent.");
+    }
 
-    const [account, lines] = group ? [{ data: group.account }, group.lines] as const : await Promise.all([
+    const [account, lines] = await Promise.all([
       client.models.Account.get({ id: invoice.accountId }),
-      grouped ? Promise.resolve([]) : listAllPages((nextToken) =>
+      listAllPages((nextToken) =>
         client.models.InvoiceLine.list({
           filter: { invoiceId: { eq: invoiceId } },
           limit: 1000,
@@ -1008,51 +620,6 @@ export const handler = async (event: {
       };
     }
 
-    if (grouped) {
-      if (!to.every(email => activeEmails.has(email.toLowerCase()))) throw new SendBlocked("Choose current account contacts for the combined financing invoice.");
-      if (invoice.status !== "DRAFT" && invoice.status !== "SENT") throw new SendBlocked("This combined invoice is not available to send.");
-      const observed = event.arguments?.expectedSentAt;
-      if (invoice.status === "SENT" && invoice.sentAt && observed === invoice.sentAt) {
-        throw new SendBlocked("The combined financing invoice has already been sent.");
-      }
-      if (process.env.HOA_TRANSACTIONAL_MAIL_PROVIDER !== "ses") {
-        throw new SendBlocked("Combined invoice delivery is not configured. No email was sent.");
-      }
-      const reconciled = await reconcileAcceptedGroupedSend(invoiceId, { to, previousSentAt: observed }, ddb);
-      if (reconciled) return reconciled;
-      if (invoice.status === "DRAFT" && (!process.env.STRIPE_SECRET_KEY || !process.env.PF_LOAN_TABLE || !process.env.SITE_URL)) {
-        throw new SendBlocked("Financing payments are not configured. No email was sent.");
-      }
-      const tracked = await beginInvoiceSend(invoice, to, observed, { database: ddb });
-      if (tracked.completed) return tracked.completed;
-      if (!group || invoice.status !== "DRAFT") throw new SendBlocked("The combined financing invoice has already been sent or needs delivery review.");
-      const [first] = group.policies;
-      const finance = await financeOffer(client, {
-        id: group.account.id, state: group.account.state, type: group.account.type, incorporated: group.account.incorporated,
-      }, {
-        kind: "groupedInvoice",
-        id: invoiceId,
-        lines: group.policies.flatMap(policy => policy.lines ?? []),
-        coverageEffectiveDate: first?.effectiveDate,
-        members: group.policies.map((policy, i) => ({ id: policy.id, lines: policy.lines ?? [], agreementLine: group.agreementLines[i] ?? "" })),
-      }, group.premium, to[0] ?? null, [], null, { ...group, leaseId: tracked.operation.leaseId });
-      if (!finance?.groupDelivery) {
-        await releaseUnfundedGroupedSend(group, tracked.operation);
-        throw new SendBlocked("Financing could not be prepared for this combined invoice. No email was sent.");
-      }
-      const cityStateZip = [group.account.city, [group.account.state, group.account.zip].filter(Boolean).join(" ")].filter(Boolean).join(", ");
-      const address = [group.account.address ?? "", cityStateZip].filter(line => line.trim());
-      const addressee = contacts.find(contact => to.includes((contact.email ?? "").trim()));
-      const view: InvoiceView = {
-        number: invoice.number, associationName: group.account.name, propertyState: group.account.state, contactFirstName: primary?.name?.trim().split(/\s+/)[0],
-        billToLines: [...(addressee?.name ? [`Attn: ${addressee.name}`] : []), ...address], riskLocation: address,
-        effectiveDate: first?.effectiveDate, expirationDate: first?.expirationDate, coverageBound: true,
-        issuedAt: invoice.issuedAt, financeOnly: true, finance, lines: group.lines,
-      };
-      return await deliverInvoice({ invoice, view, to, tracked, split: remittanceSplit(group.lines), allocations: [],
-        groupDelivery: finance.groupDelivery, onAccepted: () => { acceptedForReview = true; } });
-    }
-
     /**
      * The policy the header block describes.
      *
@@ -1066,13 +633,14 @@ export const handler = async (event: {
     const linePolicyIds = [
       ...new Set(lines.map((l) => l.policyId).filter((id): id is string => !!id)),
     ];
+    const paymentStatus = invoice.status === "PAID" || invoice.status === "PROCESSING" ? invoice.status : undefined;
     const headerPolicyId =
       invoice.policyId ?? (linePolicyIds.length === 1 ? linePolicyIds[0] : null);
     const policy = headerPolicyId
-      ? await getModel<Schema["Policy"]["type"]>("Policy", headerPolicyId)
+      ? await getModel<Schema["Policy"]["type"] & { sourcePricingLoanId?: string }>("Policy", headerPolicyId)
       : null;
     if (headerPolicyId && (!policy || policy.accountId !== invoice.accountId)) throw new SendBlocked("The invoice policy could not be verified.");
-    if (policy) await assertStandalonePolicyBilling(policy);
+    if (policy && !paymentStatus) await assertStandalonePolicyBilling(policy);
 
     /**
      * W8: every invoice bills exactly one anchor — a policy, or a quote
@@ -1082,8 +650,9 @@ export const handler = async (event: {
      */
     const quoteAnchor =
       !headerPolicyId && invoice.quoteId
-        ? (await client.models.Quote.get({ id: invoice.quoteId })).data
+        ? await getModel<Schema["Quote"]["type"] & { sourcePricingLoanId?: string }>("Quote", invoice.quoteId) ?? null
         : null;
+    if (quoteAnchor && quoteAnchor.accountId !== invoice.accountId) throw new SendBlocked("The invoice quote could not be verified.");
     if (!headerPolicyId && !quoteAnchor) {
       return {
         ok: false,
@@ -1101,7 +670,7 @@ export const handler = async (event: {
      * policy — and a lost or declined quote bills coverage that will never
      * exist.
      */
-    if (quoteAnchor && !isOpenQuoteStatus(quoteAnchor.status)) {
+    if (!paymentStatus && quoteAnchor && !isOpenQuoteStatus(quoteAnchor.status)) {
       return {
         ok: false,
         error:
@@ -1110,19 +679,14 @@ export const handler = async (event: {
             : `This quote is ${(quoteAnchor.status ?? "closed").toLowerCase()} — there is no coverage to bill. Void the invoice.`,
       };
     }
-    const anchor: FinanceAnchor = headerPolicyId
-      ? {
-          kind: "policy",
-          id: headerPolicyId,
-          lines: policy?.lines ?? [],
-          coverageEffectiveDate: policy?.effectiveDate,
-        }
-      : {
-          kind: "quote",
-          id: invoice.quoteId!,
-          lines: quoteAnchor!.lines ?? [],
-          coverageEffectiveDate: quoteAnchor!.effectiveDate,
-        };
+    if (!paymentStatus && invoice.sourcePricingVersion !== 2 && lines.some(isPositiveNonBrokerCharge)) {
+      await assertPremiumNotFinanced(invoice.accountId,
+        headerPolicyId ? [...linePolicyIds, headerPolicyId] : linePolicyIds,
+        policy?.quoteId ?? invoice.quoteId, policy?.sourcePricingLoanId ?? quoteAnchor?.sourcePricingLoanId);
+    }
+    const anchor = headerPolicyId
+      ? { kind: "policy", id: headerPolicyId }
+      : { kind: "quote", id: invoice.quoteId! };
 
     /**
      * One live invoice per anchor (W8): a DRAFT/SENT/PROCESSING sibling on
@@ -1142,13 +706,13 @@ export const handler = async (event: {
             ...(policy?.quoteId ? [{ quoteId: { eq: policy.quoteId } }] : []),
           ]
         : [{ quoteId: { eq: anchor.id } }];
-    const siblingInvoices = await listAllPages((nextToken) =>
+    const siblingInvoices = paymentStatus ? [] : await listAllPages((nextToken) =>
       client.models.Invoice.list({
         filter: siblingFilters.length === 1 ? siblingFilters[0] : { or: siblingFilters },
         nextToken,
       })
     );
-    if (anchor.kind === "policy") {
+    if (!paymentStatus && anchor.kind === "policy") {
       const anchorLines = await listAllPages((nextToken) =>
         client.models.InvoiceLine.list({
           filter: { policyId: { eq: anchor.id } },
@@ -1177,11 +741,11 @@ export const handler = async (event: {
     }
 
     await assertInitialInvoiceAvailable(invoice);
-    const adjustmentProof=await assertAdjustmentInvoiceProof(invoice);
-    const policyGuard = policy ? standalonePolicyBillingGuard(policy) : undefined;
+    const adjustmentProof=paymentStatus ? undefined : await assertAdjustmentInvoiceProof(invoice);
+    const policyGuard = policy && !paymentStatus ? standalonePolicyBillingGuard(policy) : undefined;
     const feeSource = policy ?? quoteAnchor;
     const sourceQuoteId = policy?.quoteId ?? quoteAnchor?.id;
-    const expectedFeeCents = brokerFeeCents(feeSource?.brokerFee);
+    const expectedFeeCents = paymentStatus ? 0 : brokerFeeCents(feeSource?.brokerFee);
     const existingFee = sourceQuoteId && expectedFeeCents > 0 ? await getFee(sourceQuoteId) : null;
     const feeAlreadySubmitted = !!existingFee && (existingFee.submittedCents > 0 || existingFee.collectedCents > 0 || existingFee.refundedCents > 0);
     const issuedAllocations = feeAllocations(invoice.brokerFeeAllocations);
@@ -1204,9 +768,18 @@ export const handler = async (event: {
     }
     if (!lines.length) return { ok: false, error: "This invoice no longer has a charge. Review its source quote." };
     let allocations: BrokerFeeAllocation[];
-    try { allocations = invoiceBrokerFeeAllocations({ invoice, source: feeSource, quoteId: sourceQuoteId, policyId: headerPolicyId, lines, alreadySubmitted: feeAlreadySubmitted }); }
-    catch (error) { return { ok: false, error: error instanceof Error ? error.message : "The broker fee invoice could not be verified." }; }
-    validateInvoiceSourceCharges({ invoice, source: adjustmentProof?{id:String(adjustmentProof.policy.id),accountId:String(adjustmentProof.policy.accountId),billType:adjustmentProof.policy.billType as string|undefined}:feeSource, lines });
+    try {
+      if (paymentStatus) {
+        allocations = paymentStatus === "PAID" && !issuedAllocations.length && lines.some(line => line.kind === "BROKER_FEE")
+          ? await manualReceiptFeeAllocations(invoice.id, invoice.accountId) : issuedAllocations;
+        assertReceiptBrokerFee(invoice, lines, allocations, sourceQuoteId, headerPolicyId);
+      } else {
+        allocations = invoiceBrokerFeeAllocations({ invoice, source: feeSource, quoteId: sourceQuoteId, policyId: headerPolicyId, lines, alreadySubmitted: feeAlreadySubmitted });
+      }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : "The invoice charges could not be verified." };
+    }
+    if (!paymentStatus) validateInvoiceSourceCharges({ invoice, source: adjustmentProof?{id:String(adjustmentProof.policy.id),accountId:String(adjustmentProof.policy.accountId),billType:adjustmentProof.policy.billType as string|undefined}:feeSource, lines });
     const split = remittanceSplit(lines);
     const carrierId = policy?.carrierId ?? quoteAnchor?.carrierId ?? null;
     const carrier = carrierId
@@ -1251,7 +824,7 @@ export const handler = async (event: {
      * the same `invoiceTotals` the screen ran, over rows read here rather than
      * over anything the caller posted.
      */
-    const paymentUrl = invoice.status === "PAID" || invoice.status === "PROCESSING" ? null : await ensurePaymentLink(
+    const paymentUrl = paymentStatus ? null : await ensurePaymentLink(
       invoice,
       account.data.name,
       invoiceTotals(lines).retail,
@@ -1262,24 +835,6 @@ export const handler = async (event: {
         ? [...adjustmentProof.guards, standalonePolicyBillingGuard(adjustmentProof.policy as { id: string; updatedAt: string }, true)]
         : policyGuard ? [policyGuard] : invoice.sourcePricingVersion === 1 && quoteAnchor && !allocations.length
           ? await initialQuotePublicationWrites(invoice, quoteAnchor) : []
-    );
-
-    // W8: the other side of the fork originates HERE, at fixed terms on
-    // the billed total, through every gate — or rides an existing QUOTED
-    // offer whose premium still matches.
-    const finance = invoice.sourcePricingVersion===2 || invoice.status === "PAID" || invoice.status === "PROCESSING" ? null : await financeOffer(
-      client,
-      {
-        id: account.data.id,
-        state: account.data.state,
-        type: account.data.type,
-        incorporated: account.data.incorporated,
-      },
-      anchor,
-      financeableInvoiceTotal(lines),
-      to[0] ?? null,
-      allocations,
-      policy
     );
 
     /**
@@ -1326,13 +881,13 @@ export const handler = async (event: {
       issuedAt: invoice.issuedAt,
       dueAt: invoice.dueAt,
       memo: invoice.memo,
+      paymentStatus,
       paymentUrl: disclosureUrl ?? paymentUrl,
       paymentLabel,
-      finance: disclosureUrl ? null : finance,
       lines: [...lines].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)),
     };
     return await deliverInvoice({ invoice, view, to, tracked, split, allocations, feeSendClaim,
-      financeUrl: finance?.url, onAccepted: () => { acceptedForReview = true; } });
+      onAccepted: () => { acceptedForReview = true; } });
   } catch (err) {
     if (err instanceof SendBlocked || err instanceof GroupedDraftBillingBlocked || err instanceof InvoiceSendBlocked || err instanceof MailDeliveryError) {
       return { ok: false, error: err.message };

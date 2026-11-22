@@ -14,7 +14,7 @@ import {
   NOTICE_DAYS,
   type NoticeRow,
 } from "../../../../shared/premiumFinance/noticeSequence";
-import { PF_CONFIG_SHA256 } from "../../../../shared/premiumFinance/jurisdictions";
+import { PF_CONFIG_SHA256 } from "../../../../shared/premiumFinance/auditConfig";
 import { postInstallment } from "../pfPosting";
 
 /**
@@ -107,10 +107,6 @@ export const handler = async (event: {
     const now = new Date().toISOString();
 
     switch (a.action) {
-      // Kept as a refusal for older clients. Only settlement enables collection.
-      case "ACTIVATE":
-        return { ok: false, error: "Financing starts automatically when the initial payment settles after the financing agreement is signed. No separate activation is needed." };
-
       /**
        * W8: a quote became a policy — the loan follows it. Clients cannot
        * write loans, so the bind flow calls this; the write is conditional

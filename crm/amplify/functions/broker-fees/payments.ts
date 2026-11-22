@@ -179,22 +179,16 @@ export async function feeInvoiceVoidWrites(invoice:Record<string,unknown>):Promi
   return writes;
 }
 
-/** Keep financing checkout reservations visible even after its invoice is voided. */
-export async function reserveFeeLoan(quoteId:string,loanId:string) {
-  for(let attempt=0;attempt<5;attempt++) {
-    const fee=await getFee(quoteId),loan=await getModel<Record<string,unknown>>('PfLoan',loanId);
-    const quote=await getModel<Record<string,unknown>>('Quote',quoteId);
-    if(!quote)throw new Error('The original fee quote could not be verified.');
-    assertBrokerFeeAgencyBilling(quote as {brokerFee?:number|null;billType?:string|null});
-    if(!fee||!loan||loan.accountId!==fee.accountId||!feeAllocations(loan.brokerFeeAllocations).some(a=>a.quoteId===quoteId&&a.amountCents===fee.amountCents))throw new Error('The finance offer fee does not match its accepted policy term.');
-    const ids=[...new Set([...(fee.issuedLoanIds??[]),loanId])];
-    if(ids.length>100)throw new Error('The fee financing history needs review.');
-    try {await transact([feePut({...fee,issuedLoanIds:ids},fee),versionCheck(modelTable('PfLoan'),loan as {id:string;updatedAt:string}),versionCheck(modelTable('Quote'),quote as {id:string;updatedAt:string})]);return;}
-    catch(error){if(!retryable(error)||attempt===4)throw error;}
-  }
+/** A manual payment on an unsent draft can precede its first issued allocation. */
+export async function manualReceiptFeeAllocations(invoiceId: string, accountId: string): Promise<BrokerFeeAllocation[]> {
+  const source = `manual-invoice:${invoiceId}`;
+  const payment = await getRow<Payment>(paymentId(source));
+  if (payment?.kind !== 'PAYMENT' || payment.sourceId !== source || payment.accountId !== accountId ||
+      (payment.status !== 'PAID' && payment.status !== 'REFUNDED')) return [];
+  return feeAllocations(payment.allocations);
 }
 
-/** Only trusted payment handlers call this; browsers cannot submit processor states. */
+/** Only trusted payment handlers can submit processor states. */
 export async function syncBrokerFeePayment(input: BrokerFeePaymentInput, extraWrites: Write[] = [], expectedFeeVersions: Record<string, number> = {}) {
   const allocations = feeAllocations(input.allocations);
   if (!allocations.length) { if(extraWrites.length) await transact(extraWrites); return; }

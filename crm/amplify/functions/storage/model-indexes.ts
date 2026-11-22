@@ -32,4 +32,4 @@ export function requireModelIndexKey(model: string, field: string, error: () => 
   if (!isIndexedAccountModel(model) || !(modelIndexFields(model) as readonly string[]).includes(field)) throw error();
   return modelIndexKey(model, field as ModelIndexField<typeof model>);
 }
-export const INVOICE_INDEX_KEYS = [modelIndexKey('Invoice', 'accountId'), modelIndexKey('InvoiceLine', 'invoiceId')] as const;
+export const INVOICE_INDEX_KEYS = [modelIndexKey('Invoice', 'accountId'), modelIndexKey('InvoiceLine', 'invoiceId'), modelIndexKey('PfLoan', 'accountId')] as const;

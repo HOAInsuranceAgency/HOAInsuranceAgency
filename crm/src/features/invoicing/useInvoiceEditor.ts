@@ -32,7 +32,6 @@ export function useInvoiceEditor({
   invoice,
   policies,
   quotes,
-  account,
   contacts,
   onChange,
   onLinesChange,
@@ -74,7 +73,6 @@ export function useInvoiceEditor({
   const totals = invoiceTotals(lines);
   const warnings = marginWarnings(lines);
   const grouped = isGroupedInvoice(invoice);
-  const canSendGroup = grouped && invoice.status === "DRAFT" && !invoice.sentAt && isOwner;
   const groupedPolicies = grouped ? policies.filter(policy => invoice.groupedPolicyIds?.includes(policy.id)) : [];
   const locked = !permissions.invoice || grouped || invoice.status === "VOID";
   const issuedFee = feeAllocations(invoice.brokerFeeAllocations).length > 0;
@@ -157,7 +155,7 @@ export function useInvoiceEditor({
   // Preserve the observed send across a failed/lost response. Only a confirmed
   // action clears it; retrying must not turn a newly persisted sentAt into a resend.
   const sendAttempt = useRef<{ expectedSentAt: string; toEmail: string } | null>(null);
-  const canRestoreGroup = canSendGroup && !invoice.groupedFinanceLoanId && !sendAttempt.current;
+  const canRestoreGroup = grouped && invoice.status === "DRAFT" && !invoice.sentAt && isOwner && !invoice.groupedFinanceLoanId;
   const [pending, setPending] = useState(0);
   const [actionBusy, setActionBusy] = useState(false);
   useEffect(() => { onBusyChange?.(pending > 0); }, [pending, onBusyChange]);
@@ -368,7 +366,7 @@ export function useInvoiceEditor({
   }
 
   async function send() {
-    if (grouped && (!canSendGroup || !toEmails.length)) return;
+    if (grouped) return;
     await enqueue(
       async () => {
         if (missingRemittanceCost(linesRef.current)) throw new Error("Enter actual carrier/wholesaler remittance cost before sending.");
@@ -380,32 +378,12 @@ export function useInvoiceEditor({
         }
         sendAttempt.current ??= { expectedSentAt: acknowledgedInvoice.current.sentAt ?? "", toEmail: selected };
         const attempt = sendAttempt.current;
-        let result: Awaited<ReturnType<typeof sendInvoice>>;
-        try {
-          result = await sendInvoice({
+        const result = await sendInvoice({
             invoiceId: invoice.id,
             // The checked contact addresses stay fixed across an uncertain retry.
             toEmail: attempt.toEmail,
             expectedSentAt: attempt.expectedSentAt,
           });
-        } catch (error) {
-          if (grouped) {
-            // A failed response can follow a durable reservation or delivery.
-            // Re-read it without discarding the original idempotent send attempt.
-            const fresh = await client.models.Invoice.get({ id: invoice.id }).catch(() => null);
-            const row = fresh?.errors?.length ? null : fresh?.data;
-            if (row && alive.current) {
-              acknowledgedInvoice.current = row;
-              onChange(row);
-              if (row.status === "SENT" && row.sentAt && row.sentAt !== attempt.expectedSentAt && recipientSet(row.sentTo ?? "") === recipientSet(attempt.toEmail)) {
-                sendAttempt.current = null;
-                return `Sent to ${row.sentTo}.`;
-              }
-            }
-          }
-          throw error;
-        }
-
         sendAttempt.current = null;
         // Generated fee lines can refresh from the quote at send; show the exact billed rows.
         if ((policy?.brokerFee ?? quote?.brokerFee ?? 0) > 0 || lines.some(line => line.kind === "BROKER_FEE")) {
@@ -418,8 +396,8 @@ export function useInvoiceEditor({
         const acceptedSentAt = typeof result.sentAt === "string" ? result.sentAt : undefined;
         const sentTo = result.sentTo ?? selected;
         const refreshed = await refreshAfterAction(
-          { ...acknowledgedInvoice.current, ...(grouped ? { status: "SENT" } : {}), sentAt: acceptedSentAt ?? new Date().toISOString(), sentTo },
-          row => (!grouped || row.status !== "DRAFT") && Boolean(row.sentAt && (acceptedSentAt ? row.sentAt === acceptedSentAt : row.sentAt !== previousSentAt)) && recipientSet(row.sentTo ?? "") === recipientSet(sentTo)
+          { ...acknowledgedInvoice.current, sentAt: acceptedSentAt ?? new Date().toISOString(), sentTo },
+          row => Boolean(row.sentAt && (acceptedSentAt ? row.sentAt === acceptedSentAt : row.sentAt !== previousSentAt)) && recipientSet(row.sentTo ?? "") === recipientSet(sentTo)
         );
         return `Sent to ${sentTo}.${!refreshed ? " Reopen the invoice to refresh its details." : ""}`;
       },
@@ -457,7 +435,6 @@ export function useInvoiceEditor({
     locked,
     grouped,
     groupedPolicies,
-    canSendGroup,
     canRestoreGroup,
     restoreGroupedDraft,
     actionBusy,
@@ -488,7 +465,6 @@ export function useInvoiceEditor({
     withEmail,
     toIds,
     setToIds,
-    account,
     toEmails,
     needsRemittanceCost,
     needsSupplierAmount,

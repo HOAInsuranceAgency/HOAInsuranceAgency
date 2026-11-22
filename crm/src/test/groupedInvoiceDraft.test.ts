@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createGroupedDraft, groupedReviewLines, restoreGroupedDraft } from '../../amplify/functions/crm-access/grouped-draft';
+import { restoreGroupedDraft } from '../../amplify/functions/crm-access/grouped-draft';
 import type { AccountAccess } from '../../amplify/functions/crm-access/access';
 
 const h = vi.hoisted(() => ({ send: vi.fn(), list: vi.fn(), reserve: vi.fn() }));
@@ -40,69 +40,6 @@ describe('combined invoice review', () => {
     h.reserve.mockResolvedValue({ invoiceNumber: 'INV-2026-00006' });
   });
   afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); });
-
-  it('freezes reviewed supplier costs and a gross direct advance in one unsent transaction', async () => {
-    const result = await createGroupedDraft(setup(), input);
-    const tx = h.send.mock.calls.map(([cmd]) => cmd.input.TransactItems).filter(Boolean);
-    expect(tx).toHaveLength(1);
-    const items = tx[0];
-    const invoice = items.find((item: { Put?: { TableName: string } }) => item.Put?.TableName === 'Invoice').Put.Item;
-    expect(invoice).toMatchObject({ id: result.invoiceId, groupedPolicyIds: [liability.id, property.id], status: 'DRAFT', dueAt: source.dueAt });
-    for (const field of ['sentAt', 'paymentUrl', 'stripePaymentLinkId', 'policyId', 'quoteId']) expect(invoice).not.toHaveProperty(field);
-    const lines = items.filter((item: { Put?: { TableName: string } }) => item.Put?.TableName === 'InvoiceLine').map((item: { Put: { Item: unknown } }) => item.Put.Item);
-    expect(lines).toEqual(expect.arrayContaining([
-      expect.objectContaining({ policyId: liability.id, retailAmount: 1500, costAmount: 1500 }),
-      expect.objectContaining({ policyId: property.id, retailAmount: 50000, costAmount: 45000 }),
-      expect.objectContaining({ policyId: property.id, retailAmount: 500, costAmount: 500 }),
-    ]));
-    expect(items).toContainEqual({ Update: expect.objectContaining({ TableName: 'Invoice', Key: { id: source.id },
-      ConditionExpression: expect.stringContaining('attribute_not_exists(invoiceSendOperation)'),
-      ExpressionAttributeValues: expect.objectContaining({ ':void': 'VOID' }) }) });
-    expect(items.filter((item: { Update?: { TableName: string } }) => item.Update?.TableName === 'Policy')).toHaveLength(2);
-  });
-
-  it('rejects an invoice whose publication already started, before reserving a number', async () => {
-    const access = setup({ 'Invoice:orig': { ...source, invoiceSendOperation: 'publishing' } });
-    await expect(createGroupedDraft(access, input)).rejects.toThrow('cannot be combined');
-    expect(h.reserve).not.toHaveBeenCalled();
-  });
-
-  it('returns an existing identical review without replacing records', async () => {
-    const access = setup({ 'Policy:property': { ...property, groupedDraftInvoiceId: 'group' },
-      'Policy:d-and-o': { ...liability, groupedDraftInvoiceId: 'group' },
-      'Invoice:group': { ...base, id: 'group', status: 'DRAFT', sourcePricingVersion: 3, groupedPolicyIds: input.policyIds, groupedReviewedTotals: [[property.id, 5050000]] } });
-    await expect(createGroupedDraft(access, input)).resolves.toEqual({ ok: true, invoiceId: 'group' });
-    expect(h.reserve).not.toHaveBeenCalled();
-  });
-
-  it('refuses unreviewed costs and altered supplier charges', () => {
-    expect(() => groupedReviewLines(property, source, [{ ...premium, costAmount: null }])).toThrow('supplier costs');
-    expect(() => groupedReviewLines(property, source, [premium, { ...supplier, costAmount: 400 }])).toThrow('actual cost');
-  });
-
-  it('refuses an incomplete legacy source even if the invoice index misses a saved fee', async () => {
-    const access = setup();
-    h.send.mockResolvedValue({ Items: [{ id: premium.id }] });
-    await expect(createGroupedDraft(access, input)).rejects.toThrow('reviewed carrier total');
-    expect(h.reserve).not.toHaveBeenCalled();
-  });
-
-  it('includes a tracked fee missing from index discovery and fences the source revision', async () => {
-    const access = setup({ 'Invoice:orig': { ...source, draftLineRevision: 7, draftLineIds: new Set([supplier.id]) } });
-    h.send.mockImplementation((command: { input: { TransactItems?: unknown[] } }) => Promise.resolve(command.input.TransactItems ? {} : { Items: [{ id: premium.id }] }));
-    await expect(createGroupedDraft(access, input)).resolves.toMatchObject({ ok: true });
-    const writes = h.send.mock.calls.at(-1)![0].input.TransactItems;
-    expect(writes).toContainEqual({ Update: expect.objectContaining({ TableName: 'Invoice', Key: { id: source.id },
-      ConditionExpression: expect.stringContaining('draftLineRevision = :revision'), ExpressionAttributeValues: expect.objectContaining({ ':revision': 7 }) }) });
-    expect(writes).toContainEqual({ Put: expect.objectContaining({ TableName: 'InvoiceLine', Item: expect.objectContaining({ retailAmount: 500, kind: 'CARRIER_FEE' }) }) });
-  });
-
-  it('blocks a live policy loan that is not yet visible in the account index', async () => {
-    const access = setup({ 'Policy:property': { ...property, sourcePricingLoanId: 'loan' },
-      'PfLoan:loan': { ...base, id: 'loan', policyId: property.id, status: 'QUOTED' } });
-    await expect(createGroupedDraft(access, input)).rejects.toThrow('existing financing');
-    expect(h.reserve).not.toHaveBeenCalled();
-  });
 
   it('restores source drafts and releases all members in one conditional transaction', async () => {
     const group = { ...base, id: 'group', sourcePricingVersion: 3, status: 'DRAFT', groupedPolicyIds: input.policyIds,

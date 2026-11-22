@@ -1,6 +1,6 @@
 import { QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { createHash } from 'node:crypto';
-import { PF_CONFIG_SHA256 } from '../../../../shared/premiumFinance/jurisdictions';
+import { PF_CONFIG_SHA256 } from '../../../../shared/premiumFinance/auditConfig';
 import type { BrokerFeeRecord } from '../../../../shared/brokerFees';
 import { getModel, modelTable } from '../broker-fees/store';
 import { quoteSourceBillingHistory } from '../quote-source-billing';
