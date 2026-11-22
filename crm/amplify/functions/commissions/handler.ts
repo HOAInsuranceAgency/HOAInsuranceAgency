@@ -55,7 +55,7 @@ import { holdApprovedPayroll, payrollAction, payrollOperations } from './payroll
 import { planAction, planOperations } from './plans';
 import { statementPostingChanges } from './posting';
 import { intakeAction, intakeOperations } from './intake';
-import { depositAction, depositOperations, noSavedDeposit } from './deposits';
+import { depositAction, depositOperations, holdReceiptPayroll, noSavedDeposit } from './deposits';
 
 const agencyToday = () =>
   new Intl.DateTimeFormat('en-CA', {
@@ -568,7 +568,9 @@ export async function handler(event: Event) {
       const entry = next.entries[next.entries.length - 1];
       const shared = entry.allocationId ? receiptEarnings(next, entry, await policyReceiptEarnings([policy])) : [];
       const reconciliation = await store.get<{ id: string; version: number }>('PAYROLL_STATE', 'reconciliation');
+      const holds = await holdReceiptPayroll(receivedOn, { policy: next, entry, earnings: shared });
       await store.commit([
+        ...holds,
         ...shared.map(earning => change('EARNING', earning)),
         change('PAYROLL_STATE', { id: 'reconciliation' }, reconciliation),
         change('IPFS_TRANSACTION', allocation),
