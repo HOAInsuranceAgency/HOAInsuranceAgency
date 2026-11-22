@@ -5,18 +5,26 @@ import "./BillingFlowchart.css";
 export function BillingFlowchart() {
   return (
     <details className="card billing-flowchart">
-      <summary>Billing flowchart — HOA CRM or IPFS?</summary>
+      <summary>Billing flowchart — carrier, HOA CRM or IPFS?</summary>
       <img src={chartImage} width="1400" height="1082" alt="" loading="lazy" />
       <div className="billing-flowchart-text">
+        <h3>Who bills the client?</h3>
+        <dl>
+          <dt>No broker fee and no IPFS request → use carrier direct bill when available</dt>
+          <dd>The client pays the carrier in full or on the carrier’s installment plan. HOA collects $0. Skip the HOA CRM invoice.</dd>
+          <dt>Broker fee, IPFS request or agency bill only → use agency billing</dt>
+          <dd>Select agency bill when the carrier offers it. If the carrier offers only direct bill, set the billing address on the carrier’s bill to HOA Insurance Agency. For a fee-bearing quote, confirm Agency bill in HOA CRM.</dd>
+        </dl>
+        <h3>For agency billing, which platform collects payment?</h3>
         <dl>
           <dt>Paid in full → HOA CRM</dt>
-          <dd>Invoice the full policy charges. Itemize any broker fee and collect the full invoice amount.</dd>
-          <dt>Financed with no broker fee or a fee at or below the 30% cap → IPFS only</dt>
-          <dd>IPFS collects the down payment and installments. The agency collects $0.</dd>
-          <dt>Financed with a broker fee above the 30% cap → HOA CRM for the excess fee</dt>
+          <dd>Invoice the full policy charges and itemize any broker fee. HOA collects the invoice amount and pays the amount due to the carrier.</dd>
+          <dt>IPFS with no broker fee or a fee at or below the cap → IPFS only</dt>
+          <dd>IPFS collects the down payment and installments. HOA collects $0 from the client.</dd>
+          <dt>IPFS with a broker fee above the cap → HOA CRM for the excess fee</dt>
           <dd>Invoice only the excess fee when the down payment is due. IPFS collects the regular down payment and all installments.</dd>
         </dl>
-        <p>On $10,000 financed, the cap is $3,000. For a $3,500 broker fee, bill $500 in HOA CRM and finance $3,000 through IPFS.</p>
+        <p>The cap is 30% of the IPFS amount financed. On $10,000 financed, the cap is $3,000. For a $3,500 broker fee, bill $500 in HOA CRM and finance $3,000 through IPFS.</p>
       </div>
       <a href={printableChart} target="_blank" rel="noopener noreferrer">Open printable flowchart (PDF)</a>
     </details>
