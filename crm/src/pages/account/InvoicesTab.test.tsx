@@ -40,8 +40,9 @@ describe("invoice creation reliability", () => {
     expect(screen.getByRole("link", { name: "Open printable flowchart (PDF)" })).toHaveAttribute("href");
     expect(screen.getByText(/Skip the HOA CRM invoice/)).toBeInTheDocument();
     expect(screen.getByText(/set the billing address on the carrier’s bill to HOA Insurance Agency/)).toBeInTheDocument();
-    expect(screen.getByText(/Hold the standard HOA CRM invoice for billing review/)).toBeInTheDocument();
-    expect(screen.getByText(/HOA is owed \$500 and IPFS finances \$3,000/)).toBeInTheDocument();
+    expect(screen.getByText("IPFS with a broker fee above the cap → IPFS only")).toBeInTheDocument();
+    expect(screen.getByText(/Skip the separate HOA CRM invoice/)).toBeInTheDocument();
+    expect(screen.getByText(/IPFS finances \$3,000 and collects the remaining \$500 with the regular down payment/)).toBeInTheDocument();
     expect(selector).toHaveValue("");
     expect(api.models.Invoice.create).not.toHaveBeenCalled();
   });
