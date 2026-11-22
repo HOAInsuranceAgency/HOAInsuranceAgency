@@ -6,6 +6,7 @@ import {
   ratio,
   MONEY_MAX,
   batchPaidCents,
+  isCarrierReceipt,
   type CommissionPolicy,
   type CommissionEntry,
   type CommissionBatch,
@@ -117,6 +118,14 @@ export function allocationFor(
   return entry.allocationId
     ? policy.allocations?.find((a) => a.id === entry.allocationId)
     : policy.allocations?.filter((a) => a.from <= entry.receivedOn).at(-1);
+}
+/**
+ * A fee on a shared policy follows the participants' frozen eligibility and receipt cutoffs.
+ * For a single producer the bound policy itself holds the applicable agreement.
+ */
+export function feeReceiptEligible(policy: CommissionPolicy, receivedOn: string): boolean {
+  return !!allocationFor(policy, { receivedOn }) ||
+    (policy.eligibility?.eligible !== false && (!policy.receiptsFrom || receivedOn >= policy.receiptsFrom));
 }
 export function validateAllocation(allocation: CommissionAllocation) {
   day(allocation.from);
@@ -388,20 +397,16 @@ export function departureWorklist(
           a.participants.some((p) => p.producerId === c.producerId),
         ),
     )
+    .filter(p => !c.pendingResolutions?.some(r => r.policyId === p.id &&
+      r.receiptCount <= p.entries.length && !p.entries.slice(r.receiptCount).some(isCarrierReceipt)))
     .map((p) => ({
       policyId: p.id,
       policyNumber: p.policyNumber,
       receiptCount: p.entries.length,
       expectedAgencyCents: ratio(p.premiumCents, p.agencyRateUnits, 1_000_000),
-      receivedAgencyCents: sum(p.entries.map((e) => e.agencyCents)),
+      receivedAgencyCents: sum(p.entries.filter(isCarrierReceipt).map((e) => e.agencyCents)),
     }))
-    .filter(
-      (p) =>
-        p.expectedAgencyCents > p.receivedAgencyCents &&
-        !c.pendingResolutions?.some(
-          (r) => r.policyId === p.policyId && r.receiptCount === p.receiptCount,
-        ),
-    );
+    .filter(p => p.expectedAgencyCents > p.receivedAgencyCents);
   return {
     rows,
     pending,

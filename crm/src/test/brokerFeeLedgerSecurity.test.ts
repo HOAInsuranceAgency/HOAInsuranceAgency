@@ -9,6 +9,7 @@ import { BROKER_FEE_TERMS_VERSION, type BrokerFeeAgreement, type BrokerFeeRecord
 type Row = Record<string, any>;
 const h = vi.hoisted(() => ({
   rows: new Map<string, Row>(), models: new Map<string, Row>(), ledger: new Map<string, CommissionPolicy>(), commissionRows: new Map<string, Row>(),
+  listCommission: vi.fn(), getManyCommission: vi.fn(),
   transact: vi.fn(), commit: vi.fn(), session: vi.fn(), s3: vi.fn(), db: vi.fn(),
   deactivate: vi.fn(), sessions: vi.fn(), expire: vi.fn(),
 }));
@@ -24,8 +25,10 @@ vi.mock('../../amplify/functions/broker-fees/store', async original => ({
 }));
 vi.mock('../../amplify/functions/commissions/store', () => ({
   get: async (kind: string, id: string) => structuredClone(kind === 'POLICY' ? h.ledger.get(id) : h.commissionRows.get(kind + ':' + id)),
-  list: async (kind: string) => structuredClone([...h.commissionRows.entries()].filter(([key]) => key.startsWith(kind + ':')).map(([, value]) => value)),
-  getMany: async (refs: {kind:string;id:string}[]) => structuredClone(refs.map(r=>h.commissionRows.get(r.kind+':'+r.id)).filter(Boolean)),
+  list: h.listCommission, getMany: h.getManyCommission,
+  approvedPayrollCycles: async (minimumCutoff?: string) => structuredClone([...h.commissionRows.entries()]
+    .filter(([k, c]) => k.startsWith('PAYROLL_CYCLE:') && c.status === 'APPROVED' && (!minimumCutoff || c.cutoff >= minimumCutoff))
+    .map(([, c]) => c)),
   commit: h.commit,
 }));
 vi.mock('../../amplify/functions/crm-access/user-status', async original => ({ ...await original<typeof import('../../amplify/functions/crm-access/user-status')>(), assertUserSession: h.session }));
@@ -118,6 +121,8 @@ beforeEach(() => {
   process.env.USER_ACCESS_TABLE = 'TeamUser';
   process.env.ACCESS_INDEXES = JSON.stringify({ 'InvoiceLine.invoiceId': 'invoice-lines' });
   delete process.env.HOA_MIGRATION_PREVIEW; delete process.env.HOA_MIGRATION_BUSINESS_HELD;
+  h.listCommission.mockImplementation(async (kind: string) => clone([...h.commissionRows.entries()].filter(([key]) => key.startsWith(kind + ':')).map(([, value]) => value)));
+  h.getManyCommission.mockImplementation(async (refs: {kind: string; id: string}[]) => clone(refs.map(r => h.commissionRows.get(r.kind + ':' + r.id)).filter(Boolean)));
   h.session.mockResolvedValue(undefined); h.s3.mockResolvedValue({}); h.db.mockResolvedValue({ Items: [] }); h.deactivate.mockResolvedValue({ active: false });
   h.sessions.mockImplementation(async function* () {});
   h.transact.mockImplementation(async writes => applyWrites(writes));
@@ -424,19 +429,27 @@ describe('invoice reservations versus known financing checkout URLs',()=>{
   });
 });
 
- it('posts shared broker-fee earnings once, fences payroll, and retains each original refund share', async () => {
+it('honors split broker-fee terms when a primary cutoff is later, holds affected payroll, and retains original refund shares', async () => {
+  h.ledger.get('p')!.receiptsFrom = '2026-11-01';
   h.ledger.get('p')!.allocations = [{id:'split',from:'2026-10-01',agreement:'Confirmed policy split',approvedBy:'owner',approvedAt:'2026-10-01T12:00:00Z',method:'INDIVIDUAL_PLAN_RATE',houseBps:0,participants:[
     {producerId:'producer',producerName:'Avery',shareBps:6000,producerBps:2000,planVersion:1,agreement:'Plan A',eligible:true},
     {producerId:'jordan',producerName:'Jordan',shareBps:4000,producerBps:1600,planVersion:1,agreement:'Plan B',eligible:true},
   ]}];
+  const approved = { id: 'approved', version: 1, status: 'APPROVED', batchIds: [], producerIds: ['jordan'], cutoff: '2026-10-09', totalCents: 2000 };
+  h.commissionRows.set('PAYROLL_CYCLE:approved', approved);
   await sync('PAID', {receivedOn:'2026-10-04'});
   await sync('PAID', {receivedOn:'2026-10-04'});
+  expect(h.commissionRows.get('PAYROLL_CYCLE:approved')).toMatchObject({ version: 2, totalCents: 2000, reviewRequired: expect.stringMatching(/broker fee/i) });
   expect(entries()).toHaveLength(1);
   expect(entries()[0]).toMatchObject({agencyCents:50000,producerCents:0,allocationId:'split'});
   const earnings = [...h.commissionRows.entries()].filter(([key])=>key.startsWith('EARNING:')).map(([,value])=>value);
   expect(earnings.map(e=>e.amountCents)).toEqual([6000,3200]);
   expect(h.commissionRows.get('PAYROLL_STATE:reconciliation')).toMatchObject({version:1});
+  h.commissionRows.set('PAYROLL_CYCLE:approved', { ...approved, version: 3 });
+  h.commissionRows.set('PAYROLL_CYCLE:later', { ...approved, id: 'later', cutoff: '2026-10-10' });
   await sync('REFUNDED', {receivedOn:'2026-10-10',refundedCents:10000});
+  expect(h.commissionRows.get('PAYROLL_CYCLE:approved')).toMatchObject({ version: 3 });
+  expect(h.commissionRows.get('PAYROLL_CYCLE:later')).toMatchObject({ version: 2, reviewRequired: expect.stringMatching(/broker fee/i) });
   const reversals = [...h.commissionRows.values()].filter(e=>e.originalEarningId);
   expect(reversals.map(e=>e.amountCents)).toEqual([-1200,-640]);
   expect(reversals.every(e=>e.status==='REVIEW')).toBe(true);
@@ -452,4 +465,41 @@ it('rounds shared carrier and broker-fee revenue independently', () => {
   const feeEarnings = receiptEarnings(policy, policy.entries.at(-1)!, carrier);
   expect(carrier[0].amountCents).toBe(1);
   expect(feeEarnings[0].amountCents).toBe(1);
+});
+
+it('uses each shared employee’s own broker-fee eligibility when the primary producer is outside the receipt cutoff', async () => {
+  const policy = h.ledger.get('p')!;
+  policy.receiptsFrom = '2026-11-01';
+  policy.allocations = [{ id: 'split', from: '2026-10-01', agreement: 'Signed split', approvedBy: 'owner', approvedAt: '2026-10-01',
+    method: 'INDIVIDUAL_PLAN_RATE', houseBps: 0, participants: [
+      { producerId: 'producer', producerName: 'Avery', shareBps: 6000, producerBps: 2000, planVersion: 1, agreement: 'A', eligible: true, receiptsFrom: '2026-11-01' },
+      { producerId: 'jordan', producerName: 'Jordan', shareBps: 4000, producerBps: 1600, planVersion: 1, agreement: 'B', eligible: true, receiptsFrom: '2026-10-01' },
+    ] }];
+  const cycle = { id: 'pay', version: 1, status: 'APPROVED', cutoff: '2026-10-04', batchIds: [], producerIds: ['jordan'] };
+  h.commissionRows.set('PAYROLL_CYCLE:pay', cycle);
+  h.commissionRows.set('PAYROLL_CYCLE:excluded', { ...cycle, id: 'excluded', producerIds: ['producer'] });
+  await sync('PAID', { receivedOn: cycle.cutoff });
+  expect(entries()[0]).toMatchObject({ eligible: true, allocationId: 'split', producerCents: 0 });
+  const earnings = [...h.commissionRows.entries()].filter(([k]) => k.startsWith('EARNING:')).map(([,e]) => e);
+  expect(earnings.map(e => [e.producerId, e.status, e.amountCents])).toEqual([['producer','EXCLUDED',0], ['jordan','PAYABLE',3200]]);
+  expect(h.commissionRows.get('PAYROLL_CYCLE:pay')).toMatchObject({ version: 2, reviewRequired: expect.stringMatching(/Broker fee/) });
+  expect(h.commissionRows.get('PAYROLL_CYCLE:excluded')).not.toHaveProperty('reviewRequired');
+  expect(h.getManyCommission).toHaveBeenCalledWith([{ kind: 'DEPARTURE', id: 'jordan' }]);
+  expect(h.listCommission).not.toHaveBeenCalledWith('DEPARTURE');
+});
+
+it('retries the broker-fee transaction after concurrent payroll approval and holds the fresh cycle once', async () => {
+  const commit = h.commit.getMockImplementation()!;
+  const stateKey = 'PAYROLL_STATE:reconciliation';
+  h.commissionRows.set(stateKey, { id: 'reconciliation', version: 1 });
+  h.commit.mockImplementationOnce(async (...args) => {
+    h.commissionRows.set(stateKey, { id: 'reconciliation', version: 2 });
+    h.commissionRows.set('PAYROLL_CYCLE:new', { id: 'new', version: 1, status: 'APPROVED', cutoff: '2026-10-04', batchIds: [] });
+    await commit(...args);
+  });
+  await sync('PAID', { receivedOn: '2026-10-04' });
+  expect(h.commit).toHaveBeenCalledTimes(2);
+  expect(entries()).toHaveLength(1);
+  expect(h.commissionRows.get(stateKey)).toMatchObject({ version: 3 });
+  expect(h.commissionRows.get('PAYROLL_CYCLE:new')).toMatchObject({ version: 2, reviewRequired: expect.stringMatching(/Broker fee/) });
 });

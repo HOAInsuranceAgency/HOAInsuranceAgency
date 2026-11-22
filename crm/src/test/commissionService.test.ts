@@ -1,6 +1,6 @@
-import type { CommissionEarning } from '../../../shared/commissionExceptions';
-import { buildPayrollApproval, defaultPayrollSettings, payrollPreview, validatePayrollCycle } from '../../../shared/commissionPayroll';
-import { beforeEach, expect, it, vi } from 'vitest';
+import { departureWorklist, type CommissionDeparture, type CommissionEarning } from '../../../shared/commissionExceptions';
+import { buildPayrollApproval, defaultPayrollSettings, payrollPreview, suggestPayrollDates, validatePayrollCycle, type PayrollCycle } from '../../../shared/commissionPayroll';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { commissionPolicy, commissionAccount, line, statement } from './commissionFixtures';
 import {
   appendEntry,
@@ -14,6 +14,7 @@ import {
 const h = vi.hoisted(() => ({
   get: vi.fn(),
   getMany: vi.fn(),
+  approvedCycles: vi.fn(),
   list: vi.fn(),
   commit: vi.fn(),
   session: vi.fn(),
@@ -25,6 +26,7 @@ const h = vi.hoisted(() => ({
 vi.mock('../../amplify/functions/commissions/store', () => ({
   get: h.get,
   getMany: h.getMany,
+  approvedPayrollCycles: h.approvedCycles,
   list: h.list,
   commit: h.commit,
   table: () => 'private-ledger',
@@ -90,6 +92,9 @@ beforeEach(() => {
   h.getMany.mockImplementation(async (refs: { kind: string; id: string }[]) =>
     structuredClone(refs.map((r) => records.get(`${r.kind}:${r.id}`)).filter(Boolean)),
   );
+  h.approvedCycles.mockImplementation(async (minimumCutoff?: string) => structuredClone([...records.entries()]
+    .filter(([key]) => key.startsWith('PAYROLL_CYCLE:')).map(([, v]) => v as PayrollCycle)
+    .filter(c => c.status === 'APPROVED' && (!minimumCutoff || c.cutoff >= minimumCutoff))));
   h.list.mockImplementation(async (k, producer, recordKind) =>
     structuredClone(
       [...records.entries()]
@@ -185,14 +190,20 @@ it('posts a statement atomically with source deduplication and safely retries', 
   const s = { ...statement(), lines: [line()] };
   records.set('STATEMENT:s', s);
   records.set('POLICY:p', commissionPolicy());
+  const approved = { ...suggestPayrollDates('2026-10'), id: 'approved', version: 1,
+    status: 'APPROVED', revision: 1, batchIds: [], totalCents: 2000, producerIds: ['producer'] };
+  records.set('PAYROLL_CYCLE:approved', approved);
+  records.set('PAYROLL_CYCLE:other', { ...approved, id: 'other', producerIds: ['different'] });
   expect(await handler(request('postStatement', { id: 's', version: 1, confirmed: true }))).toEqual(
     { ok: true },
   );
   expect((records.get('POLICY:p') as CommissionPolicy).entries[0].producerCents).toBe(16000);
   const changes = h.commit.mock.calls[0][0];
   expect(changes.map((c: { kind: string }) => c.kind)).toEqual(
-    expect.arrayContaining(['CARRIER_TRANSACTION', 'SETTLEMENT', 'STATEMENT', 'POLICY']),
+    expect.arrayContaining(['CARRIER_TRANSACTION', 'SETTLEMENT', 'STATEMENT', 'POLICY', 'PAYROLL_STATE', 'PAYROLL_CYCLE']),
   );
+  expect(records.get('PAYROLL_CYCLE:approved')).toMatchObject({ version: 2, totalCents: 2000, reviewRequired: expect.any(String) });
+  expect(records.get('PAYROLL_CYCLE:other')).toMatchObject({ version: 1 });
   expect(await handler(request('postStatement', { id: 's', version: 1, confirmed: true }))).toEqual(
     { ok: true },
   );
@@ -357,6 +368,7 @@ it.each([
 it('retains carrier-reported comparison values and refuses an unbalanced settlement', async () => {
   records.set('CARRIER:c', commissionPolicy().carrierTerms);
   records.set('POLICY:p', commissionPolicy());
+  records.set('PAYROLL_CYCLE:approved', { id: 'approved', version: 1, status: 'APPROVED', batchIds: [], cutoff: '2026-10-01' });
   const input = {
     version: 0,
     carrierId: 'c',
@@ -369,6 +381,7 @@ it('retains carrier-reported comparison values and refuses an unbalanced settlem
     lines: [line({ reportedPremiumCents: 1000000, reportedRateUnits: 100000 })],
   };
   expect(await handler(request('saveStatement', input))).toEqual({ ok: true });
+  expect(records.get('PAYROLL_CYCLE:approved')).toMatchObject({ version: 2, reviewRequired: expect.stringMatching(/carrier/i) });
   const saved = [...records.values()].find(
     (v) => (v as { reference?: string }).reference === 'STATEMENT-7',
   );
@@ -995,8 +1008,16 @@ it('posts IPFS fee cash once and applies each participant’s frozen share throu
       ] }],
   };
   records.set('POLICY:p', policy);
+  const splitCycle = { ...suggestPayrollDates('2026-10'), version: 1, revision: 1, status: 'APPROVED',
+    batchIds: [], totalCents: 0, cycleType: 'OFF_CYCLE' };
+  records.set('PAYROLL_CYCLE:one', { ...splitCycle, id: 'one', producerIds: ['one'] });
+  records.set('PAYROLL_CYCLE:bound', { ...splitCycle, id: 'bound', producerIds: [policy.producerId] });
   const fee = { policyId: 'p', version: 1, kind: 'RECEIPT', amountCents: 10000, receivedOn: '2026-10-01', lineRef: 'A-1', settlementRef: 'D-1' };
   expect(await handler(request('postIpfsFee', fee))).toEqual({ ok: true });
+  expect(h.getMany).toHaveBeenCalledWith([{kind: 'DEPARTURE', id: 'one'}, {kind: 'DEPARTURE', id: 'two'}]);
+  expect(h.list).not.toHaveBeenCalledWith('DEPARTURE');
+  expect(records.get('PAYROLL_CYCLE:one')).toMatchObject({version: 2, reviewRequired: expect.stringMatching(/IPFS/i)});
+  expect(records.get('PAYROLL_CYCLE:bound')).toMatchObject({version: 1});
   const current = () => records.get('POLICY:p') as CommissionPolicy;
   expect(current().entries).toMatchObject([{ revenueKind: 'IPFS_FEE', agencyCents: 10000, producerCents: 0, allocationId: 'split' }]);
   const earnings = () => [...records].filter(([key]) => key.startsWith('EARNING:')).map(([,value]) => value as CommissionEarning);
@@ -1026,4 +1047,134 @@ it('posts IPFS fee cash once and applies each participant’s frozen share throu
   expect(earnings().filter(e => e.status === 'REVIEW').map(e => e.amountCents)).toEqual([-600, -200]);
   expect(earnings()).toHaveLength(4);
   expect(records.get('PAYROLL_STATE:reconciliation')).toMatchObject({ version: 2 });
+});
+
+describe('late IPFS remittances and approved payroll', () => {
+  const input = { policyId: 'p', version: 1, kind: 'RECEIPT', amountCents: 10000,
+    receivedOn: '2026-10-23', lineRef: 'late-allocation', settlementRef: 'late-remittance' };
+  function cycle(id: string, patch: Partial<PayrollCycle> = {}) {
+    const value: PayrollCycle = { ...suggestPayrollDates('2026-10'), id, version: 1, revision: 1,
+      status: 'APPROVED', batchIds: [], totalCents: 0, cutoff: '2026-10-23', ...patch };
+    records.set('PAYROLL_CYCLE:' + id, value);
+    return () => records.get('PAYROLL_CYCLE:' + id) as PayrollCycle;
+  }
+  const post = (overrides = {}) => handler(request('postIpfsFee', { ...input, ...overrides }));
+  beforeEach(() => {
+    records.set('POLICY:p', { ...commissionPolicy(), ipfsFeeCents: 20000, ipfsAgreementRef: 'IPFS-test' });
+  });
+
+  it('holds only approved payroll that would include this receipt, in the posting transaction, once', async () => {
+    const monthly = cycle('2026-10');
+    const other = cycle('2026-10-OFF-aaaa1111', { cycleType: 'OFF_CYCLE', producerIds: ['other'] });
+    const selected = cycle('2026-10-OFF-aaaa2222', { cycleType: 'OFF_CYCLE', producerIds: ['producer'], selectedEarningKeys: ['existing-selection'] });
+    const before = cycle('2026-09', { cutoff: '2026-10-22' });
+    const paid = cycle('2026-08', { status: 'PAID' });
+    const open = cycle('2026-11', { status: 'OPEN' });
+    const existing = cycle('2026-10-OFF-aaaa3333', { reviewRequired: 'Review the original report.' });
+    expect(await post()).toEqual({ ok: true });
+    expect(monthly().reviewRequired).toMatch(/IPFS/i);
+    expect([other, selected, before, paid, open].map(read => read().reviewRequired)).toEqual(Array(5).fill(undefined));
+    expect(existing().reviewRequired).toBe('Review the original report.');
+    const changes = h.commit.mock.calls.at(-1)![0];
+    expect(changes).toEqual(expect.arrayContaining([
+      expect.objectContaining({kind: 'PAYROLL_CYCLE', previous: expect.objectContaining({id: '2026-10', version: 1})}),
+      ...['IPFS_TRANSACTION', 'IPFS_SETTLEMENT', 'POLICY', 'PAYROLL_STATE'].map(kind => expect.objectContaining({kind})),
+    ]));
+    expect(await post()).toEqual({ ok: true });
+    expect(monthly().version).toBe(2);
+    expect(h.commit).toHaveBeenCalledTimes(1);
+  });
+
+  it('holds a selected original receipt for material refunds and restorations without changing approved amounts', async () => {
+    expect(await post()).toEqual({ ok: true });
+    const policy = () => records.get('POLICY:p') as CommissionPolicy;
+    const originalId = policy().entries[0].id;
+    const selected = { cycleType: 'OFF_CYCLE' as const, producerIds: ['producer'],
+      selectedEarningKeys: [JSON.stringify(['receipt', 'p', originalId])], totalCents: 1600 };
+    const originalCycle = cycle('2026-10-OFF-1111aaaa', selected);
+    const other = cycle('2026-10-OFF-2222aaaa', { ...selected, selectedEarningKeys: ['unrelated'] });
+    for (const [kind, version] of [['REVERSAL', 2], ['RESTORATION', 3]] as const) {
+      if (kind === 'RESTORATION') cycle('2026-10-OFF-1111aaaa', { ...selected, version: 3 });
+      const adjustment = { kind, version, originalId: policy().entries.at(-1)!.id, amountCents: 5000, lineRef: kind, settlementRef: kind };
+      expect(await post(adjustment)).toEqual({ ok: true });
+      expect(originalCycle()).toMatchObject({ reviewRequired: expect.stringMatching(/IPFS/i), totalCents: 1600 });
+      expect(other().reviewRequired).toBeUndefined();
+      const heldVersion = originalCycle().version;
+      expect(await post(adjustment)).toEqual({ ok: true });
+      expect(originalCycle().version).toBe(heldVersion);
+    }
+    expect(policy().entries.map(entry => entry.producerCents)).toEqual([1600, -800, 800]);
+  });
+
+  it('leaves approved payroll open for unrelated agency-only receipts', async () => {
+    const approved = cycle('2026-10');
+    records.set('POLICY:p', { ...commissionPolicy(), receiptsFrom: '2026-11-01',
+      ipfsFeeCents: 20000, ipfsAgreementRef: 'IPFS-test' });
+    expect(await post()).toEqual({ ok: true });
+    expect((records.get('POLICY:p') as CommissionPolicy).entries).toMatchObject([{ agencyCents: 10000, producerCents: 0 }]);
+    expect(approved().version).toBe(1);
+  });
+
+  it.each([0, 100])('keeps confirmed payroll immutable when %i cents were previously paid', async paid => {
+    const readCycle = cycle('2026-10', { batchIds: ['approved-batch'], totalCents: 1000 });
+    const batch = { id: 'approved-batch', version: 1, cycleId: '2026-10', cycleRevision: 1,
+      producerId: 'producer', producerName: 'Avery', cutoff: readCycle().cutoff, payDate: readCycle().payDate,
+      status: 'APPROVED', totalCents: 1000, lines: [{ policyId: 'older', entryId: 'old', amountCents: 1000 }],
+      payments: paid ? [{id: 'prior', paidOn: '2026-10-26', amountCents: paid, reference: 'prior'}] : [] };
+    records.set('BATCH:approved-batch', batch);
+    expect(await post()).toEqual({ ok: true });
+    expect(records.get('BATCH:approved-batch')).toEqual(batch);
+    expect(readCycle().totalCents).toBe(1000);
+    const payment = { id: '2026-10', version: readCycle().version, confirmed: true,
+      paidOn: '2026-10-27', paymentReference: 'confirmed', batchId: batch.id };
+    if (paid) {
+      expect(readCycle().reviewRequired).toBeUndefined();
+      const pending = payrollPreview([records.get('POLICY:p') as CommissionPolicy], readCycle().cutoff);
+      expect(pending).toMatchObject([{amountCents: 1600, revenueKind: 'IPFS_FEE'}]);
+      expect(await handler(request('confirmPayrollCycle', payment))).toEqual({ok: true});
+      expect(await handler(request('confirmPayrollCycle', payment))).toEqual({ok: true});
+      expect(records.get('BATCH:approved-batch')).toMatchObject({ status: 'PAID', totalCents: 1000,
+        payments: [{amountCents: 100}, {amountCents: 900}] });
+    } else {
+      expect(readCycle().reviewRequired).toMatch(/IPFS/i);
+      for (const action of ['confirmPayrollEmployee', 'confirmPayrollCycle'])
+        expect(await handler(request(action, payment))).toMatchObject({ok: false, error: expect.stringMatching(/IPFS/i)});
+      expect(records.get('BATCH:approved-batch')).toEqual(batch);
+    }
+  });
+
+  it('rejects a racing payroll approval without saving money or earnings and re-evaluates the cycle on retry', async () => {
+    const list = h.approvedCycles.getMockImplementation()!;
+    let racing = true;
+    h.approvedCycles.mockImplementation(async (...args) => {
+      const found = await list(...args);
+      if (racing) {
+        racing = false;
+        cycle('2026-10');
+        records.set('PAYROLL_STATE:reconciliation', {id: 'reconciliation', version: 1});
+      }
+      return found;
+    });
+    expect(await post()).toMatchObject({ ok: false });
+    expect([...records.keys()].some(key => /^IPFS_(TRANSACTION|SETTLEMENT):|^EARNING:/.test(key))).toBe(false);
+    expect((records.get('POLICY:p') as CommissionPolicy).entries).toHaveLength(0);
+    expect(await post()).toEqual({ ok: true });
+    expect(records.get('PAYROLL_CYCLE:2026-10')).toMatchObject({version: 2, reviewRequired: expect.stringMatching(/IPFS/i)});
+  });
+});
+
+it('keeps fee cash separate from a departing employee’s pending carrier balance and its resolution', () => {
+  const departure: CommissionDeparture = {
+    id: 'producer', producerId: 'producer', producerName: 'Avery', version: 1, employmentEndOn: '2026-10-31',
+    reviewOn: '2026-10-31', paymentDueOn: '2026-11-01', laterReceipts: 'REVIEW', renewals: 'REVIEW', status: 'APPROVED',
+    agreement: 'Signed plan', evidence: 'Departure notice', decisions: [],
+  };
+  const policy = { ...commissionPolicy(), premiumCents: 100000, agencyRateUnits: 100000 };
+  const fee = appendEntry(policy, line({ revenueKind: 'IPFS_FEE', agencyCents: 10000 }), statement(), 'fee');
+  const pending = (p: CommissionPolicy) => departureWorklist(departure, [p], [], []).pending;
+  expect(pending(fee)).toMatchObject([{ expectedAgencyCents: 10000, receivedAgencyCents: 0 }]);
+  departure.pendingResolutions = [{ policyId: policy.id, receiptCount: 0, reason: 'Carrier confirmed', at: '2026-09-30', by: 'Owner' }];
+  expect(pending(fee)).toEqual([]);
+  const carrier = appendEntry(fee, line({ agencyCents: 1000 }), statement(), 'carrier');
+  expect(pending(carrier)).toMatchObject([{ expectedAgencyCents: 10000, receivedAgencyCents: 1000 }]);
 });

@@ -1,3 +1,5 @@
+import type { PayrollCycle } from '../../../../shared/commissionPayroll';
+import { APPROVED_PAYROLL_KIND, APPROVED_PAYROLL_INDEX_STATE, approvedPayrollIndexWrites } from './payroll-index';
 import { randomUUID } from 'node:crypto';
 import { setTimeout } from 'node:timers/promises';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
@@ -95,6 +97,53 @@ export async function list<T>(kind: string, producer = false, recordKind?: strin
     'Commission history could not be completely loaded. No partial totals are available.',
   );
 }
+/**
+ * Before the active lookup is ready, stream matching approvals from the authoritative
+ * partition. Closed history cannot consume the active-row limit. The cycle key starts
+ * with its payday month; the inclusive receipt cutoff can never come after payday.
+ */
+export async function approvedPayrollCycles(minimumCutoff?: string): Promise<PayrollCycle[]> {
+  const indexed = !!await get('INDEX_STATE', APPROVED_PAYROLL_INDEX_STATE);
+  const cycles: PayrollCycle[] = [];
+  const ids: string[] = [];
+  let cursor: Data | undefined;
+  const seen = new Set<string>();
+  for (let page = 0; page < 100; page++) {
+    const result = await db.send(new QueryCommand({
+      TableName: table(), ConsistentRead: true, Limit: 100, ExclusiveStartKey: cursor,
+      KeyConditionExpression: '#kind = :kind' + (minimumCutoff ? ' AND #id >= :month' : ''),
+      ExpressionAttributeNames: {
+        '#kind': 'kind', ...(minimumCutoff || indexed ? {'#id': 'id'} : {}),
+        ...(!indexed ? {'#status': 'status', ...(minimumCutoff ? {'#cutoff': 'cutoff'} : {})} : {}),
+      },
+      ExpressionAttributeValues: {
+        ':kind': indexed ? APPROVED_PAYROLL_KIND : 'PAYROLL_CYCLE',
+        ...(minimumCutoff ? {':month': minimumCutoff.slice(0, 7)} : {}),
+        ...(!indexed ? {':approved': 'APPROVED', ...(minimumCutoff ? {':date': minimumCutoff} : {})} : {}),
+      },
+      ...(indexed ? {ProjectionExpression: '#id'} : {
+        FilterExpression: '#status = :approved' + (minimumCutoff ? ' AND #cutoff >= :date' : ''),
+      }),
+    }));
+    for (const row of result.Items ?? []) {
+      if (indexed) ids.push(row.id as string);
+      else cycles.push(row as PayrollCycle);
+    }
+    if (ids.length + cycles.length > 5000) throw new Error('Too many active payroll approvals. Review outstanding cycles before proceeding.');
+    cursor = result.LastEvaluatedKey;
+    if (!cursor || !Object.keys(cursor).length) break;
+    const token = JSON.stringify(cursor);
+    if (seen.has(token) || page === 99) throw new Error(indexed
+      ? 'Approved payroll cycles could not be completely loaded. Retry before proceeding.'
+      : 'Complete the approved payroll lookup backfill and retry.');
+    seen.add(token);
+  }
+  if (!indexed) return cycles;
+  if (!ids.length) return [];
+  const current = await getMany<PayrollCycle>(ids.map(id => ({kind: 'PAYROLL_CYCLE', id})));
+  if (current.length !== ids.length) throw new Error('An approved payroll cycle is missing. Review its source record before proceeding.');
+  return current.filter(c => c.status === 'APPROVED' && (!minimumCutoff || c.cutoff >= minimumCutoff));
+}
 export async function commit(changes: Change[], actor: string, extras: Transaction = []) {
   const at = new Date().toISOString();
   const items: Transaction = changes.map((c) => ({
@@ -146,6 +195,7 @@ export async function commit(changes: Change[], actor: string, extras: Transacti
       },
     },
     ...extras,
+    ...changes.flatMap(c => approvedPayrollIndexWrites(table(), c)),
   );
   if (
     items.length > 100 ||

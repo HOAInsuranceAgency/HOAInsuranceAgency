@@ -1,6 +1,6 @@
 import { policyReceiptEarnings, workspaceEarnings } from "./earnings";
 import { payrollRevenueKind } from '../../../../shared/commissionPayroll';
-import { allocationFor, receiptEarnings, type CommissionEarning } from '../../../../shared/commissionExceptions';
+import { feeReceiptEligible, receiptEarnings, type CommissionEarning } from '../../../../shared/commissionExceptions';
 import { exceptionAction, exceptionOperations } from './exceptions';
 import { assertPreviewRead } from "../migration-readonly";
 import { QueryCommand } from '@aws-sdk/lib-dynamodb';
@@ -55,7 +55,7 @@ import { holdApprovedPayroll, payrollAction, payrollOperations } from './payroll
 import { planAction, planOperations } from './plans';
 import { statementPostingChanges } from './posting';
 import { intakeAction, intakeOperations } from './intake';
-import { depositAction, depositOperations, noSavedDeposit } from './deposits';
+import { depositAction, depositOperations, holdReceiptPayroll, noSavedDeposit } from './deposits';
 
 const agencyToday = () =>
   new Intl.DateTimeFormat('en-CA', {
@@ -556,9 +556,7 @@ export async function handler(event: Event) {
       if (kind === 'RECEIPT' && amount > balances.outstanding)
         throw new Error('The receipt exceeds the outstanding IPFS fee. Verify the agreement amount and allocation.');
       const original = originalId ? policy.entries.find(entry => entry.id === originalId) : undefined;
-      // A dated shared allocation carries its participants' own eligible rates and receipt cutoffs.
-      const split = kind === 'RECEIPT' && allocationFor(policy, { receivedOn });
-      const eligible = original?.eligible ?? (!!split || (policy.eligibility?.eligible !== false && (!policy.receiptsFrom || receivedOn >= policy.receiptsFrom)));
+      const eligible = original?.eligible ?? feeReceiptEligible(policy, receivedOn);
       const entryId = `ipfs:${id}`;
       const next = appendEntry(policy, {
         policyId, lineRef, kind, originalId, eligible, revenueKind: 'IPFS_FEE',
@@ -568,7 +566,9 @@ export async function handler(event: Event) {
       const entry = next.entries[next.entries.length - 1];
       const shared = entry.allocationId ? receiptEarnings(next, entry, await policyReceiptEarnings([policy])) : [];
       const reconciliation = await store.get<{ id: string; version: number }>('PAYROLL_STATE', 'reconciliation');
+      const holds = await holdReceiptPayroll([{ policy: next, entry, earnings: shared }]);
       await store.commit([
+        ...holds,
         ...shared.map(earning => change('EARNING', earning)),
         change('PAYROLL_STATE', { id: 'reconciliation' }, reconciliation),
         change('IPFS_TRANSACTION', allocation),
@@ -765,7 +765,12 @@ export async function handler(event: Event) {
         policies.set(policy.id, appendEntry(policy, line.reviewStatus === 'PENDING' ? { ...line, reviewStatus: undefined, eligible: false } : line, statement, `${id}:${line.lineRef}`));
       }
       const reconciliation = await store.get<{ id: string; version: number }>('PAYROLL_STATE', 'reconciliation');
-      await store.commit([change('STATEMENT', statement, old), change('PAYROLL_STATE', { id: 'reconciliation' }, reconciliation)], actor, [noSavedDeposit(statement.settlementRef)]);
+      // Pending statement rows block payroll at this cutoff until their earnings are reviewed.
+      const holds = await holdReceiptPayroll(statement.receivedOn);
+      await store.commit([
+        change('STATEMENT', statement, old), ...holds,
+        change('PAYROLL_STATE', { id: 'reconciliation' }, reconciliation),
+      ], actor, [noSavedDeposit(statement.settlementRef)]);
       return { ok: true };
     }
     if (operation === 'voidStatement') {
@@ -798,8 +803,7 @@ export async function handler(event: Event) {
       if (input.confirmed !== true)
         throw new Error('Confirm settlement evidence and line eligibility before posting.');
       const changes = await statementPostingChanges(statement, actor, statement);
-      const reconciliation = await store.get<{ id: string; version: number }>('PAYROLL_STATE', 'reconciliation');
-      await store.commit([...changes, change('PAYROLL_STATE', { id: 'reconciliation' }, reconciliation)], actor, statement.lines.map(line => ({ ConditionCheck: { TableName: store.table(), Key: { kind: 'INTAKE_TRANSACTION', id: hash(statement.carrierId + '|' + line.lineRef.toLowerCase()) }, ConditionExpression: 'attribute_not_exists(id)' } })));
+      await store.commit(changes, actor, statement.lines.map(line => ({ ConditionCheck: { TableName: store.table(), Key: { kind: 'INTAKE_TRANSACTION', id: hash(statement.carrierId + '|' + line.lineRef.toLowerCase()) }, ConditionExpression: 'attribute_not_exists(id)' } })));
       return { ok: true };
     }
     if (operation === 'preparePayroll') throw new Error('Use the payroll workspace to create an off-cycle run, review its preview, and approve its HR report.');

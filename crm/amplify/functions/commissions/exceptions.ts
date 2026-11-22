@@ -23,7 +23,6 @@ import {
   type CommissionDeparture,
   type CommissionAdjustment,
 } from "../../../../shared/commissionExceptions";
-import type { PayrollCycle } from "../../../../shared/commissionPayroll";
 import { payrollDay } from "../../../../shared/commissionPayroll";
 import { change, condition } from "./payroll";
 import * as store from "./store";
@@ -52,15 +51,12 @@ async function reconciliation() {
   );
 }
 async function holdEmployeeCycles(producerId: string) {
-  const batches = await store.list<CommissionBatch>("BATCH");
-  return (await store.list<PayrollCycle>("PAYROLL_CYCLE"))
-    .filter(
-      (c) =>
-        c.status === "APPROVED" &&
-        batches.some(
-          (b) => b.producerId === producerId && c.batchIds.includes(b.id),
-        ),
-    )
+  const cycles = await store.approvedPayrollCycles();
+  const ids = [...new Set(cycles.flatMap(c => c.batchIds))];
+  const batches = await store.getMany<CommissionBatch>(ids.map(id => ({ kind: 'BATCH', id })));
+  if (batches.length !== ids.length) throw new Error('An approved employee payroll batch is missing. Review its source record before proceeding.');
+  const employeeBatches = new Set(batches.filter(b => b.producerId === producerId).map(b => b.id));
+  return cycles.filter(c => c.batchIds.some(id => employeeBatches.has(id)))
     .map((c) =>
       change(
         "PAYROLL_CYCLE",

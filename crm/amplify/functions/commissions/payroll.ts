@@ -21,7 +21,7 @@ export const absentCycle = (id: string): store.Transaction[number] => ({ Conditi
  * The change competes with delivery reservation on the cycle version. */
 export async function holdApprovedPayroll(policy: CommissionPolicy, dueOn: string) {
   const batchIds = new Set(policy.entries.map(e => e.batchId).filter(Boolean));
-  const cycles = (await store.list<PayrollCycle>('PAYROLL_CYCLE')).filter(c => c.status === 'APPROVED' && (dueOn <= c.payDate || c.batchIds.some(id => batchIds.has(id))));
+  const cycles = (await store.approvedPayrollCycles()).filter(c => dueOn <= c.payDate || c.batchIds.some(id => batchIds.has(id)));
   if (cycles.length > 90) throw new Error('Too many outstanding payroll cycles. Review and close historical payroll first.');
   return cycles.map(c => change('PAYROLL_CYCLE', { ...c, reviewRequired: 'A policy review was added after approval. Resolve it and replace this unsent cycle with a fresh approval. If delivery already started, coordinate the correction with HR before recording payment.' }, c));
 }
@@ -32,6 +32,9 @@ function preview(cycle: PayrollCycle, policies: CommissionPolicy[], settings: Pa
   return { token, rows, blockers: [...(payrollCutoffIssue(cycle) ? [payrollCutoffIssue(cycle)] : []), ...payrollBlockers(cycle, policies, statements, earnings, departures), ...adjustments.filter(a=>a.status==='DRAFT'&&a.adjustmentType==='UNPAID_CORRECTION'&&a.effectiveOn<=cycle.payDate&&(!cycle.producerIds||cycle.producerIds.includes(a.producerId))).map(a=>'Resolve unpaid compensation correction '+a.id+' before payroll approval.')], totalCents: sum(rows.map(r => r.amountCents)), entryCount: rows.length, employees: [...new Set(rows.map(r => r.producerId))].map(producerId => ({ producerId, name: rows.find(r => r.producerId === producerId)!.producerName, amountCents: sum(rows.filter(r => r.producerId === producerId).map(r => r.amountCents)) })) };
 }
 
+function assertPaymentReady(cycle: PayrollCycle, batches: CommissionBatch[]) {
+  if (cycle.reviewRequired && !batches.some(b => batchPaidCents(b) > 0)) throw new Error(cycle.reviewRequired);
+}
 export async function payrollAction(_event: Event, actor: string, owner: boolean, operation: string, input: store.Data) {
   if (!owner) throw new Error('Not authorized: only the active Owner can manage commission payroll.');
   const settings = await payrollSettings();
@@ -158,6 +161,7 @@ export async function payrollAction(_event: Event, actor: string, owner: boolean
       throw new Error('This employee payment was already recorded.');
     }
     version(input, cycle);
+    assertPaymentReady(cycle, batches);
     const balance = batch.totalCents - batchPaidCents(batch);
     const amountCents = input.amountCents === undefined ? balance : integer(input.amountCents, 1, balance, 'payment amount within the unpaid balance');
     if (amountCents < balance && !input.paymentId) throw new Error('A partial payment needs a unique payment ID.');
@@ -194,6 +198,7 @@ export async function payrollAction(_event: Event, actor: string, owner: boolean
     const paidOn = day(input.paidOn), paymentReference = required(input.paymentReference, 'the payroll payment reference');
     if (paidOn > payrollDay()) throw new Error('Confirm payment only after it occurs.');
     const batches = cycleBatches(cycle, await store.getMany<CommissionBatch>(cycle.batchIds.map(id => ({ kind: 'BATCH', id }))));
+    assertPaymentReady(cycle, batches);
     const lastPaid = [paidOn, ...batches.flatMap(b => [b.actualPaidOn ?? '', ...(b.payments ?? []).map(p => p.paidOn)])].sort().at(-1)!;
     await store.commit([...batches.filter(b => b.status === 'APPROVED').map(b => change('BATCH', { ...b, status: 'PAID', reference: paymentReference, actualPaidOn: [paidOn, ...(b.payments ?? []).map(p => p.paidOn)].sort().at(-1), payments: [...(b.payments ?? []), { id: `cycle:${cycle.id}:${cycle.revision}`, amountCents: b.totalCents - batchPaidCents(b), paidOn, reference: paymentReference, recordedAt: new Date().toISOString(), recordedBy: actor }] }, b)), change('PAYROLL_CYCLE', { ...cycle, status: 'PAID', paidOn: lastPaid, confirmationPaidOn: paidOn, paymentReference }, cycle)], actor);
     return { ok: true };
