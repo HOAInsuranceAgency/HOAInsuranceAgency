@@ -2,6 +2,24 @@ import { assertBrokerFeeAgencyBilling, brokerFeeCents, type BrokerFeeAllocation 
 interface Source { accountId: string; brokerFee?: number | null; billType?: string | null }
 interface FeeLine { kind?: string | null; accountId?: string | null; policyId?: string | null; brokerFeeQuoteId?: string | null; retailAmount?: number | null; costAmount?: number | null }
 const legacyEndorsement=(invoice:{sourcePricingVersion?:number|null},lines:readonly FeeLine[])=>invoice.sourcePricingVersion==null&&lines.some(line=>line.kind==='ENDORSEMENT')&&!lines.some(line=>['PREMIUM','BROKER_FEE'].includes(line.kind??''));
+/** A receipt can display only the fee allocated to this particular invoice. */
+export function assertReceiptBrokerFee(
+  invoice: { accountId: string; remittanceBrokerFeeCents?: number | null },
+  lines: readonly FeeLine[], allocations: readonly BrokerFeeAllocation[],
+  quoteId?: string | null, policyId?: string | null,
+): void {
+  const fees = lines.filter(line => line.kind === 'BROKER_FEE');
+  if (!fees.length && !allocations.length && !invoice.remittanceBrokerFeeCents) return;
+  const fee = fees[0], issued = allocations[0];
+  if (fees.length !== 1 || allocations.length !== 1 || !quoteId || issued.quoteId !== quoteId ||
+      fee.brokerFeeQuoteId !== quoteId || fee.accountId !== invoice.accountId || fee.costAmount !== 0 ||
+      (issued.policyId && issued.policyId !== policyId) || (fee.policyId && fee.policyId !== policyId) ||
+      brokerFeeCents(fee.retailAmount) !== issued.amountCents ||
+      (invoice.remittanceBrokerFeeCents != null && invoice.remittanceBrokerFeeCents !== issued.amountCents)) {
+    throw new Error("The broker fee on this receipt does not match the payment allocation recorded for this invoice.");
+  }
+}
+
 /** Invoice fees must represent the existing term's exact charge, never free-form invoice markup. */
 export function invoiceBrokerFeeAllocations(input: {
   invoice: { accountId: string; status?: string | null; sourcePricingVersion?: number | null }; source: Source | null;
