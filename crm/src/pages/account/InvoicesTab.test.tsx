@@ -42,6 +42,22 @@ it("opens legacy combined invoices without offering new combined financing to ow
 });
 
 describe("invoice creation reliability", () => {
+  it("lets staff consult the billing flowchart before choosing an invoice source", async () => {
+    render(<InvoicesTab accountId="a1" />);
+    const guide = screen.getByText("Billing flowchart — carrier, HOA CRM or IPFS?");
+    const selector = await screen.findByRole("combobox");
+    expect(guide.compareDocumentPosition(selector) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    await userEvent.click(guide);
+    expect(guide.closest("details")).toHaveAttribute("open");
+    expect(screen.getByRole("link", { name: "Open printable flowchart (PDF)" })).toHaveAttribute("href");
+    expect(screen.getByText(/Skip the HOA CRM invoice/)).toBeInTheDocument();
+    expect(screen.getByText(/set the billing address on the carrier’s bill to HOA Insurance Agency/)).toBeInTheDocument();
+    expect(screen.getByText(/Hold the standard HOA CRM invoice for billing review/)).toBeInTheDocument();
+    expect(screen.getByText(/HOA is owed \$500 and IPFS finances \$3,000/)).toBeInTheDocument();
+    expect(selector).toHaveValue("");
+    expect(api.models.Invoice.create).not.toHaveBeenCalled();
+  });
   it("does not create an unnumbered invoice when reservation fails", async () => {
     api.mutations.reserveInvoiceNumber.mockResolvedValue({ data: null, errors: [{ message: "Reservation failed" }] });
     await selectPolicy();
