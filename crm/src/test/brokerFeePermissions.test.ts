@@ -64,6 +64,11 @@ it('installs bounded managed grants without consuming the communications role in
     expect(policy.Properties.Roles).toHaveLength(1);
     expect(Buffer.byteLength(JSON.stringify(policy.Properties.PolicyDocument))).toBeLessThanOrEqual(6144);
   }
+  for (const caller of ['brokerFees', 'stripeWebhook']) {
+    const policy = feePolicies.find(p => JSON.stringify(p.Properties.Roles).includes(caller));
+    const ledger = policy?.Properties.PolicyDocument.Statement.find((s: any) => JSON.stringify(s.Resource).includes('Commissions'));
+    expect(ledger?.Action).toEqual(expect.arrayContaining(['dynamodb:GetItem', 'dynamodb:BatchGetItem', 'dynamodb:Query', 'dynamodb:PutItem']));
+  }
   const existingInline = resources.filter(resource => resource.Type === 'AWS::IAM::Policy');
   expect(existingInline).toHaveLength(1);
   const inlineBytes = Buffer.byteLength(JSON.stringify(existingInline[0].Properties.PolicyDocument));

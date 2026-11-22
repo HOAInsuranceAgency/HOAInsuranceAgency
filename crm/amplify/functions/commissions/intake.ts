@@ -739,7 +739,6 @@ export async function intakeAction(
         settlementId: settlement.id,
         result,
       }),
-      await reconciliationChange(),
     );
     await store.commit(changes, actor, guards);
     return result;

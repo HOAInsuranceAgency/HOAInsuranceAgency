@@ -119,6 +119,14 @@ export function allocationFor(
     ? policy.allocations?.find((a) => a.id === entry.allocationId)
     : policy.allocations?.filter((a) => a.from <= entry.receivedOn).at(-1);
 }
+/**
+ * A fee on a shared policy follows the participants' frozen eligibility and receipt cutoffs.
+ * For a single producer the bound policy itself holds the applicable agreement.
+ */
+export function feeReceiptEligible(policy: CommissionPolicy, receivedOn: string): boolean {
+  return !!allocationFor(policy, { receivedOn }) ||
+    (policy.eligibility?.eligible !== false && (!policy.receiptsFrom || receivedOn >= policy.receiptsFrom));
+}
 export function validateAllocation(allocation: CommissionAllocation) {
   day(allocation.from);
   required(allocation.agreement, "the shared-production agreement");

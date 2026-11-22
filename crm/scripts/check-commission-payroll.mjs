@@ -536,6 +536,7 @@ test('replaces and pays a held payroll with its original earnings and the late I
   assert.deepEqual(await ownerApi('postIpfsFee', fee), { ok: true });
   const held = currentCycle();
   assert.match(held.reviewRequired, /IPFS/);
+  await assert.rejects(ownerAction('downloadPayrollCycle', { id: held.id }), /IPFS/);
   await assert.rejects(ownerAction('confirmPayrollCycle', { id: held.id, version: held.version, paidOn: '2026-11-20', paymentReference: 'TEST-PAY', confirmed: true }), /IPFS/);
   await ownerAction('reopenPayrollCycle', { id: held.id, version: held.version, reason: 'Include late IPFS fee at cutoff' });
   const { cycles } = await ownerAction('payrollWorkspace');

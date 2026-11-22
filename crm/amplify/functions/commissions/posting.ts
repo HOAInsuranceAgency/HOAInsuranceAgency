@@ -8,6 +8,7 @@ import {
   receiptEarnings,
   type CommissionEarning,
 } from "../../../../shared/commissionExceptions";
+import { holdReceiptPayroll, type ReceiptPayrollPosting } from "./deposits";
 import { policyReceiptEarnings } from "./earnings";
 import * as store from "./store";
 const hash = (value: string) =>
@@ -28,6 +29,9 @@ export async function statementPostingChanges(
   previous?: CommissionStatement,
   review?: { policyVersions: Record<string, number>; calculations: ReturnType<typeof assertStatementPostingPlan>['calculations'] },
 ) {
+  // Fence approvals before discovering any cycle that needs a hold.
+  const reconciliation = await store.get("PAYROLL_STATE", "reconciliation");
+  const postings: ReceiptPayrollPosting[] = [];
   const earnings: CommissionEarning[] = [];
   const actual: ReturnType<typeof assertStatementPostingPlan>["calculations"] = [];
   const changes: store.Change[] = [],
@@ -55,6 +59,7 @@ export async function statementPostingChanges(
     const postedPolicy = updated.get(original.id)!;
     const postedEntry = postedPolicy.entries.at(-1)!;
     const allocations = receiptEarnings(postedPolicy, postedEntry, earnings);
+    postings.push({ policy: postedPolicy, entry: postedEntry, earnings: allocations });
     actual.push(...calculationRows(postedPolicy, line, postedEntry, allocations));
     earnings.push(...allocations);
     changes.push(...allocations.map((e) => change("EARNING", e)));
@@ -89,6 +94,10 @@ export async function statementPostingChanges(
       },
       previous,
     ),
+  );
+  changes.push(
+    ...await holdReceiptPayroll(postings),
+    change("PAYROLL_STATE", { id: "reconciliation" }, reconciliation),
   );
   return changes;
 }
