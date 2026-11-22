@@ -797,3 +797,75 @@ it('retries safely if payroll is approved during receipt discovery without savin
   expect(await call('recordIntakeSettlement',{id:'inbox',version:1,reference:'RACE',totalCents:100,receivedOn:'2026-10-03',settlementType:'DEPOSIT',evidence:'TEST bank evidence',confirmed:true})).toMatchObject({ok:false});
   expect(all('INTAKE_SETTLEMENT')).toEqual([]);expect(version()).toBe(1);
 });
+
+function approvedCarrierCycle(id: string, overrides: Partial<PayrollCycle> = {}) {
+  const cycle: PayrollCycle = { ...suggestPayrollDates('2026-10'), id, version: 1, revision: 1,
+    status: 'APPROVED', batchIds: [], totalCents: 0, ...overrides };
+  seed('PAYROLL_CYCLE', cycle);
+  return cycle;
+}
+
+function manualCarrierDraft(pending = false) {
+  return { ...statement(), version: 0, reference: 'MANUAL-REMITTANCE', receivedOn: '2026-10-03',
+    source: 'statements/12345678-1234-1234-1234-123456789abc',
+    lines: [line({ lineRef: 'MANUAL-1', reviewStatus: pending ? 'PENDING' : 'ELIGIBLE', eligible: !pending })] };
+}
+
+it('holds unpaid approvals when an in-cutoff manual statement first arrives, including pending eligibility', async () => {
+  approvedCarrierCycle('unpaid');
+  approvedCarrierCycle('earlier', { cutoff: '2026-10-02' });
+  approvedCarrierCycle('part-paid', { batchIds: ['partial'] });
+  seed('BATCH', {id: 'partial', status: 'APPROVED', totalCents: 20000, paidCents: 5000, version: 1});
+  const saved = await call('saveStatement', manualCarrierDraft(true));
+  expect(saved, JSON.stringify(saved)).toMatchObject({ok: true});
+  expect(get<PayrollCycle>('PAYROLL_CYCLE', 'unpaid').reviewRequired).toMatch(/carrier receipt/);
+  expect(get<PayrollCycle>('PAYROLL_CYCLE', 'earlier').reviewRequired).toBeUndefined();
+  expect(get<PayrollCycle>('PAYROLL_CYCLE', 'part-paid').reviewRequired).toBeUndefined();
+  expect(get<CommissionPolicy>('POLICY', 'p').entries).toHaveLength(0);
+  expect(h.commit.mock.calls.at(-1)![0].map((change: {kind:string}) => change.kind))
+    .toEqual(expect.arrayContaining(['STATEMENT', 'PAYROLL_CYCLE', 'PAYROLL_STATE']));
+});
+
+it.each(['manual', 'guided'])('holds an intervening approval atomically at %s posting and replays without duplicate earnings', async mode => {
+  let submit: () => Promise<{ ok: boolean }>;
+  if (mode === 'manual') {
+    const saved = await call('saveStatement', manualCarrierDraft());
+    expect(saved, JSON.stringify(saved)).toMatchObject({ok: true});
+    const draft = [...records.entries()].find(([key]) => key.startsWith('STATEMENT:'))![1] as {id:string;version:number};
+    submit = () => call('postStatement', {id: draft.id, version: draft.version, confirmed: true});
+  } else {
+    await save();
+    const reviewed = await allocate(await payment());
+    submit = () => post(reviewed);
+  }
+  approvedCarrierCycle('affected');
+  approvedCarrierCycle('unrelated', {producerIds: ['somebody-else']});
+  approvedCarrierCycle('part-paid', {batchIds: ['partial']});
+  seed('BATCH', {id: 'partial', status: 'APPROVED', totalCents: 10000, paidCents: 500, version: 1});
+  const currentList = h.list.getMockImplementation()!;
+  let simulateApproval = true;
+  h.list.mockImplementation(async (...args) => {
+    const rows = await currentList(...args);
+    if (args[0] === 'PAYROLL_CYCLE' && simulateApproval) {
+      simulateApproval = false;
+      const key = 'PAYROLL_STATE:reconciliation';
+      const revision = (records.get(key) as {version:number}).version;
+      records.set(key, {id: 'reconciliation', version: revision + 1});
+    }
+    return rows;
+  });
+  expect((await submit()).ok).toBe(false);
+  expect(get<CommissionPolicy>('POLICY', 'p').entries).toHaveLength(0);
+  expect(get<PayrollCycle>('PAYROLL_CYCLE', 'affected').reviewRequired).toBeUndefined();
+  const posted = await submit();
+  expect(posted, JSON.stringify(posted)).toMatchObject({ok: true});
+  expect(get<CommissionPolicy>('POLICY', 'p').entries).toHaveLength(1);
+  expect(get<PayrollCycle>('PAYROLL_CYCLE', 'affected').reviewRequired).toMatch(/carrier (commission|receipt)/i);
+  expect(get<PayrollCycle>('PAYROLL_CYCLE', 'unrelated').reviewRequired).toBeUndefined();
+  expect(get<PayrollCycle>('PAYROLL_CYCLE', 'part-paid').reviewRequired).toBeUndefined();
+  const writes = h.commit.mock.calls.at(-1)![0] as {kind:string}[];
+  for (const kind of ['PAYROLL_STATE', 'PAYROLL_CYCLE', 'POLICY', 'STATEMENT']) expect(writes.filter(w => w.kind === kind)).toHaveLength(1);
+  const count = h.commit.mock.calls.length;
+  expect(await submit()).toMatchObject({ok: true});
+  expect(h.commit).toHaveBeenCalledTimes(count);
+});

@@ -185,14 +185,20 @@ it('posts a statement atomically with source deduplication and safely retries', 
   const s = { ...statement(), lines: [line()] };
   records.set('STATEMENT:s', s);
   records.set('POLICY:p', commissionPolicy());
+  const approved = { ...suggestPayrollDates('2026-10'), id: 'approved', version: 1,
+    status: 'APPROVED', revision: 1, batchIds: [], totalCents: 2000, producerIds: ['producer'] };
+  records.set('PAYROLL_CYCLE:approved', approved);
+  records.set('PAYROLL_CYCLE:other', { ...approved, id: 'other', producerIds: ['different'] });
   expect(await handler(request('postStatement', { id: 's', version: 1, confirmed: true }))).toEqual(
     { ok: true },
   );
   expect((records.get('POLICY:p') as CommissionPolicy).entries[0].producerCents).toBe(16000);
   const changes = h.commit.mock.calls[0][0];
   expect(changes.map((c: { kind: string }) => c.kind)).toEqual(
-    expect.arrayContaining(['CARRIER_TRANSACTION', 'SETTLEMENT', 'STATEMENT', 'POLICY']),
+    expect.arrayContaining(['CARRIER_TRANSACTION', 'SETTLEMENT', 'STATEMENT', 'POLICY', 'PAYROLL_STATE', 'PAYROLL_CYCLE']),
   );
+  expect(records.get('PAYROLL_CYCLE:approved')).toMatchObject({ version: 2, totalCents: 2000, reviewRequired: expect.any(String) });
+  expect(records.get('PAYROLL_CYCLE:other')).toMatchObject({ version: 1 });
   expect(await handler(request('postStatement', { id: 's', version: 1, confirmed: true }))).toEqual(
     { ok: true },
   );
@@ -357,6 +363,7 @@ it.each([
 it('retains carrier-reported comparison values and refuses an unbalanced settlement', async () => {
   records.set('CARRIER:c', commissionPolicy().carrierTerms);
   records.set('POLICY:p', commissionPolicy());
+  records.set('PAYROLL_CYCLE:approved', { id: 'approved', version: 1, status: 'APPROVED', batchIds: [], cutoff: '2026-10-01' });
   const input = {
     version: 0,
     carrierId: 'c',
@@ -369,6 +376,7 @@ it('retains carrier-reported comparison values and refuses an unbalanced settlem
     lines: [line({ reportedPremiumCents: 1000000, reportedRateUnits: 100000 })],
   };
   expect(await handler(request('saveStatement', input))).toEqual({ ok: true });
+  expect(records.get('PAYROLL_CYCLE:approved')).toMatchObject({ version: 2, reviewRequired: expect.stringMatching(/carrier/i) });
   const saved = [...records.values()].find(
     (v) => (v as { reference?: string }).reference === 'STATEMENT-7',
   );
@@ -1001,6 +1009,8 @@ it('posts IPFS fee cash once and applies each participant’s frozen share throu
   records.set('PAYROLL_CYCLE:bound', { ...splitCycle, id: 'bound', producerIds: [policy.producerId] });
   const fee = { policyId: 'p', version: 1, kind: 'RECEIPT', amountCents: 10000, receivedOn: '2026-10-01', lineRef: 'A-1', settlementRef: 'D-1' };
   expect(await handler(request('postIpfsFee', fee))).toEqual({ ok: true });
+  expect(h.getMany).toHaveBeenCalledWith([{kind: 'DEPARTURE', id: 'one'}, {kind: 'DEPARTURE', id: 'two'}]);
+  expect(h.list).not.toHaveBeenCalledWith('DEPARTURE');
   expect(records.get('PAYROLL_CYCLE:one')).toMatchObject({version: 2, reviewRequired: expect.stringMatching(/IPFS/i)});
   expect(records.get('PAYROLL_CYCLE:bound')).toMatchObject({version: 1});
   const current = () => records.get('POLICY:p') as CommissionPolicy;

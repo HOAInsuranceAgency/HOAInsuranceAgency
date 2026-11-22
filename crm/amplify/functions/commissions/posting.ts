@@ -8,6 +8,7 @@ import {
   receiptEarnings,
   type CommissionEarning,
 } from "../../../../shared/commissionExceptions";
+import { holdReceiptPayroll, type ReceiptPayrollPosting } from "./deposits";
 import { policyReceiptEarnings } from "./earnings";
 import * as store from "./store";
 const hash = (value: string) =>
@@ -27,6 +28,8 @@ export async function statementPostingChanges(
   actor: string,
   previous?: CommissionStatement,
 ) {
+  const reconciliation = await store.get("PAYROLL_STATE", "reconciliation");
+  const postings: ReceiptPayrollPosting[] = [];
   const earnings: CommissionEarning[] = [];
   const changes: store.Change[] = [],
     originals = new Map<string, CommissionPolicy>(),
@@ -51,6 +54,7 @@ export async function statementPostingChanges(
     const postedPolicy = updated.get(original.id)!;
     const postedEntry = postedPolicy.entries.at(-1)!;
     const allocations = receiptEarnings(postedPolicy, postedEntry, earnings);
+    postings.push({ policy: postedPolicy, entry: postedEntry, earnings: allocations });
     earnings.push(...allocations);
     changes.push(...allocations.map((e) => change("EARNING", e)));
     changes.push(
@@ -82,6 +86,10 @@ export async function statementPostingChanges(
       },
       previous,
     ),
+  );
+  changes.push(
+    ...await holdReceiptPayroll(postings),
+    change("PAYROLL_STATE", { id: "reconciliation" }, reconciliation),
   );
   return changes;
 }
