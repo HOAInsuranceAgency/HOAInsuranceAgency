@@ -56,6 +56,11 @@ describe("withExtension", () => {
     expect(withExtension("Loss Runs.pdf", "scan.pdf")).toBe("Loss Runs.pdf");
   });
 
+  it.each([86, 87, 88, 89, 90])("preserves an existing filename with a %i-character stem", (length) => {
+    const name = "A".repeat(length) + ".pdf";
+    expect(withExtension(name, "scan.pdf")).toBe(name);
+  });
+
   it("matches the extension case-insensitively", () => {
     expect(withExtension("Loss Runs.PDF", "scan.pdf")).toBe("Loss Runs.pdf");
   });
