@@ -285,6 +285,12 @@ describe("the invoice PDF", () => {
     );
   };
 
+  it.each(["PAID", "PROCESSING"] as const)("prints payment status without collection instructions for %s", async paymentStatus => {
+    const pdf = await text({ paymentStatus, paymentUrl: "https://example.test/old" });
+    expect(pdf).toContain("INVOICE TOTAL");
+    expect(pdf).toContain(paymentStatus === "PAID" ? "Payment has been received" : "Your payment has been submitted");
+    expect(pdf).not.toMatch(/TOTAL DUE|Make checks payable|PAYMENT INSTRUCTIONS|example.test\/old/);
+  });
   it("shows the retail figures and the total", async () => {
     const pdf = await text();
     for (const want of ["25,000.00", "1,000.00", "26,000.00", "TOTAL DUE"]) {

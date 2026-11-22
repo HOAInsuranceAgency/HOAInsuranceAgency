@@ -223,6 +223,21 @@ it("disables payroll export when a new issue requires fresh approval", async () 
     "A policy review was added after approval.",
   );
 });
+it("opens the IPFS fee reconciliation from a paid employee calculation", async () => {
+  workspace.cycles[0] = { ...workspace.cycles[0], status: 'PAID', batchIds: ['batch'], totalCents: 16000 };
+  const item = { policyId: 'policy', entryId: 'fee', accountName: 'Cedar HOA', policyNumber: 'POL-1',
+    receivedOn: '2026-11-10', transaction: 'NEW' as const, agencyCents: 100000, producerBps: 1600, amountCents: 16000, revenueKind: 'IPFS_FEE' as const };
+  workspace.batches = [{ id: 'batch', version: 1, producerId: 'p', producerName: 'Avery', status: 'PAID',
+    payDate: '2026-11-27', cutoff: '2026-11-16', totalCents: 16000, lines: [item] }];
+  const navigate = vi.fn();
+  render(<CommissionWorkflowContext.Provider value={{target:{tab:'payroll'},navigate}}><CommissionPayroll owner refreshLedger={vi.fn()}/></CommissionWorkflowContext.Provider>);
+  fireEvent.click(await screen.findByText('Employee calculations & source statements'));
+  fireEvent.click(screen.getByText('Avery · $160.00', {selector:'summary'}));
+  const row = screen.getByText(/16% saved rate · IPFS financing fee/).parentElement!.parentElement!;
+  expect(within(row).getByText('POL-1 · $160.00')).toBeVisible();
+  fireEvent.click(within(row).getByRole('button', {name:'Open source'}));
+  expect(navigate).toHaveBeenCalledWith({tab:'ipfs',policyId:'policy'});
+});
 it("records the actual partial dollar amount with a stable payment identity", async () => {
   workspace.cycles[0] = {
     ...workspace.cycles[0],

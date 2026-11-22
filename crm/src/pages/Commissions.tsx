@@ -1,3 +1,4 @@
+import { payrollRevenueKind, payrollSourceLabel } from "../../../shared/commissionPayroll";
 import { formatUsdCents as money, formatUsdDollars } from "../../../shared/money";
 import { getCurrentUser } from 'aws-amplify/auth';
 import { CommissionWorkflowContext, CommissionTarget, useCommissionWorkflow, type CommissionDestination } from '../lib/commissionWorkflow';
@@ -243,7 +244,7 @@ function Ledger({
                 'Producer rate (%)',
                 'Producer amount (USD)',
                 'Payment batch',
-                'Carrier transaction reference',
+                'Transaction reference',
               ],
               rows: data.policies.flatMap((p) =>
                 p.entries.map((e) => [
@@ -264,7 +265,7 @@ function Ledger({
             {
               title: 'Employee earnings allocations (agency cash is recorded above)',
               columns: ['Employee', 'Account', 'Policy', 'Date', 'Source', 'Policy share (%)', 'Plan rate (%)', 'Employee amount (USD)', 'Status', 'Payment batch', 'Earning ID', 'Original receipt / adjustment ID'],
-              rows: earningRows.map(e => [e.producerName, e.accountName, e.policyNumber, e.receivedOn, e.source, e.shareBps === undefined ? '' : e.shareBps / 100, e.source === 'ADJUSTMENT' ? '' : e.producerBps / 100, e.amountCents / 100, e.status, e.batchId ?? '', e.id, e.entryId]),
+              rows: earningRows.map(e => [e.producerName, e.accountName, e.policyNumber, e.receivedOn, payrollRevenueKind(e) ? payrollSourceLabel(e) : e.source, e.shareBps === undefined ? '' : e.shareBps / 100, e.source === 'ADJUSTMENT' ? '' : e.producerBps / 100, e.amountCents / 100, e.status, e.batchId ?? '', e.id, e.entryId]),
             },
             {
               title: 'Recorded payments',
@@ -274,9 +275,9 @@ function Ledger({
           ],
         }}
       />
-      {!!earningRows.length && <section className="card"><h2>Shared commission & adjustment earnings</h2><div className="commission-scroll"><table><thead><tr>{owner&&<th>Employee</th>}<th>Policy</th><th>Date</th><th>Source</th><th>Share / rate</th><th>Employee amount</th><th>Status</th></tr></thead><tbody>{visibleEarnings.map(e=><tr key={e.id}>{owner&&<td>{e.producerName}</td>}<td>{e.accountName}<div className="small muted">{e.policyNumber}</div></td><td>{e.receivedOn}</td><td>{e.source==='ADJUSTMENT'?'Approved adjustment':'Shared receipt'}</td><td>{e.shareBps===undefined?'—':e.shareBps/100+'% share · '+e.producerBps/100+'% rate'}</td><td>{money(e.amountCents)}</td><td>{e.batchId?(data.batches.find(b=>b.id===e.batchId)?.status??'Allocated'):e.status}
+      {!!earningRows.length && <section className="card"><h2>Shared commission & adjustment earnings</h2><div className="commission-scroll"><table><thead><tr>{owner&&<th>Employee</th>}<th>Policy</th><th>Date</th><th>Source</th><th>Share / rate</th><th>Employee amount</th><th>Status</th></tr></thead><tbody>{visibleEarnings.map(e=><tr key={e.id}>{owner&&<td>{e.producerName}</td>}<td>{e.accountName}<div className="small muted">{e.policyNumber}</div></td><td>{e.receivedOn}</td><td>{payrollSourceLabel(e)}</td><td>{e.shareBps===undefined?'—':e.shareBps/100+'% share · '+e.producerBps/100+'% rate'}</td><td>{money(e.amountCents)}</td><td>{e.batchId?(data.batches.find(b=>b.id===e.batchId)?.status??'Allocated'):e.status}
       {owner && e.status==='PAYABLE' && !e.batchId && e.amountCents>0 && <button className="secondary" onClick={()=>navigate({tab:'payroll',earningKeys:[JSON.stringify(['earning',e.id])],producerId:e.producerId})}>Prepare off-cycle payment</button>}
-      {owner && <button className="secondary" onClick={()=>navigate({tab:'exceptions',...(e.adjustmentId?{adjustmentId:e.adjustmentId}:{policyId:e.policyId}),producerId:e.producerId})}>Review source & decisions</button>}</td></tr>)}</tbody></table></div>{pageCount > 1 && <nav aria-label="Earnings history pages"><button className="secondary" disabled={page === 0} onClick={()=>setEarningsPage(page-1)}>Previous earnings</button><span> Page {page+1} of {pageCount} · {filteredEarnings.length} earnings </span><button className="secondary" disabled={page+1 === pageCount} onClick={()=>setEarningsPage(page+1)}>Next earnings</button></nav>}<p className="small muted">Totals and downloads include the complete ledger. Shared earnings reference one carrier receipt. Compensation adjustments do not change agency cash received.</p></section>}
+      {owner && <button className="secondary" onClick={()=>navigate({tab:'exceptions',...(e.adjustmentId?{adjustmentId:e.adjustmentId}:{policyId:e.policyId}),producerId:e.producerId})}>Review source & decisions</button>}</td></tr>)}</tbody></table></div>{pageCount > 1 && <nav aria-label="Earnings history pages"><button className="secondary" disabled={page === 0} onClick={()=>setEarningsPage(page-1)}>Previous earnings</button><span> Page {page+1} of {pageCount} · {filteredEarnings.length} earnings </span><button className="secondary" disabled={page+1 === pageCount} onClick={()=>setEarningsPage(page+1)}>Next earnings</button></nav>}<p className="small muted">Totals and downloads include the complete ledger. Shared earnings reference one agency receipt. Compensation adjustments do not change agency cash received.</p></section>}
       {!data.policies.length && !earningRows.length && (
         <div className="card">
           No commission snapshots yet.{' '}
@@ -1847,6 +1848,7 @@ function BatchCard({
               columns: [
                 'Account',
                 'Policy',
+                'Revenue source',
                 'Agency received (USD)',
                 'Producer rate (%)',
                 'Producer commission (USD)',
@@ -1854,6 +1856,7 @@ function BatchCard({
               rows: b.lines.map((l) => [
                 l.accountName,
                 l.policyNumber,
+                payrollSourceLabel(l),
                 l.agencyCents / 100,
                 l.producerBps / 100,
                 l.amountCents / 100,
@@ -2146,7 +2149,8 @@ function carrierComparison(line: LineDraft, policy?: CommissionPolicy) {
 type Refresh = () => Promise<void>;
 
 function IpfsFees({ policies, refresh }: { policies: CommissionPolicy[]; refresh: Refresh }) {
-  const [policyId, setPolicyId] = useState('');
+  const { target } = useCommissionWorkflow();
+  const [policyId, setPolicyId] = useState(target.policyId ?? '');
   const policy = policies.find(row => row.id === policyId);
   const fees = policies.filter(row => (row.ipfsFeeCents ?? 0) > 0);
   return (
