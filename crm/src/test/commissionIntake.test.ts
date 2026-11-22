@@ -24,6 +24,7 @@ import {
 const h = vi.hoisted(() => ({
   get: vi.fn(),
   getMany: vi.fn(),
+  approvedCycles: vi.fn(),
   list: vi.fn(),
   page: vi.fn(),
   commit: vi.fn(),
@@ -36,6 +37,7 @@ const h = vi.hoisted(() => ({
 vi.mock("../../amplify/functions/commissions/store", () => ({
   get: h.get,
   getMany: h.getMany,
+  approvedPayrollCycles: h.approvedCycles,
   list: h.list,
   page: h.page,
   commit: h.commit,
@@ -99,6 +101,8 @@ beforeEach(() => {
       refs.map((r) => records.get(`${r.kind}:${r.id}`)).filter(Boolean),
     ),
   );
+  h.approvedCycles.mockImplementation(async (minimumCutoff?: string) => structuredClone(all<PayrollCycle>('PAYROLL_CYCLE')
+    .filter(c => c.status === 'APPROVED' && (!minimumCutoff || c.cutoff >= minimumCutoff))));
   h.list.mockImplementation(async (k, producer, recordKind) =>
     structuredClone(
       [...records.entries()]
@@ -802,13 +806,11 @@ it('posts an ordinary receipt without querying unrelated earnings history',async
 
 it('retries safely if payroll is approved during receipt discovery without saving a partial settlement',async()=>{
   seed('STATEMENT_INTAKE',intake());
-  const list=h.list.getMockImplementation()!;
-  h.list.mockImplementation(async (...args)=>{
+  const list=h.approvedCycles.getMockImplementation()!;
+  h.approvedCycles.mockImplementation(async (...args)=>{
     const result=await list(...args);
-    if(args[0]==='PAYROLL_CYCLE') {
-      records.set('PAYROLL_STATE:reconciliation',{id:'reconciliation',version:1});
-      seed('PAYROLL_CYCLE',{...suggestPayrollDates('2026-10'),version:1,status:'APPROVED',revision:1,batchIds:[],totalCents:0} as PayrollCycle);
-    }
+    records.set('PAYROLL_STATE:reconciliation',{id:'reconciliation',version:1});
+    seed('PAYROLL_CYCLE',{...suggestPayrollDates('2026-10'),version:1,status:'APPROVED',revision:1,batchIds:[],totalCents:0} as PayrollCycle);
     return result;
   });
   expect(await call('recordIntakeSettlement',{id:'inbox',version:1,reference:'RACE',totalCents:100,receivedOn:'2026-10-03',settlementType:'DEPOSIT',evidence:'TEST bank evidence',confirmed:true})).toMatchObject({ok:false});
@@ -965,11 +967,11 @@ it.each(['manual', 'guided'])('holds an intervening approval atomically at %s po
   approvedCarrierCycle('unrelated', {producerIds: ['somebody-else']});
   approvedCarrierCycle('part-paid', {batchIds: ['partial']});
   seed('BATCH', {id: 'partial', status: 'APPROVED', totalCents: 10000, paidCents: 500, version: 1});
-  const currentList = h.list.getMockImplementation()!;
+  const currentList = h.approvedCycles.getMockImplementation()!;
   let simulateApproval = true;
-  h.list.mockImplementation(async (...args) => {
+  h.approvedCycles.mockImplementation(async (...args) => {
     const rows = await currentList(...args);
-    if (args[0] === 'PAYROLL_CYCLE' && simulateApproval) {
+    if (simulateApproval) {
       simulateApproval = false;
       const key = 'PAYROLL_STATE:reconciliation';
       const revision = (records.get(key) as {version:number}).version;

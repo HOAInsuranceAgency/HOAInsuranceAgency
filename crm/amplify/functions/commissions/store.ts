@@ -1,3 +1,5 @@
+import type { PayrollCycle } from '../../../../shared/commissionPayroll';
+import { APPROVED_PAYROLL_KIND, APPROVED_PAYROLL_INDEX_STATE, approvedPayrollIndexWrites } from './payroll-index';
 import { statementIndexWrites } from './statement-index';
 import { randomUUID } from 'node:crypto';
 import { sendCommissionWrite } from '../live-write';
@@ -68,6 +70,52 @@ export async function list<T>(kind: string, producer = false, recordKind?: strin
     sizeError: () => new Error('Commission history exceeds this view’s limit. Narrow or archive the reporting scope before proceeding.'),
     error: () => new Error('Commission history could not be completely loaded. No partial totals are available.') });
 }
+/**
+ * Before the active lookup is ready, stream matching approvals from the authoritative
+ * partition. Closed history cannot consume the active-row limit. The cycle key starts
+ * with its payday month; the inclusive receipt cutoff can never come after payday.
+ */
+export async function approvedPayrollCycles(minimumCutoff?: string): Promise<PayrollCycle[]> {
+  const indexed = !!await get('INDEX_STATE', APPROVED_PAYROLL_INDEX_STATE);
+  const incomplete = () => new Error(indexed
+    ? 'Approved payroll cycles could not be completely loaded. Retry before proceeding.'
+    : 'Complete the approved payroll lookup backfill and retry.');
+  const rows = await collectCompletePages<Data>(async cursor => {
+    const result = await db.send(new QueryCommand({
+      TableName: table(),
+      ConsistentRead: true,
+      Limit: 100,
+      ExclusiveStartKey: cursor,
+      KeyConditionExpression: '#kind = :kind' + (minimumCutoff ? ' AND #id >= :month' : ''),
+      ExpressionAttributeNames: {
+        '#kind': 'kind',
+        ...(minimumCutoff || indexed ? { '#id': 'id' } : {}),
+        ...(!indexed ? { '#status': 'status' } : {}),
+        ...(!indexed && minimumCutoff ? { '#cutoff': 'cutoff' } : {}),
+      },
+      ExpressionAttributeValues: {
+        ':kind': indexed ? APPROVED_PAYROLL_KIND : 'PAYROLL_CYCLE',
+        ...(minimumCutoff ? { ':month': minimumCutoff.slice(0, 7) } : {}),
+        ...(!indexed ? { ':approved': 'APPROVED' } : {}),
+        ...(!indexed && minimumCutoff ? { ':date': minimumCutoff } : {}),
+      },
+      ...(indexed ? { ProjectionExpression: '#id' } : {
+        FilterExpression: '#status = :approved' + (minimumCutoff ? ' AND #cutoff >= :date' : ''),
+      }),
+    }));
+    return { items: result.Items ?? [], next: result.LastEvaluatedKey };
+  }, {
+    maxPages: 100,
+    maxRows: 5000,
+    error: incomplete,
+    sizeError: () => new Error('Too many active payroll approvals. Review outstanding cycles before proceeding.'),
+  });
+  if (!indexed) return rows as PayrollCycle[];
+  const ids = rows.map(row => row.id as string);
+  const current = await getMany<PayrollCycle>(ids.map(id => ({kind: 'PAYROLL_CYCLE', id})));
+  if (current.length !== ids.length) throw new Error('An approved payroll cycle is missing. Review its source record before proceeding.');
+  return current.filter(c => c.status === 'APPROVED' && (!minimumCutoff || c.cutoff >= minimumCutoff));
+}
 export async function commit(changes: Change[], actor: string, extras: Transaction = []) {
   const at = new Date().toISOString();
   const items: Transaction = changes.map((c) => ({
@@ -120,6 +168,7 @@ export async function commit(changes: Change[], actor: string, extras: Transacti
     },
     ...extras,
     ...changes.flatMap(c => statementIndexWrites(table(), c)),
+    ...changes.flatMap(c => approvedPayrollIndexWrites(table(), c)),
   );
   assertTransactionEnvelope(items, { maxBytes: 3_500_000, maxItemBytes: 300_000, keyFields: name => name === table() ? ['kind', 'id'] : undefined,
     error: () => new Error('This operation is too large. Use a smaller statement or payroll batch.') });

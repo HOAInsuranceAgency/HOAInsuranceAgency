@@ -12,6 +12,7 @@ import {
 const h = vi.hoisted(() => ({
   get: vi.fn(),
   getMany: vi.fn(),
+  approvedCycles: vi.fn(),
   list: vi.fn(),
   commit: vi.fn(),
   session: vi.fn(),
@@ -23,6 +24,7 @@ const h = vi.hoisted(() => ({
 vi.mock('../../amplify/functions/commissions/store', () => ({
   get: h.get,
   getMany: h.getMany,
+  approvedPayrollCycles: h.approvedCycles,
   list: h.list,
   commit: h.commit,
   table: () => 'private-ledger',
@@ -88,6 +90,9 @@ beforeEach(() => {
   h.getMany.mockImplementation(async (refs: { kind: string; id: string }[]) =>
     structuredClone(refs.map((r) => records.get(`${r.kind}:${r.id}`)).filter(Boolean)),
   );
+  h.approvedCycles.mockImplementation(async (minimumCutoff?: string) => structuredClone([...records.entries()]
+    .filter(([key]) => key.startsWith('PAYROLL_CYCLE:')).map(([, v]) => v as PayrollCycle)
+    .filter(c => c.status === 'APPROVED' && (!minimumCutoff || c.cutoff >= minimumCutoff))));
   h.list.mockImplementation(async (k, producer, recordKind) =>
     structuredClone(
       [...records.entries()]
@@ -1104,10 +1109,10 @@ it('preserves a partial payment and leaves a late fee available for supplemental
 it('retries without any fee postings when approval wins the race after the cycle lookup', async () => {
   const { approved } = seedFeePayroll();
   records.delete('PAYROLL_CYCLE:' + approved.id);
-  const list = h.list.getMockImplementation()!;
-  h.list.mockImplementation(async (...args) => {
+  const list = h.approvedCycles.getMockImplementation()!;
+  h.approvedCycles.mockImplementation(async (...args) => {
     const result = await list(...args);
-    if (args[0] === 'PAYROLL_CYCLE' && !records.has('PAYROLL_CYCLE:' + approved.id)) {
+    if (!records.has('PAYROLL_CYCLE:' + approved.id)) {
       records.set('PAYROLL_CYCLE:' + approved.id, approved);
       records.set('PAYROLL_STATE:reconciliation', { id: 'reconciliation', version: 2 });
     }

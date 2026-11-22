@@ -22,7 +22,7 @@ export const absentCycle = (id: string): store.Transaction[number] => ({ Conditi
  * The change competes with delivery reservation on the cycle version. */
 export async function holdApprovedPayroll(policy: CommissionPolicy, dueOn: string) {
   const batchIds = new Set(policy.entries.map(e => e.batchId).filter(Boolean));
-  const cycles = (await store.list<PayrollCycle>('PAYROLL_CYCLE')).filter(c => c.status === 'APPROVED' && (dueOn <= c.payDate || c.batchIds.some(id => batchIds.has(id))));
+  const cycles = (await store.approvedPayrollCycles()).filter(c => dueOn <= c.payDate || c.batchIds.some(id => batchIds.has(id)));
   if (cycles.length > 90) throw new Error('Too many outstanding payroll cycles. Review and close historical payroll first.');
   return cycles.map(c => change('PAYROLL_CYCLE', { ...c, reviewRequired: 'A policy review was added after approval. Resolve it and replace this unsent cycle with a fresh approval. If delivery already started, coordinate the correction with HR before recording payment.' }, c));
 }
