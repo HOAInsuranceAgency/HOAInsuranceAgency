@@ -183,7 +183,6 @@ try {
   const { checkBrokerFeeCallerAccess } = await import('./check-broker-fee-access');
   checkBrokerFeeCallerAccess(backend.stack.node.root, {
     voidInvoice: backend.voidInvoice.resources.lambda.role!,
-    pfElection: backend.pfElection.resources.lambda.role!,
   });
   // Field-level read-only rules can silently remove every browser role from
   // deleteAccount even though the model permits administrator deletion. Check

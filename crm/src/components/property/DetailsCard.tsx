@@ -29,10 +29,6 @@ export default function DetailsCard({
     county: inputValue(account.county),
     state: inputValue(account.state),
     zip: inputValue(account.zip),
-    // Tri-state on purpose: unanswered is not "no". Rhode Island's financing
-    // eligibility blocks until this is answered from the articles.
-    incorporated:
-      account.incorporated === true ? "yes" : account.incorporated === false ? "no" : "",
     unitCount: inputValue(account.unitCount),
     propertyType: normalizePropertyType(account.propertyType) ?? "",
     rentalPct: inputValue(account.rentalPct),
@@ -70,8 +66,6 @@ export default function DetailsCard({
               county: str(form.county),
               state: str(form.state),
               zip: str(form.zip),
-              incorporated:
-                form.incorporated === "yes" ? true : form.incorporated === "no" ? false : null,
               unitCount: num(form.unitCount),
               propertyType: normalizePropertyType(form.propertyType),
               rentalPct: num(form.rentalPct),
@@ -145,14 +139,6 @@ export default function DetailsCard({
             <select id="account-property-type" value={form.propertyType} onChange={e => setF("propertyType", e.target.value)}>
               <option value="">Use existing information</option>
               {PROPERTY_TYPES.map(value => <option key={value} value={value}>{PROPERTY_TYPE_LABELS[value]}</option>)}
-            </select>
-          </label>
-          <label className="field">
-            <span>Incorporated association</span>
-            <select value={form.incorporated} onChange={(e) => setF("incorporated", e.target.value)}>
-              <option value="">—</option>
-              <option value="yes">Yes — incorporated</option>
-              <option value="no">No — unincorporated</option>
             </select>
           </label>
           <label className="field">

@@ -110,27 +110,11 @@ export interface PfEventDecision {
   outcome: InvoiceOutcome | "COMMITTED";
   paymentIntentId: string;
   occurredAt: string;
-  /** The saved mandate, present on the down payment's succeeded event. */
-  customerId: string | null;
-  paymentMethodId: string | null;
   /** Dollars, from the intent's amount — for the accounting email. */
   amount: number | null;
 }
 
-/**
- * The loan side hears two events the invoice side does not:
- *
- * `checkout.session.completed` — COMMITTED. For an invoice, form completion
- * is not money and stays ignored. For an election it is the CHOICE being
- * made: the treasurer finished checkout, and the offer page must stop
- * presenting an accept button — manual-entry ACH sits in microdeposit
- * verification for days before `processing` ever fires, and that window
- * held the door open for a second $15,000 session. No money moves on it.
- *
- * `payment_intent.canceled` — FAILED. A microdeposit verification nobody
- * completes expires into a cancellation, and the clearing marker it leaves
- * behind must revive the link the way a failed debit does.
- */
+/** Legacy Checkout completion records a pending intent; only a settled intent records cash. */
 const PF_OUTCOMES: Record<string, InvoiceOutcome | "COMMITTED"> = {
   ...OUTCOMES,
   "checkout.session.completed": "COMMITTED",
@@ -170,7 +154,6 @@ export function decidePfEvent(event: StripeEventLike): PfEventDecision | null {
   // actionable — posting "the next one" on faith is how ledgers drift.
   if (kind === "installment" && installment === null) return null;
 
-  const str = (v: unknown) => (typeof v === "string" && v ? v : null);
   const cents = object.amount;
   return {
     loanId: loanId.trim(),
@@ -180,8 +163,6 @@ export function decidePfEvent(event: StripeEventLike): PfEventDecision | null {
     outcome,
     paymentIntentId,
     occurredAt: new Date(event.created * 1000).toISOString(),
-    customerId: str(object.customer),
-    paymentMethodId: str(object.payment_method),
     amount:
       typeof cents === "number" && Number.isFinite(cents) ? cents / 100 : null,
   };

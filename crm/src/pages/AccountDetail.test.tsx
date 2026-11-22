@@ -29,7 +29,6 @@ describe("tabsFor", () => {
       "submissions",
       "quotes",
       "invoices",
-      "financing",
       "documents",
       "certificates",
       "activity",
@@ -45,7 +44,6 @@ describe("tabsFor", () => {
       "quotes",
       "policies",
       "invoices",
-      "financing",
       "documents",
       "certificates",
       "activity",
@@ -92,22 +90,10 @@ describe("the property and coverage tab", () => {
   });
 });
 
-/**
- * The Financing tab.
- *
- * It used to be doubly gated — client-only, then behind the premium-finance
- * module flag, which made it vanish everywhere when counsel flipped the
- * switch. Client-only ended with W8 (a lead's quote-anchored loan needs its
- * servicing surface) and the flag gate ended on 2026-08-25 when the module
- * became always-on. What is left to pin is that it is offered at every
- * stage, and that a bookmarked `?tab=financing` now always resolves to
- * itself rather than bouncing to Overview.
- */
 describe("the financing tab", () => {
-  it("is offered at every stage", () => {
-    expect(tabsFor("CLIENT").map(([t]) => t)).toContain("financing");
-    expect(tabsFor("LEAD").map(([t]) => t)).toContain("financing");
-    expect(tabsFor(null).map(([t]) => t)).toContain("financing");
+  it("shows legacy financing only on accounts with loan history", () => {
+    expect(tabsFor("CLIENT").map(([tab]) => tab)).not.toContain("financing");
+    expect(tabsFor("CLIENT", true).map(([tab]) => tab)).toContain("financing");
   });
 
   it("keeps a bookmarked ?tab=financing at financing, both stages", () => {
@@ -118,7 +104,7 @@ describe("the financing tab", () => {
   it("sits between Invoices and Documents, where the money tabs are", () => {
     // Position is the claim: the tab set is read left to right, and
     // Financing belongs with Invoices rather than off among the paperwork.
-    const tabs = tabsFor("CLIENT").map(([t]) => t);
+    const tabs = tabsFor("CLIENT", true).map(([t]) => t);
     expect(tabs.indexOf("financing")).toBe(tabs.indexOf("invoices") + 1);
     expect(tabs.indexOf("documents")).toBe(tabs.indexOf("financing") + 1);
   });

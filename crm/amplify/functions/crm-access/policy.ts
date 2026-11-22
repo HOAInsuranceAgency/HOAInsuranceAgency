@@ -3,18 +3,18 @@ export const ACCOUNT_MODELS = ["Account", "AccountRelationship", "Contact", "Pri
 /** Storage remains for history; no signed-in browser can use the retired feature. */
 export const RETIRED_MODELS: readonly string[] = ["MarketingTask"];
 export const SHARED_MODELS = ["Party", "PartyAffiliation", "Carrier", "AppetiteGuide", "PfCounselOpinion", "UserProfile", "ProducerLicense", "License", "AgencySettings", "LicenseReminder"] as const;
-export const PUBLIC_OPERATIONS = ["brokerFeeDisclosure", "signBrokerFeeDisclosure", "webLeadEstimate", "leadIntakeReady", "submitWebLead", "requestLeadUpload", "closeLeadUploadWindow", "uploadPortalStatus", "requestPortalUpload", "financeElectionTerms", "acceptFinanceElection"];
+export const PUBLIC_OPERATIONS = ["brokerFeeDisclosure", "signBrokerFeeDisclosure", "webLeadEstimate", "leadIntakeReady", "submitWebLead", "requestLeadUpload", "closeLeadUploadWindow", "uploadPortalStatus", "requestPortalUpload"];
 export const OWNER_OPERATIONS = ["commissionAction", "ownerProfitability", "saveEmployeeCompensation", "setTeamUserEnabled", "updateTeamUserEmail"];
-export const ADMIN_OPERATIONS = ["inviteUser", "updateUserRoles", "listTeamUsers", "setPremiumFinanceEnabled", "marketingReportSettings", "marketingReportAction"];
+export const ADMIN_OPERATIONS = ["inviteUser", "updateUserRoles", "listTeamUsers", "marketingReportSettings", "marketingReportAction"];
 /** Native group authorization still sees every assigned Cognito group. These
  * ADMIN-only model actions also require the ADMIN view to be selected. */
 export const ADMIN_MODEL_OPERATIONS: Record<string, readonly string[]> = {
   Account: ["delete"], Activity: ["create", "update", "delete"],
   Quote: ["delete"], Policy: ["delete"], Invoice: ["delete"], Certificate: ["delete"],
-  UserProfile: ["delete"], PfCounselOpinion: ["create"], License: ["update", "delete"],
+  UserProfile: ["delete"], License: ["update", "delete"],
   AgencySettings: ["create", "update", "delete"], LeadReply: ["read"], UploadPortal: ["read", "update"],
 };
-export const CUSTOM_OPERATIONS = ["brokerFeeAction", "commissionOverview", "carrierPaymentPreview", "bindCommissionPolicy", "communicationRead", "communicationWrite", "honeycombSubmissionSettings", "startHoneycombSubmission", "resolveHoneycombSubmission", "startLeadExtraction", "suggestFormFields", "reserveCertificateNumber", "reserveInvoiceNumber", "sendInvoice", "voidInvoice", "issueFinanceQuote", "generatePfAgreement", "servicePfLoan", "crmAccess", "crmFile"];
+export const CUSTOM_OPERATIONS = ["brokerFeeAction", "commissionOverview", "carrierPaymentPreview", "bindCommissionPolicy", "communicationRead", "communicationWrite", "honeycombSubmissionSettings", "startHoneycombSubmission", "resolveHoneycombSubmission", "startLeadExtraction", "suggestFormFields", "reserveCertificateNumber", "reserveInvoiceNumber", "sendInvoice", "voidInvoice", "servicePfLoan", "crmAccess", "crmFile"];
 export const ACCOUNT_REFERENCES: Record<string, Record<string, string>> = {
   Quote: { renewalPolicyId: "Policy" }, Policy: { quoteId: "Quote" }, Invoice: { policyId: "Policy", quoteId: "Quote" },
   InvoiceLine: { invoiceId: "Invoice", policyId: "Policy" }, PfLoan: { policyId: "Policy", quoteId: "Quote", boardResolutionDocumentId: "Document" },

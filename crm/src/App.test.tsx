@@ -73,7 +73,6 @@ vi.mock("./pages/Onboarding", () => ({
   </section>,
 }));
 vi.mock("./pages/Settings", () => ({ default: () => null }));
-vi.mock("./pages/Financing", () => ({ default: () => null }));
 vi.mock("./pages/SearchResults", () => ({ default: () => null }));
 vi.mock("./pages/QuotesList", () => ({ default: () => null }));
 vi.mock("./pages/PoliciesList", () => ({ default: () => null }));

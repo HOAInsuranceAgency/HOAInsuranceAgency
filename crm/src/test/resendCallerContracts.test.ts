@@ -18,6 +18,11 @@ vi.mock("../../amplify/functions/transactional-mail/client", () => ({ Transactio
 } }));
 vi.mock("@aws-sdk/client-cognito-identity-provider", async original => ({ ...await original<object>(), CognitoIdentityProviderClient: class { send = h.cognito; } }));
 vi.mock("@aws-sdk/lib-dynamodb", async original => ({ ...await original<object>(), DynamoDBDocumentClient: { from: () => ({ send: h.db }) } }));
+vi.mock("../../amplify/functions/broker-fees/store", async original => ({
+  ...await original<typeof import("../../amplify/functions/broker-fees/store")>(),
+  accountModels: async () => [],
+  getModel: async (model: string, id: string) => (await h.models[model]?.get({ id }))?.data,
+}));
 vi.mock("aws-amplify", () => ({ Amplify: { configure: vi.fn() } }));
 vi.mock("aws-amplify/data", () => ({ generateClient: () => ({ models: h.models }) }));
 vi.mock("@aws-amplify/backend/function/runtime", () => ({ getAmplifyDataClientConfig: async () => ({ resourceConfig: {}, libraryOptions: {} }) }));

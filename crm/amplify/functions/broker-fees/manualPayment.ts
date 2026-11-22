@@ -1,3 +1,4 @@
+import { assertPremiumNotFinanced } from '../legacy-premium-billing';
 import Stripe from 'stripe';
 import { QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { AccountAccess } from '../crm-access/access';
@@ -39,6 +40,12 @@ export async function confirmInvoicePayment(event:{identity?:Identity;request?:R
     cursor=result.LastEvaluatedKey;
     if(lines.length>70)throw new Error('This invoice needs a smaller reviewed payment allocation.');
   }while(cursor);
+  const premiumLines = lines.filter(line =>
+    (line.kind === 'PREMIUM' || line.kind === 'ENDORSEMENT') && Number(line.retailAmount) > 0);
+  if (invoice.status !== 'PAID' && !adjustmentProof && premiumLines.length) {
+    const policyIds = [id(invoice.policyId), ...premiumLines.map(line => id(line.policyId))].filter(Boolean);
+    await assertPremiumNotFinanced(String(invoice.accountId), policyIds, quoteId, policy?.sourcePricingLoanId ?? quote?.sourcePricingLoanId);
+  }
   const fee=quoteId?await getFee(quoteId):undefined;
   validateInvoiceSourceCharges({invoice:{accountId:String(invoice.accountId),policyId:invoice.policyId as string|undefined,status:invoice.status as string|undefined,sourcePricingVersion:invoice.sourcePricingVersion as number|undefined},source:source?{id:String(source.id),accountId:String(source.accountId),premium:source.premium as number|undefined,billType:source.billType as string|undefined,passThroughCharges:source.passThroughCharges}:null,lines});
   if(invoice.sourcePricingVersion===2&&invoiceTotals(lines).retail<=0)throw new Error('A zero or credit adjustment is not an incoming payment and cannot be marked paid.');

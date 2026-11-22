@@ -59,7 +59,6 @@ vi.mock("../pages/Carriers", () => ({ default: () => null }));
 vi.mock("../pages/CarrierDetail", () => ({ default: () => null }));
 vi.mock("../pages/Onboarding", () => ({ default: () => null }));
 vi.mock("../pages/Settings", () => ({ default: () => null }));
-vi.mock("../pages/Financing", () => ({ default: () => null }));
 vi.mock("../pages/SearchResults", () => ({ default: () => null }));
 vi.mock("../pages/QuotesList", () => ({ default: () => null }));
 vi.mock("../pages/PoliciesList", () => ({ default: () => null }));

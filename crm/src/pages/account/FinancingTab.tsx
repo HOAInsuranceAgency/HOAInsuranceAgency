@@ -1,3 +1,4 @@
+import { hasFinancingReceivable, outstandingPrincipal } from "../../lib/dashboardFinance";
 import { useRef, useState } from "react";
 import {
   client,
@@ -159,10 +160,10 @@ function LoanActions({ loan, onChanged, refreshRequired, setRefreshRequired }: {
 
       {loan.status === "ACCEPTED" && (
         <p className="muted small">
-          The association elected financing{loan.electedAt ? ` on ${fmtDate(loan.electedAt.slice(0, 10))}` : ""}:
-          down payment received{loan.downPaidAt ? ` ${fmtDate(loan.downPaidAt.slice(0, 10))}` : ""}, autopay
-          mandate on file. Monthly collections are enabled automatically; no
-          staff activation or document upload is needed to start billing.
+          The association elected financing{loan.electedAt ? ` on ${fmtDate(loan.electedAt.slice(0, 10))}` : ""}.
+          {loan.downPaidAt && ` Down payment received ${fmtDate(loan.downPaidAt.slice(0, 10))}.`}
+          {loan.stripePaymentMethodId && " Autopay mandate on file."}
+          {" "}Monthly collections are closed for this agreement.
         </p>
       )}
 
@@ -192,7 +193,7 @@ function LoanActions({ loan, onChanged, refreshRequired, setRefreshRequired }: {
       )}
 
       {loan.status === "QUOTED" && loan.downPaymentIntentId && (
-        <p className="muted small">Initial payment is processing. Monthly collections turn on automatically when it settles.</p>
+        <p className="muted small">An initial payment was submitted. Verify its settlement before recording another payment.</p>
       )}
 
       {(loan.status === "ACTIVE" || loan.status === "DEFAULTED") && (
@@ -329,19 +330,8 @@ function LoanActions({ loan, onChanged, refreshRequired, setRefreshRequired }: {
   );
 }
 
-/**
- * Financing on one association — servicing only, since W8.
- *
- * Origination has no UI anywhere: an offer originates automatically when an
- * invoice is sent, at the product's fixed terms, through the server's gates.
- * What this tab holds is everything AFTER a loan exists — the loans table,
- * agreement paper, automatic monthly collection, posting, and the
- * notice-clocked cancellation sequence.
- */
-
 const LOAN_BADGE: Record<string, BadgeSpec> = {
   QUOTED: { cls: "blue", label: "QUOTED" },
-  /** Legacy settled election; the daily job automatically enables collection. */
   ACCEPTED: { cls: "amber", label: "ACCEPTED" },
   ACTIVE: { cls: "green", label: "ACTIVE" },
   PAID: { cls: "gray", label: "PAID" },
@@ -376,8 +366,6 @@ function AccountFinancing({ account }: { account: Account }) {
     { initialData: null, errorMessage: "Failed to load financing", clearDataOnError: isAuthorizationError }
   );
 
-  const agreementStatus = useSaveStatus({ autoClearMs: 6000 });
-  const agreementPending = useRef(false);
   const [openLoan, setOpenLoan] = useState<string | null>(null);
   const [refreshRequired, setRefreshRequired] = useState(false);
 
@@ -399,26 +387,6 @@ function AccountFinancing({ account }: { account: Account }) {
     }
   }
 
-  /**
-   * Renders the financing agreement from the loan's frozen terms and
-   * files it in Documents with the signature recorded at deposit.
-   */
-  async function generateAgreement(loanId: string) {
-    if (agreementPending.current) return;
-    agreementPending.current = true;
-    try { await agreementStatus.run(
-      async () => {
-        const { data, errors } = await client.mutations.generatePfAgreement({ loanId });
-        if (errors?.length) throw new Error(errors[0].message);
-        const result =
-          typeof data === "string" ? JSON.parse(data) : (data as Record<string, unknown>);
-        if (!result?.ok) throw new Error(String(result?.error ?? "Generation failed."));
-        return "Financing agreement filed in Documents.";
-      },
-      { errorMessage: "Couldn't generate the agreement." }
-    ); } finally { agreementPending.current = false; }
-  }
-
   if (!res.loaded || (res.loading && !res.data)) return <p className="muted small">Loading…</p>;
 
   const loans = res.data?.loans ?? [];
@@ -431,12 +399,9 @@ function AccountFinancing({ account }: { account: Account }) {
       </p>}
       {res.data && loans.length === 0 && (
         <div className="card">
-          <h2>Financing</h2>
+          <h2>Legacy financing</h2>
           <p className="muted small">
-            No financing on this association. Offers originate automatically
-            when an invoice is sent — at 25% down, 14% APR, 11 monthly
-            installments — and appear here once one exists. See the Invoices
-            tab.
+            No legacy loans for this association.
           </p>
         </div>
       )}
@@ -445,7 +410,7 @@ function AccountFinancing({ account }: { account: Account }) {
         <div className="card">
           <div className="card-head">
             <h2>Loans</h2>
-            <SaveStatus {...agreementStatus.status} />
+            <a href={`/accounts/${encodeURIComponent(account.id)}?tab=documents`}>Account documents</a>
           </div>
           <div className="table-wrap">
             <table>
@@ -473,22 +438,10 @@ function AccountFinancing({ account }: { account: Account }) {
                       <td className="num">{fmtLoanMoney(l.amountFinanced)}</td>
                       <td className="num">{l.apr}%</td>
                       <td className="num">{fmtLoanMoney(l.payment)}</td>
-                      <td className="num">{fmtLoanMoney(l.balance)}</td>
+                      <td className="num">{fmtLoanMoney(hasFinancingReceivable(l) ? outstandingPrincipal(l) : l.status === "PAID" ? 0 : null)}</td>
                       <td>{fmtDate(l.nextDueAt)}</td>
                       <td className="row-action">
                         <div className="row-tools">
-                          {(l.status === "QUOTED" ||
-                            l.status === "ACCEPTED" ||
-                            l.status === "ACTIVE") && (
-                            <button
-                              type="button"
-                              className="link"
-                              disabled={agreementStatus.busy}
-                              onClick={() => void generateAgreement(l.id)}
-                            >
-                              Agreement PDF
-                            </button>
-                          )}
                           <button
                             type="button"
                             className="link"

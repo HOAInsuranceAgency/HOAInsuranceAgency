@@ -116,7 +116,7 @@ export async function loadFinanceDashboard() {
     (invoice.status === 'SENT' || invoice.status === 'PROCESSING') && loanAccounts.has(invoice.accountId));
   const [invoiceLines, commercial] = await allWithAuthorizationPriority([
     loadFinanceInvoiceAnchors(overlapInvoices.map(invoice => invoice.id)),
-    loadAssignments([...new Set([...invoices, ...outstanding, ...payments, ...brokerFeePolicies].map(record => record.accountId))]),
+    loadAssignments([...new Set([...invoices, ...outstanding, ...pfLoans.filter(loan => loan.status === "QUOTED" && loan.agreementSignedAt), ...payments, ...brokerFeePolicies].map(record => record.accountId))]),
   ]);
   const overlapAccounts = new Set(overlapInvoices.map(invoice => invoice.accountId));
   const policyIds = [...outstanding.filter(loan => overlapAccounts.has(loan.accountId)), ...overlapInvoices, ...invoiceLines]

@@ -66,12 +66,8 @@ import { portalSweep } from "./functions/portal-sweep/resource";
 import { sendInvoice } from "./functions/send-invoice/resource";
 import { stripeWebhook } from "./functions/stripe-webhook/resource";
 import { voidInvoice } from "./functions/void-invoice/resource";
-import { pfAdmin } from "./functions/pf-admin/resource";
-import { pfOriginate } from "./functions/pf-originate/resource";
-import { pfAgreement } from "./functions/pf-agreement/resource";
 import { pfServicing } from "./functions/pf-servicing/resource";
 import { pfDefaultSweep } from "./functions/pf-default-sweep/resource";
-import { pfElection } from "./functions/pf-election/resource";
 import { pfAutopay } from "./functions/pf-autopay/resource";
 import { resolveMailbox } from "./functions/mailbox";
 import { activityLog } from "./functions/activity-log/resource";
@@ -120,12 +116,8 @@ export const backend = defineBackend({
   sendInvoice,
   stripeWebhook,
   voidInvoice,
-  pfAdmin,
-  pfOriginate,
-  pfAgreement,
   pfServicing,
   pfDefaultSweep,
-  pfElection,
   pfAutopay,
   activityLog,
   communications,
@@ -822,42 +814,7 @@ invoiceTable.grantReadWriteData(backend.stripeWebhook.resources.lambda);
 backend.voidInvoice.addEnvironment("INVOICE_TABLE", invoiceTable.tableName);
 invoiceTable.grantReadWriteData(backend.voidInvoice.resources.lambda);
 
-/**
- * Premium finance admin: the module flag and its audit row are written by one
- * Lambda over direct table access — see pf-admin/resource.ts for why the flip
- * and its record must be inseparable.
- */
 const pfLogTable = backend.data.resources.tables.PfComplianceLog;
-backend.pfAdmin.addEnvironment(
-  "AGENCY_SETTINGS_TABLE",
-  backend.data.resources.tables.AgencySettings.tableName
-);
-backend.pfAdmin.addEnvironment("PF_COMPLIANCE_LOG_TABLE", pfLogTable.tableName);
-backend.data.resources.tables.AgencySettings.grantReadWriteData(
-  backend.pfAdmin.resources.lambda
-);
-pfLogTable.grantReadWriteData(backend.pfAdmin.resources.lambda);
-
-// Origination writes its decision rows straight to the log table too; model
-// reads and the PfLoan create go through the data client via allow.resource.
-backend.pfOriginate.addEnvironment("PF_COMPLIANCE_LOG_TABLE", pfLogTable.tableName);
-pfLogTable.grantReadWriteData(backend.pfOriginate.resources.lambda);
-// The loan create is a cross-table transaction with a ConditionCheck on the
-// module flag, so origination needs both tables directly.
-backend.pfOriginate.addEnvironment(
-  "AGENCY_SETTINGS_TABLE",
-  backend.data.resources.tables.AgencySettings.tableName
-);
-backend.pfOriginate.addEnvironment(
-  "PF_LOAN_TABLE",
-  backend.data.resources.tables.PfLoan.tableName
-);
-backend.data.resources.tables.AgencySettings.grantReadData(
-  backend.pfOriginate.resources.lambda
-);
-backend.data.resources.tables.PfLoan.grantReadWriteData(
-  backend.pfOriginate.resources.lambda
-);
 
 // Servicing and the default sweep write their decision rows to the log too.
 for (const fn of [backend.pfServicing, backend.pfDefaultSweep]) {
@@ -891,17 +848,6 @@ backend.data.resources.tables.PfLoan.grantReadWriteData(
   backend.pfDefaultSweep.resources.lambda
 );
 
-// The agreement renderer writes its PDFs under generated/pf/ — outside
-// documents/, so the OCR upload trigger never re-reads the app's own output.
-backend.pfAgreement.addEnvironment(
-  "DOCUMENTS_BUCKET",
-  backend.storage.resources.bucket.bucketName
-);
-backend.storage.resources.bucket.grantPut(
-  backend.pfAgreement.resources.lambda,
-  "generated/pf/*"
-);
-
 /**
  * And the send, for one write: storing a freshly minted payment link
  * conditionally on the link it replaced, so two overlapping sends cannot leave
@@ -910,33 +856,7 @@ backend.storage.resources.bucket.grantPut(
  */
 backend.sendInvoice.addEnvironment("INVOICE_TABLE", invoiceTable.tableName);
 invoiceTable.grantReadWriteData(backend.sendInvoice.resources.lambda);
-/**
- * W7: the email's financing fork. The send mints the election token onto the
- * QUOTED loan — conditionally, direct to the table — and links to the public
- * site's finance page.
- */
-backend.sendInvoice.addEnvironment(
-  "PF_LOAN_TABLE",
-  backend.data.resources.tables.PfLoan.tableName
-);
-backend.data.resources.tables.PfLoan.grantReadWriteData(
-  backend.sendInvoice.resources.lambda
-);
 backend.sendInvoice.addEnvironment("SITE_URL", siteBaseUrl);
-/**
- * W8: origination happens at send, through the shared core — so the send
- * writes decision rows and its loan create transacts with the kill switch.
- */
-backend.sendInvoice.addEnvironment("PF_COMPLIANCE_LOG_TABLE", pfLogTable.tableName);
-pfLogTable.grantWriteData(backend.sendInvoice.resources.lambda);
-backend.sendInvoice.addEnvironment(
-  "AGENCY_SETTINGS_TABLE",
-  backend.data.resources.tables.AgencySettings.tableName
-);
-backend.data.resources.tables.AgencySettings.grantReadData(
-  backend.sendInvoice.resources.lambda
-);
-
 /**
  * Reporting the split to corporate finance, when Stripe confirms a payment.
  *
@@ -979,17 +899,6 @@ backend.data.resources.tables.PfComplianceLog.grantWriteData(
   backend.stripeWebhook.resources.lambda
 );
 
-// W7: the webhook consults the kill switch at settle time — not to refuse
-// money, but to record and alarm when a pre-disable election completes
-// under a disabled module.
-backend.stripeWebhook.addEnvironment(
-  "AGENCY_SETTINGS_TABLE",
-  backend.data.resources.tables.AgencySettings.tableName
-);
-backend.data.resources.tables.AgencySettings.grantReadData(
-  backend.stripeWebhook.resources.lambda
-);
-
 /**
  * W7: autopay debits post to the ledger through the webhook, so the webhook
  * gets the payment table too — the same shared posting core pf-servicing
@@ -1001,34 +910,6 @@ backend.stripeWebhook.addEnvironment(
 );
 backend.data.resources.tables.PfLoanPayment.grantReadWriteData(
   backend.stripeWebhook.resources.lambda
-);
-
-/**
- * W7: the election endpoint. Its writes are all direct: the pay-in-full void
- * (void-invoice's own code, imported — INVOICE_TABLE), the electedAt stamp
- * (PF_LOAN_TABLE, conditional), and the compliance row. SITE_URL is where
- * Checkout returns the customer — the public website's finance page.
- */
-backend.pfElection.addEnvironment("INVOICE_TABLE", invoiceTable.tableName);
-invoiceTable.grantReadWriteData(backend.pfElection.resources.lambda);
-backend.pfElection.addEnvironment(
-  "PF_LOAN_TABLE",
-  backend.data.resources.tables.PfLoan.tableName
-);
-backend.data.resources.tables.PfLoan.grantReadWriteData(
-  backend.pfElection.resources.lambda
-);
-backend.pfElection.addEnvironment("PF_COMPLIANCE_LOG_TABLE", pfLogTable.tableName);
-pfLogTable.grantWriteData(backend.pfElection.resources.lambda);
-backend.pfElection.addEnvironment("SITE_URL", siteBaseUrl);
-// The election stamp transacts with a ConditionCheck on the kill switch —
-// pf-originate's pattern; grantReadData carries ConditionCheckItem.
-backend.pfElection.addEnvironment(
-  "AGENCY_SETTINGS_TABLE",
-  backend.data.resources.tables.AgencySettings.tableName
-);
-backend.data.resources.tables.AgencySettings.grantReadData(
-  backend.pfElection.resources.lambda
 );
 
 /**

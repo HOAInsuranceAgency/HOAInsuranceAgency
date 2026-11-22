@@ -118,7 +118,7 @@ export interface CommissionEntry {
   lineRef: string;
   receivedOn: string;
   kind: 'RECEIPT' | 'REVERSAL' | 'RESTORATION';
-  revenueKind?: 'CARRIER_COMMISSION' | 'BROKER_FEE';
+  revenueKind?: 'CARRIER_COMMISSION' | 'BROKER_FEE' | 'IPFS_FEE';
   agencyCents: number;
   producerCents: number;
   originalId?: string;
@@ -146,6 +146,8 @@ export interface CommissionPolicy {
   premiumCents: number;
   agencyRateUnits: number;
   brokerFeeCents?: number;
+  ipfsFeeCents?: number;
+  ipfsAgreementRef?: string;
   producerBps: number;
   agreement: string;
   planVersion: number;
@@ -231,6 +233,7 @@ export interface CommissionBatch {
     transaction?: 'NEW' | 'RENEWAL';
     policyId: string;
     entryId: string;
+    revenueKind?: CommissionEntry['revenueKind'];
     accountName: string;
     policyNumber: string;
     agencyCents: number;
@@ -423,10 +426,10 @@ export function selectCommissionTerms(
 }
 /** Append, never rewrite posted history. Negative producer amounts are proposed
  * recoveries only; they do not reduce unpaid wages or enter payroll batches. */
-export function appendEntry(
+export function appendEntry<T extends Pick<CommissionStatement, 'receivedOn' | 'id'>>(
   policy: CommissionPolicy,
   line: StatementLine,
-  statement: CommissionStatement,
+  statement: T,
   entryId: string,
 ): CommissionPolicy {
   if (policy.entries.length >= 500)
@@ -466,6 +469,7 @@ export function appendEntry(
     const reverse = line.kind === 'REVERSAL';
     if (
       !original ||
+      (original.revenueKind ?? 'CARRIER_COMMISSION') !== (line.revenueKind ?? 'CARRIER_COMMISSION') ||
       !(reverse
         ? ['RECEIPT', 'RESTORATION'].includes(original.kind)
         : original.kind === 'REVERSAL') ||
@@ -508,6 +512,20 @@ export function appendEntry(
     ],
   };
 }
+export function isCarrierReceipt(entry: CommissionEntry) {
+  return (entry.revenueKind ?? 'CARRIER_COMMISSION') === 'CARRIER_COMMISSION';
+}
+export function commissionRevenueLabel(kind: CommissionEntry['revenueKind']) {
+  if (kind === 'IPFS_FEE') return 'IPFS financing fee';
+  return kind === 'BROKER_FEE' ? 'Broker fee' : 'Carrier commission';
+}
+export function ipfsFeeBalances(policy: CommissionPolicy) {
+  const entries = policy.entries.filter(entry => entry.revenueKind === 'IPFS_FEE');
+  const collected = sum(entries.filter(entry => entry.kind === 'RECEIPT').map(entry => entry.agencyCents));
+  const net = sum(entries.map(entry => entry.agencyCents));
+  const expected = policy.ipfsFeeCents ?? 0;
+  return { expected, collected, refunded: collected - net, net, outstanding: expected - collected };
+}
 export function policyTotals(policy: CommissionPolicy) {
   const earned = sum(
     policy.entries.filter((e) => e.kind === 'RECEIPT' && !e.supersededBy && !e.excludedByCase).map((e) => e.producerCents),
@@ -515,7 +533,7 @@ export function policyTotals(policy: CommissionPolicy) {
   const recovery =
     0 - sum(policy.entries.filter((e) => e.kind !== 'RECEIPT').map((e) => e.producerCents));
   return {
-    expectedAgency: ratio(policy.premiumCents, policy.agencyRateUnits, 1_000_000) + (policy.brokerFeeCents ?? 0),
+    expectedAgency: ratio(policy.premiumCents, policy.agencyRateUnits, 1_000_000) + (policy.brokerFeeCents ?? 0) + (policy.ipfsFeeCents ?? 0),
     receivedAgency: sum(policy.entries.map((e) => e.agencyCents)),
     earned,
     proposedRecovery: recovery,
@@ -874,7 +892,7 @@ export function carrierReconciliationBalances(
 ): CommissionReconciliationBalances {
   day(asOf);
   const fullTermEstimate = ratio(policy.premiumCents, policy.agencyRateUnits, 1_000_000);
-  const receivedEntries = policy.entries.filter((entry) => entry.revenueKind !== 'BROKER_FEE' && entry.receivedOn <= asOf);
+  const receivedEntries = policy.entries.filter((entry) => isCarrierReceipt(entry) && entry.receivedOn <= asOf);
   const receivedToDate = sum(receivedEntries.map((entry) => entry.agencyCents));
   const forecast = policy.receiptForecast
     ? validateReceiptForecast(policy.receiptForecast)
@@ -883,7 +901,7 @@ export function carrierReconciliationBalances(
   // The review watermark counts the complete immutable ledger, including fees.
   // Preserve those indexes while excluding fee reversals from carrier review.
   const adjustmentReview = policy.entries.some((entry, index) =>
-    entry.revenueKind !== 'BROKER_FEE' && entry.receivedOn <= asOf && entry.kind !== 'RECEIPT' && index >= reviewedEntryCount);
+    isCarrierReceipt(entry) && entry.receivedOn <= asOf && entry.kind !== 'RECEIPT' && index >= reviewedEntryCount);
   if (!forecast) return {
     asOf, fullTermEstimate, forecastTotal: null, expectedToDate: null, receivedToDate,
     overdue: null, futureForecast: null, unallocatedForecast: null, confirmed: false,

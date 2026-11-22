@@ -1,6 +1,7 @@
+import { assertPremiumNotFinanced, LegacyPremiumBillingBlocked } from "../legacy-premium-billing";
 import { captureHandledFailure } from "../monitoring";
 import { initialQuotePublicationWrites } from "../quote-source-billing";
-import { reserveFeeInvoice, reserveFeeLoan, publishFeeInvoiceLink, completeFeeInvoiceSend } from "../broker-fees/payments";
+import { reserveFeeInvoice, publishFeeInvoiceLink, completeFeeInvoiceSend } from "../broker-fees/payments";
 import { closeInvoiceCheckoutSessions } from "../invoiceCheckout";
 import { assertBrokerFeeSigned } from "../broker-fees/bindValidation";
 import { invoiceBrokerFeeAllocations, brokerFeeInvoiceRefresh } from "./brokerFeeInvoice";
@@ -14,10 +15,9 @@ import { getFee, getModel, modelTable, versionCheck, type Write } from "../broke
 import { TransactionalMailClient } from "../transactional-mail/client";
 import { MailDeliveryError } from "../transactional-mail/contract";
 import { currentContacts, billingContact } from "../../../src/lib/contacts";
-import { randomUUID } from "node:crypto";
 import { SendEmailCommand } from "@aws-sdk/client-sesv2";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, GetCommand, PutCommand, UpdateCommand, TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, UpdateCommand, TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
 import { Amplify } from "aws-amplify";
 import { generateClient } from "aws-amplify/data";
 import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtime";
@@ -27,15 +27,7 @@ import { isOpenQuoteStatus } from "../../../src/lib/quoteStatus";
 import { customerEmailIdentity } from "../../../../shared/customerEmailIdentity";
 import { AGENCY, AGENCY_FMT } from "../../../../shared/agency";
 import Stripe from "stripe";
-import { invoiceTotals, remittanceSplit, financeableInvoiceTotal, type RemittanceSplit } from "../../../src/lib/invoiceTotals";
-import { electionExpiry, mintElectionToken } from "../pfElectionToken";
-import { originateLoan } from "../pfOrigination";
-import {
-  PF_DEFAULT_APR,
-  PF_DEFAULT_DOWN_PCT,
-  PF_DEFAULT_MONTHS,
-} from "../../../src/lib/premiumFinance/quote";
-import { PF_CONFIG_SHA256 } from "../../../src/lib/premiumFinance/jurisdictions";
+import { invoiceTotals, remittanceSplit, type RemittanceSplit } from "../../../src/lib/invoiceTotals";
 import { renderInvoice } from "./invoice";
 import { createPaymentLink, InactivePaymentLink, toCents } from "./stripeLink";
 import { buildMimeMessage } from "./mime";
@@ -74,280 +66,6 @@ const ddb = DynamoDBDocumentClient.from(new DynamoDBClient());
  * rather than the generic apology, because "try again" is the actual remedy.
  */
 class SendBlocked extends Error {}
-
-/** The anchor a W8 invoice bills: a policy, or a quote before bind. */
-interface FinanceAnchor {
-  kind: "policy" | "quote";
-  id: string;
-  lines: readonly (string | null | undefined)[];
-}
-
-/**
- * W8: the financing side of the fork, or null — and since origination moved
- * into the send, this is where loans are BORN. Fixed terms (25% down as
- * payment 1 of 12, 14% APR, 11 installments), financed amount = the
- * invoiced total, schedule anchored at the send date. The core runs every
- * gate and logs every rule; a block means a plain bill, never a stopped
- * send. Null on any failure for the same reason ensurePaymentLink is: a
- * bill that arrives beats an offer that stopped it.
- *
- * Re-pricing supersedes: a QUOTED loan whose premium no longer matches the
- * billed total is conditionally cancelled (`superseded-by-repricing`,
- * logged) and a fresh one originates at the new figure. A loan the
- * association has already committed to — ACCEPTED onward — suppresses any
- * new origination and any offer: the choice was made.
- */
-async function financeOffer(
-  client: DataClient,
-  account: {
-    id: string;
-    state: string | null | undefined;
-    type: string | null | undefined;
-    incorporated: boolean | null | undefined;
-  },
-  anchor: FinanceAnchor | null,
-  retailTotal: number,
-  recipientEmail: string | null,
-  allocations: BrokerFeeAllocation[] = []
-): Promise<{ url: string; downPayment: number; monthly: number; months: number; apr: number; originationFee: number; brokerFee: number } | null> {
-  if (!anchor || retailTotal <= 0) return null;
-  const brokerFeeTotalCents = allocations.reduce((sum, allocation) => sum + allocation.amountCents, 0);
-  const sameFee = (loan: { brokerFeeCents?: number | null; brokerFeeAllocations?: unknown }) => (loan.brokerFeeCents ?? 0) === brokerFeeTotalCents && JSON.stringify(feeAllocations(loan.brokerFeeAllocations)) === JSON.stringify(allocations);
-  const loanTable = process.env.PF_LOAN_TABLE;
-  const siteUrl = process.env.SITE_URL;
-  if (!loanTable || !siteUrl) return null;
-  try {
-    const { data: settings } = await client.models.AgencySettings.get({ id: "AGENCY" });
-    if (settings?.premiumFinanceEnabled !== true) return null;
-
-    const anchorFilter =
-      anchor.kind === "policy"
-        ? { policyId: { eq: anchor.id } }
-        : { quoteId: { eq: anchor.id } };
-    const loans = await listAllPages((nextToken) =>
-      client.models.PfLoan.list({ filter: anchorFilter, nextToken })
-    );
-    if (
-      loans.some((l) =>
-        ["ACCEPTED", "ACTIVE", "DEFAULTED", "PAID"].includes(l.status ?? "")
-      )
-    ) {
-      return null;
-    }
-    // Annotated: the backend tsconfig lacks noUncheckedIndexedAccess, so
-    // `[0] ?? null` would otherwise infer the element type WITHOUT null.
-    let loan: (typeof loans)[number] | null =
-      [...loans]
-        .filter((l) => l.status === "QUOTED")
-        .sort((a, b) => (b.quotedAt ?? "").localeCompare(a.quotedAt ?? ""))[0] ?? null;
-
-    /**
-     * An election is COMMITTED before the loan leaves QUOTED: the customer
-     * signs and accepts, their down payment can be clearing for days
-     * (ACH), and only settlement flips the status. A committed loan is
-     * never superseded and never quietly replaced — cancelling it would
-     * land the customer's money on a CANCELLED loan. Committed means money
-     * is in flight or could be within minutes: a stamped down-payment
-     * intent, or a live Checkout session/claim the customer may be sitting
-     * on right now. A bill re-priced over a committed election is a human's
-     * knot to untie; the email goes out with pay-in-full only.
-     */
-    const nowIso = new Date().toISOString();
-    const committed =
-      loan &&
-      (loan.downPaymentIntentId ||
-        (loan.electionCheckoutUrl &&
-          loan.electionCheckoutExpiresAt &&
-          loan.electionCheckoutExpiresAt > nowIso));
-    if (loan && committed && (loan.premium !== retailTotal || !sameFee(loan))) {
-      console.error(
-        `[send-invoice] invoice re-priced to ${retailTotal} over committed election on loan ${loan.id} (quoted ${loan.premium}) — offering nothing; resolve by hand`
-      );
-      return null;
-    }
-
-    const today = new Date().toISOString().slice(0, 10);
-    const stale = loan && (loan.effectiveDate ?? today) < today;
-    if (loan && !committed && ((loan.premium !== retailTotal || !sameFee(loan)) || stale)) {
-      /**
-       * The bill changed under the offer, or the offer aged past its send
-       * day (the spec anchors the schedule at the send date — a resend
-       * weeks later must not offer a schedule already in arrears). The old
-       * quote's terms are dead, so it cancels — conditionally on still
-       * being QUOTED at the premium the decision read AND still
-       * uncommitted at write time, because the customer can be electing in
-       * this very second — and a fresh quote takes its place.
-       */
-      try {
-        await ddb.send(
-          new UpdateCommand({
-            TableName: loanTable,
-            Key: { id: loan.id },
-            UpdateExpression: "SET #s = :c, closedAt = :now, updatedAt = :now",
-            ConditionExpression:
-              "#s = :q AND premium = :seen AND attribute_not_exists(downPaymentIntentId) AND (attribute_not_exists(electionCheckoutUrl) OR electionCheckoutExpiresAt < :now)",
-            ExpressionAttributeNames: { "#s": "status" },
-            ExpressionAttributeValues: {
-              ":c": "CANCELLED",
-              ":q": "QUOTED",
-              ":seen": loan.premium,
-              ":now": nowIso,
-            },
-          })
-        );
-        await logSupersession(loan, retailTotal, account.id);
-      } catch (err) {
-        if ((err as { name?: string }).name !== "ConditionalCheckFailedException") throw err;
-        // The loan moved mid-send — a payment landed, or an election
-        // committed under this write. Offer nothing; the next send
-        // re-reads the world.
-        return null;
-      }
-      loan = null;
-    }
-
-    if (!loan) {
-      const result = await originateLoan(
-        ddb,
-        {
-          // Paginated to exhaustion: a list filter is applied AFTER the
-          // page is read, so a capped single page can silently miss the
-          // one opinion or override that matters once the table grows.
-          listOpinions: async (code) => {
-            const rows = await listAllPages((nextToken) =>
-              client.models.PfCounselOpinion.list({
-                filter: { jurisdiction: { eq: code } },
-                nextToken,
-              })
-            );
-            return rows.map((o) => ({ effectiveAt: o.effectiveAt, reviewBy: o.reviewBy }));
-          },
-        },
-        settings?.premiumFinanceEnabled === true,
-        {
-          account,
-          anchor,
-          premium: retailTotal,
-          brokerFeeCents: brokerFeeTotalCents,
-          brokerFeeAllocations: allocations,
-          downPct: PF_DEFAULT_DOWN_PCT,
-          months: PF_DEFAULT_MONTHS,
-          apr: PF_DEFAULT_APR,
-          effectiveDate: today,
-          actor: "send-invoice",
-          actorName: "send-invoice (auto-origination)",
-        }
-      );
-      if (!result.ok || !result.loanId) {
-        if (result.ok) {
-          console.log(
-            `[send-invoice] financing not offered on ${anchor.kind} ${anchor.id}: ${result.blocks
-              .map((b) => b.rule)
-              .join(", ")}`
-          );
-        } else {
-          console.warn(`[send-invoice] origination failed: ${result.error}`);
-        }
-        return null;
-      }
-      /**
-       * Straight off the table, strongly: the AppSync read is eventually
-       * consistent and a miss here would drop the offer from the very email
-       * that originated the loan.
-       */
-      const created = await ddb
-        .send(
-          new GetCommand({ TableName: loanTable, Key: { id: result.loanId }, ConsistentRead: true })
-        )
-        .then((r) => r.Item as typeof loan | undefined);
-      loan = created ?? null;
-      if (!loan) return null;
-    }
-
-    for (const allocation of allocations) await reserveFeeLoan(allocation.quoteId, loan.id);
-    let token = loan.electionToken ?? null;
-    const fresh =
-      token &&
-      loan.electionTokenExpiresAt &&
-      new Date(loan.electionTokenExpiresAt).getTime() > Date.now() + 7 * 24 * 60 * 60 * 1000;
-    if (!fresh) {
-      const seenToken = token;
-      token = mintElectionToken();
-      // Conditional on the token this decision read: two concurrent sends
-      // must not last-write-win each other's mint, or the first email
-      // carries a link that is already dead. The loser's email goes out
-      // without the offer — honest, and the next send self-heals.
-      await ddb.send(
-        new UpdateCommand({
-          TableName: loanTable,
-          Key: { id: loan.id },
-          UpdateExpression:
-            "SET electionToken = :tok, electionTokenExpiresAt = :exp, electionEmail = :email, updatedAt = :now",
-          ConditionExpression: seenToken
-            ? "#s = :quoted AND electionToken = :seenTok"
-            : "#s = :quoted AND attribute_not_exists(electionToken)",
-          ExpressionAttributeNames: { "#s": "status" },
-          ExpressionAttributeValues: {
-            ":tok": token,
-            ":exp": electionExpiry(new Date()),
-            ":email": recipientEmail ?? null,
-            ":quoted": "QUOTED",
-            ":now": new Date().toISOString(),
-            ...(seenToken ? { ":seenTok": seenToken } : {}),
-          },
-        })
-      );
-    }
-    return {
-      url: `${siteUrl}/finance/?t=${token}`,
-      downPayment: loan.downPayment,
-      originationFee: loan.originationFee,
-      brokerFee: (loan.brokerFeeCents ?? 0) / 100,
-      monthly: loan.payment,
-      months: loan.months,
-      apr: loan.apr,
-    };
-  } catch (err) {
-    console.warn("[send-invoice] financing offer omitted", err);
-    return null;
-  }
-}
-
-/** The supersession's audit row — same shape every pf writer uses. */
-async function logSupersession(
-  loan: { id: string; premium: number; state?: string | null },
-  retailTotal: number,
-  accountId: string
-) {
-  const table = process.env.PF_COMPLIANCE_LOG_TABLE;
-  if (!table) return;
-  const now = new Date().toISOString();
-  try {
-    await ddb.send(
-      new PutCommand({
-        TableName: table,
-        Item: {
-          id: randomUUID(),
-          __typename: "PfComplianceLog",
-          createdAt: now,
-          updatedAt: now,
-          accountId,
-          jurisdiction: loan.state ?? "UNKNOWN",
-          rule: "superseded-by-repricing",
-          outcome: "BLOCK",
-          reason: `Quote for $${loan.premium.toLocaleString("en-US")} superseded: the invoice now bills $${retailTotal.toLocaleString("en-US")}.`,
-          inputs: JSON.stringify({ loanId: loan.id, was: loan.premium, now: retailTotal }),
-          configSha256: PF_CONFIG_SHA256,
-          actor: "send-invoice",
-          actorName: "send-invoice (auto-origination)",
-          occurredAt: now,
-        },
-      })
-    );
-  } catch (err) {
-    console.error("[send-invoice] supersession log write failed", err);
-  }
-}
 
 /** Invoices come from the mailbox the agency actually reads, not from sales. */
 const MAILBOX = process.env.AGENCY_MAILBOX || AGENCY_FMT.emailLower;
@@ -797,7 +515,7 @@ export const handler = async (event: {
     const headerPolicyId =
       invoice.policyId ?? (linePolicyIds.length === 1 ? linePolicyIds[0] : null);
     const policy = headerPolicyId
-      ? (await client.models.Policy.get({ id: headerPolicyId })).data
+      ? await getModel<Schema["Policy"]["type"] & { sourcePricingLoanId?: string }>("Policy", headerPolicyId) ?? null
       : null;
 
     /**
@@ -808,9 +526,10 @@ export const handler = async (event: {
      */
     const quoteAnchor =
       !headerPolicyId && invoice.quoteId
-        ? (await client.models.Quote.get({ id: invoice.quoteId })).data
+        ? await getModel<Schema["Quote"]["type"] & { sourcePricingLoanId?: string }>("Quote", invoice.quoteId) ?? null
         : null;
-    if (!headerPolicyId && !quoteAnchor) {
+    if (policy && policy.accountId !== invoice.accountId || quoteAnchor && quoteAnchor.accountId !== invoice.accountId) return { ok: false, error: "The billing source could not be verified." };
+    if (!headerPolicyId && !quoteAnchor || headerPolicyId && !policy) {
       return {
         ok: false,
         error: invoice.quoteId
@@ -836,17 +555,12 @@ export const handler = async (event: {
             : `This quote is ${(quoteAnchor.status ?? "closed").toLowerCase()} — there is no coverage to bill. Void the invoice.`,
       };
     }
-    const anchor: FinanceAnchor = headerPolicyId
-      ? {
-          kind: "policy",
-          id: headerPolicyId,
-          lines: policy?.lines ?? [],
-        }
-      : {
-          kind: "quote",
-          id: invoice.quoteId!,
-          lines: quoteAnchor!.lines ?? [],
-        };
+    const billsPremium = lines.some(line => line.kind !== "BROKER_FEE" && (line.retailAmount ?? 0) > 0);
+    if (billsPremium && invoice.sourcePricingVersion !== 2) {
+      await assertPremiumNotFinanced(invoice.accountId, headerPolicyId ? [...linePolicyIds, headerPolicyId] : linePolicyIds,
+        policy?.quoteId ?? invoice.quoteId, policy?.sourcePricingLoanId ?? quoteAnchor?.sourcePricingLoanId);
+    }
+    const anchor = headerPolicyId ? { kind: "policy", id: headerPolicyId } : { kind: "quote", id: invoice.quoteId! };
 
     /**
      * One live invoice per anchor (W8): a DRAFT/SENT/PROCESSING sibling on
@@ -984,23 +698,6 @@ export const handler = async (event: {
       adjustmentProof?[...adjustmentProof.guards,versionCheck(modelTable('Policy'),adjustmentProof.policy as {id:string;updatedAt:string})]:invoice.sourcePricingVersion===1&&quoteAnchor&&!allocations.length?await initialQuotePublicationWrites(invoice,quoteAnchor):[]
     );
 
-    // W8: the other side of the fork originates HERE, at fixed terms on
-    // the billed total, through every gate — or rides an existing QUOTED
-    // offer whose premium still matches.
-    const finance = invoice.sourcePricingVersion===2 || invoice.status === "PAID" || invoice.status === "PROCESSING" ? null : await financeOffer(
-      client,
-      {
-        id: account.data.id,
-        state: account.data.state,
-        type: account.data.type,
-        incorporated: account.data.incorporated,
-      },
-      anchor,
-      financeableInvoiceTotal(lines),
-      to[0] ?? null,
-      allocations
-    );
-
     /**
      * The envelope, in the order it would be typed.
      *
@@ -1047,7 +744,6 @@ export const handler = async (event: {
       memo: invoice.memo,
       paymentUrl: disclosureUrl ?? paymentUrl,
       paymentLabel,
-      finance: disclosureUrl ? null : finance,
       lines: [...lines].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)),
     };
     const { subject, text, html } = renderInvoice(view);
@@ -1138,7 +834,7 @@ export const handler = async (event: {
       sentTo: to.join(", "),
       ...(invoice.status === "PAID" || invoice.status === "PROCESSING" ? {} : {
         remittanceCarrierCents: split.carrierCents, remittanceCommissionCents: split.commissionCents, remittanceInterestCents: split.interestCents,
-        remittanceBrokerFeeCents: split.brokerFeeCents, brokerFeeAllocations: JSON.stringify(allocations), brokerFeeFinanceUrl: finance?.url ?? null,
+        remittanceBrokerFeeCents: split.brokerFeeCents, brokerFeeAllocations: JSON.stringify(allocations), brokerFeeFinanceUrl: null,
       }),
       // Named, because this write does not go through the browser's actor
       // proxy. Without it the activity log would say "System" sent the bill,
@@ -1163,7 +859,7 @@ export const handler = async (event: {
     console.log(`send-invoice sent ${invoice.number ?? invoiceId} to ${to.join(", ")}`);
     return result;
   } catch (err) {
-    if (err instanceof SendBlocked || err instanceof InvoiceSendBlocked || err instanceof MailDeliveryError) {
+    if (err instanceof SendBlocked || err instanceof LegacyPremiumBillingBlocked || err instanceof InvoiceSendBlocked || err instanceof MailDeliveryError) {
       return { ok: false, error: err.message };
     }
     captureHandledFailure(err);

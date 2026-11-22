@@ -130,10 +130,6 @@ export function safePaymentUrl(value: unknown): value is string {
   if (typeof value !== 'string') return false;
   try { const url = new URL(value); return url.protocol === 'https:' && !url.username && !url.password && !url.port && ['buy.stripe.com', 'checkout.stripe.com'].includes(url.hostname); } catch { return false; }
 }
-function safeFinanceUrl(value: unknown): value is string {
-  if (typeof value !== 'string') return false;
-  try { const url = new URL(value), site = new URL(process.env.SITE_URL ?? ''); return url.protocol === 'https:' && url.origin === site.origin && !url.username && !url.password && !url.hash && /^\/finance\/?$/.test(url.pathname) && !!url.searchParams.get('t'); } catch { return false; }
-}
 async function readInBatches<T, R>(values: readonly T[], read: (value: T) => Promise<R>): Promise<R[]> {
   const results: R[] = [];
   for (let offset = 0; offset < values.length; offset += 5) results.push(...await Promise.all(values.slice(offset, offset + 5).map(read)));
@@ -150,24 +146,24 @@ async function termsDto(agreement: BrokerFeeAgreement): Promise<BrokerFeePublicT
   // The GSI supplies candidates only. Frozen allocations retain the covered
   // quote association when binding adds/replaces the invoice's policy anchor.
   const candidateIds = [...new Set(listed.filter(invoice => {
-    if (invoice.accountId !== agreement.accountId || typeof invoice.id !== 'string' || !invoice.id || !['SENT', 'PROCESSING'].includes(String(invoice.status)) || !safePaymentUrl(invoice.paymentUrl) && !safeFinanceUrl(invoice.brokerFeeFinanceUrl)) return false;
+    if (invoice.accountId !== agreement.accountId || typeof invoice.id !== 'string' || !invoice.id || !['SENT', 'PROCESSING'].includes(String(invoice.status)) || !safePaymentUrl(invoice.paymentUrl)) return false;
     try { return feeAllocations(invoice.brokerFeeAllocations).some(allocation => ids.has(allocation.quoteId)); }
     catch { return false; } // An invalid index projection cannot authorize a payment link.
   }).map(invoice => String(invoice.id)))];
   const invoices = await readInBatches(candidateIds, invoiceId => getModel<Record<string, unknown>>('Invoice', invoiceId));
   const payable: Record<string, unknown>[] = [];
   for (const invoice of invoices) {
-    if (!invoice || invoice.accountId !== agreement.accountId || invoice.status !== 'SENT' || !safePaymentUrl(invoice.paymentUrl) && !safeFinanceUrl(invoice.brokerFeeFinanceUrl)) continue;
+    if (!invoice || invoice.accountId !== agreement.accountId || invoice.status !== 'SENT' || !safePaymentUrl(invoice.paymentUrl)) continue;
     const allocations = feeAllocations(invoice.brokerFeeAllocations);
     if (!allocations.some(allocation => ids.has(allocation.quoteId))) continue;
     const fees = await readInBatches(allocations, allocation => getFee(allocation.quoteId));
     if (fees.some((fee, index) => !fee?.signedAt || fee.accountId !== agreement.accountId || fee.amountCents !== allocations[index].amountCents)) continue;
     payable.push(invoice);
   }
-  dto.payments = payable.flatMap(invoice => [
-    ...(safePaymentUrl(invoice.paymentUrl) ? [{ label: `Pay invoice ${invoice.number || ''} in full`.trim(), url: String(invoice.paymentUrl) }] : []),
-    ...(safeFinanceUrl(invoice.brokerFeeFinanceUrl) ? [{ label: `Finance the premium and pay broker fees upfront${invoice.number ? ` - ${invoice.number}` : ''}`, url: String(invoice.brokerFeeFinanceUrl) }] : []),
-  ]);
+  dto.payments = payable.map(invoice => ({
+    label: `Pay invoice ${invoice.number || ''} in full`.trim(),
+    url: String(invoice.paymentUrl),
+  }));
   return dto;
 }
 export async function brokerFeeDisclosure(token: string): Promise<BrokerFeePublicTerms> {

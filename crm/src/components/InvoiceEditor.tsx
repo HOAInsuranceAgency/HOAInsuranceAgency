@@ -4,14 +4,12 @@ import { currentContacts, billingContact } from "../lib/contacts";
 import { useEffect, useRef, useState } from "react";
 import {
   client,
-  type Account,
   type Contact,
   type Invoice,
   type InvoiceLine,
   type Policy,
   type Quote,
 } from "../lib/client";
-import { FinanceOfferHint } from "./FinanceOfferHint";
 import { listAllPages } from "../lib/pagination";
 import { brokerFeeLineFromSource, passThroughLinesFromSource, sourceChargeLineId, seededLineDescription, seededQuoteLineDescription } from "../lib/invoiceSeed";
 import { useAsyncResource } from "../lib/useAsyncResource";
@@ -20,7 +18,6 @@ import ConfirmButton from "./ConfirmButton";
 import { Badge, INVOICE_STATUS_BADGE, statusBadge } from "../lib/badges";
 import {
   directBillWarning,
-  financeableInvoiceTotal,
   formatMoney,
   invoiceTotals,
   isPassThrough,
@@ -59,9 +56,6 @@ const LINE_KINDS = [
   ["TAX", "Tax"],
   ["SURPLUS_LINES", "Surplus lines"],
   ["STAMPING_FEE", "Stamping fee"],
-  // All margin, and reported to accounting as its own kind of income rather
-  // than as commission. Nothing charges it until in-house financing is offered.
-  ["INTEREST", "Interest"],
   ["OTHER", "Other"],
 ] as const;
 const SUPPLIER_LINE_KINDS = [
@@ -98,7 +92,6 @@ function InvoiceEditorContent({
   invoice,
   policies,
   quotes,
-  account,
   contacts,
   onChange,
   onLinesChange,
@@ -110,8 +103,6 @@ function InvoiceEditorContent({
   policies: Policy[];
   /** The account's quotes — a W8 invoice may bill one before bind. */
   quotes: Quote[];
-  /** The account row: the financing hint reads its state and incorporation. */
-  account: Account | null;
   /** The account's contacts — who the invoice can be addressed to. */
   contacts: Contact[];
   onChange: (next: Invoice) => void;
@@ -672,6 +663,7 @@ function InvoiceEditorContent({
                         void saveEdits();
                       }}
                     >
+                      {l.kind === "INTEREST" && <option value="INTEREST">Interest (historical)</option>}
                       {l.kind === "BROKER_FEE" && <option value="BROKER_FEE">HOA broker fee · from quote</option>}
                       {l.sourceQuoteChargeId && <option value={l.kind!}>{l.kind?.replaceAll("_", " ")} · supplier/tax from quote</option>}
                       {!sourceLocked && (adjustment ? ADJUSTMENT_LINE_KINDS : manualPassThrough ? SUPPLIER_LINE_KINDS : LINE_KINDS).map(([value, label]) => (
@@ -835,7 +827,7 @@ function InvoiceEditorContent({
             <p className="muted small">Agency bill — we collect and remit.</p>
           ) : quote ? (
             <p className="muted small">
-              Bills a quote — binding rolls this invoice (and any financing)
+              Bills a quote — binding rolls this invoice
               onto the new policy.
             </p>
           ) : null}
@@ -927,26 +919,6 @@ function InvoiceEditorContent({
             without opening the CRM. A branded PDF is attached automatically,
             {adjustment && totals.retail <= 0 ? " with no payment link for a credit or zero-balance statement." : " and a Stripe bank-transfer link is generated when it sends."}
           </p>
-          {!adjustment && account && (policy || quote) && (
-            <FinanceOfferHint
-              account={account}
-              anchor={
-                policy
-                  ? {
-                      kind: "policy",
-                      id: policy.id,
-                      lines: policy.lines ?? [],
-                    }
-                  : {
-                      kind: "quote",
-                      id: quote!.id,
-                      lines: quote!.lines ?? [],
-                    }
-              }
-              retailTotal={financeableInvoiceTotal(lines)}
-              brokerFee={lines.filter(line => line.kind === "BROKER_FEE").reduce((total, line) => total + (line.retailAmount ?? 0), 0)}
-            />
-          )}
 
           <div className="inline-actions">
             <button

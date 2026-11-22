@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import type { LineLike } from "./invoiceTotals";
 import {
   directBillWarning,
-  financeableInvoiceTotal,
   formatMoney,
   invoiceTotals,
   isPassThrough,
@@ -381,7 +380,7 @@ describe("remittanceSplit", () => {
 });
 
 describe("broker fee separation", () => {
-  it("keeps wholesaler fees and taxes out of agency income while including them in financed client charges", () => {
+  it("keeps wholesaler fees and taxes out of agency income when allocating client charges", () => {
     const lines = [
       { kind: "PREMIUM", retailAmount: 55541, costAmount: 49986.90 },
       { kind: "WHOLESALER_FEE", retailAmount: 250, costAmount: 250 },
@@ -389,7 +388,6 @@ describe("broker fee separation", () => {
       { kind: "BROKER_FEE", retailAmount: 500, costAmount: 0 },
     ];
     expect(invoiceTotals(lines).retail).toBe(58512.64);
-    expect(financeableInvoiceTotal(lines)).toBe(58012.64);
     expect(remittanceSplit(lines)).toEqual({ carrierCents: 5245854, commissionCents: 555410, brokerFeeCents: 50000, interestCents: 0, totalCents: 5851264 });
     expect(marginWarnings(lines)).toEqual([]);
     expect(remittanceSplit(lines.filter(line => line.kind !== "BROKER_FEE")).brokerFeeCents).toBe(0);
@@ -404,13 +402,11 @@ describe("broker fee separation", () => {
   });
   it("collects the full fee separately while financing only premium and existing pass-throughs", () => {
     const lines = [{kind:"PREMIUM",retailAmount:10000,costAmount:8500}, {kind:"BROKER_FEE",retailAmount:500,costAmount:0}, {kind:"TAX",retailAmount:100,costAmount:100}];
-    expect(financeableInvoiceTotal(lines)).toBe(10100);
     expect(remittanceSplit(lines)).toEqual({carrierCents:860000,commissionCents:150000,brokerFeeCents:50000,interestCents:0,totalCents:1060000});
     expect(marginWarnings([lines[1]])).toEqual([]);
   });
-  it("does not finance a fee-only direct-bill invoice", () => {
+  it("allows a fee-only direct-bill invoice", () => {
     const lines = [{kind:"BROKER_FEE",retailAmount:500,costAmount:0}];
-    expect(financeableInvoiceTotal(lines)).toBe(0);
     expect(directBillWarning("DIRECT", lines)).toBeNull();
   });
 });

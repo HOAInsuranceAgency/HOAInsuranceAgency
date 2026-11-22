@@ -17,19 +17,18 @@ function fixture(writeInlineCaller: boolean) {
   const permissions = new NestedStack(root, 'Permissions');
   const table = new Table(ledger, 'BrokerFeeLedger', { partitionKey: { name: 'id', type: AttributeType.STRING } });
   const voidInvoice = new Role(data, 'VoidInvoiceRole', { assumedBy: new ServicePrincipal('lambda.amazonaws.com') });
-  const pfElection = new Role(data, 'PfElectionRole', { assumedBy: new ServicePrincipal('lambda.amazonaws.com') });
-  for (const [name, role, write] of [['Void', voidInvoice, true], ['Election', pfElection, writeInlineCaller]] as const) {
+  for (const [name, role, write] of [['Void', voidInvoice, writeInlineCaller]] as const) {
     new ManagedPolicy(permissions, name, { roles: [role], statements: [new PolicyStatement({
       actions: ['dynamodb:GetItem', 'dynamodb:ConditionCheckItem', ...(write ? ['dynamodb:PutItem'] : [])], resources: [table.tableArn],
     })] });
   }
   app.synth();
-  return { app, root, callers: { voidInvoice, pfElection } };
+  return { app, root, callers: { voidInvoice } };
 }
 
 it('requires ledger writes on the inline financing caller even when the standalone void role can write', () => {
   const { root, callers } = fixture(false);
-  expect(() => checkBrokerFeeCallerAccess(root, callers)).toThrow('pfElection lacks broker fee claim-release permission: dynamodb:PutItem');
+  expect(() => checkBrokerFeeCallerAccess(root, callers)).toThrow('voidInvoice lacks broker fee claim-release permission: dynamodb:PutItem');
 });
 
 it('accepts actual cross-stack claim-release policies for both callers without altering dependencies', () => {
@@ -43,7 +42,7 @@ it('installs bounded managed grants without consuming the communications role in
   const app = new App(), root = new Stack(app, 'BrokerFeeDeployment');
   const data = new NestedStack(root, 'Data');
   const api = Object.assign(new Construct(data, 'Api'), { apiId: 'fixture-api-id' });
-  const functions = Object.fromEntries(['brokerFees','communications','commissions','stripeWebhook','sendInvoice','voidInvoice','pfElection','crmAccess'].map(name => {
+  const functions = Object.fromEntries(['brokerFees','communications','commissions','stripeWebhook','sendInvoice','voidInvoice','crmAccess'].map(name => {
     const fn = new Function(data, name, { runtime: Runtime.NODEJS_22_X, handler: 'index.handler', code: Code.fromInline('exports.handler = async () => {};') });
     return [name, { resources: { lambda: fn }, addEnvironment: (key: string, value: string) => fn.addEnvironment(key, value) }];
   }));
@@ -61,7 +60,7 @@ it('installs bounded managed grants without consuming the communications role in
   const resources = root.node.findAll().filter((node): node is CfnResource => node instanceof CfnResource).map(node =>
     Object.values(Stack.of(node).resolve(node._toCloudFormation()).Resources as Record<string, any>)[0]);
   const feePolicies = resources.filter(resource => JSON.stringify(resource.Properties?.PolicyDocument ?? {}).includes('BrokerFeeLedger'));
-  expect(feePolicies).toHaveLength(8);
+  expect(feePolicies).toHaveLength(7);
   expect(feePolicies.every(resource => resource.Type === 'AWS::IAM::ManagedPolicy')).toBe(true);
   for (const policy of feePolicies) {
     expect(policy.Properties.Roles).toHaveLength(1);
@@ -72,7 +71,7 @@ it('installs bounded managed grants without consuming the communications role in
   const inlineBytes = Buffer.byteLength(JSON.stringify(existingInline[0].Properties.PolicyDocument));
   expect(inlineBytes).toBeGreaterThan(9000);
   expect(inlineBytes).toBeLessThanOrEqual(10240);
-  expect(() => checkBrokerFeeCallerAccess(root, { voidInvoice: functions.voidInvoice.resources.lambda.role!, pfElection: functions.pfElection.resources.lambda.role! })).not.toThrow();
+  expect(() => checkBrokerFeeCallerAccess(root, { voidInvoice: functions.voidInvoice.resources.lambda.role! })).not.toThrow();
   const crmPolicy = feePolicies.find(policy => policy.Properties.Roles.some((role: unknown) => JSON.stringify(role).includes('crmAccess')));
   expect(crmPolicy).toBeDefined();
   const crmActions = crmPolicy.Properties.PolicyDocument.Statement.flatMap((statement: any) => [statement.Action].flat());

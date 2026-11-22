@@ -40,7 +40,7 @@ export async function authorizeCustom(access: AccountAccess, field: string, args
     }
     return;
   }
-  const model = ({ resolveHoneycombSubmission: ["HoneycombSubmission", "id"], sendInvoice: ["Invoice", "invoiceId"], voidInvoice: ["Invoice", "invoiceId"], issueFinanceQuote: ["Policy", "policyId"], generatePfAgreement: ["PfLoan", "loanId"], servicePfLoan: ["PfLoan", "loanId"] } as Record<string, string[]>)[field];
+  const model = ({ resolveHoneycombSubmission: ["HoneycombSubmission", "id"], sendInvoice: ["Invoice", "invoiceId"], voidInvoice: ["Invoice", "invoiceId"], servicePfLoan: ["PfLoan", "loanId"] } as Record<string, string[]>)[field];
   if (model) {
     const record = await access.requireRecord(model[0], id(args[model[1]]));
     for (const [key, target] of Object.entries({ policyId: "Policy", noticeId: "PfNotice", boardResolutionDocumentId: "Document" })) if (args[key]) {
