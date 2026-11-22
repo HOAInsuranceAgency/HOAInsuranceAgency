@@ -979,7 +979,7 @@ backend.extractLead.resources.lambda.grantInvoke(
 const commissionAccessPolicy = installAccountAccess(backend, communicationTable, businessDeliveryPermissions);
 installDashboardReads(backend);
 installOwnerProfitability(backend, communicationTable);
-const commissionStorage = installCommissions(backend, communicationTable, communicationAlerts, internalMailbox, crmBaseUrl);
+const commissionStorage = installCommissions(backend, communicationTable, commissionAccessPolicy, communicationAlerts, internalMailbox, crmBaseUrl);
 installBrokerFees(backend, communicationTable, commissionStorage.table, siteBaseUrl);
 installLiveChanges(backend);
 

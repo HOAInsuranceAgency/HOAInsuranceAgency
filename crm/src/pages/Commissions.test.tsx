@@ -856,3 +856,28 @@ it('pages earnings history without truncating the ledger totals or downloads',as
   expect(screen.getByText('History 50')).toBeVisible();expect(screen.queryByText('History 0')).toBeNull();
   expect(screen.getByText('Producer earned').parentElement?.textContent).toBe(before);
 });
+
+it('allows an Owner to record the fee entered in IPFS and match its settlement independently of a carrier statement', async () => {
+  h.owner = true;
+  const policy = { ...commissionPolicy(), ipfsAgreementRef: 'IPFS-123', ipfsFeeCents: 12500 };
+  h.read.mockResolvedValue({ ...snapshot(), policies: [policy] });
+  render(<Commissions />);
+  await screen.findByText('Producer earned');
+  fireEvent.click(screen.getByRole('tab', { name: 'IPFS fees' }));
+  expect(screen.getByText('IPFS-123')).toBeVisible();
+  fireEvent.change(screen.getByLabelText('Policy term to record or reconcile'), { target: { value: 'p' } });
+  fireEvent.change(screen.getByLabelText('Expected fee ($)'), { target: { value: '126.00' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save expected fee' }));
+  await waitFor(() => expect(h.action).toHaveBeenCalledWith('saveIpfsFee', {
+    policyId: 'p', version: 1, agreementRef: 'IPFS-123', expectedCents: 12600,
+  }));
+  fireEvent.change(screen.getByLabelText('Allocated fee amount ($)'), { target: { value: '120.50' } });
+  fireEvent.change(screen.getByLabelText('Actual settlement date'), { target: { value: '2026-10-15' } });
+  fireEvent.change(screen.getByLabelText('Unique IPFS transaction or allocation reference'), { target: { value: 'A-1' } });
+  fireEvent.change(screen.getByLabelText('Verified remittance or deposit reference'), { target: { value: 'D-1' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Post verified settlement' }));
+  await waitFor(() => expect(h.action).toHaveBeenCalledWith('postIpfsFee', {
+    policyId: 'p', version: 1, kind: 'RECEIPT', amountCents: 12050, lineRef: 'A-1', settlementRef: 'D-1',
+    receivedOn: '2026-10-15',
+  }));
+});
