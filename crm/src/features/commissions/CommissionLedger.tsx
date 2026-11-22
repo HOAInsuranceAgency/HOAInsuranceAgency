@@ -2,6 +2,7 @@ import { useState } from 'react';
 import {
   ACCOUNT_COMMISSION_CLASSES,
   carrierReconciliationBalances,
+  commissionRevenueLabel,
   decimal,
   policyTotals,
   recoveryBalances,
@@ -83,7 +84,7 @@ export function Ledger({
                   p.policyNumber,
                   e.receivedOn,
                   e.kind,
-                  e.revenueKind === "BROKER_FEE" ? "Broker fee" : "Carrier commission",
+                  commissionRevenueLabel(e.revenueKind),
                   e.agencyCents / 100,
                   p.producerBps / 100,
                   e.producerCents / 100,
@@ -183,7 +184,7 @@ export function Ledger({
                         <td>{e.receivedOn}</td>
                         <td>
                           {e.kind}
-                          <div className="small">{e.revenueKind === "BROKER_FEE" ? "Broker fee" : "Carrier commission"}</div>
+                          <div className="small">{commissionRevenueLabel(e.revenueKind)}</div>
                           <div className="small muted">{e.lineRef}</div>
                         </td>
                         <td>{money(e.agencyCents)}</td>
@@ -206,7 +207,7 @@ export function Ledger({
               </div>
             ) : (
               <p className="muted">
-                Awaiting carrier commission or broker fee receipts. Binding alone does not create payable earnings.
+                Awaiting carrier commission, broker fee, or IPFS fee receipts. Binding alone does not create payable earnings.
               </p>
             )}
           </section>

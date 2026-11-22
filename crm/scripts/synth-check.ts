@@ -176,6 +176,11 @@ try {
   }
   const statusEnv = Stack.of(backend.honeycombStatus.resources.lambda).resolve((backend.honeycombStatus.resources.lambda.node.defaultChild as CfnFunction).environment);
   if (statusEnv.variables.HONEYCOMB_ENVIRONMENT !== environment) throw new Error("Honeycomb public status must label the correct environment");
+  const retiredFinancingFields = new Set(["createPfLoan", "issueFinanceQuote", "createGroupedInvoice",
+    "financeElectionTerms", "acceptFinanceElection", "setPremiumFinanceEnabled", "generatePfAgreement"]);
+  for (const resolver of Object.values(backend.data.resources.cfnResources.cfnResolvers)) {
+    if (retiredFinancingFields.has(resolver.fieldName)) throw new Error(`Retired financing API is still published: ${resolver.fieldName}`);
+  }
   const { checkAccountAccess } = await import("./check-account-access");
   checkAccountAccess(backend, outdir);
   const { checkLiveChanges } = await import('./check-live-changes');
@@ -185,7 +190,6 @@ try {
   const { checkBrokerFeeCallerAccess } = await import('./check-broker-fee-access');
   checkBrokerFeeCallerAccess(backend.stack.node.root, {
     voidInvoice: backend.voidInvoice.resources.lambda.role!,
-    pfElection: backend.pfElection.resources.lambda.role!,
   });
   // Field-level read-only rules can silently remove every browser role from
   // deleteAccount even though the model permits administrator deletion. Check

@@ -10,28 +10,16 @@ import {
   DynamoDBDocumentClient,
   GetCommand,
   PutCommand,
-  ScanCommand,
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { SendEmailCommand } from "@aws-sdk/client-sesv2";
-import { PF_CONFIG_SHA256 } from "../../../../shared/premiumFinance/jurisdictions";
+import { PF_CONFIG_SHA256 } from "../../../../shared/premiumFinance/auditConfig";
 import { postInstallment, type PostableLoan } from "../pfPosting";
 import type { PfEventDecision } from "./decide";
 import { readPaidContext } from "./lookups";
 import { initialPaymentReceipt } from "../pfInitialPayment";
-import { activateSettledElection } from "../pfAutomaticActivation";
 
-/**
- * W7: the loan side of the webhook — the down payment that turns a QUOTED
- * offer into an ACTIVE loan, and the autopay debits that post installments.
- *
- * Same discipline as the invoice side: only `succeeded` moves anything,
- * writes are conditional on the state the decision read, and money that
- * lands where no state admits it is an alarm to a human, never a silent
- * skip. All 200s — an event acted on, an event skipped, and an event that
- * needs a person are all "received" as far as Stripe is concerned; only a
- * lost race asks for redelivery.
- */
+/** Record historical initial receipts and collect installments on existing loans. */
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient());
 const ses = new TransactionalMailClient("accounting");
@@ -40,7 +28,6 @@ interface LoanRow extends PostableLoan {
   status: string | null;
   state: string;
   policyId: string | null;
-  quoteId: string | null;
   groupedInvoiceId: string | null;
   groupedPolicyAgreementLines: string[];
   months: number;
@@ -48,11 +35,7 @@ interface LoanRow extends PostableLoan {
   originationFee: number;
   brokerFeeCents?: number;
   brokerFeeAllocations?: BrokerFeeAllocation[];
-  electedAt: string | null;
-  agreementSignedAt: string | null;
   downPaidAt: string | null;
-  stripeCustomerId: string | null;
-  stripePaymentMethodId: string | null;
   autopayPendingIntentId: string | null;
   downPaymentIntentId: string | null;
   electionEmail: string | null;
@@ -77,7 +60,6 @@ async function readLoan(loanId: string): Promise<LoanRow | null> {
     status: typeof item.status === "string" ? item.status : null,
     state: typeof item.state === "string" ? item.state : "",
     policyId: typeof item.policyId === "string" ? item.policyId : null,
-    quoteId: typeof item.quoteId === "string" ? item.quoteId : null,
     groupedInvoiceId: typeof item.groupedInvoiceId === "string" ? item.groupedInvoiceId : null,
     groupedPolicyAgreementLines: Array.isArray(item.groupedPolicyAgreementLines)
       ? item.groupedPolicyAgreementLines.filter((line): line is string => typeof line === "string")
@@ -87,11 +69,7 @@ async function readLoan(loanId: string): Promise<LoanRow | null> {
     originationFee: typeof item.originationFee === "number" ? item.originationFee : 0,
     brokerFeeCents: typeof item.brokerFeeCents === "number" ? item.brokerFeeCents : 0,
     brokerFeeAllocations: feeAllocations(item.brokerFeeAllocations),
-    electedAt: typeof item.electedAt === "string" ? item.electedAt : null,
-    agreementSignedAt: typeof item.agreementSignedAt === "string" ? item.agreementSignedAt : null,
     downPaidAt: typeof item.downPaidAt === "string" ? item.downPaidAt : null,
-    stripeCustomerId: typeof item.stripeCustomerId === "string" ? item.stripeCustomerId : null,
-    stripePaymentMethodId: typeof item.stripePaymentMethodId === "string" ? item.stripePaymentMethodId : null,
     autopayPendingIntentId:
       typeof item.autopayPendingIntentId === "string" ? item.autopayPendingIntentId : null,
     downPaymentIntentId:
@@ -208,44 +186,12 @@ async function syncLoanBrokerFee(d: PfEventDecision, loan: LoanRow, status: "PRO
   await syncBrokerFeePayment({ sourceId: d.paymentIntentId, accountId: loan.accountId, allocations, status, receivedOn: agencyDay(d.occurredAt) });
 }
 
-/** The down payment cleared: QUOTED → ACCEPTED, mandate stored. */
+/** A late initial settlement records only the money received, even on a signed offer. */
 async function applyDownPayment(d: PfEventDecision, loan: LoanRow): Promise<string> {
   const table = process.env.PF_LOAN_TABLE as string;
-  /**
-   * The kill switch is consulted at settle time — not to refuse the money,
-   * but to say so loudly. An electedAt stamp can only exist because it
-   * transacted with the flag ON (pf-election), so a down payment settling
-   * after a disable is a pre-disable election completing: servicing, not
-   * origination, the same rule that keeps debits running on ACTIVE loans.
-   * What must not happen silently is exactly this case — the row and the
-   * accounting note below are how a human reviews whether to unwind it.
-   */
-  let moduleOffAtSettle = false;
-  const settingsTable = process.env.AGENCY_SETTINGS_TABLE;
-  if (settingsTable) {
-    try {
-      const s = await ddb.send(
-        new GetCommand({ TableName: settingsTable, Key: { id: "AGENCY" }, ConsistentRead: true })
-      );
-      moduleOffAtSettle = s.Item?.premiumFinanceEnabled !== true;
-    } catch (err) {
-      console.error("stripe-webhook: could not read the module flag at settle", err);
-    }
-  }
-  /**
-   * A redelivered success is not stray money. The first delivery stored the
-   * intent id; seeing it again means the 200 got lost, nothing more — the
-   * quiet mirror of the installment path's "already posted".
-   */
-  if (loan.downPaymentIntentId === d.paymentIntentId && loan.status !== "QUOTED") {
-    await activateSettledElection(ddb, table, loan);
+  if (loan.downPaymentIntentId === d.paymentIntentId && loan.downPaidAt) {
     await syncLoanBrokerFee(d, loan, "PAID");
-    return "already accepted";
-  }
-  // A customer election is the activation authorization. Never mark a pending
-  // debit paid or require a later staff action to enroll the monthly schedule.
-  if (!d.customerId || !d.paymentMethodId || !loan.agreementSignedAt || !loan.electedAt) {
-    throw new Error("Settled financing election is missing its signature or saved payment mandate");
+    return "initial receipt already recorded";
   }
   const receipt = initialPaymentReceipt(loan, d.amount, d.billingVersion ?? null);
   const now = new Date().toISOString();
@@ -254,22 +200,16 @@ async function applyDownPayment(d: PfEventDecision, loan: LoanRow): Promise<stri
       new UpdateCommand({
         TableName: table,
         Key: { id: loan.id },
-        UpdateExpression:
-          "SET #s = :active, downPaidAt = :now, downPaymentIntentId = :pi, " +
-          "stripeCustomerId = :cus, stripePaymentMethodId = :pm, " +
-          "initialPaymentAmount = :received, originationFeeCollected = :fee, " +
-          "activatedAt = if_not_exists(activatedAt, :now), updatedAt = :now",
-        ConditionExpression: "#s = :quoted AND attribute_exists(agreementSignedAt) AND attribute_exists(electedAt)",
+        UpdateExpression: "SET downPaidAt = :settled, downPaymentIntentId = :pi, " +
+          "initialPaymentAmount = :received, originationFeeCollected = :fee, updatedAt = :now",
+        ConditionExpression: "#s IN (:quoted, :accepted) AND attribute_exists(agreementSignedAt) " +
+          "AND attribute_exists(electedAt) AND attribute_not_exists(downPaidAt) " +
+          "AND (attribute_not_exists(downPaymentIntentId) OR downPaymentIntentId = :pi)",
         ExpressionAttributeNames: { "#s": "status" },
         ExpressionAttributeValues: {
-          ":active": "ACTIVE",
-          ":received": receipt.initialPaymentAmount,
-          ":fee": receipt.originationFeeCollected,
-          ":quoted": "QUOTED",
-          ":now": now,
-          ":pi": d.paymentIntentId,
-          ":cus": d.customerId,
-          ":pm": d.paymentMethodId,
+          ":received": receipt.initialPaymentAmount, ":fee": receipt.originationFeeCollected,
+          ":quoted": "QUOTED", ":accepted": "ACCEPTED", ":pi": d.paymentIntentId,
+          ":settled": d.occurredAt, ":now": now,
         },
       })
     ));
@@ -281,140 +221,28 @@ async function applyDownPayment(d: PfEventDecision, loan: LoanRow): Promise<stri
      * is recorded and there is nothing to say.
      */
     const fresh = await readLoan(loan.id);
-    if (fresh?.downPaymentIntentId === d.paymentIntentId) { await syncLoanBrokerFee(d, fresh, "PAID"); return "already accepted"; }
+    if (fresh?.downPaymentIntentId === d.paymentIntentId && fresh.downPaidAt) {
+      await syncLoanBrokerFee(d, fresh, "PAID");
+      return "initial receipt already recorded";
+    }
     /**
      * Genuinely stray: a second checkout session, a cancellation that raced
      * the payment, a full payment that superseded the quote while the down
      * payment cleared. The money is real and the state cannot admit it: a
      * person refunds this, so a person hears now.
      */
-    console.error(
-      `stripe-webhook: down payment ${d.paymentIntentId} on loan ${loan.id} which is ${loan.status}, not QUOTED — refund needed`
-    );
-    try {
-      await mailAccounting(
-        `Financing down payment received on a ${loan.status} loan — refund needed`,
-        [
-          `A down payment of ${d.amount != null ? money(d.amount) : "(amount on the intent)"} cleared for loan ${loan.id},`,
-          `but the loan is ${loan.status}, not awaiting acceptance. Nothing was recorded against it.`,
-          ``,
-          `Payment intent: ${d.paymentIntentId}`,
-          `This needs a refund, not a journal entry.`,
-        ]
-      );
-    } catch (err2) {
-      console.error("stripe-webhook: could not send the down-payment alert", err2);
-    }
-    return "down payment on non-quoted loan; alerted";
+    await mailAccounting("Financing down payment needs reconciliation", [
+      `A Stripe deposit of ${money(receipt.initialPaymentAmount)} cleared for loan ${loan.id}.`,
+      `The existing loan record could not accept this receipt. Review its payment history and any refund due.`,
+      `Payment intent: ${d.paymentIntentId}`,
+    ]);
+    return "unmatched down payment; alerted";
   }
-
   await logRow({
-    accountId: loan.accountId,
-    jurisdiction: loan.state,
-    rule: "election",
-    outcome: "PASS",
-    reason:
-      `Down payment received (payment 1 of ${loan.months + 1}); loan automatically activated, mandate on file. Monthly debits follow the signed schedule.` +
-      (moduleOffAtSettle
-        ? " NOTE: the module was OFF at settle — the election predated the disable (its stamp transacted with the flag); review whether to unwind."
-        : ""),
-    inputs: {
-      loanId: loan.id,
-      paymentIntentId: d.paymentIntentId,
-      customerId: d.customerId,
-      paymentMethodId: d.paymentMethodId,
-      moduleOffAtSettle,
-      initialPaymentAmount: receipt.initialPaymentAmount,
-      originationFeeCollected: receipt.originationFeeCollected,
-    },
+    accountId: loan.accountId, jurisdiction: loan.state, rule: "down-payment", outcome: "PASS",
+    reason: "Received a historical financing down payment after origination closed.",
+    inputs: { loanId: loan.id, paymentIntentId: d.paymentIntentId, amount: receipt.initialPaymentAmount },
   });
-  if (moduleOffAtSettle) {
-    console.warn(`stripe-webhook: loan ${loan.id} accepted while the module is OFF; alerting`);
-    try {
-      await mailAccounting(
-        `Down payment settled under a disabled module — review loan ${loan.id}`,
-        [
-          `The financing module is OFF, but a down payment just settled and`,
-          `loan ${loan.id} is now ACTIVE. The election itself predates the`,
-          `disable — its stamp can only exist from a transaction with the flag on —`,
-          `so nothing was refused. Review whether this one should be unwound`,
-          `(refund ${d.paymentIntentId}) or continue servicing.`,
-        ]
-      );
-    } catch (err) {
-      console.error("stripe-webhook: could not send the off-at-settle note", err);
-    }
-  }
-
-  /**
-   * A committed election supersedes sibling quotes, exactly as a paid
-   * invoice does: the accept-time sibling check runs at read time, so two
-   * QUOTED loans on one policy can both hold payable sessions until one
-   * down payment lands — this is where the race serializes. Cancelling the
-   * siblings kills their election links (a CANCELLED loan's terms and
-   * accept both read closed), and a sibling whose OWN down payment was
-   * already clearing resolves through the not-QUOTED branch above when it
-   * settles: the refund alarm, which is the right answer to the second of
-   * two down payments for one premium.
-   */
-  try {
-    if (loan.policyId || loan.quoteId) {
-      // W8: siblings share EITHER anchor — a bind rollover mid-race must
-      // not let a quote-anchored twin escape the supersession.
-      const legs: string[] = [];
-      const values: Record<string, unknown> = { ":q": "QUOTED", ":self": loan.id };
-      if (loan.policyId) {
-        legs.push("policyId = :p");
-        values[":p"] = loan.policyId;
-      }
-      if (loan.quoteId) {
-        legs.push("quoteId = :qa");
-        values[":qa"] = loan.quoteId;
-      }
-      const { Items } = await ddb.send(
-        new ScanCommand({
-          TableName: table,
-          FilterExpression: `(${legs.join(" OR ")}) AND #s = :q AND id <> :self`,
-          ExpressionAttributeNames: { "#s": "status" },
-          ExpressionAttributeValues: values,
-        })
-      );
-      for (const sib of Items ?? []) {
-        try {
-          await sendCrmWrite(ddb.send(
-            new UpdateCommand({
-              TableName: table,
-              Key: { id: sib.id },
-              UpdateExpression: "SET #s = :c, closedAt = :now, updatedAt = :now",
-              ConditionExpression: "#s = :q",
-              ExpressionAttributeNames: { "#s": "status" },
-              ExpressionAttributeValues: {
-                ":c": "CANCELLED",
-                ":q": "QUOTED",
-                ":now": new Date().toISOString(),
-              },
-            })
-          ));
-        } catch (err) {
-          if ((err as { name?: string }).name === "ConditionalCheckFailedException") continue;
-          throw err;
-        }
-        await logRow({
-          accountId: loan.accountId,
-          jurisdiction: (sib.state as string) ?? loan.state,
-          rule: "superseded-by-election",
-          outcome: "BLOCK",
-          reason: `Quote cancelled: a sibling financing election on the same policy was funded (loan ${loan.id}).`,
-          inputs: { loanId: sib.id, fundedLoanId: loan.id },
-        });
-        console.log(`stripe-webhook: cancelled sibling QUOTED loan ${sib.id} — election funded`);
-      }
-    }
-  } catch (err) {
-    // Best effort after the money record; a failure never un-accepts.
-    console.error(`stripe-webhook: could not supersede sibling quotes for ${loan.id}`, err);
-  }
-  await syncLoanBrokerFee(d, loan, "PAID");
   try {
     const deal = await dealNames(loan);
     await mailAccounting(
@@ -434,7 +262,7 @@ async function applyDownPayment(d: PfEventDecision, loan: LoanRow): Promise<stri
           ? [`Legacy checkout: ${money(loan.originationFee - receipt.originationFeeCollected)} of the contractual origination fee was not collected.`]
           : []),
         `Premium and fee settle to the trust on the Stripe rail; keep the fee separate from premium.`,
-        `Monthly collections are enabled automatically on the signed schedule.`,
+        `Reconcile this deposit with the financing provider. Monthly collections were not started.`,
         ``,
         `Loan: ${loan.id}`,
         `Payment intent: ${d.paymentIntentId}`,
@@ -444,8 +272,8 @@ async function applyDownPayment(d: PfEventDecision, loan: LoanRow): Promise<stri
   } catch (err) {
     console.error("stripe-webhook: could not mail the down-payment split", err);
   }
-  console.log(`stripe-webhook: loan ${loan.id} automatically ACTIVE on ${d.paymentIntentId}`);
-  return "activated";
+  await syncLoanBrokerFee(d, loan, "PAID");
+  return "initial receipt recorded";
 }
 
 /** Clear the pending marker, if it still names this debit. */
@@ -694,71 +522,28 @@ export async function applyPfEvent(d: PfEventDecision): Promise<string> {
     return "unknown loan";
   }
 
-  if (d.outcome === "COMMITTED") {
-    /**
-     * The treasurer finished checkout. No money has moved — for manual-entry
-     * ACH it will sit in microdeposit verification for days — but the choice
-     * is made, and the election page must stop offering the accept button.
-     * Same stamp the PROCESSING branch writes, days earlier.
-     */
-    if (d.kind === "down" && loan.status === "QUOTED" && !loan.downPaymentIntentId) {
-      try {
-        await sendCrmWrite(ddb.send(
-          new UpdateCommand({
-            TableName: process.env.PF_LOAN_TABLE as string,
-            Key: { id: loan.id },
-            UpdateExpression: "SET downPaymentIntentId = :pi, updatedAt = :now",
-            ConditionExpression: "#s = :quoted AND attribute_not_exists(downPaymentIntentId)",
-            ExpressionAttributeNames: { "#s": "status" },
-            ExpressionAttributeValues: {
-              ":pi": d.paymentIntentId,
-              ":quoted": "QUOTED",
-              ":now": new Date().toISOString(),
-            },
-          })
-        ));
-      } catch (err) {
-        if ((err as { name?: string }).name !== "ConditionalCheckFailedException") throw err;
-      }
-      return "election committed; marked";
+  if (d.outcome === "COMMITTED" || d.outcome === "PROCESSING") {
+    // A completed Checkout can precede bank verification. Keep its reference
+    // for reconciliation without treating pending money as a receipt.
+    if (d.kind !== "down" || loan.downPaidAt || !["QUOTED", "ACCEPTED"].includes(loan.status ?? "")) return "clearing";
+    try {
+      await sendCrmWrite(ddb.send(new UpdateCommand({
+        TableName: process.env.PF_LOAN_TABLE as string,
+        Key: { id: loan.id },
+        UpdateExpression: "SET downPaymentIntentId = :pi, updatedAt = :now",
+        ConditionExpression: "#s IN (:quoted, :accepted) AND attribute_not_exists(downPaidAt) " +
+          "AND (attribute_not_exists(downPaymentIntentId) OR downPaymentIntentId = :pi)",
+        ExpressionAttributeNames: { "#s": "status" },
+        ExpressionAttributeValues: {
+          ":pi": d.paymentIntentId, ":quoted": "QUOTED", ":accepted": "ACCEPTED", ":now": new Date().toISOString(),
+        },
+      })));
+    } catch (err) {
+      if ((err as { name?: string }).name !== "ConditionalCheckFailedException") throw err;
+      return "historical receipt already advanced";
     }
-    return "session completed; nothing to mark";
-  }
-
-  if (d.outcome === "PROCESSING") {
-    if (d.kind === "down" && loan.status === "QUOTED") {
-      /**
-       * Record that a down payment is clearing, on the field its success
-       * will confirm. This is what lets the election page refuse a second
-       * election during the multi-day ACH window — the loan-side mirror of
-       * the invoice rule that PROCESSING refuses everything.
-       */
-      try {
-        await sendCrmWrite(ddb.send(
-          new UpdateCommand({
-            TableName: process.env.PF_LOAN_TABLE as string,
-            Key: { id: loan.id },
-            UpdateExpression: "SET downPaymentIntentId = :pi, updatedAt = :now",
-            ConditionExpression: "#s = :quoted",
-            ExpressionAttributeNames: { "#s": "status" },
-            ExpressionAttributeValues: {
-              ":pi": d.paymentIntentId,
-              ":quoted": "QUOTED",
-              ":now": new Date().toISOString(),
-            },
-          })
-        ));
-      } catch (err) {
-        if ((err as { name?: string }).name !== "ConditionalCheckFailedException") throw err;
-        // The loan moved; whatever won knows more than this event does.
-      }
-      const current = await readLoan(loan.id);
-      if (current?.downPaymentIntentId === d.paymentIntentId && current.status === "QUOTED") await syncLoanBrokerFee(d, current, "PROCESSING");
-      return "down payment clearing; marked";
-    }
-    // Money in flight moves nothing else — the pending marker already says
-    // everything true for an installment.
-    return "clearing";
+    if (d.outcome === "PROCESSING") await syncLoanBrokerFee(d, loan, "PROCESSING");
+    return "down payment pending";
   }
 
   if (d.outcome === "FAILED") {
@@ -782,22 +567,19 @@ export async function applyPfEvent(d: PfEventDecision): Promise<string> {
       });
       return "debit failed; stood down";
     }
-    /**
-     * A failed down payment leaves the offer QUOTED, and clears the
-     * clearing-marker so the election link works again — the loan-side
-     * mirror of PROCESSING → SENT on the invoice.
-     */
+    // Only clear a pending receipt. Failure events may arrive after success.
     try {
       await sendCrmWrite(ddb.send(
         new UpdateCommand({
           TableName: process.env.PF_LOAN_TABLE as string,
           Key: { id: loan.id },
           UpdateExpression: "REMOVE downPaymentIntentId SET updatedAt = :now",
-          ConditionExpression: "downPaymentIntentId = :pi AND #s = :quoted",
+          ConditionExpression: "downPaymentIntentId = :pi AND #s IN (:quoted, :accepted) AND attribute_not_exists(downPaidAt)",
           ExpressionAttributeNames: { "#s": "status" },
           ExpressionAttributeValues: {
             ":pi": d.paymentIntentId,
             ":quoted": "QUOTED",
+            ":accepted": "ACCEPTED",
             ":now": new Date().toISOString(),
           },
         })
@@ -805,7 +587,10 @@ export async function applyPfEvent(d: PfEventDecision): Promise<string> {
     } catch (err) {
       if ((err as { name?: string }).name !== "ConditionalCheckFailedException") throw err;
     }
-    if (!loan.downPaymentIntentId || loan.downPaymentIntentId === d.paymentIntentId) await syncLoanBrokerFee(d, loan, "FAILED");
+    const current = await readLoan(loan.id);
+    if (current && !current.downPaidAt && (!current.downPaymentIntentId || current.downPaymentIntentId === d.paymentIntentId)) {
+      await syncLoanBrokerFee(d, current, "FAILED");
+    }
     console.log(`stripe-webhook: down payment ${d.paymentIntentId} failed for ${loan.id}`);
     return "down payment failed";
   }

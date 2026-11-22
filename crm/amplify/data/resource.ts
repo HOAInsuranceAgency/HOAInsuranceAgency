@@ -13,12 +13,8 @@ import { certNumber } from "../functions/cert-number/resource";
 import { invoiceNumber } from "../functions/invoice-number/resource";
 import { sendInvoice } from "../functions/send-invoice/resource";
 import { voidInvoice } from "../functions/void-invoice/resource";
-import { pfAdmin } from "../functions/pf-admin/resource";
-import { pfOriginate } from "../functions/pf-originate/resource";
-import { pfAgreement } from "../functions/pf-agreement/resource";
 import { pfServicing } from "../functions/pf-servicing/resource";
 import { pfDefaultSweep } from "../functions/pf-default-sweep/resource";
-import { pfElection } from "../functions/pf-election/resource";
 import { pfAutopay } from "../functions/pf-autopay/resource";
 import { leadUpload } from "../functions/lead-upload/resource";
 import { uploadPortal } from "../functions/upload-portal/resource";
@@ -1226,22 +1222,7 @@ const schema = a
       .secondaryIndexes((index) => [index("accountId").sortKeys(["occurredAt"])])
       .authorization((allow) => [allow.authenticated().to(["read"])]),
 
-    /**
-     * A premium finance loan, from quote to close.
-     *
-     * The client can only READ. Every write — creation included — happens in
-     * the pf Lambdas over IAM, because creation IS the control point: the
-     * jurisdiction gate, the APR cap, the coverage screen and the eligibility
-     * checks all run server-side in issueFinanceQuote, and a client-writable
-     * model would be a path around all of them. The terms and schedule are
-     * FROZEN COPIES taken at issuance: the quote a borrower signs must not
-     * drift when a policy row is edited later.
-     *
-     * No compensation fields of any kind belong here — no commission, fee
-     * split, referral or producer payment from the lending side. Nine states
-     * prohibit it and the schema must not be able to express it; a grep test
-     * holds this section to that.
-     */
+    /** In-house financing history and frozen terms for servicing existing loans. */
     PfLoan: a
       .model({
         accountId: a.id().required(),
@@ -1353,7 +1334,7 @@ const schema = a
         agreementSignedName: a.string(),
         agreementSignedRole: a.string(),
         agreementSignedIp: a.string(),
-      }).disableOperations(["subscriptions"])
+      }).disableOperations(["subscriptions", "create"])
       .secondaryIndexes((index) => [
         index("accountId").sortKeys(["quotedAt"]),
         index("electionToken"),
@@ -1449,7 +1430,6 @@ const schema = a
       .secondaryIndexes((index) => [index("jurisdiction").sortKeys(["effectiveAt"])])
       .authorization((allow) => [
         allow.authenticated().to(["read"]),
-        allow.groups(["ADMIN", "OWNER"]).to(["read", "create"]),
       ]),
 
     /**
@@ -1834,32 +1814,13 @@ const schema = a
          * than in someone's notes app.
          */
         agencyEin: a.string(),
-        /**
-         * The premium-finance kill switch.
-         *
-         * Written ONLY by the setPremiumFinanceEnabled mutation (pf-admin),
-         * so every flip lands in PfComplianceLog with who and when — counsel
-         * says stop, an admin stops it in minutes, and the record exists.
-         * The ordinary Settings save path must never write this field.
-         * Absent means off: the module ships dark.
-         */
+        /** Historical origination setting retained for audit. */
         premiumFinanceEnabled: a.boolean(),
         /** Reviewed jurisdiction eligibility and disclosure templates; no per-policy approval. */
         brokerFeeJurisdictions: a.json(),
         brokerFeeJurisdictionsVersion: a.integer(),
-        /**
-         * When the flag last changed — the serialization stamp. Enable writes
-         * conditionally on it being unchanged since the invocation began, so
-         * an in-flight enable cannot overwrite a disable that landed after it
-         * started; disable writes unconditionally, because off always wins.
-         */
         premiumFinanceEnabledAt: a.datetime(),
-        /**
-         * The designated lending bank account's label. Loan receipts and
-         * disbursements reference it and it must never name the premium
-         * trust: fiduciary premium and lending capital cannot commingle.
-         * Payment posting refuses until this is set.
-         */
+        /** Historical account label from the in-house lending program. */
         pfLendingAccountName: a.string(),
         /**
          * Who last changed these, for the obvious "who typed that?" question.
@@ -2235,40 +2196,6 @@ const schema = a
       .authorization((allow) => [allow.publicApiKey()])
       .handler(a.handler.function(uploadPortal)),
 
-    /**
-     * W7: the finance election, from the invoice email's signed link. Public
-     * for the association's board treasurer, thin for everyone else — the
-     * token names a loan; every decision is re-made server-side from what
-     * the tables say now. Terms renders the offer; accept closes the
-     * pay-in-full paths, stamps the election, and returns a Stripe Checkout
-     * URL for the down payment + ACH mandate. Advancing the loan itself is
-     * the webhook's job, when the money actually moves.
-     */
-    financeElectionTerms: a
-      .query()
-      .arguments({ token: a.string().required() })
-      .returns(a.json())
-      .authorization((allow) => [allow.publicApiKey()])
-      .handler(a.handler.function(pfElection)),
-
-    acceptFinanceElection: a
-      .mutation()
-      .arguments({
-        token: a.string().required(),
-        /** The dispatch discriminator — see lead-upload/dispatch.ts. */
-        accept: a.boolean().required(),
-        /**
-         * W8: the agreement's execution — a typed name and role, required
-         * by the handler before any Checkout Session exists. Optional here
-         * only because a revived link (failed debit) is already signed.
-         */
-        signerName: a.string(),
-        signerRole: a.string(),
-      })
-      .returns(a.json())
-      .authorization((allow) => [allow.publicApiKey()])
-      .handler(a.handler.function(pfElection)),
-
     brokerFeeDisclosure: a.query()
       .arguments({ token: a.string().required() }).returns(a.json())
       .authorization(allow => [allow.publicApiKey()])
@@ -2399,13 +2326,6 @@ const schema = a
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(invoiceNumber)),
 
-    createGroupedInvoice: a
-      .mutation()
-      .arguments({ accountId: a.id().required(), policyIds: a.id().array().required(), reviewedTotals: a.json().required() })
-      .returns(a.json())
-      .authorization((allow) => [allow.groups(["OWNER"])])
-      .handler(a.handler.function(crmAccess)),
-
     restoreGroupedInvoice: a
       .mutation()
       .arguments({ invoiceId: a.id().required() })
@@ -2443,54 +2363,6 @@ const schema = a
       .returns(a.json())
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(voidInvoice)),
-
-    /**
-     * Flip the premium-finance module, with the flip logged in the same
-     * breath. ADMIN only — this is the kill switch on a lending product, and
-     * the reason it is a mutation rather than a settings write is that the
-     * log row and the flag change come from one Lambda and cannot come apart.
-     */
-    setPremiumFinanceEnabled: a
-      .mutation()
-      .arguments({ enabled: a.boolean().required() })
-      .returns(a.json())
-      .authorization((allow) => [allow.groups(["ADMIN", "OWNER"])])
-      .handler(a.handler.function(pfAdmin)),
-
-    /**
-     * Originate a premium finance quote — the control point.
-     *
-     * Re-runs everything server-side whatever the UI showed: the module flag,
-     * the jurisdiction gate, the APR cap (a request above the cap is rejected
-     * by this API, not just disabled in a browser), the minimum principal,
-     * and all four eligibility screens. Writes one PfComplianceLog row per
-     * rule evaluated, pass or block, each carrying the ruleset SHA — and only
-     * on all-pass creates the PfLoan.
-     */
-    issueFinanceQuote: a
-      .mutation()
-      .arguments({
-        policyId: a.string().required(),
-        premium: a.float().required(),
-        downPct: a.float().required(),
-        months: a.integer().required(),
-        apr: a.float().required(),
-        effectiveDate: a.string().required(),
-      })
-      .returns(a.json())
-      .authorization((allow) => [allow.authenticated()])
-      .handler(a.handler.function(pfOriginate)),
-
-    /**
-     * Render the financing agreement from the loan's frozen terms and recorded
-     * deposit-time signature. This is the only financing document required.
-     */
-    generatePfAgreement: a
-      .mutation()
-      .arguments({ loanId: a.string().required() })
-      .returns(a.json())
-      .authorization((allow) => [allow.authenticated()])
-      .handler(a.handler.function(pfAgreement)),
 
     /**
      * Everything that happens to a loan after issuance, in one Lambda-backed
@@ -2562,22 +2434,9 @@ const schema = a
     allow.resource(portalSweep),
     // Reads invoices, lines, accounts and contacts to build the emailed bill.
     allow.resource(sendInvoice),
-    /**
-     * Premium finance. Origination reads Account/Policy/PfOverride/settings
-     * and creates PfLoan; the agreement renderer reads the loan tree and
-     * creates Document rows; servicing writes loans, payments and notice
-     * rows; the default sweep marks missed loans. All four write their
-     * decision rows to the compliance-log table directly, not through here —
-     * that model takes no data-client writes from anything.
-     */
-    allow.resource(pfOriginate),
-    allow.resource(pfAgreement),
+    // Historical agreements, servicing and default detection.
     allow.resource(pfServicing),
     allow.resource(pfDefaultSweep),
-    // The public election endpoint resolves loan tokens, reads the account
-    // name, the kill switch, and the policy's invoices; its writes (the
-    // election stamp, the compliance row, the void) go direct to tables.
-    allow.resource(pfElection),
     // The autopay cron reads ACTIVE loans; its claim/marker writes are
     // conditional and go direct to the loan table.
     allow.resource(pfAutopay),

@@ -299,3 +299,11 @@ rates are 10% new / 5% renewal; accounts originally bound before October 1 remai
 excluded from commissions on all later renewals. October 1 itself is eligible.
 These are configuration requirements, not seeded global defaults. Other
 producers' agreements remain independently configurable.
+
+## IPFS financing fees
+
+In **Commissions → IPFS fees**, the Owner selects a bound policy term and records the agency fee entered in IPFS and its agreement reference. For a multi-policy agreement, allocate the agreed fee across the covered terms. Each renewal has its own fee. The fee belongs to that policy term.
+
+Match the fee portion of an actual IPFS remittance to the term using its settlement date, a unique transaction or allocation reference, and the deposit or remittance reference. For a shared deposit, enter the total agency fees shown on the remittance, reuse the deposit reference and date, and enter a different allocation reference for each term. Allocations across all terms and accounts are capped by the verified subtotal for that transaction type. Partial receipts accumulate against the expected fee. An amount entered before collecting it contributes to the agency estimate. Only verified receipts create producer earnings, using the policy's frozen eligible producer share.
+
+The fee table shows expected, gross received, refunded, net received, and outstanding amounts. A refund links to its original receipt, reduces net collections, and goes through the normal producer adjustment review. Outstanding is the expected fee less gross receipts. A reversed refund links to that refund. The private ledger identifies IPFS fees separately, and eligible receipts enter the producer’s regular payroll batch.

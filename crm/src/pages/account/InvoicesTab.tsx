@@ -1,23 +1,18 @@
 import { useAccountPermissions } from '../../components/AccountPermissions';
 import { assertGraphqlErrors } from '../../lib/apiResponse';
-import { createGroupedInvoice, reserveInvoiceNumber } from '../../lib/billingApi';
-import { MoneyInput } from "../../components/inputs";
+import { reserveInvoiceNumber } from '../../lib/billingApi';
 import { Button } from "../../components/ui/Button";
-import { Input } from "../../components/ui/Input";
 import { Select } from "../../components/ui/Select";
 import { Table } from "../../components/ui/Table";
 import { useRef, useState } from "react";
-import { client, fmtDate, fmtMoney, type Account, type Contact, type Invoice, type InvoiceLine, type Policy, type Quote } from "../../lib/client";
+import { client, fmtDate, fmtMoney, type Contact, type Invoice, type InvoiceLine, type Policy, type Quote } from "../../lib/client";
 import { listAllPages } from "../../../../shared/pagination";
 import { isAuthorizationError } from "../../../../shared/authorizationError";
 import { allWithAuthorizationPriority } from "../../lib/allWithAuthorizationPriority";
 import { useAsyncResource } from "../../lib/useAsyncResource";
 import { SaveStatus, useSaveStatus } from "../../components/SaveStatus";
 import { InvoiceEditor } from "../../components/InvoiceEditor";
-import { groupedInvoiceCandidates, parseSupplierGrossCents } from "../../features/invoicing/groupedInvoiceDrafts";
-import { policyLabel } from "../../features/invoicing/invoiceInputs";
-import { useIsOwner } from "../../lib/auth";
-import { formatMoney, invoiceTotals, premiumLineFromPolicy } from "../../../../shared/invoiceTotals";
+import { invoiceTotals, premiumLineFromPolicy } from "../../../../shared/invoiceTotals";
 import {
   brokerFeeLineFromSource,
   findAdjustmentOriginal,
@@ -70,7 +65,6 @@ export function InvoicesTab({ accountId }: { accountId: string }) {
 }
 
 function InvoicesTabContent({ accountId }: { accountId: string }) {
-  const isOwner = useIsOwner();
   const res = useAsyncResource(
     async () => {
       /**
@@ -81,7 +75,7 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
        * know which policies are already billed. Fetching them per-invoice would
        * be one round trip per row to render a summary.
        */
-      const [invoices, lines, policies, quotes, contacts, account] = await allWithAuthorizationPriority([
+      const [invoices, lines, policies, quotes, contacts] = await allWithAuthorizationPriority([
         listAllPages((nextToken) =>
           client.models.Invoice.list({
             filter: { accountId: { eq: accountId } },
@@ -100,8 +94,6 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
             nextToken,
           })
         ),
-        // W8: quotes are invoiceable before bind — premium billed, financing
-        // offered, everything rolling onto the policy at bind.
         listAllPages((nextToken) =>
           client.models.Quote.list({
             filter: { accountId: { eq: accountId } },
@@ -114,13 +106,6 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
             nextToken,
           })
         ),
-        // The financing hint predicts the send's origination, which reads
-        // the account's state, type and incorporation.
-        client.models.Account.get({ id: accountId }).then((r) => {
-          if (r.errors?.length) throw r.errors.find(isAuthorizationError) ?? r.errors[0];
-          if (!r.data) throw new Error("Couldn't load the account for billing.");
-          return r.data;
-        }),
       ]);
       return {
         invoices: invoices as Invoice[],
@@ -128,7 +113,6 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
         policies: policies as Policy[],
         quotes: quotes as Quote[],
         contacts: contacts as Contact[],
-        account: account as Account | null,
       };
     },
     [accountId],
@@ -142,11 +126,6 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
   const [editorBusy, setEditorBusy] = useState(false);
   /** "policy:<id>" | "quote:<id>" — the anchor the next invoice bills. */
   const [anchorKey, setAnchorKey] = useState("");
-  const [combineOpen, setCombineOpen] = useState(false);
-  const [selectedPolicyIds, setSelectedPolicyIds] = useState<string[]>([]);
-  const [supplierGross, setSupplierGross] = useState<Record<string, string>>({});
-  const [createdGroupId, setCreatedGroupId] = useState<string | null>(null);
-
   /**
    * W8: every invoice bills exactly one policy or quote, chosen HERE, and an
    * anchor carries one live invoice at a time — PAID and VOID free the slot
@@ -155,7 +134,7 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
    */
   async function newInvoice() {
     const loaded = res.data;
-    if (!loaded || !anchorAvailable || combineOpen || waitingForGroup || creating.current) return;
+    if (!loaded || !anchorAvailable || creating.current) return;
     creating.current = true;
     const [kind, anchorId] = anchorKey.split(":", 2);
     await createStatus.run(
@@ -279,8 +258,7 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
   const readError = res.error && <p className="error-text">{res.error} <Button type="button" disabled={res.loading} onClick={() => void res.refetch()}>Retry invoices</Button></p>;
   if (!res.data) return readError || null;
 
-  const { invoices, lines, policies, quotes, contacts, account } = res.data;
-  const waitingForGroup = !!createdGroupId && !invoices.some(invoice => invoice.id === createdGroupId);
+  const { invoices, lines, policies, quotes, contacts } = res.data;
   // Newest first: the one someone came here for is almost always the last made.
   const ordered = [...invoices].sort((a, b) =>
     (b.createdAt ?? "").localeCompare(a.createdAt ?? "")
@@ -302,46 +280,9 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
   const openQuotes = invoiceableQuotes(quotes, busyAnchors, isOpenQuoteStatus);
   const anchorAvailable = openPolicies.some(policy => anchorKey === `policy:${policy.id}`) ||
     openQuotes.some(quote => anchorKey === `quote:${quote.id}`);
-  const candidates = isOwner ? groupedInvoiceCandidates(policies, invoices, lines) : [];
-  const canOpenCombine = candidates.some(candidate => candidates.filter(other => other.term === candidate.term).length >= 2);
-  const selected = candidates.filter(candidate => selectedPolicyIds.includes(candidate.policy.id));
-  const selectedTerm = selected[0]?.term;
-  const supplierReviews = new Map(selected.filter(candidate => candidate.draft).map(({ policy, amount }) => {
-    const input = supplierGross[policy.id] ?? "";
-    const totalCents = parseSupplierGrossCents(input);
-    const matches = totalCents === Math.round(amount * 100);
-    return [policy.id, { input, totalCents, matches }] as const;
-  }));
-  const reviewedTotals = [...supplierReviews].flatMap(([policyId, review]) =>
-    review.matches && review.totalCents !== null ? [{ policyId, totalCents: review.totalCents }] : []);
-  const totalMismatch = [...supplierReviews.values()].some(review => review.totalCents !== null && !review.matches);
-  const missingSelection = selected.length !== selectedPolicyIds.length;
-  const canCombine = selected.length >= 2 && selected.length <= 8 && !missingSelection &&
-    selected.every(candidate => candidate.term === selectedTerm) && reviewedTotals.length === supplierReviews.size;
-
-  async function combinePolicies() {
-    if (!isOwner || !canCombine || creating.current || res.loading || res.error || open || waitingForGroup) return;
-    creating.current = true;
-    await createStatus.run(async isCurrent => {
-      const invoiceId = await createGroupedInvoice({ accountId, policyIds: selectedPolicyIds, reviewedTotals });
-      if (!isCurrent()) return;
-      setCreatedGroupId(invoiceId);
-      setOpenId(invoiceId);
-      setCombineOpen(false);
-      setSelectedPolicyIds([]);
-      setSupplierGross({});
-      setAnchorKey("");
-      await res.refetch();
-    }, { savedMessage: "Combined draft created.", errorMessage: "Couldn't combine the selected policies." });
-    creating.current = false;
-  }
-
   return (
     <>
       {readError}
-      {waitingForGroup && !res.loading && !readError && <p className="muted small">
-        Refresh invoices to open the combined draft. <Button type="button" onClick={() => void res.refetch()}>Refresh invoices</Button>
-      </p>}
       <div className="card">
         <div className="card-head">
           <h2>Invoices</h2>
@@ -350,7 +291,7 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
             <Select
               aria-label="Bill which policy or quote"
               value={anchorKey}
-              disabled={createStatus.busy || combineOpen || waitingForGroup}
+              disabled={createStatus.busy}
               onChange={(e) => setAnchorKey(e.target.value)}
             >
               <option value="">Bill which policy or quote…</option>
@@ -375,73 +316,14 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
             <Button variant="primary"
               type="button"
 
-              disabled={!permissions.invoice || createStatus.busy || editorBusy || combineOpen || waitingForGroup || !anchorAvailable}
+              disabled={!permissions.invoice || createStatus.busy || editorBusy || !anchorAvailable}
               onClick={() => void newInvoice()}
             >
               New invoice
             </Button>
-            {canOpenCombine && !combineOpen && <Button type="button" variant="secondary"
-              disabled={createStatus.busy || editorBusy || !!open || waitingForGroup || res.loading || !!res.error}
-              onClick={() => { createStatus.markDirty(); setCombineOpen(true); }}>
-              Combine policies
-            </Button>}
           </div>
         </div>
-        {combineOpen && <div className="card inset">
-          <h3>Combine policies</h3>
-          <p className="muted small">Choose policies on the same term. The combined draft replaces the selected unsent invoices.</p>
-          {supplierReviews.size > 0 && <p className="muted small">Enter each supplier invoice total before commission, including fees and taxes.</p>}
-          <ul className="check-list">
-            {candidates.map(({ policy, term, draft, amount }) => {
-              const checked = selectedPolicyIds.includes(policy.id);
-              const review = supplierReviews.get(policy.id);
-              const inputId = `supplier-gross-${policy.id}`;
-              const problem = review?.input && !review.matches
-                ? review.totalCents === null ? "Enter a positive amount with up to two decimal places."
-                  : `The supplier gross total differs from the draft total of ${formatMoney(amount)}.`
-                : "";
-              return <li key={policy.id}><label>
-                <Input type="checkbox" checked={checked}
-                  disabled={createStatus.busy || (!checked && ((!!selectedTerm && term !== selectedTerm) || selectedPolicyIds.length >= 8))}
-                  onChange={event => {
-                    createStatus.markDirty();
-                    const include = event.target.checked;
-                    setSelectedPolicyIds(ids => include ? [...ids, policy.id] : ids.filter(id => id !== policy.id));
-                    if (!include) setSupplierGross(previous => ({ ...previous, [policy.id]: "" }));
-                  }} />
-                <span>{policyLabel(policy)}
-                  <span className="muted small"> · {draft ? `Draft ${draft.number ?? "invoice"}` : "HOA carrier advance"} · {formatMoney(amount)}</span>
-                </span>
-              </label>
-                {review && <div className="field">
-                  <label htmlFor={inputId}>Supplier gross total</label>
-                  <MoneyInput id={inputId} value={review.input} disabled={createStatus.busy}
-                    aria-label={`Supplier gross total for ${policyLabel(policy)}`}
-                    aria-required={true} aria-invalid={!!problem} aria-describedby={problem ? `${inputId}-problem` : undefined}
-                    onChange={value => {
-                      createStatus.markDirty();
-                      setSupplierGross(previous => ({ ...previous, [policy.id]: value }));
-                    }} />
-                  {problem && <p id={`${inputId}-problem`} className="error-text small">{problem}</p>}
-                </div>}
-              </li>;
-            })}
-          </ul>
-          {missingSelection && <p className="warn-inline">A selected draft is no longer available. Close and reopen this form to review available drafts.</p>}
-          <div className="inline-actions">
-            <Button type="button" variant="primary" disabled={!canCombine || createStatus.busy || res.loading || !!res.error}
-              onClick={() => void combinePolicies()}>Create combined draft</Button>
-            {(totalMismatch || createStatus.status.state === "error") && <Button type="button" variant="secondary" disabled={createStatus.busy || res.loading}
-              onClick={() => { createStatus.markDirty(); void res.refetch(); }}>Refresh invoices</Button>}
-            <Button type="button" variant="secondary" disabled={createStatus.busy} onClick={() => {
-              createStatus.markDirty();
-              setCombineOpen(false);
-              setSelectedPolicyIds([]);
-              setSupplierGross({});
-            }}>Cancel</Button>
-          </div>
-        </div>}
-        {!combineOpen && !canOpenCombine && openPolicies.length === 0 && openQuotes.length === 0 && (
+        {openPolicies.length === 0 && openQuotes.length === 0 && (
           <p className="muted small">
             Every policy and open quote either has a live invoice already or
             isn't agency-billed. One live invoice per policy or quote — void
@@ -487,7 +369,7 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
                           type="button"
 
                           aria-expanded={isOpen}
-                          disabled={createStatus.busy || editorBusy || combineOpen || waitingForGroup}
+                          disabled={createStatus.busy || editorBusy}
                           onClick={() => setOpenId(isOpen ? null : inv.id)}
                         >
                           {isOpen ? "Close" : "Open"}
@@ -512,7 +394,6 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
           onGroupedRestored={res.refetch}
           policies={policies}
           quotes={quotes}
-          account={account}
           contacts={contacts}
           onChange={(next) =>
             res.setData((cur) =>

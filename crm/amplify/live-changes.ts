@@ -18,8 +18,8 @@ export function livePublisherFunctions(backend: typeof Backend) {
   const functions = [backend.crmAccess, backend.activityLog, backend.honeycombWorker, backend.honeycombSubmissionWorker,
     backend.communications, backend.communicationWorker, backend.communicationWebhook, backend.communicationMonitor,
     backend.assignmentIndexWorker, backend.commissions, backend.brokerFees, backend.ownerProfitability,
-    backend.stripeWebhook, backend.sendInvoice, backend.voidInvoice, backend.pfAdmin, backend.pfOriginate,
-    backend.pfServicing, backend.pfDefaultSweep, backend.pfElection, backend.pfAutopay,
+    backend.stripeWebhook, backend.sendInvoice, backend.voidInvoice,
+    backend.pfServicing, backend.pfDefaultSweep, backend.pfAutopay,
     backend.teamAdmin, backend.leadReply, backend.leadIntake,
     backend.portalSweep, backend.marketingReportApi,
     backend.marketingReportWorker];

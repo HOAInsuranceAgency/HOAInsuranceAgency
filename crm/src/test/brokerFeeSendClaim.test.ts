@@ -17,7 +17,7 @@ vi.mock('../../amplify/functions/broker-fees/store', async original => ({
   ...await original<typeof import('../../amplify/functions/broker-fees/store')>(),
   getFee: h.getFee, getModel: h.model, accountModels: h.accountModels, db: { send: h.storeDb },
 }));
-vi.mock('../../amplify/functions/broker-fees/payments', () => ({ reserveFeeInvoice: h.reserve, publishFeeInvoiceLink: h.publish, completeFeeInvoiceSend: h.complete, reserveFeeLoan: vi.fn() }));
+vi.mock('../../amplify/functions/broker-fees/payments', () => ({ reserveFeeInvoice: h.reserve, publishFeeInvoiceLink: h.publish, completeFeeInvoiceSend: h.complete }));
 vi.mock('../../amplify/functions/broker-fees/bindValidation', () => ({ assertBrokerFeeSigned: async () => ({}) }));
 vi.mock('../../amplify/functions/broker-fees/agreements', () => ({ prepareBrokerFeeAgreement: h.prepare }));
 vi.mock('../../amplify/functions/send-invoice/pdf', () => ({ pdfFilename: () => 'invoice.pdf', renderInvoicePdf: h.pdf }));
@@ -109,9 +109,27 @@ beforeEach(() => {
 afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 const send = () => handler({ arguments: { invoiceId: 'i', toEmail: 'board@example.test' } });
 
+it.each([
+  { policyId: 'p', status: 'ACTIVE' },
+  { quoteId: 'q', status: 'PAID' },
+  { groupedPolicyIds: ['other', 'p'], status: 'DEFAULTED' },
+  { quoteId: 'q', status: 'QUOTED', agreementSignedAt: '2026-11-01T12:00:00Z' },
+  { quoteId: 'q', status: 'QUOTED', downPaymentIntentId: 'processing' },
+  { policyId: 'p', status: 'CANCELLED', downPaidAt: '2026-11-01T12:00:00Z' },
+])('refuses a second premium bill for a committed financing term %j', async loan => {
+  Object.assign(h.invoice, { policyId: 'p', status: 'SENT', paymentUrl: 'https://buy.stripe.com/old' });
+  h.records.set('Policy:p', { ...h.quote, id: 'p', quoteId: 'q' });
+  h.records.set('PfLoan:legacy', { ...loan, id: 'legacy', accountId: 'a' });
+  h.models.InvoiceLine.list = async () => ({ data: [{ id: 'premium', policyId: 'p', kind: 'PREMIUM', retailAmount: 10000 }] });
+  await expect(send()).resolves.toMatchObject({ ok: false, error: expect.stringContaining('existing financing') });
+  expect(h.begin).not.toHaveBeenCalled();
+  expect(h.link).not.toHaveBeenCalled();
+  expect(h.mail).not.toHaveBeenCalled();
+});
+
 it.each([{ sourcePricingVersion: 3 }, { groupedPolicyIds: ['p1', 'p2'] }])('blocks incomplete grouped invoices before delivery or payment setup', async grouped => {
   Object.assign(h.invoice, grouped);
-  await expect(send()).resolves.toEqual({ ok: false, error: 'The combined invoice no longer matches its reviewed policies and amounts. Review the draft before billing.' });
+  await expect(send()).resolves.toEqual({ ok: false, error: 'In-house financing has ended. This combined financing invoice cannot be sent.' });
   expect(h.begin).not.toHaveBeenCalled();
   expect(h.reserve).not.toHaveBeenCalled();
   expect(h.link).not.toHaveBeenCalled();
@@ -337,7 +355,7 @@ describe('real adjustment Send proof and source protection', () => {
   it('blocks an agency-collected carrier direct bill from the standalone payment path', async () => {
     adjustmentFixture();
     Object.assign(h.records.get('Policy:p')!, { billType: 'AGENCY', carrierBillType: 'DIRECT' });
-    await expect(send()).resolves.toMatchObject({ ok: false, error: expect.stringContaining('direct-bill advance') });
+    await expect(send()).resolves.toMatchObject({ ok: false, error: expect.stringContaining('carrier-direct policy') });
     expect(h.begin).not.toHaveBeenCalled();
     expect(h.link).not.toHaveBeenCalled();
     expect(h.mail).not.toHaveBeenCalled();
@@ -371,7 +389,7 @@ describe('real adjustment Send proof and source protection', () => {
     expect(h.price.mock.calls[0][0].unit_amount).toBe(25000);
     expect(h.reserve).not.toHaveBeenCalled(); expect(h.prepare).not.toHaveBeenCalled(); expect(h.publish).not.toHaveBeenCalled();
     expect(h.models.AgencySettings.get).not.toHaveBeenCalled();
-    expect(h.pdf.mock.calls[0][0].finance).toBeNull();
+    expect(h.pdf.mock.calls[0][0].finance).toBeUndefined();
     expect(h.pdf.mock.calls[0][0].lines).toHaveLength(1);
     expect(h.pdf.mock.calls[0][0].lines[0].kind).toBe('ENDORSEMENT');
   });
@@ -417,7 +435,7 @@ describe('real adjustment Send proof and source protection', () => {
     expect(h.link).not.toHaveBeenCalled(); expect(h.reserve).not.toHaveBeenCalled();
     expect(h.models.AgencySettings.get).not.toHaveBeenCalled();
     const view = h.pdf.mock.calls[0][0];
-    expect(view.paymentUrl).toBeNull(); expect(view.finance).toBeNull();
+    expect(view.paymentUrl).toBeNull(); expect(view.finance).toBeUndefined();
     expect(h.mail.mock.calls[0][1].text).toContain('No payment is due.');
   });
 
@@ -455,7 +473,7 @@ describe('real adjustment Send proof and source protection', () => {
     adjustmentFixture();
     h.invoice.sourcePricingVersion = 1;
     delete h.invoice.adjustsInvoiceId; delete h.invoice.adjustsPremiumLineId;
-    h.accountModels.mockResolvedValue([{ ...h.records.get('Invoice:original'), status: 'SENT' }]);
+    h.accountModels.mockImplementation(async model => model === 'Invoice' ? [{ ...h.records.get('Invoice:original'), status: 'SENT' }] : []);
     h.models.InvoiceLine.list = async () => ({ data: [{ id: 'new-premium', accountId: 'a', invoiceId: 'i', policyId: 'p', kind: 'PREMIUM', description: 'Policy premium', retailAmount: 10000, costAmount: 8000 }] });
     expect(await send()).toMatchObject({ ok: false });
     expect(h.accountModels).toHaveBeenCalledWith('Invoice', 'a');

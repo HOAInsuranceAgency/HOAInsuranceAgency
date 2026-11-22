@@ -67,12 +67,8 @@ import { portalSweep } from "./functions/portal-sweep/resource";
 import { sendInvoice } from "./functions/send-invoice/resource";
 import { stripeWebhook } from "./functions/stripe-webhook/resource";
 import { voidInvoice } from "./functions/void-invoice/resource";
-import { pfAdmin } from "./functions/pf-admin/resource";
-import { pfOriginate } from "./functions/pf-originate/resource";
-import { pfAgreement } from "./functions/pf-agreement/resource";
 import { pfServicing } from "./functions/pf-servicing/resource";
 import { pfDefaultSweep } from "./functions/pf-default-sweep/resource";
-import { pfElection } from "./functions/pf-election/resource";
 import { pfAutopay } from "./functions/pf-autopay/resource";
 import { resolveMailbox } from "./functions/mailbox";
 import { activityLog } from "./functions/activity-log/resource";
@@ -119,12 +115,8 @@ export const backend = defineBackend({
   sendInvoice,
   stripeWebhook,
   voidInvoice,
-  pfAdmin,
-  pfOriginate,
-  pfAgreement,
   pfServicing,
   pfDefaultSweep,
-  pfElection,
   pfAutopay,
   activityLog,
   communications,
@@ -834,37 +826,13 @@ invoiceTable.grantReadWriteData(backend.stripeWebhook.resources.lambda);
 backend.voidInvoice.addEnvironment("INVOICE_TABLE", invoiceTable.tableName);
 invoiceTable.grantReadWriteData(backend.voidInvoice.resources.lambda);
 
-/**
- * Premium finance admin: the module flag and its audit row are written by one
- * Lambda over direct table access — see pf-admin/resource.ts for why the flip
- * and its record must be inseparable.
- */
-bindPremiumFinanceTables(backend, 'administration');
-
-// Origination writes its decision rows straight to the log table too; model
-// reads and the PfLoan create go through the data client via allow.resource.
-bindPremiumFinanceTables(backend, 'origination');
-
 // Conditional ledger/notice writes and the default sweep share the audit log.
 bindPremiumFinanceTables(backend, 'servicing');
 bindPremiumFinanceTables(backend, 'defaultSweep');
 
-// The agreement renderer writes its PDFs under generated/pf/ — outside
-// documents/, so the OCR upload trigger never re-reads the app's own output.
-backend.pfAgreement.addEnvironment(
-  "DOCUMENTS_BUCKET",
-  backend.storage.resources.bucket.bucketName
-);
-backend.storage.resources.bucket.grantPut(
-  backend.pfAgreement.resources.lambda,
-  "generated/pf/*"
-);
-
-// Invoice-link publication and loan origination use conditional writes and
-// append-only compliance decisions; the feature map retains each permission.
+// Invoice writes and legacy loan checks protect against duplicate collection.
 bindPremiumFinanceTables(backend, 'invoicePublication');
 backend.sendInvoice.addEnvironment("SITE_URL", siteBaseUrl);
-bindPremiumFinanceTables(backend, 'invoiceOrigination');
 
 /**
  * Reporting the split to corporate finance, when Stripe confirms a payment.
@@ -887,16 +855,6 @@ backend.stripeWebhook.resources.lambda.addToRolePolicy(
 // webhook cancels those conditionally and logs the supersession. Settlement
 // checks the flag and posts autopay debits through the existing ledger core.
 bindPremiumFinanceTables(backend, 'webhookSettlement');
-
-/**
- * W7: the election endpoint. Its writes are all direct: the pay-in-full void
- * (void-invoice's own code, imported — INVOICE_TABLE), the electedAt stamp
- * (PF_LOAN_TABLE, conditional), and the compliance row. SITE_URL is where
- * Checkout returns the customer — the public website's finance page.
- */
-bindPremiumFinanceTables(backend, 'electionCheckout');
-backend.pfElection.addEnvironment("SITE_URL", siteBaseUrl);
-bindPremiumFinanceTables(backend, 'electionFlag');
 
 /**
  * W7: the autopay cron scans the loan table itself (no data client — its

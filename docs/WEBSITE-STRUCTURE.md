@@ -213,7 +213,7 @@ goes to the greatest lengths to keep private.
 | Prefix | Why |
 | --- | --- |
 | `/documents/` | Tokenised document portal — the URL carries a live upload secret |
-| `/finance/` | Tokenised premium-finance election — same reason |
+| `/finance/` | Closed notice for clients following an old financing link |
 | `/associations/` | Private per-association pages, distributed by property managers |
 | `/get-started/` | Orphaned paid-traffic landers; six of the eight target the same query as the reviewed state pages, so indexing them runs two competing pages per state |
 | `/quote/` | `client:only` — the HTML a crawler receives has an empty body, which earns a Soft 404, not a ranking |

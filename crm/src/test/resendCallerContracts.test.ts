@@ -48,6 +48,7 @@ beforeEach(() => {
   h.order.length = 0; h.reportUpdates.length = 0; h.createdSub = "synthetic-member-1";
   h.price.mockReset().mockResolvedValue({ id: "price_synthetic" }); h.link.mockReset().mockResolvedValue({ id: "plink_synthetic", url: "https://pay.example.com/synthetic" });
   h.db.mockReset().mockImplementation(async command => {
+    if (command.constructor.name === "QueryCommand" && command.input.TableName === "synthetic-loan-table") return { Items: [] };
     if (command.constructor.name === "GetCommand" && command.input.TableName === "synthetic-policy-table") return { Item: structuredClone(h.policy) };
     h.order.push("business-write"); return {};
   });
@@ -61,7 +62,7 @@ beforeEach(() => {
     POLICY_TABLE: "synthetic-policy-table",
     MARKETING_REPORT_FROM: "insurance@protectmyhoa.com", STRIPE_WEBHOOK_SECRET: "whsec_synthetic_only",
   })) vi.stubEnv(key, value);
-  vi.stubEnv("STRIPE_SECRET_KEY", ""); vi.stubEnv("PF_LOAN_TABLE", ""); vi.stubEnv("SITE_URL", "");
+  vi.stubEnv("STRIPE_SECRET_KEY", ""); vi.stubEnv("PFLOAN_TABLE", "synthetic-loan-table"); vi.stubEnv("PF_LOAN_TABLE", "synthetic-loan-table"); vi.stubEnv("SITE_URL", "");
   h.invoice = { id: "synthetic-invoice", number: "INV-SYN-001", accountId: "synthetic-account", policyId: "synthetic-policy", status: "DRAFT", issuedAt: "2026-10-30", updatedAt: "2026-10-30T11:00:00Z", stripePaymentIntentId: "pi_synthetic", remittanceCarrierCents: 80000, remittanceCommissionCents: 20000, remittanceInterestCents: 0 };
   h.policy = { id: h.invoice.policyId, accountId: h.invoice.accountId, policyNumber: "SYN-001", lines: ["Property"] };
   const lines = [{ id: "synthetic-line", invoiceId: h.invoice.id, policyId: h.invoice.policyId, description: "Synthetic premium", kind: "PREMIUM", retailAmount: 1000, costAmount: 800 }];
@@ -140,6 +141,7 @@ describe("real sender to Resend adapter contracts", () => {
     h.models.Invoice.get = async () => ({ data: structuredClone(h.invoice) });
     h.db.mockImplementation(async command => {
       const name = command.constructor.name;
+      if (name === "QueryCommand" && command.input.TableName === "synthetic-loan-table") return { Items: [] };
       if (name === "GetCommand") {
         const { TableName, Key } = command.input;
         if (TableName === "synthetic-policy-table") return { Item: structuredClone(h.policy) };

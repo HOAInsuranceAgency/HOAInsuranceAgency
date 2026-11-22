@@ -57,17 +57,17 @@ export function installTransactionalMail(backend: any, alerts: any) {
   const sendPermissions = permissionsStack ? new ManagedPolicy(permissionsStack, "SesSendPermissions", { statements: sesSendPermissions(configurationSet, staging) }) : undefined;
   // Void may retire only invoice OP keys in its own environment. It cannot
   // send mail, edit counters/receipts, or access saved envelopes.
-  for(const fn of [backend.voidInvoice,backend.crmAccess,backend.pfElection])fn.addEnvironment('HOA_TRANSACTIONAL_MAIL_TABLE',table);
+  for(const fn of [backend.voidInvoice,backend.crmAccess])fn.addEnvironment('HOA_TRANSACTIONAL_MAIL_TABLE',table);
   if (permissionsStack) {
     const invoicePermissions = backend.createStack('InvoiceSendRetirementPermissions');
     const invoiceKeys = { 'ForAllValues:StringLike': { 'dynamodb:LeadingKeys': [`OP#hoa/${businessBranch}/invoice/*`] } };
     new ManagedPolicy(invoicePermissions, 'InvoiceVoidMailRetirement', {
-      roles: [backend.voidInvoice, backend.crmAccess, backend.pfElection].map(fn => fn.resources.lambda.role!),
+      roles: [backend.voidInvoice, backend.crmAccess].map(fn => fn.resources.lambda.role!),
       statements: [new PolicyStatement({ actions: ['dynamodb:GetItem', 'dynamodb:UpdateItem'], resources: [tableArn], conditions: invoiceKeys })],
     });
     // Keep publication's read-only check off the near-limit data template.
     new ManagedPolicy(invoicePermissions, 'GroupedInvoiceMailPublication', {
-      roles: [backend.sendInvoice, backend.pfElection].map(fn => fn.resources.lambda.role!),
+      roles: [backend.sendInvoice.resources.lambda.role!],
       statements: [new PolicyStatement({ actions: ['dynamodb:ConditionCheckItem'], resources: [tableArn], conditions: invoiceKeys })],
     });
   }

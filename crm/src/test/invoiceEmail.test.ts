@@ -27,7 +27,7 @@ const base: InvoiceView = {
 
 describe("the emailed invoice", () => {
   it.each([-500, 0])('never requests payment or financing for a nonpositive adjustment balance (%s)', amount => {
-    const result = renderInvoice({ ...base, lines: [{ kind: 'ENDORSEMENT', description: 'Audit premium adjustment', retailAmount: amount, costAmount: amount }], finance: { url: 'https://example.test/finance', downPayment: 100, monthly: 50, months: 3, apr: 12, originationFee: 0, brokerFee: 0 } });
+    const result = renderInvoice({ ...base, lines: [{ kind: 'ENDORSEMENT', description: 'Audit premium adjustment', retailAmount: amount, costAmount: amount }] });
     expect(result.text).toContain(amount < 0 ? 'Credit balance: $500.00' : 'No payment due: $0.00');
     expect(result.html).toContain(amount < 0 ? 'Credit balance' : 'No payment due');
     if (amount < 0) expect(result.subject).toContain('$500.00 credit');

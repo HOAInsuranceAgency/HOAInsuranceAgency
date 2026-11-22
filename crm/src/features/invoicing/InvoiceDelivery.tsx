@@ -1,8 +1,4 @@
 import { useAccountPermissions } from '../../components/AccountPermissions';
-import {
-  financeableInvoiceTotal
-} from "../../../../shared/invoiceTotals";
-import { FinanceOfferHint } from "../../components/FinanceOfferHint";
 import { SaveStatus } from "../../components/SaveStatus";
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
@@ -18,9 +14,6 @@ type InvoiceDeliveryState = Pick<
   | 'setToIds'
   | 'adjustment'
   | 'totals'
-  | 'account'
-  | 'policy'
-  | 'quote'
   | 'lines'
   | 'toEmails'
   | 'needsRemittanceCost'
@@ -40,7 +33,7 @@ export function InvoiceSentDetails({ invoice }: { invoice: InvoiceDeliveryState[
   </p>;
 }
 
-export function InvoiceDelivery({ editor, financeOnly = false }: { editor: InvoiceDeliveryState; financeOnly?: boolean }) {
+export function InvoiceDelivery({ editor }: { editor: InvoiceDeliveryState }) {
   const permissions = useAccountPermissions();
   const {
     locked,
@@ -51,9 +44,6 @@ export function InvoiceDelivery({ editor, financeOnly = false }: { editor: Invoi
     setToIds,
     adjustment,
     totals,
-    account,
-    policy,
-    quote,
     lines,
     toEmails,
     needsRemittanceCost,
@@ -65,8 +55,8 @@ export function InvoiceDelivery({ editor, financeOnly = false }: { editor: Invoi
     markPaid,
   } = editor;
   return <>{/* ── Send ───────────────────────────────────────────────────────── */}
-    {(!locked || financeOnly) && (
-      <div className={financeOnly ? undefined : "card inset"}>
+    {!locked && (
+      <div className="card inset">
         <h3>Send</h3>
         <div className="field">
           <label htmlFor={inputId("to")}>Send to</label>
@@ -110,34 +100,11 @@ export function InvoiceDelivery({ editor, financeOnly = false }: { editor: Invoi
             </>
           )}
         </div>
-        {financeOnly ? <p className="muted small">The email includes the invoice PDF and a link to review and accept financing.</p> : <p className="muted small">
+        <p className="muted small">
           The agency is copied on every invoice, so a sent copy is findable
           without opening the CRM. A branded PDF is attached automatically,
           {adjustment && totals.retail <= 0 ? " with no payment link for a credit or zero-balance statement." : " and a Stripe bank-transfer link is generated when it sends."}
-        </p>}
-        {!financeOnly && !adjustment && account && (policy || quote) && (
-          <FinanceOfferHint
-            account={account}
-            anchor={
-              policy
-                ? {
-                  kind: "policy",
-                  id: policy.id,
-                  lines: policy.lines ?? [],
-                  coverageEffectiveDate: policy.effectiveDate,
-                }
-                : {
-                  kind: "quote",
-                  id: quote!.id,
-                  lines: quote!.lines ?? [],
-                  coverageEffectiveDate: quote!.effectiveDate,
-                }
-            }
-            retailTotal={financeableInvoiceTotal(lines)}
-            brokerFee={lines.filter(line => line.kind === "BROKER_FEE").reduce((total, line) => total + (line.retailAmount ?? 0), 0)}
-          />
-        )}
-
+        </p>
         <div className="inline-actions">
           <Button variant="primary"
             type="button"
@@ -165,7 +132,7 @@ export function InvoiceDelivery({ editor, financeOnly = false }: { editor: Invoi
     {adjustment && invoice.status === "SENT" && totals.retail <= 0 && <p className="muted small" role="status">
       {totals.retail < 0 ? "Credit statement" : "Zero-balance statement"}: no incoming payment is due. This remains sent as the statement record.
     </p>}
-    {!financeOnly && (invoice.status === "SENT" || invoice.status === "PROCESSING") && !(adjustment && totals.retail <= 0) && (
+    {(invoice.status === "SENT" || invoice.status === "PROCESSING") && !(adjustment && totals.retail <= 0) && (
       <div className="inline-actions">
         <Button variant="secondary"
           type="button"

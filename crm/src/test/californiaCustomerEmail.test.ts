@@ -53,8 +53,8 @@ describe("shared California customer email identity", () => {
     expect(reply.text).not.toContain(disclosure);
     expect(renderInvoice({ ...invoice, propertyState: "MA" })).toEqual(renderInvoice({ ...invoice, propertyState: undefined }));
   });
-  it.each([null, { url: "https://example.invalid/finance", downPayment: 300, monthly: 100, months: 9, apr: 5 }])("brands invoices, including the financing variant %j, from the risk state", finance => {
-    const rendered = renderInvoice({ ...invoice, finance });
+  it("brands invoices from the risk state", () => {
+    const rendered = renderInvoice(invoice);
     expect(rendered.subject).toContain("Condo Insurance Agency");
     for (const part of [rendered.text, rendered.html]) {
       expect(part).toContain(disclosure);
@@ -62,7 +62,6 @@ describe("shared California customer email identity", () => {
       expect(part).not.toContain("$900");
     }
     expect(rendered.html).not.toContain(AGENCY_FMT.logoUrl);
-    if (finance) expect(rendered.text).toContain(finance.url);
   });
   it("uses a California PDF wordmark and disclosure on every page without fetching the HOA logo", async () => {
     const fetch = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Should not load the other wordmark"));
@@ -79,30 +78,6 @@ describe("shared California customer email identity", () => {
       }
     } finally { fetch.mockRestore(); }
   });
-});
-
-it("keeps the plain California wordmark on combined financing invoices", async () => {
-  const combined: InvoiceView = { ...invoice, financeOnly: true, finance: {
-    url: "https://example.invalid/finance", downPayment: 300, monthly: 100, months: 9, apr: 5,
-  } };
-  const rendered = renderInvoice(combined);
-  expect(rendered.subject).toContain("Condo Insurance Agency");
-  expect(rendered.html).toContain(disclosure);
-  expect(rendered.text).toContain(disclosure);
-  expect(rendered.html).not.toContain("<img");
-  expect(rendered.html).not.toContain("condo-logo");
-  const pdf = await PDFDocument.load(await renderInvoicePdf(combined));
-  expect(pdf.getAuthor()).toBe("Condo Insurance Agency");
-});
-
-it.each([
-  '<div>Sample Producer</div><img src="https://example.invalid/contact-and-license.png">',
-  '<div>Sample Producer<br>sample@protectmyhoa.com<br>508-233-2261</div><img src="https://example.invalid/license.png">',
-  '<div>Sample Producer<br>CA License No. TEST123<br>508-233-2261</div><img src="https://example.invalid/email.png">',
-  '<div>Sample Producer<br>CA License No. TEST123<br>sample@protectmyhoa.com</div><img src="https://example.invalid/phone.png">',
-  '<div>Sample Producer<br>License No.<br><img src="https://example.invalid/license.png"><br>508-233-2261<br>sample@protectmyhoa.com</div>',
-])("holds mixed signatures whose essential details exist only in images", signatureHtml => {
-  expect(() => renderReply({ generated, lead, producerName: "Sample Producer", signatureMode: "FRONT", producerSignatureHtml: signatureHtml })).toThrow("text signature");
 });
 
 it("retains phone and email destinations when their link labels differ", () => {

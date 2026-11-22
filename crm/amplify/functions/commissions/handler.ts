@@ -26,6 +26,7 @@ import {
   validateCarrierPaymentTerms,
   validateReceiptForecast,
   carrierReconciliationBalances,
+  ipfsFeeBalances,
   type CommissionReceiptForecast,
   type CommissionAccount,
   MONEY_MAX,
@@ -123,6 +124,7 @@ export async function handler(event: Event) {
             premiumCents: p.premiumCents,
             agencyRateUnits: p.agencyRateUnits,
             brokerFeeCents: p.brokerFeeCents,
+            ipfsFeeCents: p.ipfsFeeCents,
             producerBps: p.producerBps,
             eligibility: p.eligibility,
             receiptsFrom: p.receiptsFrom,
@@ -427,6 +429,71 @@ export async function handler(event: Event) {
       );
       return { ok: true };
     }
+    if (operation === 'saveIpfsFee' || operation === 'postIpfsFee') {
+      const policyId = required(input.policyId, 'a bound policy');
+      const policy = await store.get<CommissionPolicy>('POLICY', policyId);
+      if (!policy) throw new Error('Commission policy not found.');
+      const balances = ipfsFeeBalances(policy);
+      if (operation === 'saveIpfsFee') {
+        currentVersion(input, policy);
+        const expected = integer(input.expectedCents, 0, MONEY_MAX, 'expected IPFS fee');
+        const agreement = expected ? required(input.agreementRef, 'the IPFS agreement reference', 200) : undefined;
+        if (expected < balances.collected) throw new Error('The expected IPFS fee cannot be less than its gross receipts.');
+        if (balances.collected && agreement !== policy.ipfsAgreementRef)
+          throw new Error('Posted receipts belong to the recorded IPFS agreement.');
+        await store.commit([change('POLICY', { ...policy, ipfsFeeCents: expected, ipfsAgreementRef: agreement }, policy)], actor);
+        return { ok: true };
+      }
+      const receivedOn = day(input.receivedOn);
+      if (receivedOn > agencyToday()) throw new Error('A settlement cannot be future dated.');
+      const lineRef = required(input.lineRef, 'a unique IPFS transaction or allocation reference', 200);
+      const settlementRef = required(input.settlementRef, 'the verified IPFS remittance or deposit reference', 200);
+      const amount = integer(input.amountCents, 1, MONEY_MAX, 'IPFS fee amount');
+      const settlementTotalCents = integer(input.settlementTotalCents ?? amount, amount, MONEY_MAX, 'total IPFS fees on this remittance');
+      const kind = input.kind;
+      if (kind !== 'RECEIPT' && kind !== 'REVERSAL' && kind !== 'RESTORATION')
+        throw new Error('Choose an IPFS transaction type.');
+      const originalId = kind === 'RECEIPT' ? undefined : required(input.originalId, 'the original IPFS transaction');
+      const id = hash(lineRef.toLowerCase());
+      const allocation = { id, policyId, transactionKind: kind, lineRef, settlementRef, receivedOn, amount, originalId, settlementTotalCents };
+      // A remittance can carry both fees and refunds. Match and cap each signed component
+      // to its verified subtotal independently, even when its policies belong to separate accounts.
+      const settlementId = hash(JSON.stringify([settlementRef.toLowerCase(), kind]));
+      const [previous, settlement] = await Promise.all([
+        store.get<typeof allocation>('IPFS_TRANSACTION', id),
+        store.get<{ id: string; version: number; totalCents: number; allocatedCents: number; receivedOn: string }>('IPFS_SETTLEMENT', settlementId),
+      ]);
+      if (previous) {
+        if (previous.policyId !== policyId || previous.transactionKind !== kind || previous.receivedOn !== receivedOn ||
+            previous.amount !== amount || previous.originalId !== originalId || previous.settlementRef.toLowerCase() !== settlementRef.toLowerCase() ||
+            previous.settlementTotalCents !== settlementTotalCents)
+          throw new Error('This IPFS allocation reference was already posted with different details.');
+        return { ok: true };
+      }
+      currentVersion(input, policy);
+      if (settlement && (settlement.totalCents !== settlementTotalCents || settlement.receivedOn !== receivedOn))
+        throw new Error('The IPFS remittance total and date must match its previous allocations.');
+      const allocatedCents = (settlement?.allocatedCents ?? 0) + amount;
+      if (allocatedCents > settlementTotalCents)
+        throw new Error('Allocations exceed the verified IPFS fee total for this remittance.');
+      if (!policy.ipfsAgreementRef || !balances.expected) throw new Error('Record the expected fee and IPFS agreement first.');
+      if (kind === 'RECEIPT' && amount > balances.outstanding)
+        throw new Error('The receipt exceeds the outstanding IPFS fee. Verify the agreement amount and allocation.');
+      const original = originalId ? policy.entries.find(entry => entry.id === originalId) : undefined;
+      const eligible = original?.eligible ?? (policy.eligibility?.eligible !== false && (!policy.receiptsFrom || receivedOn >= policy.receiptsFrom));
+      const entryId = `ipfs:${id}`;
+      const next = appendEntry(policy, {
+        policyId, lineRef, kind, originalId, eligible, revenueKind: 'IPFS_FEE',
+        agencyCents: kind === 'REVERSAL' ? -amount : amount,
+        eligibilityNote: `IPFS settlement ${settlementRef} · agreement ${policy.ipfsAgreementRef}`,
+      }, { id: entryId, receivedOn }, entryId);
+      await store.commit([
+        change('IPFS_TRANSACTION', allocation),
+        change('IPFS_SETTLEMENT', { id: settlementId, receivedOn, totalCents: settlementTotalCents, allocatedCents }, settlement),
+        change('POLICY', next, policy),
+      ], actor);
+      return { ok: true };
+    }
     if (operation === 'saveReceiptForecast') {
       const id = required(input.policyId, 'a policy'),
         snapshot = await store.get<CommissionPolicy>('POLICY', id);
@@ -704,6 +771,7 @@ export async function handler(event: Event) {
           lines.push({
             policyId: p.id,
             entryId: e.id,
+            revenueKind: e.revenueKind ?? 'CARRIER_COMMISSION',
             accountName: p.accountName,
             policyNumber: p.policyNumber,
             agencyCents: e.agencyCents,

@@ -1,9 +1,9 @@
 import { voidedInvoiceSendRetirementWrites } from "./send-invoice/sendOperation";
-import { brokerFeeCents, feeAllocations, type BrokerFeeRecord } from '../../../shared/brokerFees';
+import { feeAllocations, type BrokerFeeRecord } from '../../../shared/brokerFees';
 import { authorizedQuoteTerms } from '../../../shared/quoteAuthorization';
 import { isOpenQuoteStatus } from '../../../shared/quoteStatus';
 import { loanWithoutCheckoutGuard } from './broker-fees/payments';
-import { db, accountModels, getFee, getModel, modelTable, table, versionCheck, type Write } from './broker-fees/store';
+import { db, accountModels, getModel, modelTable, versionCheck, type Write } from './broker-fees/store';
 type RecordData = Record<string, unknown>;
 const SOURCE_INVOICE_POINTER = 'sourcePricingInvoiceId';
 const SOURCE_LOAN_POINTER = 'sourcePricingLoanId';
@@ -34,10 +34,10 @@ export async function quoteSourceBillingHistory(quote: RecordData, fee: BrokerFe
   return {invoices,loans};
 }
 
-export function sourceQuoteTouch(quote: RecordData, pointer: typeof SOURCE_INVOICE_POINTER | typeof SOURCE_LOAN_POINTER, key: string): Write {
+function publishInvoicePointer(quote: RecordData, key: string): Write {
   if (typeof quote.updatedAt !== 'string' || !Number.isFinite(Date.parse(quote.updatedAt))) throw new Error('The current quoted billing source version could not be verified.');
   const values: RecordData = { ':old':quote.updatedAt, ':now':new Date(Math.max(Date.now(),Date.parse(quote.updatedAt)+1)).toISOString(), ':id':historyId(key) };
-  const names:Record<string,string>={'#pointer':pointer},conditions=['updatedAt = :old'];
+  const names:Record<string,string>={'#pointer':SOURCE_INVOICE_POINTER},conditions=['updatedAt = :old'];
   // Fence both owner slots: a native note save may repeat a timestamp after
   // a concurrent invoice or loan publication has changed the other pointer.
   for(const [index,field] of [SOURCE_INVOICE_POINTER,SOURCE_LOAN_POINTER].entries()){
@@ -68,28 +68,6 @@ export async function initialQuotePublicationWrites(invoice:RecordData, snapshot
   }
   const loan=await pointerSource(quote,'PfLoan',SOURCE_LOAN_POINTER);
   if(loan)writes.push(loanWithoutCheckoutGuard(loan));
-  writes.push(sourceQuoteTouch(quote,SOURCE_INVOICE_POINTER,String(invoice.id)));
-  return writes;
-}
-/** Runs immediately before the actual public Checkout slot claim, after any
- * pay-in-full invoice was voided. A stale fee-free finance URL cannot collect
- * after an agent adds an unpaid fee or withdraws/reparents the quote. */
-export async function zeroFeeQuoteClaimWrites(loan:RecordData):Promise<Write[]> {
-  if(loan.policyId||!loan.quoteId||Number(loan.brokerFeeCents??0)!==0||feeAllocations(loan.brokerFeeAllocations).length)return [];
-  const quote=await getModel<RecordData>('Quote',historyId(loan.quoteId));
-  if(!quote||quote.accountId!==loan.accountId||!isOpenQuoteStatus(quote.status as string)||quote.billType!=null&&quote.billType!=='AGENCY')throw new Error('The quoted billing source changed. Use the updated invoice from your agent.');
-  const writes:Write[]=[];
-  const amount=brokerFeeCents(quote.brokerFee as number|undefined);
-  if(amount){
-    if(quote.billType!=='AGENCY')throw new Error('Broker fees require agency billing.');
-    const fee=await getFee(String(quote.id));
-    if(!fee?.signedAt||fee.accountId!==quote.accountId||fee.amountCents!==amount||fee.terms!==authorizedQuoteTerms(quote)||Math.max(fee.submittedCents,fee.collectedCents)-fee.refundedCents<amount)throw new Error('The broker fee changed or is still due. Use the updated invoice from your agent.');
-    writes.push(versionCheck(table(),fee));
-  }
-  const prior=await pointerSource(quote,'PfLoan',SOURCE_LOAN_POINTER);
-  if(prior&&prior.id!==loan.id)writes.push(loanWithoutCheckoutGuard(prior));
-  const invoice=await pointerSource(quote,'Invoice',SOURCE_INVOICE_POINTER);
-  if(invoice){if(invoice.status!=='VOID')throw new Error('Resolve the existing quote invoice before opening financing.');const retirement=await voidedInvoiceSendRetirementWrites(invoice,{database:db,invoiceTable:modelTable('Invoice')});if(retirement.length)writes.push(...retirement);else writes.push(versionCheck(modelTable('Invoice'),invoice as {id:string;updatedAt:string}));}
-  writes.push(sourceQuoteTouch(quote,SOURCE_LOAN_POINTER,String(loan.id)));
+  writes.push(publishInvoicePointer(quote,String(invoice.id)));
   return writes;
 }

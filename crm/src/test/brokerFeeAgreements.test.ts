@@ -147,7 +147,7 @@ describe('broker fee client disclosure', () => {
     const p = await prepared();
     h.models.set('Invoice:i1', { id: 'i1', accountId: 'a1', number: 'INV-1', status: 'SENT', paymentUrl: 'https://buy.stripe.com/example', brokerFeeFinanceUrl: 'https://agency.example.test/finance/?t=existing-token', brokerFeeAllocations: JSON.stringify([{ quoteId: 'q1', amountCents: 25000 }]) });
     expect((await brokerFeeDisclosure(p.token)).payments).toBeUndefined();
-    const signed = await signBrokerFeeDisclosure(p.token, signer); expect(signed.payments).toHaveLength(2);
+    const signed = await signBrokerFeeDisclosure(p.token, signer); expect(signed.payments?.map(payment => payment.url)).toEqual(['https://buy.stripe.com/example']);
     h.models.get('Invoice:i1').paymentUrl = 'https://attacker.example.test/checkout'; h.models.get('Invoice:i1').brokerFeeFinanceUrl = 'https://attacker.example.test/finance/?t=token';
     expect((await brokerFeeDisclosure(p.token)).payments).toEqual([]);
     h.models.get('Invoice:i1').status = 'PAID'; expect((await brokerFeeDisclosure(p.token)).payments).toEqual([]);
@@ -181,9 +181,9 @@ describe('broker fee client disclosure', () => {
     const candidateIds = indexed.slice(400).map(invoice => invoice.id); indexed.push({ ...indexed[400] }); // Duplicate GSI appearance needs only one strong read.
     h.indexInvoices = indexed; h.modelReads = []; h.maxInvoiceInFlight = 0;
     const dto = await brokerFeeDisclosure(p.token);
-    expect(h.modelReads.filter(([model]) => model === 'Invoice').map(([, id]) => id)).toEqual(candidateIds);
+    expect(h.modelReads.filter(([model]) => model === 'Invoice').map(([, id]) => id)).toEqual(candidateIds.filter(id => id !== 'finance-only'));
     expect(h.maxInvoiceInFlight).toBe(5); expect(h.invoiceInFlight).toBe(0);
-    expect(dto.payments?.map(payment => payment.url)).toEqual(['https://buy.stripe.com/live', 'https://agency.example.test/finance/?t=existing-one', 'https://agency.example.test/finance/?t=existing-two', 'https://buy.stripe.com/retry']);
+    expect(dto.payments?.map(payment => payment.url)).toEqual(['https://buy.stripe.com/live', 'https://buy.stripe.com/retry']);
   });
   it('propagates a candidate invoice read failure instead of presenting an incomplete payment list', async () => {
     const p = await prepared(); await signBrokerFeeDisclosure(p.token, signer);

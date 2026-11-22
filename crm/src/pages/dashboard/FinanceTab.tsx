@@ -260,6 +260,7 @@ function PortfolioCard({
   const navigate = useNavigate();
   const count = (s: string) => loans.filter((l) => l.status === s).length;
 
+  const signedOffers = loans.filter(loan => loan.status === "QUOTED" && loan.agreementSignedAt);
   const rows = loans
     .filter((l) => hasFinancingReceivable(l) && (l.status !== "CANCELLED" || outstandingPrincipal(l) !== 0))
     .sort((a, b) => (a.nextDueAt ?? "9999").localeCompare(b.nextDueAt ?? "9999"));
@@ -278,6 +279,14 @@ function PortfolioCard({
         <Badge cls="blue" label={`Quoted · ${count("QUOTED")}`} />
         {rows.some(loan => loan.status === "CANCELLED") && <Badge cls="amber" label={`Awaiting reconciliation · ${rows.filter(loan => loan.status === "CANCELLED").length}`} />}
       </div>
+      {signedOffers.length > 0 && <div>
+        <h3>Signed agreements outside loan servicing</h3>
+        <p className="muted small">These agreements have no in-house principal outstanding. See the account for down-payment and IPFS handoff records.</p>
+        <ul>{signedOffers.map(loan => <li key={loan.id}>
+          <a href={accountPath(loan.accountId, { tab: "financing" })}>{accountName.get(loan.accountId) ?? "View account"}</a>
+          {" · signed "}{fmtDate(loan.agreementSignedAt?.slice(0, 10))}
+        </li>)}</ul>
+      </div>}
       {rows.length === 0 ? (
         <p className="muted small">No outstanding financing.</p>
       ) : (

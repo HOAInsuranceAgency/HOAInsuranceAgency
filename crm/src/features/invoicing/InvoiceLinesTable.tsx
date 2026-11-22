@@ -67,9 +67,6 @@ const LINE_KINDS = [
   ["TAX", "Tax"],
   ["SURPLUS_LINES", "Surplus lines"],
   ["STAMPING_FEE", "Stamping fee"],
-  // All margin, and reported to accounting as its own kind of income rather
-  // than as commission. Nothing charges it until in-house financing is offered.
-  ["INTEREST", "Interest"],
   ["OTHER", "Other"],
 ] as const;
 
@@ -167,6 +164,7 @@ export function InvoiceLinesTable({ editor }: { editor: InvoiceLinesTableState }
                       void saveEdits();
                     }}
                   >
+                    {l.kind === "INTEREST" && <option value="INTEREST">Interest (historical)</option>}
                     {l.kind === "BROKER_FEE" && <option value="BROKER_FEE">HOA broker fee · from quote</option>}
                     {l.sourceQuoteChargeId && <option value={l.kind!}>{l.kind?.replaceAll("_", " ")} · supplier/tax from quote</option>}
                     {!sourceLocked && (adjustment ? ADJUSTMENT_LINE_KINDS : manualPassThrough ? SUPPLIER_LINE_KINDS : LINE_KINDS).map(([value, label]) => (

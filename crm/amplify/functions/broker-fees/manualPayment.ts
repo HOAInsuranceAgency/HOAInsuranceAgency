@@ -14,7 +14,7 @@ import { validateInvoiceSourceCharges } from '../send-invoice/passThroughInvoice
 import { assertAdjustmentInvoiceProof, assertInitialInvoiceAvailable } from '../send-invoice/adjustmentInvoice';
 import { invoiceTotals } from '../../../../shared/invoiceTotals';
 import { GROUPED_INVOICE_REVIEW_ONLY, isGroupedInvoice } from '../../../../shared/groupedInvoiceGuard';
-import { assertStandalonePolicyBilling, standalonePolicyBillingGuard } from '../grouped-draft-billing';
+import { assertPremiumNotFinanced, assertStandalonePolicyBilling, standalonePolicyBillingGuard } from '../grouped-draft-billing';
 import { db, getFee, getModel, modelTable, versionCheck, type Write } from './store';
 import { assertBrokerFeeSigned } from './bindValidation';
 import { assertNoFeeLoanCheckout, syncBrokerFeePayment } from './payments';
@@ -45,6 +45,12 @@ export async function confirmInvoicePayment(event:{identity?:Identity;request?:R
     for(const item of result.Items??[]){const current=await getModel<Record<string,unknown>>('InvoiceLine',String(item.id));if(current&&current.invoiceId===invoice.id)items.push(current);}
     return { items, next: result.LastEvaluatedKey };
   }, { maxPages: 100, maxRows: 70, error: () => new Error('This invoice needs a smaller reviewed payment allocation.') });
+  const premiumLines = lines.filter(line =>
+    (line.kind === 'PREMIUM' || line.kind === 'ENDORSEMENT') && Number(line.retailAmount) > 0);
+  if (invoice.status !== 'PAID' && !adjustmentProof && premiumLines.length) {
+    const policyIds = [id(invoice.policyId), ...premiumLines.map(line => id(line.policyId))].filter(Boolean);
+    await assertPremiumNotFinanced(String(invoice.accountId), policyIds, quoteId, policy?.sourcePricingLoanId ?? quote?.sourcePricingLoanId);
+  }
   const fee=quoteId?await getFee(quoteId):undefined;
   validateInvoiceSourceCharges({invoice:{accountId:String(invoice.accountId),policyId:invoice.policyId as string|undefined,status:invoice.status as string|undefined,sourcePricingVersion:invoice.sourcePricingVersion as number|undefined},source:source?{id:String(source.id),accountId:String(source.accountId),premium:source.premium as number|undefined,billType:source.billType as string|undefined,passThroughCharges:source.passThroughCharges}:null,lines});
   if(invoice.sourcePricingVersion===2&&invoiceTotals(lines).retail<=0)throw new Error('A zero or credit adjustment is not an incoming payment and cannot be marked paid.');

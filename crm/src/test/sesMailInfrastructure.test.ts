@@ -16,7 +16,7 @@ function infra() {
   const sesStack = new Stack(app, "NewSesMail", { env: { account: "917680434255", region: "us-east-1" } });
   const shared = new Map<string, Stack>();
   const backend: any = { createStack: (name: string) => { const s = new Stack(app, name, { env: { account: "917680434255", region: "us-east-1" } }); shared.set(name, s); return s; }, addOutput: vi.fn() };
-  for (const name of [...senders,"voidInvoice","crmAccess","pfElection", ...(config.migrationPreview ? [] : ["sesMailFeedback"])]) {
+  for (const name of [...senders,"voidInvoice","crmAccess", ...(config.migrationPreview ? [] : ["sesMailFeedback"])]) {
     const fn = new Function(name === "sesMailFeedback" ? sesStack : stack, name, { runtime: Runtime.NODEJS_22_X, handler: "index.handler", code: Code.fromInline("exports.handler=async()=>({});") });
     if (senders.includes(name)) fn.addToRolePolicy(new PolicyStatement({ actions: ["ses:SendEmail", "ses:SendRawEmail"], resources: ["*"] }));
     backend[name] = { resources: { lambda: fn }, addEnvironment: (key: string, value: string) => fn.addEnvironment(key, value) };
@@ -123,14 +123,14 @@ it.each(['main','staging'])('keeps %s invoice mail retirement and publication pe
  config.businessBranch=branch;
  const {retirement,existing}=infra();
  const policies=resources(retirement).filter(row=>row.Type==='AWS::IAM::ManagedPolicy');expect(policies).toHaveLength(2);
- const retirementPolicy=policies.find(row=>row.Properties.Roles.length===3)!;
- const publicationPolicy=policies.find(row=>row.Properties.Roles.length===2)!;
+ const retirementPolicy=policies.find(row=>row.Properties.Roles.length===2)!;
+ const publicationPolicy=policies.find(row=>row.Properties.Roles.length===1)!;
  const condition={'ForAllValues:StringLike':{'dynamodb:LeadingKeys':[`OP#hoa/${branch}/invoice/*`]}};
  expect(retirementPolicy.Properties.PolicyDocument.Statement).toEqual([{
   Action:['dynamodb:GetItem','dynamodb:UpdateItem'],Effect:'Allow',Resource:'arn:aws:dynamodb:us-east-1:917680434255:table/HOA-TransactionalMail',
   Condition:condition,
  }]);
- for(const name of ['voidInvoice','crmAccess','pfElection']){
+ for(const name of ['voidInvoice','crmAccess']){
   expect(mailFunction(existing,name).Properties.Environment.Variables.HOA_TRANSACTIONAL_MAIL_TABLE).toBe('HOA-TransactionalMail');
   expect(JSON.stringify(retirementPolicy.Properties.Roles)).toContain(name);
  }
@@ -138,7 +138,7 @@ it.each(['main','staging'])('keeps %s invoice mail retirement and publication pe
   Action:'dynamodb:ConditionCheckItem',Effect:'Allow',Resource:'arn:aws:dynamodb:us-east-1:917680434255:table/HOA-TransactionalMail',
   Condition:condition,
  }]);
- for(const name of ['sendInvoice','pfElection']) expect(JSON.stringify(publicationPolicy.Properties.Roles)).toContain(name);
+ for(const name of ['sendInvoice']) expect(JSON.stringify(publicationPolicy.Properties.Roles)).toContain(name);
  expect(JSON.stringify(existing)).not.toContain('dynamodb:ConditionCheckItem');
  expect(JSON.stringify(retirement)).not.toContain('ses:');expect(JSON.stringify(retirement)).not.toContain('s3:');expect(JSON.stringify(retirement)).not.toContain('TransactionalMailSendPermissions');
 });

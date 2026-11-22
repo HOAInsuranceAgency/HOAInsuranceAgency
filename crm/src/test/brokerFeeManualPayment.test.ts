@@ -157,6 +157,32 @@ describe('outside invoice payment after an unsuccessful online checkout', () => 
   });
 });
 
+describe('manual receipts on premiums already financed', () => {
+  it.each([
+    { status: 'ACTIVE', quoteId: 'q' },
+    { status: 'PAID', policyId: 'p' },
+    { status: 'QUOTED', agreementSignedAt: NOW, groupedPolicyIds: ['p', 'another-policy'] },
+  ])('blocks a matching loan before closing links or creating a cash receipt', async fields => {
+    h.invoiceLineIds.push('premium');
+    h.models.set('InvoiceLine:premium', { id: 'premium', invoiceId: 'i', policyId: 'p', accountId: 'a',
+      kind: 'PREMIUM', retailAmount: 10000, costAmount: 8000, updatedAt: NOW });
+    h.models.set('PfLoan:loan', { id: 'loan', accountId: 'a', ...fields });
+    await expect(confirmInvoicePayment(actor, { invoiceId: 'i' })).rejects.toThrow('existing financing agreement');
+    expect(h.deactivate).not.toHaveBeenCalled();
+    expect(h.transact).not.toHaveBeenCalled();
+  });
+
+  it('allows a separate broker fee and a retry of an already-recorded outside receipt', async () => {
+    h.models.set('PfLoan:loan', { id: 'loan', accountId: 'a', quoteId: 'q', status: 'ACTIVE' });
+    await expect(confirmInvoicePayment(actor, { invoiceId: 'i' })).resolves.toMatchObject({ invoice: {status: 'PAID'} });
+    h.invoiceLineIds.push('premium');
+    h.models.set('InvoiceLine:premium', { id: 'premium', invoiceId: 'i', accountId: 'a', kind: 'PREMIUM',
+      retailAmount: 10000, costAmount: 8000, updatedAt: NOW });
+    await expect(confirmInvoicePayment(actor, { invoiceId: 'i' })).resolves.toMatchObject({ invoice: {status: 'PAID'} });
+    expect(h.deactivate).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('outside invoice payment beside an issued financing offer', () => {
   it.each(['https://checkout.stripe.com/c/pay/live', 'claim-pending-session'])('refuses a live financing checkout %s before closing invoice links', async electionCheckoutUrl => {
     issuedLoan({ electionCheckoutUrl, electionCheckoutExpiresAt: '2026-11-04T16:00:00Z' });
@@ -216,6 +242,7 @@ describe('outside invoice payment beside an issued financing offer', () => {
 describe('outside payment while an invoice send owns the fee', () => {
   it('records a proven adjustment receipt without charging or earning the original broker fee twice', async () => {
     adjustment();const oldFee=structuredClone(h.rows.get('fee:q'));
+    h.models.set('PfLoan:loan', { id: 'loan', accountId: 'a', policyId: 'p', status: 'ACTIVE' });
     await expect(confirmInvoicePayment(actor,{invoiceId:'i'})).resolves.toMatchObject({invoice:{status:'PAID'}});
     expect(paymentRows()).toHaveLength(0);expect(h.rows.get('fee:q')).toEqual(oldFee);
     expect(h.transact.mock.calls[0][0]).toEqual(expect.arrayContaining([expect.objectContaining({ConditionCheck:expect.objectContaining({TableName:'Invoice',Key:{id:'original'}})}),expect.objectContaining({ConditionCheck:expect.objectContaining({TableName:'InvoiceLine',Key:{id:'original-premium'}})})]));

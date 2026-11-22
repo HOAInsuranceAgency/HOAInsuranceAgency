@@ -57,20 +57,18 @@ describe("editable property reporting group", () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
-  it("labels the property fields and preserves unanswered incorporation on save", async () => {
+  it("labels the property fields and preserves historical incorporation on save", async () => {
     render(<DetailsCard account={account} onChange={vi.fn()} />);
-    for (const label of ["Street address", "City", "County", "State", "ZIP", "Fire district", "Property type", "Incorporated association", "Unit count", "Rented units (%)", "Other updates"]) {
+    for (const label of ["Street address", "City", "County", "State", "ZIP", "Fire district", "Property type", "Unit count", "Rented units (%)", "Other updates"]) {
       expect(screen.getByLabelText(label)).toHaveAccessibleName(label);
     }
     expect(screen.getByLabelText("Property type")).toHaveAttribute("id", "account-property-type");
     fireEvent.change(screen.getByRole("textbox", { name: "Street address" }), { target: { value: "100 Example St" } });
     fireEvent.change(screen.getByRole("textbox", { name: "City" }), { target: { value: "Boston" } });
-    expect(screen.getByRole("combobox", { name: "Incorporated association" })).toHaveValue("");
+    expect(screen.queryByRole("combobox", { name: "Incorporated association" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Save property" }));
-    await waitFor(() => expect(AccountModel.update).toHaveBeenCalledWith(expect.objectContaining({ address: "100 Example St", city: "Boston", incorporated: null })));
-    fireEvent.change(screen.getByRole("combobox", { name: "Incorporated association" }), { target: { value: "no" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save property" }));
-    await waitFor(() => expect(AccountModel.update).toHaveBeenLastCalledWith(expect.objectContaining({ incorporated: false })));
+    await waitFor(() => expect(AccountModel.update).toHaveBeenCalledWith(expect.objectContaining({ address: "100 Example St", city: "Boston" })));
+    expect(AccountModel.update.mock.calls.at(-1)?.[0]).not.toHaveProperty("incorporated");
   });
 
   it("shows coastal distance beside its toggle and validates before saving", async () => {

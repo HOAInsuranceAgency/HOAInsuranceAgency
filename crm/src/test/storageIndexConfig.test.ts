@@ -32,7 +32,7 @@ if (false) {
 }
 
 describe('generated model-index declarations', () => {
-  it('keeps the complete existing field set and the two-key invoice environment projection', () => {
+  it('keeps the complete existing field set and the invoice and legacy loan index projection', () => {
     const keys = ACCOUNT_MODELS.filter(isIndexedAccountModel).flatMap(model => modelIndexFields(model).map(field => modelIndexKey(model, field)));
     expect(keys).toEqual([
       'AccountRelationship.accountId', 'Contact.accountId', 'PriorCarrier.accountId', 'Activity.entityId',
@@ -42,10 +42,10 @@ describe('generated model-index declarations', () => {
       'Document.entityType', 'MarketingTask.accountId', 'Certificate.accountId', 'LeadReply.accountId',
       'UploadPortal.accountId', 'HoneycombEstimate.accountId', 'HoneycombSubmission.accountId',
     ]);
-    expect(INVOICE_INDEX_KEYS).toEqual(['Invoice.accountId', 'InvoiceLine.invoiceId']);
+    expect(INVOICE_INDEX_KEYS).toEqual(['Invoice.accountId', 'InvoiceLine.invoiceId', 'PfLoan.accountId']);
     const deployed = Object.fromEntries(keys.map(key => [key, `retained_${key.replace('.', '_')}`])) as ModelIndexMap;
     expect(Object.fromEntries(INVOICE_INDEX_KEYS.map(key => [key, deployed[key]]))).toEqual({
-      'Invoice.accountId': 'retained_Invoice_accountId', 'InvoiceLine.invoiceId': 'retained_InvoiceLine_invoiceId',
+      'Invoice.accountId': 'retained_Invoice_accountId', 'InvoiceLine.invoiceId': 'retained_InvoiceLine_invoiceId', 'PfLoan.accountId': 'retained_PfLoan_accountId',
     });
     expect(new Set(keys).size).toBe(keys.length);
   });
