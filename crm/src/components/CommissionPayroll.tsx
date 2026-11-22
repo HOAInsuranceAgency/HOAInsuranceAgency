@@ -1,3 +1,4 @@
+import { payrollRevenueKind, payrollSourceLabel } from "../../../shared/commissionPayroll";
 import { formatUsdCents as money } from "../../../shared/money";
 import { zipSync } from "fflate";
 import {
@@ -973,7 +974,7 @@ function CycleCard({
                 checked={approvalConfirmed}
                 onChange={(e) => {setConfirmed(e.target.checked);setReviewedToken(e.target.checked?c.preview?.token:undefined);}}
               />{" "}
-              I reviewed carrier receipts, eligibility, employee totals, prior
+              I reviewed carrier receipts, fees received, eligibility, employee totals, prior
               commission payments, and payroll dates.
             </label>
           </Action>
@@ -1011,7 +1012,7 @@ function CycleCard({
             ))}
         </Panel>
       )}
-      {c.status === "APPROVED" && (
+      {c.status === "APPROVED" && (!c.reviewRequired || paidCents > 0) && (
         <>
           <Panel id={"payroll-payments-"+c.id} title="Record individual employee payments" open={guided}>
             <p>
@@ -1337,7 +1338,7 @@ function OffCycleForm({
         {selection !== undefined && <div className="commission-scroll"><Table><thead><tr><th>Include</th><th>Employee / policy</th><th>Receipt / source</th><th>Amount</th></tr></thead><tbody>
           {(changeSelection ? available : selected).map(e => <tr key={payrollRowKey(e)}><td><Input type="checkbox" aria-label={'Include ' + e.producerName + ' ' + e.policyNumber + ' ' + e.receivedOn + ' ' + money(e.amountCents)}
             checked={selection.includes(payrollRowKey(e))} onChange={event => { const checked = event.target.checked; setSelection(keys => checked ? [...(keys ?? []), payrollRowKey(e)] : (keys ?? []).filter(key => key !== payrollRowKey(e))); }} /></td>
-            <td>{e.producerName}<div className="small muted">{e.accountName} · {e.policyNumber}</div></td><td>{e.receivedOn}<div className="small muted">{e.source === 'ADJUSTMENT' ? 'Approved adjustment' : e.source === 'SHARED_RECEIPT' ? 'Shared receipt' : 'Commission receipt'}</div></td><td>{money(e.amountCents)}</td></tr>)}
+            <td>{e.producerName}<div className="small muted">{e.accountName} · {e.policyNumber}</div></td><td>{e.receivedOn}<div className="small muted">{payrollSourceLabel(e)}</div></td><td>{money(e.amountCents)}</td></tr>)}
         </tbody></Table></div>}
         {!available.length && <p>No eligible, unallocated earnings through this cutoff.</p>}
         {stale && <p role="alert" className="error-text">The employee or cutoff selection changed. Choose specific earnings again before saving.</p>}
@@ -1500,8 +1501,8 @@ function EmployeeCalculations({cycle,workspace}:{cycle:PayrollCycle;workspace:Pa
     {[...new Set(rows.map(r=>r.producerId))].map(id=><details key={id}><summary>{rows.find(r=>r.producerId===id)?.producerName} · {money(sum(rows.filter(r=>r.producerId===id).map(r=>r.amountCents)))}</summary>
       {rows.filter(r=>r.producerId===id).map(r=>{
         const source=workspace.sourceLinks?.find(s=>s.policyId===r.policyId&&s.entryId===r.entryId);
-        return <div className="commission-work-item" key={payrollRowKey(r)}><div><strong>{r.policyNumber} · {money(r.amountCents)}</strong><p>{r.receivedOn} · agency {money(r.agencyCents)} · {r.shareBps===undefined?'':(r.shareBps/100)+'% share × '}{r.producerBps/100}% saved rate{r.source==='ADJUSTMENT'?' · approved compensation adjustment':''}</p></div>
-          <Button variant="secondary" onClick={()=>navigate(source?{tab:'statements',...(source.intakeId?{intakeId:source.intakeId}:{statementId:source.statementId})}:{tab:'ledger',policyId:r.policyId})}>Open source</Button>
+        return <div className="commission-work-item" key={payrollRowKey(r)}><div><strong>{r.policyNumber} · {money(r.amountCents)}</strong><p>{r.receivedOn} · agency {money(r.agencyCents)} · {r.shareBps===undefined?'':(r.shareBps/100)+'% share × '}{r.producerBps/100}% saved rate{' · '+payrollSourceLabel(r)}</p></div>
+          <Button variant="secondary" onClick={()=>navigate(payrollRevenueKind(r) === 'IPFS_FEE' ? {tab:'ipfs',policyId:r.policyId} : source?{tab:'statements',...(source.intakeId?{intakeId:source.intakeId}:{statementId:source.statementId})}:{tab:'ledger',policyId:r.policyId})}>Open source</Button>
           {cycle.status==='OPEN' && <Button variant="secondary" onClick={()=>navigate({tab:'payroll',earningKeys:[payrollRowKey(r)],producerId:r.producerId})}>Prepare off-cycle payment</Button>}
         </div>;
       })}

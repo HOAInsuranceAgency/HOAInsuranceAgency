@@ -1,9 +1,9 @@
 import { useContext,useEffect,useRef,useState } from 'react';
 import {
 carrierReconciliationBalances,
+isCarrierReceipt,
 COMMISSION_BASES,
 decimal,
-policyTotals,
 ratio,
 type CommissionOverview,
 type CommissionPolicy,

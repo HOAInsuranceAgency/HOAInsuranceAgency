@@ -1,5 +1,5 @@
 import { departureDecision, type CommissionEarning, type CommissionDeparture } from './commissionExceptions';
-import { assertCommissionReviewed, day, integer, required, sum, validateAllocationSnapshot, type CommissionBatch, type CommissionPolicy, type CommissionStatement } from './commissions';
+import { assertCommissionReviewed, commissionRevenueLabel, day, integer, required, sum, validateAllocationSnapshot, type CommissionBatch, type CommissionPolicy, type CommissionStatement } from './commissions';
 
 export const PAYROLL_TIME_ZONE = 'America/New_York';
 export const COMMISSION_START_MONTH = '2026-10';
@@ -92,11 +92,37 @@ export function validatePayrollCycle(input: PayrollCycle): PayrollCycle {
   if (!(cutoff < reviewOn && reviewOn <= hrDueOn && hrDueOn <= processingOn && processingOn <= payDate)) throw new Error('Use cutoff < review date <= HR due date <= processing date <= pay date.');
   return { id, version: integer(input.version, 0, Number.MAX_SAFE_INTEGER, 'cycle version'), revision: 1, cutoff, reviewOn, hrDueOn, processingOn, payDate, status: 'OPEN', batchIds: [], totalCents: 0, employees: [], ...(offCycle ? { cycleType: 'OFF_CYCLE', reason: required(input.reason, 'the off-cycle reason', 1000), producerIds, ...(selectedEarningKeys ? { selectedEarningKeys } : {}) } : { cycleType: 'MONTHLY' }) };
 }
+type PayrollSource = Pick<CommissionBatch['lines'][number], 'source' | 'entryId' | 'revenueKind'>;
+
+/** Earlier payroll snapshots retained the server-generated entry ID before storing its revenue source. */
+export function payrollRevenueKind(row: PayrollSource) {
+  if (row.revenueKind) return row.revenueKind;
+  if (/^ipfs:[0-9a-f]{64}$/.test(row.entryId)) return 'IPFS_FEE';
+  if (/^fee-(receipt|refund):[0-9a-f]{64}$/.test(row.entryId)) return 'BROKER_FEE';
+}
+
+export function payrollSourceLabel(row: PayrollSource): string {
+  if (row.source === 'ADJUSTMENT') return 'Approved adjustment';
+  const kind = payrollRevenueKind(row);
+  if (kind) {
+    const label = commissionRevenueLabel(kind);
+    return row.source === 'SHARED_RECEIPT' ? `Shared receipt · ${label}` : label;
+  }
+  return row.source === 'SHARED_RECEIPT' ? 'Shared receipt' : 'Commission receipt';
+}
 export function payrollPreview(policies: CommissionPolicy[], cutoff: string, producerIds?: string[], earnings: CommissionEarning[] = [], departures: CommissionDeparture[] = []) {
   day(cutoff);
   const rows = [
-    ...policies.flatMap(p => p.entries.filter(e => e.kind === 'RECEIPT' && !e.excludedByCase && !e.supersededBy && !e.batchId && !e.allocationId && e.producerCents > 0 && e.receivedOn <= cutoff).map(e => ({ producerId: p.producerId, producerName: p.producerName, policyId: p.id, entryId: e.id, accountName: p.accountName, policyNumber: p.policyNumber, receivedOn: e.receivedOn, transaction: p.transaction, agencyCents: e.agencyCents, producerBps: p.producerBps, amountCents: e.producerCents, earningId: undefined as string | undefined, source: undefined as CommissionEarning['source'] | undefined, shareBps: undefined as number | undefined }))),
-    ...earnings.filter(e => e.status === 'PAYABLE' && !e.batchId && e.amountCents > 0 && e.receivedOn <= cutoff).map(e => ({producerId:e.producerId,producerName:e.producerName,policyId:e.policyId,entryId:e.entryId,accountName:e.accountName,policyNumber:e.policyNumber,receivedOn:e.receivedOn,transaction:e.transaction,agencyCents:e.agencyCents,producerBps:e.producerBps,amountCents:e.amountCents,earningId:e.id,source:e.source,shareBps:e.shareBps}))
+    ...policies.flatMap(p => p.entries.filter(e => e.kind === 'RECEIPT' && !e.excludedByCase && !e.supersededBy && !e.batchId && !e.allocationId && e.producerCents > 0 && e.receivedOn <= cutoff).map(e => ({ producerId: p.producerId, producerName: p.producerName, policyId: p.id, entryId: e.id, accountName: p.accountName, policyNumber: p.policyNumber, receivedOn: e.receivedOn, transaction: p.transaction, ...(e.revenueKind ? { revenueKind: e.revenueKind } : {}), agencyCents: e.agencyCents, producerBps: p.producerBps, amountCents: e.producerCents, earningId: undefined as string | undefined, source: undefined as CommissionEarning['source'] | undefined, shareBps: undefined as number | undefined }))),
+    ...earnings.filter(e => e.status === 'PAYABLE' && !e.batchId && e.amountCents > 0 && e.receivedOn <= cutoff).map(e => {
+      const revenueKind = payrollRevenueKind(e);
+      return {
+        producerId: e.producerId, producerName: e.producerName, policyId: e.policyId, entryId: e.entryId,
+        accountName: e.accountName, policyNumber: e.policyNumber, receivedOn: e.receivedOn, transaction: e.transaction,
+        ...(revenueKind ? { revenueKind } : {}), agencyCents: e.agencyCents, producerBps: e.producerBps,
+        amountCents: e.amountCents, earningId: e.id, source: e.source, shareBps: e.shareBps,
+      };
+    }),
   ];
   return rows.filter(r => (!producerIds || producerIds.includes(r.producerId)) && !departures.some(c => c.producerId === r.producerId && departureDecision(c,r.policyId,r.entryId,r.receivedOn,r.transaction,r.earningId) === 'EXCLUDE')).sort((a,b) => a.producerId.localeCompare(b.producerId) || a.policyId.localeCompare(b.policyId) || (a.earningId ?? a.entryId).localeCompare(b.earningId ?? b.entryId));
 }

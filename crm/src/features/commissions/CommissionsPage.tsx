@@ -16,6 +16,7 @@ import { CommissionWorkflowContext,type CommissionDestination } from '../../lib/
 import { useAsyncResource } from '../../lib/useAsyncResource';
 
 import { AccountClassificationResource } from './AccountClassifications';
+import { IpfsFees } from './IpfsFees';
 import { Ledger } from './CommissionLedger';
 import { Settings } from './CommissionSettings';
 import { CommissionAccessContext,FinancialStale } from './context';
@@ -58,7 +59,7 @@ export function CommissionView({ owner }: { owner: boolean }) {
       setStorageKey(key);
       try {
         const saved = JSON.parse(localStorage.getItem(key + ':location') ?? 'null') as CommissionDestination | null;
-        if (!interacted.current && saved && ['queue','statements','payroll','ledger','exceptions','settings'].includes(saved.tab) && !window.location.search.includes('tab=settings')) setTarget(saved);
+        if (!interacted.current && saved && ['queue','statements','payroll','ledger','ipfs','exceptions','settings'].includes(saved.tab) && !window.location.search.includes('tab=settings')) setTarget(saved);
       } catch { /* Optional browser preferences. */ }
     }).catch(() => {});
     return () => { active = false; };
@@ -82,7 +83,7 @@ export function CommissionView({ owner }: { owner: boolean }) {
       {owner && (
         <Tabs id="commissions" label="Commission views" value={tab === 'payroll' ? 'statements' : tab}
           onChange={id => navigate(id === 'statements' && ['statements', 'payroll'].includes(tab) ? target : {tab:id})}
-          items={[{value:'queue',label:'Work queue'},{value:'statements',label:'Guided workflow'},{value:'ledger',label:'Ledger'},{value:'exceptions',label:'Reviews & exceptions'},{value:'settings',label:'Setup'}]} />
+          items={[{value:'queue',label:'Work queue'},{value:'statements',label:'Guided workflow'},{value:'ledger',label:'Ledger'},{value:'ipfs',label:'IPFS fees'},{value:'exceptions',label:'Reviews & exceptions'},{value:'settings',label:'Setup'}]} />
       )}
       <LiveStatus resource={resource} />
       {resource.error && (
@@ -97,6 +98,7 @@ export function CommissionView({ owner }: { owner: boolean }) {
         <>
           {owner && tab === 'queue' && <CommissionWorkQueue data={snapshot} onAccessDenied={resource.invalidate} />}
           {tab === 'ledger' && <Ledger data={snapshot} owner={owner} refresh={resource.refetch} />}
+          {owner && tab === 'ipfs' && <IpfsFees key={target.policyId ?? 'all'} initialPolicyId={target.policyId} policies={snapshot.policies} refresh={resource.refetch} />}
           {owner && tab === 'settings' && <Settings data={snapshot} refresh={resource.refetch} />}
           {owner && ['statements', 'payroll'].includes(tab) && <div className="commission-action-bar"><Button variant="secondary" onClick={() => navigate({tab:'statements',intakeId:''})}>Statement inbox</Button><Button variant="secondary" onClick={() => navigate({tab:'payroll'})}>All payroll cycles & history</Button></div>}
           {owner && tab === 'statements' && (

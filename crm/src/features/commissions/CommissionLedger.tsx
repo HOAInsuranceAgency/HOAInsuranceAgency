@@ -1,8 +1,10 @@
+import { payrollSourceLabel, payrollRevenueKind } from '../../../../shared/commissionPayroll';
 import { useState } from 'react';
 import {
 ACCOUNT_COMMISSION_CLASSES,
 batchPaidCents,
 carrierReconciliationBalances,
+commissionRevenueLabel,
 COMMISSION_REVIEW_CATEGORIES,
 decimal,
 policyTotals,
@@ -37,12 +39,12 @@ export function Ledger({
   const { target, navigate } = useCommissionWorkflow();
   const [search, setSearch] = useState('');
   const [earningsPage, setEarningsPage] = useState(0);
-  const displayed = data.policies.filter(p => (!target.policyId || p.id === target.policyId) && (p.policyNumber + ' ' + p.accountName + ' ' + p.producerName + ' ' + p.entries.map(e => e.lineRef).join(' ')).toLowerCase().includes(search.toLowerCase()));
+  const displayed = data.policies.filter(p => (!target.policyId || p.id === target.policyId) && (p.policyNumber + ' ' + p.accountName + ' ' + p.producerName + ' ' + p.entries.map(e => e.lineRef + ' ' + commissionRevenueLabel(e.revenueKind)).join(' ')).toLowerCase().includes(search.toLowerCase()));
   const totals = data.policies.map(policyTotals),
     recoveries = data.policies.map((p) => recoveryBalances(p, data.batches)),
     paid = sum(data.batches.map(batchPaidCents));
   const earningRows = data.earnings ?? [];
-  const filteredEarnings = earningRows.filter(e => (!target.policyId || e.policyId === target.policyId) && [e.producerName,e.policyNumber,e.accountName,e.entryId].join(' ').toLowerCase().includes(search.toLowerCase()));
+  const filteredEarnings = earningRows.filter(e => (!target.policyId || e.policyId === target.policyId) && [e.producerName,e.policyNumber,e.accountName,e.entryId,payrollSourceLabel(e)].join(' ').toLowerCase().includes(search.toLowerCase()));
   const pageCount = Math.max(1, Math.ceil(filteredEarnings.length / 50));
   const page = Math.min(earningsPage, pageCount - 1);
   const visibleEarnings = filteredEarnings.slice(page * 50, (page + 1) * 50);
@@ -108,7 +110,7 @@ export function Ledger({
                   p.policyNumber,
                   e.receivedOn,
                   e.kind + (e.allocationId ? ' · shared allocation' : '') + (e.supersededBy ? ' · corrected' : '') + (e.excludedByCase ? ' · excluded' : ''),
-                  e.revenueKind === "BROKER_FEE" ? "Broker fee" : "Carrier commission",
+                  commissionRevenueLabel(e.revenueKind),
                   e.agencyCents / 100,
                   e.allocationId ? '' : p.producerBps / 100,
                   e.allocationId ? '' : e.producerCents / 100,
@@ -120,7 +122,7 @@ export function Ledger({
             {
               title: 'Employee earnings allocations (agency cash is recorded above)',
               columns: ['Employee', 'Account', 'Policy', 'Date', 'Source', 'Policy share (%)', 'Plan rate (%)', 'Employee amount (USD)', 'Status', 'Payment batch', 'Earning ID', 'Original receipt / adjustment ID'],
-              rows: earningRows.map(e => [e.producerName, e.accountName, e.policyNumber, e.receivedOn, e.source, e.shareBps === undefined ? '' : e.shareBps / 100, e.source === 'ADJUSTMENT' ? '' : e.producerBps / 100, e.amountCents / 100, e.status, e.batchId ?? '', e.id, e.entryId]),
+              rows: earningRows.map(e => [e.producerName, e.accountName, e.policyNumber, e.receivedOn, payrollRevenueKind(e) ? payrollSourceLabel(e) : e.source, e.shareBps === undefined ? '' : e.shareBps / 100, e.source === 'ADJUSTMENT' ? '' : e.producerBps / 100, e.amountCents / 100, e.status, e.batchId ?? '', e.id, e.entryId]),
             },
             {
               title: 'Recorded payments',
@@ -130,9 +132,9 @@ export function Ledger({
           ],
         }}
       />
-      {!!earningRows.length && <section className="card"><h2>Shared commission & adjustment earnings</h2><div className="commission-scroll"><Table><thead><tr>{owner&&<th>Employee</th>}<th>Policy</th><th>Date</th><th>Source</th><th>Share / rate</th><th>Employee amount</th><th>Status</th></tr></thead><tbody>{visibleEarnings.map(e=><tr key={e.id}>{owner&&<td>{e.producerName}</td>}<td>{e.accountName}<div className="small muted">{e.policyNumber}</div></td><td>{e.receivedOn}</td><td>{e.source==='ADJUSTMENT'?'Approved adjustment':'Shared receipt'}</td><td>{e.shareBps===undefined?'—':e.shareBps/100+'% share · '+e.producerBps/100+'% rate'}</td><td>{money(e.amountCents)}</td><td>{e.batchId?(data.batches.find(b=>b.id===e.batchId)?.status??'Allocated'):e.status}
+      {!!earningRows.length && <section className="card"><h2>Shared commission & adjustment earnings</h2><div className="commission-scroll"><Table><thead><tr>{owner&&<th>Employee</th>}<th>Policy</th><th>Date</th><th>Source</th><th>Share / rate</th><th>Employee amount</th><th>Status</th></tr></thead><tbody>{visibleEarnings.map(e=><tr key={e.id}>{owner&&<td>{e.producerName}</td>}<td>{e.accountName}<div className="small muted">{e.policyNumber}</div></td><td>{e.receivedOn}</td><td>{payrollSourceLabel(e)}</td><td>{e.shareBps===undefined?'—':e.shareBps/100+'% share · '+e.producerBps/100+'% rate'}</td><td>{money(e.amountCents)}</td><td>{e.batchId?(data.batches.find(b=>b.id===e.batchId)?.status??'Allocated'):e.status}
       {owner && e.status==='PAYABLE' && !e.batchId && e.amountCents>0 && <Button variant="secondary" onClick={()=>navigate({tab:'payroll',earningKeys:[JSON.stringify(['earning',e.id])],producerId:e.producerId})}>Prepare off-cycle payment</Button>}
-      {owner && <Button variant="secondary" onClick={()=>navigate({tab:'exceptions',...(e.adjustmentId?{adjustmentId:e.adjustmentId}:{policyId:e.policyId}),producerId:e.producerId})}>Review source & decisions</Button>}</td></tr>)}</tbody></Table></div>{pageCount > 1 && <nav aria-label="Earnings history pages"><Button variant="secondary" disabled={page === 0} onClick={()=>setEarningsPage(page-1)}>Previous earnings</Button><span> Page {page+1} of {pageCount} · {filteredEarnings.length} earnings </span><Button variant="secondary" disabled={page+1 === pageCount} onClick={()=>setEarningsPage(page+1)}>Next earnings</Button></nav>}<p className="small muted">Totals and downloads include the complete ledger. Shared earnings reference one carrier receipt. Compensation adjustments do not change agency cash received.</p></section>}
+      {owner && <Button variant="secondary" onClick={()=>navigate(payrollRevenueKind(e)==='IPFS_FEE' && !e.adjustmentId ? {tab:'ipfs',policyId:e.policyId} : {tab:'exceptions',...(e.adjustmentId?{adjustmentId:e.adjustmentId}:{policyId:e.policyId}),producerId:e.producerId})}>Review source & decisions</Button>}</td></tr>)}</tbody></Table></div>{pageCount > 1 && <nav aria-label="Earnings history pages"><Button variant="secondary" disabled={page === 0} onClick={()=>setEarningsPage(page-1)}>Previous earnings</Button><span> Page {page+1} of {pageCount} · {filteredEarnings.length} earnings </span><Button variant="secondary" disabled={page+1 === pageCount} onClick={()=>setEarningsPage(page+1)}>Next earnings</Button></nav>}<p className="small muted">Totals and downloads include the complete ledger. Shared earnings reference one carrier receipt. Compensation adjustments do not change agency cash received.</p></section>}
       {!data.policies.length && !earningRows.length && (
         <div className="card">
           No commission snapshots yet.{' '}
@@ -229,7 +231,7 @@ export function Ledger({
                         <td>{e.receivedOn}</td>
                         <td>
                           {e.kind}{e.allocationId ? ' · shared allocation' : ''}{e.supersededBy ? ' · corrected' : ''}{e.excludedByCase ? ' · excluded' : ''}
-                          <div className="small">{e.revenueKind === "BROKER_FEE" ? "Broker fee" : "Carrier commission"}</div>
+                          <div className="small">{commissionRevenueLabel(e.revenueKind)}</div>
                           <div className="small muted">{e.lineRef}</div>
                         </td>
                         <td>{money(e.agencyCents)}</td>

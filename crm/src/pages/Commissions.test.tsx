@@ -18,6 +18,7 @@ vi.mock('../components/CommissionWorkQueue',()=>({default:()=> <div>Work queue c
 vi.mock('../lib/auth', () => ({ useIsOwner: () => h.owner }));
 vi.mock('../lib/commissions', () => ({
   readCommissions: h.read,
+  commissionAction: h.action,
   commissionWorkflowAction: (op: string, input: unknown) => op === 'intakeWorkspace' ? Promise.resolve({intakes:[],settlements:[],templates:[]}) : h.action(op,input),
 }));
 vi.mock('../lib/client', () => ({
@@ -654,20 +655,24 @@ it('defers live plan updates through a dirty draft and failed save without repea
   confirm.mockRestore();
 });
 
-it('exports shared employee earnings separately from the single agency receipt', async () => {
+it('shows the paid IPFS share on the producer ledger and exports the agency receipt once', async () => {
   const source=snapshot();
   source.policies[0].entries[0].producerCents=0;
+  source.policies[0].entries[0].revenueKind='IPFS_FEE';
   source.policies[0].entries[0].allocationId='split';
-  h.read.mockResolvedValue({...source,earnings:[{id:'shared:avery',version:1,producerId:'producer',producerName:'Brian Cole',policyId:'p',policyNumber:'POL-1',accountName:'Cedar HOA',transaction:'NEW',entryId:'e',receivedOn:'2026-10-15',agencyCents:100000,producerBps:2000,amountCents:12000,shareBps:6000,source:'SHARED_RECEIPT',status:'PAYABLE'}]});
+  h.read.mockResolvedValue({...source,batches:[{id:'batch',producerName:'Brian Cole',status:'PAID',totalCents:12000,payDate:'2026-10-30',lines:[]}],earnings:[{id:'shared:avery',version:1,producerId:'producer',producerName:'Brian Cole',policyId:'p',policyNumber:'POL-1',accountName:'Cedar HOA',transaction:'NEW',entryId:'e',receivedOn:'2026-10-15',agencyCents:100000,producerBps:2000,amountCents:12000,shareBps:6000,source:'SHARED_RECEIPT',revenueKind:'IPFS_FEE',status:'PAYABLE',batchId:'batch'}]});
   render(<Commissions />);
   await screen.findByText('Shared commission & adjustment earnings');
-  const report=h.report.mock.calls.at(-1)![0];
-  expect(report.commissionLedger).toMatchObject({scope:'Your displayed earnings',agencyReceivedCents:100000,earnedCents:12000,paidCents:0});
+  const report=h.report.mock.calls.map(([report]) => report).find(report => report.commissionLedger);
+  expect(report.commissionLedger).toMatchObject({scope:'Your displayed earnings',agencyReceivedCents:100000,earnedCents:12000,paidCents:12000});
   expect(report.sections[0].rows).toHaveLength(1);
   expect(report.sections[0].rows[0][6]).toBe(1000);
   expect(report.sections[0].rows[0].slice(7,9)).toEqual(['','']);
   expect(screen.getByText(/Your earnings \$120\.00/)).toBeVisible();
+  expect(screen.getByRole('row', {name: /Shared receipt · IPFS financing fee/})).toHaveTextContent('PAID');
+  expect(screen.getByText('Paid', {selector: 'span.l'}).parentElement).toHaveTextContent('$120.00');
   expect(report.sections[1].rows).toHaveLength(1);
+  expect(report.sections[1].rows[0][4]).toBe('Shared receipt · IPFS financing fee');
   expect(report.sections[1].rows[0].slice(5,9)).toEqual([60,20,120,'PAYABLE']);
   expect(report.sections[1].columns).not.toContain('Agency commission (USD)');
 });
@@ -855,6 +860,14 @@ it('pages earnings history without truncating the ledger totals or downloads',as
   fireEvent.click(screen.getByRole('button',{name:'Next earnings'}));
   expect(screen.getByText('History 50')).toBeVisible();expect(screen.queryByText('History 0')).toBeNull();
   expect(screen.getByText('Producer earned').parentElement?.textContent).toBe(before);
+});
+
+it('restores the selected IPFS policy for an owner', async () => {
+  h.owner = true;
+  localStorage.setItem('hoa-commission-navigation:test-owner:owner:location', JSON.stringify({tab: 'ipfs', policyId: 'p'}));
+  render(<Commissions />);
+  expect(await screen.findByLabelText('Policy term to record or reconcile')).toHaveValue('p');
+  expect(screen.getByRole('tab', { name: 'IPFS fees' })).toHaveAttribute('aria-selected', 'true');
 });
 
 it('allows an Owner to record the fee entered in IPFS and match its settlement independently of a carrier statement', async () => {

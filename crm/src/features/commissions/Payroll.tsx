@@ -1,3 +1,4 @@
+import { payrollSourceLabel, payrollRevenueKind } from '../../../../shared/commissionPayroll';
 import { useContext,useState } from 'react';
 import {
 batchPaidCents,
@@ -81,7 +82,7 @@ export function BatchCard({
               rows: b.lines.map((l) => [
                 l.accountName,
                 l.policyNumber,
-                l.revenueKind ? commissionRevenueLabel(l.revenueKind) : 'See original ledger entry',
+                payrollRevenueKind(l) || l.source ? payrollSourceLabel(l) : 'See original ledger entry',
                 l.agencyCents / 100,
                 l.producerBps / 100,
                 l.amountCents / 100,

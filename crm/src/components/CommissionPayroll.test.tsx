@@ -1,3 +1,4 @@
+import { payrollRevenueKind } from "../../../shared/commissionPayroll";
 import { CommissionWorkflowContext } from '../lib/commissionWorkflow';
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
@@ -79,7 +80,8 @@ it("requires explicit approval and submits the exact preview token", async () =>
   fireEvent.click(
     screen.getByRole("checkbox", { name: /I reviewed carrier receipts/ }),
   );
-  fireEvent.click(button);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Approve payroll cycle" })).toBeEnabled());
+  fireEvent.click(screen.getByRole("button", { name: "Approve payroll cycle" }));
   await waitFor(() =>
     expect(h.action).toHaveBeenCalledWith("approvePayrollCycle", {
       id: "2026-11",
@@ -223,6 +225,42 @@ it("disables payroll export when a new issue requires fresh approval", async () 
     "A policy review was added after approval.",
   );
 });
+it("preserves recorded payroll sources and identifies older fee rows by their permanent receipt IDs", () => {
+  const hash = "a".repeat(64);
+  expect(payrollRevenueKind({ entryId: "ipfs:" + hash })).toBe("IPFS_FEE");
+  expect(payrollRevenueKind({ entryId: "fee-receipt:" + hash })).toBe("BROKER_FEE");
+  expect(payrollRevenueKind({ entryId: "fee-refund:" + hash })).toBe("BROKER_FEE");
+  expect(payrollRevenueKind({ entryId: "fee-receipt:unverified" })).toBeUndefined();
+  expect(payrollRevenueKind({ entryId: "ipfs:" + hash, revenueKind: "CARRIER_COMMISSION" })).toBe("CARRIER_COMMISSION");
+});
+
+it("opens the IPFS fee reconciliation from a paid employee calculation", async () => {
+  workspace.cycles[0] = { ...workspace.cycles[0], status: 'PAID', batchIds: ['batch'], totalCents: 16000 };
+  const item = { policyId: 'policy', entryId: 'fee', accountName: 'Cedar HOA', policyNumber: 'POL-1',
+    receivedOn: '2026-11-10', transaction: 'NEW' as const, agencyCents: 100000, producerBps: 1600, amountCents: 16000, revenueKind: 'IPFS_FEE' as const };
+  workspace.batches = [{ id: 'batch', version: 1, producerId: 'p', producerName: 'Avery', status: 'PAID',
+    payDate: '2026-11-27', cutoff: '2026-11-16', totalCents: 16000, lines: [item] }];
+  const navigate = vi.fn();
+  render(<CommissionWorkflowContext.Provider value={{target:{tab:'payroll'},navigate}}><CommissionPayroll owner refreshLedger={vi.fn()}/></CommissionWorkflowContext.Provider>);
+  fireEvent.click(await screen.findByText('Employee calculations & source statements'));
+  fireEvent.click(screen.getByText('Avery · $160.00', {selector:'summary'}));
+  const row = screen.getByText(/16% saved rate · IPFS financing fee/).parentElement!.parentElement!;
+  expect(within(row).getByText('POL-1 · $160.00')).toBeVisible();
+  fireEvent.click(within(row).getByRole('button', {name:'Open source'}));
+  expect(navigate).toHaveBeenCalledWith({tab:'ipfs',policyId:'policy'});
+});
+it.each([0, 6000])("holds only wholly unpaid confirmations after a new reconciliation (%s cents paid)", async paidCents => {
+  workspace.cycles[0] = { ...workspace.cycles[0], status: "APPROVED", batchIds: ["batch"], reviewRequired: "Review the late fee receipt." };
+  workspace.batches = [{ id: "batch", version: 1, producerId: "p", producerName: "Avery", status: "APPROVED",
+    cutoff: "2026-11-16", payDate: "2026-11-27", totalCents: 16000, paidCents, lines: [] }];
+  render(<CommissionPayroll owner refreshLedger={vi.fn()} />);
+  expect(await screen.findByRole("alert")).toHaveTextContent("Review the late fee receipt.");
+  const individual = screen.queryByLabelText("Amount paid to Avery (USD)");
+  const full = screen.queryByText("Confirm full cycle paid");
+  if (paidCents) { expect(individual).toBeInTheDocument(); expect(full).toBeInTheDocument(); }
+  else { expect(individual).toBeNull(); expect(full).toBeNull(); }
+});
+
 it("records the actual partial dollar amount with a stable payment identity", async () => {
   workspace.cycles[0] = {
     ...workspace.cycles[0],

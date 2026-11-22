@@ -17,7 +17,7 @@ type IntakeSettlement,
 type IntakeWorkspace,
 type StatementIntake,
 } from "../../../shared/commissionIntake";
-import { sum,type CommissionOverview } from "../../../shared/commissions";
+import { isCarrierReceipt, sum,type CommissionOverview } from "../../../shared/commissions";
 import { isAuthorizationError } from "../../../shared/authorizationError";
 import { useEditProtection,useCommissionUnsavedChanges as useUnsavedChanges } from "../lib/commissionEditProtection";
 import { commissionWorkflowAction as commissionAction } from "../lib/commissions";
@@ -1551,7 +1551,7 @@ function RowsEditor({
                             <option value="">
                               Link original receipt / reversal
                             </option>
-                            {policy?.entries.map((entry) => (
+                            {policy?.entries.filter(isCarrierReceipt).map((entry) => (
                               <option key={entry.id} value={entry.id}>
                                 {entry.lineRef} · {entry.receivedOn} ·{" "}
                                 {money(entry.agencyCents)}

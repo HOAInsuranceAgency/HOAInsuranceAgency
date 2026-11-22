@@ -1,4 +1,4 @@
-import { cycleBatches, type PayrollCycle } from '../../../../shared/commissionPayroll';
+import { cycleBatches, payrollRevenueKind, payrollSourceLabel, type PayrollCycle } from '../../../../shared/commissionPayroll';
 import type { CommissionBatch } from '../../../../shared/commissions';
 import { CommissionPdf, reportDate, reportMoney, reportTimestamp, type ReportRenderOptions, type Tone } from './report-layout';
 
@@ -23,6 +23,7 @@ export async function commissionReportFiles(cycle: PayrollCycle, batches: Commis
     const copy=employee?'Confidential employee copy':'Confidential HR copy';
     const pdf=await CommissionPdf.create(cycle.id+' Commission earnings - '+(employee?.producerName??'HR summary'),approved.iso,copy,renderOptions);
     const offCycle=cycle.cycleType==='OFF_CYCLE';
+    const includesFee = (employee ? [employee] : selected).some(batch => batch.lines.some(line => ['IPFS_FEE', 'BROKER_FEE'].includes(payrollRevenueKind(line) ?? '')));
     const adjustment=(employee?[employee]:selected).some(b=>b.lines.some(l=>l.source==='ADJUSTMENT'));
     const badges:{label:string;tone:Tone}[]=[];
     if(cycle.replacesRevision)badges.push({label:'REPLACEMENT',tone:'uncovered'});
@@ -38,7 +39,7 @@ export async function commissionReportFiles(cycle: PayrollCycle, batches: Commis
     pdf.facts([
       {label:'Scheduled payday',value:payday.date,detail:payday.weekday},
       {label:'Processing',value:processing.date,detail:processing.weekday},
-      {label:'Carrier receipts',value:cutoff.date,detail:'Through end of day Eastern'},
+      {label:includesFee ? 'Agency receipts' : 'Carrier receipts',value:cutoff.date,detail:'Through end of day Eastern'},
       {label:'Approved',value:approved.date,detail:approved.time},
     ]);
     pdf.amount(employee?.totalCents??cycle.totalCents,
@@ -49,7 +50,7 @@ export async function commissionReportFiles(cycle: PayrollCycle, batches: Commis
       pdf.table(['Account / policy','Receipt / reference','Calculation','Earnings'],[172,106,146,100],
         employee.lines.map(row => [
           {text:row.accountName+' · '+row.policyNumber+' · '+(row.transaction==='NEW'?'New business':row.transaction==='RENEWAL'?'Renewal':'Commission'),bold:true},
-          {text:(row.receivedOn?reportDate(row.receivedOn).date:'See source ledger')+' · '+reportReference(row.entryId)},
+          {text:(row.receivedOn?reportDate(row.receivedOn).date:'See source ledger')+' · '+reportReference(row.entryId)+(payrollRevenueKind(row) ? ' · '+payrollSourceLabel(row) : '')},
           {text:row.source==='ADJUSTMENT'?'Approved compensation adjustment':reportMoney(row.agencyCents)+(row.shareBps===undefined?'':' × '+(row.shareBps/100).toFixed(2)+'% share')+' × '+(row.producerBps/100).toFixed(2)+'% rate'},
           {text:reportMoney(row.amountCents),bold:true,align:'right'},
         ]),
