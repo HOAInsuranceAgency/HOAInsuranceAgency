@@ -151,6 +151,19 @@ describe("combined invoice drafts", () => {
   });
 });
 describe("invoice creation reliability", () => {
+  it("lets staff consult the billing flowchart before choosing an invoice source", async () => {
+    render(<InvoicesTab accountId="a1" />);
+    const guide = screen.getByText("Billing flowchart — HOA CRM or IPFS?");
+    const selector = await screen.findByRole("combobox");
+    expect(guide.compareDocumentPosition(selector) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    await userEvent.click(guide);
+    expect(guide.closest("details")).toHaveAttribute("open");
+    expect(screen.getByRole("link", { name: "Open printable flowchart (PDF)" })).toHaveAttribute("href");
+    expect(screen.getByText(/bill \$500 in HOA CRM/)).toBeInTheDocument();
+    expect(selector).toHaveValue("");
+    expect(api.models.Invoice.create).not.toHaveBeenCalled();
+  });
   it("does not create an unnumbered invoice when reservation fails", async () => {
     api.mutations.reserveInvoiceNumber.mockResolvedValue({ data: null, errors: [{ message: "Reservation failed" }] });
     await selectPolicy();
