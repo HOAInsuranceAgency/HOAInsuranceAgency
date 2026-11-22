@@ -55,6 +55,7 @@ export interface InvoiceView {
   memo?: string | null;
   paymentUrl?: string | null;
   paymentLabel?: string;
+  paymentStatus?: "PAID" | "PROCESSING";
   lines: InvoiceLineView[];
 }
 
@@ -113,21 +114,28 @@ export interface RenderedInvoice {
   html: string;
 }
 
+export function submittedPaymentMessage(status: InvoiceView["paymentStatus"]) {
+  if (status === "PAID") return { subject: "Payment received", note: "Payment has been received. No further payment is due." };
+  if (status === "PROCESSING") return { subject: "Payment processing", note: "Your payment has been submitted and is processing. Please do not send another payment." };
+}
+
 export function renderInvoice(inv: InvoiceView): RenderedInvoice {
   const identity = customerEmailIdentity(inv.propertyState);
   const totals = invoiceTotals(inv.lines);
-  const credit = totals.retail < 0, payable = totals.retail > 0;
+  const submitted = submittedPaymentMessage(inv.paymentStatus);
+  const credit = totals.retail < 0, payable = !submitted && totals.retail > 0;
   const due = formatMoney(Math.abs(totals.retail));
-  const balanceLabel = credit ? 'Credit balance' : payable ? 'Amount due' : 'No payment due';
-  const balanceNote = credit ? 'No payment is due. Contact the agency to apply or return this credit.' : 'No payment is due on this invoice.';
+  const balanceLabel = submitted ? 'Invoice total' : credit ? 'Credit balance' : payable ? 'Amount due' : 'No payment due';
+  const balanceNote = submitted?.note ?? (credit ? 'No payment is due. Contact the agency to apply or return this credit.' : 'No payment is due on this invoice.');
   const number = inv.number?.trim() || "";
   const greeting = inv.contactFirstName?.trim()
     ? `Hi ${inv.contactFirstName.trim()},`
     : "Hello,";
 
+  const summary = submitted?.subject ?? `${due} ${credit ? 'credit' : 'due'}`;
   const subject = number
-    ? `Invoice ${number} from ${identity.displayName} — ${due} ${credit ? 'credit' : 'due'}`
-    : `Invoice from ${identity.displayName} — ${due} ${credit ? 'credit' : 'due'}`;
+    ? `Invoice ${number} from ${identity.displayName} — ${summary}`
+    : `Invoice from ${identity.displayName} — ${summary}`;
 
   const meta: [string, string][] = [
     ["Invoice", number],

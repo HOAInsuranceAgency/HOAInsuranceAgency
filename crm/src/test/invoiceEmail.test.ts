@@ -26,6 +26,16 @@ const base: InvoiceView = {
 };
 
 describe("the emailed invoice", () => {
+  it.each(["PAID", "PROCESSING"] as const)("sends a payment update for %s without a payment request", paymentStatus => {
+    const invoice = renderInvoice({ ...base, paymentStatus });
+    expect(invoice.subject).toContain(paymentStatus === "PAID" ? "Payment received" : "Payment processing");
+    expect(invoice.subject).not.toContain("$");
+    for (const body of [invoice.html, invoice.text]) {
+      expect(body).toContain("Invoice total");
+      expect(body).toContain(paymentStatus === "PAID" ? "Payment has been received" : "Your payment has been submitted");
+      expect(body).not.toMatch(/Amount due|Payable by|Pay online|pay.example.com/);
+    }
+  });
   it.each([-500, 0])('never requests payment or financing for a nonpositive adjustment balance (%s)', amount => {
     const result = renderInvoice({ ...base, lines: [{ kind: 'ENDORSEMENT', description: 'Audit premium adjustment', retailAmount: amount, costAmount: amount }] });
     expect(result.text).toContain(amount < 0 ? 'Credit balance: $500.00' : 'No payment due: $0.00');

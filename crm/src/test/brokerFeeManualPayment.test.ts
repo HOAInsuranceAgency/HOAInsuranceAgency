@@ -9,7 +9,12 @@ vi.mock('../../amplify/functions/broker-fees/store', async original => ({
   getModel: async (model: string, id: string) => structuredClone(h.models.get(`${model}:${id}`)),
   accountModels: async (model:string,accountId:string)=>[...h.models.entries()].filter(([key,row])=>key.startsWith(`${model}:`)&&row.accountId===accountId).map(([,row])=>structuredClone(row)),
   getRow: async (id: string) => structuredClone(h.rows.get(id)), getFee: async (id: string) => structuredClone(h.rows.get(`fee:${id}`)), getAgreement: async (id: string) => structuredClone(h.rows.get(id)),
-  db: { send: async (command:{input:{ExpressionAttributeValues:Record<string,unknown>}}) => ({ Items: command.input.ExpressionAttributeValues[':invoice']==='i'?h.invoiceLineIds.map(id=>({id})):[...h.models.entries()].filter(([key,row])=>key.startsWith('InvoiceLine:')&&row.invoiceId===command.input.ExpressionAttributeValues[':invoice']).map(([,row])=>({id:row.id})) }) }, transact: h.transact,
+  db: { send: async (command: { input: { RequestItems?: Record<string, { Keys: { id: string }[] }>; ExpressionAttributeValues?: Record<string, unknown> } }) => {
+    const batch = command.input.RequestItems?.PfLoan;
+    if (batch) return { Responses: { PfLoan: batch.Keys.flatMap(key => h.models.get(`PfLoan:${key.id}`) ?? []) } };
+    const values = command.input.ExpressionAttributeValues ?? {};
+    return { Items: values[':invoice']==='i'?h.invoiceLineIds.map(id=>({id})):[...h.models.entries()].filter(([key,row])=>key.startsWith('InvoiceLine:')&&row.invoiceId===values[':invoice']).map(([,row])=>({id:row.id})) };
+  } }, transact: h.transact,
 }));
 vi.mock('../../amplify/functions/crm-access/user-status', async original => ({ ...await original<typeof import('../../amplify/functions/crm-access/user-status')>(), assertUserSession: h.session }));
 vi.mock('stripe', () => ({ default: class {
@@ -172,6 +177,14 @@ describe('manual receipts on premiums already financed', () => {
     expect(h.transact).not.toHaveBeenCalled();
   });
 
+  it.each(["ENDORSEMENT", "CARRIER_FEE"])("refuses a manual receipt for an unverified standalone %s on a financed term", async kind => {
+    h.invoiceLineIds = ["charge"];
+    h.models.set("InvoiceLine:charge", { id: "charge", invoiceId: "i", accountId: "a", policyId: "p", kind, retailAmount: 250, costAmount: 250, updatedAt: NOW });
+    h.models.set("PfLoan:loan", { id: "loan", accountId: "a", policyId: "p", status: "ACTIVE" });
+    await expect(confirmInvoicePayment(actor, { invoiceId: "i" })).rejects.toThrow("existing financing agreement");
+    expect(h.deactivate).not.toHaveBeenCalled();
+    expect(h.transact).not.toHaveBeenCalled();
+  });
   it('allows a separate broker fee and a retry of an already-recorded outside receipt', async () => {
     h.models.set('PfLoan:loan', { id: 'loan', accountId: 'a', quoteId: 'q', status: 'ACTIVE' });
     await expect(confirmInvoicePayment(actor, { invoiceId: 'i' })).resolves.toMatchObject({ invoice: {status: 'PAID'} });
@@ -241,7 +254,9 @@ describe('outside invoice payment beside an issued financing offer', () => {
 
 describe('outside payment while an invoice send owns the fee', () => {
   it('records a proven adjustment receipt without charging or earning the original broker fee twice', async () => {
-    adjustment();const oldFee=structuredClone(h.rows.get('fee:q'));
+    adjustment();
+    h.models.set('PfLoan:legacy', { id: 'legacy', accountId: 'a', policyId: 'p', status: 'ACTIVE' });
+    const oldFee=structuredClone(h.rows.get('fee:q'));
     h.models.set('PfLoan:loan', { id: 'loan', accountId: 'a', policyId: 'p', status: 'ACTIVE' });
     await expect(confirmInvoicePayment(actor,{invoiceId:'i'})).resolves.toMatchObject({invoice:{status:'PAID'}});
     expect(paymentRows()).toHaveLength(0);expect(h.rows.get('fee:q')).toEqual(oldFee);

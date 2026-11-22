@@ -1,5 +1,6 @@
+import { batchGetComplete } from './storage/batchGet';
 import { isGroupedInvoice } from '../../../shared/groupedInvoiceGuard';
-import { accountModels, getModel, modelTable, versionCheck, type Write } from './broker-fees/store';
+import { accountModels, db, getModel, modelTable, versionCheck, type Write } from './broker-fees/store';
 
 export type BillingPolicy = {
   id: string;
@@ -70,11 +71,17 @@ export async function assertPremiumNotFinanced(accountId: string, policyIds: str
     Array.isArray(loan.groupedPolicyIds) && loan.groupedPolicyIds.some(id => policies.has(id))
   ).map(loan => loan.id));
   if (typeof sourceLoanId === 'string' && sourceLoanId) matchedIds.add(sourceLoanId);
+  if (!matchedIds.size) return;
+  const unverified = () => new GroupedDraftBillingBlocked('The existing premium financing could not be verified. Review this policy before billing.');
+  const current = await batchGetComplete<LegacyLoan>({
+    send: command => db.send(command), table: modelTable('PfLoan'), keys: [...matchedIds].map(id => ({ id })),
+    // Account discovery allows 5,000 rows plus one explicit source outside the index results.
+    maxKeys: 5001, attempts: 5, read: { ConsistentRead: true }, sizeError: unverified, incompleteError: unverified,
+  });
+  const byId = new Map(current.map(loan => [loan.id, loan]));
   for (const id of matchedIds) {
-    const loan = await getModel<LegacyLoan>('PfLoan', id);
-    if (!loan || loan.accountId !== accountId) {
-      throw new GroupedDraftBillingBlocked('The existing premium financing could not be verified. Review this policy before billing.');
-    }
+    const loan = byId.get(id);
+    if (!loan || loan.accountId !== accountId) throw unverified();
     if (hasPremiumCommitment(loan)) {
       throw new GroupedDraftBillingBlocked('This premium is covered by an existing financing agreement or payment in progress. Review the agreement before billing.');
     }

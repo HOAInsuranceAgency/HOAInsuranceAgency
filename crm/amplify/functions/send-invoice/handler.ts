@@ -6,6 +6,7 @@ import { reserveFeeInvoice, publishFeeInvoiceLink, completeFeeInvoiceSend } from
 import { closeInvoiceCheckoutSessions } from "../invoiceCheckout";
 import { assertBrokerFeeSigned } from "../broker-fees/bindValidation";
 import { invoiceBrokerFeeAllocations, brokerFeeInvoiceRefresh } from "./brokerFeeInvoice";
+import { isPositiveNonBrokerCharge } from "../../../../shared/invoiceAdjustments";
 import { validateInvoiceSourceCharges } from "./passThroughInvoice";
 import { assertAdjustmentInvoiceProof, assertInitialInvoiceAvailable } from "./adjustmentInvoice";
 import { isNonpayableAdjustmentStatement } from "../../../../shared/invoicePaymentStatus";
@@ -677,8 +678,8 @@ export const handler = async (event: {
             : `This quote is ${(quoteAnchor.status ?? "closed").toLowerCase()} — there is no coverage to bill. Void the invoice.`,
       };
     }
-    const billsPremium = lines.some(line => line.kind !== "BROKER_FEE" && (line.retailAmount ?? 0) > 0);
-    if (billsPremium && invoice.sourcePricingVersion !== 2) {
+    const paymentStatus = invoice.status === "PAID" || invoice.status === "PROCESSING" ? invoice.status : undefined;
+    if (!paymentStatus && invoice.sourcePricingVersion !== 2 && lines.some(isPositiveNonBrokerCharge)) {
       await assertPremiumNotFinanced(invoice.accountId,
         headerPolicyId ? [...linePolicyIds, headerPolicyId] : linePolicyIds,
         policy?.quoteId ?? invoice.quoteId, policy?.sourcePricingLoanId ?? quoteAnchor?.sourcePricingLoanId);
@@ -814,7 +815,7 @@ export const handler = async (event: {
      * the same `invoiceTotals` the screen ran, over rows read here rather than
      * over anything the caller posted.
      */
-    const paymentUrl = invoice.status === "PAID" || invoice.status === "PROCESSING" ? null : await ensurePaymentLink(
+    const paymentUrl = paymentStatus ? null : await ensurePaymentLink(
       invoice,
       account.data.name,
       invoiceTotals(lines).retail,
@@ -871,6 +872,7 @@ export const handler = async (event: {
       issuedAt: invoice.issuedAt,
       dueAt: invoice.dueAt,
       memo: invoice.memo,
+      paymentStatus,
       paymentUrl: disclosureUrl ?? paymentUrl,
       paymentLabel,
       lines: [...lines].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)),

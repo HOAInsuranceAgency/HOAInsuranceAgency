@@ -17,6 +17,12 @@ export function isPaidOriginalPremium(policy: AdjustmentPolicy, invoice: Origina
   if (invoice.quoteId && policy.quoteId && invoice.quoteId !== policy.quoteId) return false;
   return line.invoiceId === invoice.id && line.kind === 'PREMIUM' && wholeCents(line.retailAmount) && line.retailAmount > 0 && (!line.accountId || line.accountId === policy.accountId) && (!line.policyId || line.policyId === policy.id);
 }
+/** Only a separate broker fee or a verified adjustment is independent of an
+ * existing financing commitment. Supplier charges can be part of the original bill. */
+export function isPositiveNonBrokerCharge(line: { kind?: unknown; retailAmount?: unknown }): boolean {
+  return line.kind !== 'BROKER_FEE' && Number(line.retailAmount) > 0;
+}
+
 export interface AdjustmentLine {
   kind?: string | null; description?: string | null; retailAmount?: number | null; costAmount?: number | null;
   sourceQuoteChargeId?: string | null; brokerFeeQuoteId?: string | null;

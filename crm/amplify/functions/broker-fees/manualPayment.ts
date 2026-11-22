@@ -1,6 +1,7 @@
 import { parseAccessIndexes, resolveAccessIndex } from '../storage/index-config';
 import { modelIndexKey } from '../storage/model-indexes';
 import { agencyDay } from '../../../../shared/agencyTime';
+import { isPositiveNonBrokerCharge } from "../../../../shared/invoiceAdjustments";
 import Stripe from 'stripe';
 import { QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { collectCompletePages } from '../storage/pages';
@@ -45,10 +46,9 @@ export async function confirmInvoicePayment(event:{identity?:Identity;request?:R
     for(const item of result.Items??[]){const current=await getModel<Record<string,unknown>>('InvoiceLine',String(item.id));if(current&&current.invoiceId===invoice.id)items.push(current);}
     return { items, next: result.LastEvaluatedKey };
   }, { maxPages: 100, maxRows: 70, error: () => new Error('This invoice needs a smaller reviewed payment allocation.') });
-  const premiumLines = lines.filter(line =>
-    (line.kind === 'PREMIUM' || line.kind === 'ENDORSEMENT') && Number(line.retailAmount) > 0);
-  if (invoice.status !== 'PAID' && !adjustmentProof && premiumLines.length) {
-    const policyIds = [id(invoice.policyId), ...premiumLines.map(line => id(line.policyId))].filter(Boolean);
+  const charges = lines.filter(isPositiveNonBrokerCharge);
+  if (invoice.status !== 'PAID' && !adjustmentProof && charges.length) {
+    const policyIds = [id(invoice.policyId), ...charges.map(line => id(line.policyId))].filter(Boolean);
     await assertPremiumNotFinanced(String(invoice.accountId), policyIds, quoteId, policy?.sourcePricingLoanId ?? quote?.sourcePricingLoanId);
   }
   const fee=quoteId?await getFee(quoteId):undefined;
