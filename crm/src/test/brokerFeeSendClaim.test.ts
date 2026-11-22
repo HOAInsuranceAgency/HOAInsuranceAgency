@@ -37,7 +37,7 @@ beforeEach(() => {
   vi.spyOn(console, 'log').mockImplementation(() => {}); vi.spyOn(console, 'warn').mockImplementation(() => {}); vi.spyOn(console, 'error').mockImplementation(() => {});
   vi.stubEnv('HOA_TRANSACTIONAL_MAIL_PROVIDER', 'resend'); vi.stubEnv('STRIPE_SECRET_KEY', 'fixture'); vi.stubEnv('INVOICE_TABLE', 'Invoice');
   vi.stubEnv('PF_LOAN_TABLE', ''); vi.stubEnv('SITE_URL', '');
-  vi.stubEnv('ACCESS_TABLES', JSON.stringify({ Policy: 'Policy', Quote: 'Quote', Invoice: 'Invoice', InvoiceLine: 'InvoiceLine' }));
+  vi.stubEnv('ACCESS_TABLES', JSON.stringify({ Policy: 'Policy', Quote: 'Quote', Invoice: 'Invoice', InvoiceLine: 'InvoiceLine', PfLoan: 'PfLoan' }));
   vi.stubEnv('ACCESS_INDEXES', JSON.stringify({ 'Invoice.accountId': 'by-account', 'InvoiceLine.invoiceId': 'by-invoice' }));
   h.order.length = 0;
   h.records.clear();
@@ -58,6 +58,10 @@ beforeEach(() => {
   h.accountModels.mockImplementation(async (model, accountId) => [...h.records.entries()].filter(([key, row]) => key.startsWith(`${model}:`) && row.accountId === accountId).map(([, row]) => structuredClone(row)));
   h.storeDb.mockImplementation(async command => {
     const input = command.input;
+    if (command.constructor.name === 'BatchGetCommand') {
+      const loans = input.RequestItems.PfLoan.Keys.flatMap(({ id }: { id: string }) => h.records.get(`PfLoan:${id}`) ?? []);
+      return { Responses: { PfLoan: loans } };
+    }
     if (command.constructor.name === 'GetCommand') return { Item: await h.model(input.TableName, input.Key.id) };
     if (command.constructor.name !== 'QueryCommand') throw new Error('Unexpected private-store write in Send fixture');
     const value = Object.values(input.ExpressionAttributeValues ?? {})[0];
@@ -105,6 +109,30 @@ beforeEach(() => {
 afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 const send = () => handler({ arguments: { invoiceId: 'i', toEmail: 'board@example.test' } });
 
+it.each(["PAID", "PROCESSING"] as const)("sends the existing %s invoice without offering another collection", async status => {
+  h.quote.brokerFee = 0;
+  Object.assign(h.invoice, { policyId: "p", status, paymentUrl: "https://buy.stripe.com/old", stripePaymentLinkId: "old-link" });
+  h.records.set("Policy:p", { ...h.quote, id: "p", quoteId: "q" });
+  h.records.set("PfLoan:legacy", { id: "legacy", accountId: "a", policyId: "p", status: "ACTIVE" });
+  h.models.InvoiceLine.list = async () => ({ data: [{ id: "premium", accountId: "a", policyId: "p", kind: "PREMIUM", retailAmount: 10000, costAmount: 8000 }] });
+  await expect(send()).resolves.toMatchObject({ ok: true, subject: expect.stringContaining(status === "PAID" ? "Payment received" : "Payment processing") });
+  expect(h.pdf.mock.calls[0][0]).toMatchObject({ paymentStatus: status, paymentUrl: null });
+  expect(h.mail).toHaveBeenCalledOnce();
+  expect(h.reserve).not.toHaveBeenCalled();
+  expect(h.link).not.toHaveBeenCalled();
+  expect(h.retrieve).not.toHaveBeenCalled();
+});
+
+it.each(["ENDORSEMENT", "CARRIER_FEE"])("blocks an unverified %s on a financed term before email or payment setup", async kind => {
+  h.quote.brokerFee = 0;
+  Object.assign(h.invoice, { policyId: "p", status: "SENT", stripeLinkAmountCents: 25000 });
+  h.records.set("Policy:p", { ...h.quote, id: "p", quoteId: "q" });
+  h.records.set("PfLoan:legacy", { id: "legacy", accountId: "a", policyId: "p", status: "ACTIVE" });
+  h.models.InvoiceLine.list = async () => ({ data: [{ id: "charge", accountId: "a", policyId: "p", kind, retailAmount: 250, costAmount: 250 }] });
+  await expect(send()).resolves.toMatchObject({ ok: false, error: expect.stringContaining("existing financing") });
+  expect(h.mail).not.toHaveBeenCalled();
+  expect(h.link).not.toHaveBeenCalled();
+});
 it.each([
   { policyId: 'p', status: 'ACTIVE' },
   { quoteId: 'q', status: 'PAID' },
@@ -318,8 +346,9 @@ describe('real broker fee invoice send claim sequencing', () => {
 });
 
 describe('real adjustment Send proof and source protection', () => {
-  it('strongly verifies the paid original and publishes the positive delta with atomic proof guards', async () => {
+  it('strongly verifies a paid original and allows its distinct positive adjustment on a financed policy', async () => {
     adjustmentFixture();
+    h.records.set('PfLoan:legacy', { id: 'legacy', accountId: 'a', policyId: 'p', status: 'ACTIVE' });
     h.quote.brokerFee = 500;
     h.records.get('Policy:p')!.brokerFee = 500;
     expect(await send()).toMatchObject({ ok: true });

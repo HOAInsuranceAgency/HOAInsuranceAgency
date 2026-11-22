@@ -41,6 +41,7 @@ export interface CommissionEarning {
   accountName: string;
   transaction: "NEW" | "RENEWAL";
   entryId: string;
+  revenueKind?: CommissionEntry['revenueKind'];
   receivedOn: string;
   agencyCents: number;
   producerBps: number;
@@ -233,6 +234,7 @@ export function receiptEarnings(
       transaction: policy.transaction,
       entryId: entry.id,
       receivedOn: entry.receivedOn,
+      ...(entry.revenueKind ? { revenueKind: entry.revenueKind } : {}),
       agencyCents: entry.agencyCents,
       producerBps: p.producerBps,
       shareBps: p.shareBps,

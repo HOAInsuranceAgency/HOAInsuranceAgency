@@ -1,4 +1,5 @@
 import { policyReceiptEarnings, workspaceEarnings } from "./earnings";
+import { payrollRevenueKind } from '../../../../shared/commissionPayroll';
 import { allocationFor, receiptEarnings, type CommissionEarning } from '../../../../shared/commissionExceptions';
 import { exceptionAction, exceptionOperations } from './exceptions';
 import { assertPreviewRead } from "../migration-readonly";
@@ -170,12 +171,12 @@ export async function handler(event: Event) {
           asOf,
           isTest: !!process.env.COMMISSION_PAYROLL_ENV && process.env.COMMISSION_PAYROLL_ENV !== 'main',
           policies,
-          earnings: ownEarnings.map(e => ({id:e.id,version:e.version,producerId:e.producerId,producerName:e.producerName,policyId:e.policyId,policyNumber:e.policyNumber,accountName:e.accountName,transaction:e.transaction,entryId:e.entryId,receivedOn:e.receivedOn,agencyCents:e.shareBps===undefined?e.agencyCents:ratio(e.agencyCents,e.shareBps,10000),producerBps:e.producerBps,shareBps:e.shareBps,amountCents:e.amountCents,source:e.source,status:e.status,batchId:e.batchId})),
+          earnings: ownEarnings.map(e => ({id:e.id,version:e.version,producerId:e.producerId,producerName:e.producerName,policyId:e.policyId,policyNumber:e.policyNumber,accountName:e.accountName,transaction:e.transaction,entryId:e.entryId,revenueKind:payrollRevenueKind(e),receivedOn:e.receivedOn,agencyCents:e.shareBps===undefined?e.agencyCents:ratio(e.agencyCents,e.shareBps,10000),producerBps:e.producerBps,shareBps:e.shareBps,amountCents:e.amountCents,source:e.source,status:e.status,batchId:e.batchId})),
           batches: ownBatches.map(b => ({
             id: b.id, version: b.version, producerId: b.producerId, producerName: b.producerName,
             cutoff: b.cutoff, payDate: b.payDate, actualPaidOn: b.actualPaidOn, status: b.status, totalCents: b.totalCents, paidCents: batchPaidCents(b),
             payments: b.payments?.map((p,i) => ({ id: String(i+1), amountCents: p.amountCents, paidOn: p.paidOn })),
-            lines: b.lines.map(l => ({ earningId: l.earningId, source: l.source, shareBps: l.shareBps, policyId: l.policyId, entryId: l.entryId, accountName: l.accountName,
+            lines: b.lines.map(l => ({ earningId: l.earningId, source: l.source, revenueKind: payrollRevenueKind(l), shareBps: l.shareBps, policyId: l.policyId, entryId: l.entryId, accountName: l.accountName,
               policyNumber: l.policyNumber, receivedOn: l.receivedOn, transaction: l.transaction,
               agencyCents: l.agencyCents, producerBps: l.producerBps, amountCents: l.amountCents })),
           })),

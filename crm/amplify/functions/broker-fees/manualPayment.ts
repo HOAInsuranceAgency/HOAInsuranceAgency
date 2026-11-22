@@ -1,4 +1,5 @@
 import { assertPremiumNotFinanced } from '../legacy-premium-billing';
+import { isPositiveNonBrokerCharge } from "../../../../shared/invoiceAdjustments";
 import Stripe from 'stripe';
 import { QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { AccountAccess } from '../crm-access/access';
@@ -40,10 +41,9 @@ export async function confirmInvoicePayment(event:{identity?:Identity;request?:R
     cursor=result.LastEvaluatedKey;
     if(lines.length>70)throw new Error('This invoice needs a smaller reviewed payment allocation.');
   }while(cursor);
-  const premiumLines = lines.filter(line =>
-    (line.kind === 'PREMIUM' || line.kind === 'ENDORSEMENT') && Number(line.retailAmount) > 0);
-  if (invoice.status !== 'PAID' && !adjustmentProof && premiumLines.length) {
-    const policyIds = [id(invoice.policyId), ...premiumLines.map(line => id(line.policyId))].filter(Boolean);
+  const charges = lines.filter(isPositiveNonBrokerCharge);
+  if (invoice.status !== 'PAID' && !adjustmentProof && charges.length) {
+    const policyIds = [id(invoice.policyId), ...charges.map(line => id(line.policyId))].filter(Boolean);
     await assertPremiumNotFinanced(String(invoice.accountId), policyIds, quoteId, policy?.sourcePricingLoanId ?? quote?.sourcePricingLoanId);
   }
   const fee=quoteId?await getFee(quoteId):undefined;
