@@ -3,13 +3,13 @@
  * Team.
  *
  *   01 hero
- *   02 how the team works (three functions, no headcount claims)
- *   03 top producers: photo and name
- *   04 CTA
+ *   02 intro: the agency and its founder, beside a photo
+ *   03 how the team works (three functions, no headcount claims)
+ *   04 "Our standards" band (shared component): figures, carriers and CTA
  */
 import Layout from "../layouts/Layout.astro";
 import Hero from "../components/Hero.astro";
-import { QUOTE_URL } from "../constants";
+import AgencyStandards from "../components/AgencyStandards.astro";
 import { AGENCY } from "../../../shared/agency";
 import "./Team.css";
 
@@ -18,15 +18,6 @@ const FUNCTIONS = [
   { title: "Placement", desc: "Licensed agents take your association to the markets that write it and compare every option." },
   { title: "Account service", desc: "Certificates, policy changes and lender requests handled without the runaround." },
   { title: "Renewal planning", desc: "Valuations and loss history updated early, so your board has time to decide." },
-];
-
-/* Ordered for the row: darker backdrops at the ends, the gray one centered. */
-const PRODUCERS = [
-  { name: "Jake Greasley", photo: "/images/team/jake-greasley.jpg" },
-  { name: "Holly Martin", photo: "/images/team/holly-martin.jpg" },
-  { name: "Brian Cole", photo: "/images/team/brian-cole.jpg" },
-  { name: "Samuel Danis", photo: "/images/team/samuel-danis.jpg" },
-  { name: "Michael Greasley", photo: "/images/team/michael-greasley.jpg" },
 ];
 ---
 
@@ -37,15 +28,50 @@ const PRODUCERS = [
 >
   <Hero
     eyebrow="Our team"
-    title="The people behind your association’s coverage"
+    title="Dedicated to your association’s coverage"
     subtitle="Licensed Insurance professionals focused on homeowners and condominium associations."
     backgroundImage="/images/practice-team.jpg"
     compact
     short
   />
 
-  {/* ═══ 02 · How the team works ═════════════════════════════════════ */}
-  <section class="section" aria-labelledby="team-work-h">
+  {/* ═══ 02 · Intro ═══════════════════════════════════════════════════ */}
+  <section class="section" aria-labelledby="team-intro-h">
+    <div class="container tm-intro">
+      <div class="tm-intro__copy">
+        <p class="eyebrow">Who we are</p>
+        <h2 class="section-title" id="team-intro-h">An independent agency built for community associations</h2>
+        <p class="tm-intro__lead">
+          {AGENCY.name} focuses on homeowners and condominium associations, their
+          boards, property managers and unit owners. Every account is placed, serviced and
+          renewed by licensed agents who know how association master policies are written.
+        </p>
+        <p class="tm-intro__lead">
+          The agency is led by{" "}
+          <strong class="tm-intro__founder">{AGENCY.founderDisplayName}</strong>,
+          {AGENCY.founderJobTitle}. It is based in {AGENCY.city}, {AGENCY.state}, and licensed
+          in {AGENCY.areaServed}.
+        </p>
+        <p class="tm-intro__sign">
+          <strong>{AGENCY.founderDisplayName}</strong>
+          <span>{AGENCY.founderJobTitle}, HOA Insurance Agency</span>
+        </p>
+      </div>
+      <figure class="tm-intro__media">
+        <img
+          src="/images/board-meeting.jpg"
+          alt="Modern condominium buildings with glass balconies against a blue sky"
+          width="1600"
+          height="1066"
+          loading="lazy"
+          decoding="async"
+        />
+      </figure>
+    </div>
+  </section>
+
+  {/* ═══ 03 · How the team works ═════════════════════════════════════ */}
+  <section class="section section--alt" aria-labelledby="team-work-h">
     <div class="container">
       <div class="sec-head sec-head--center">
         <p class="eyebrow">How we work</p>
@@ -67,36 +93,6 @@ const PRODUCERS = [
     </div>
   </section>
 
-  {/* ═══ 03 · Top producers ══════════════════════════════════════════ */}
-  <section class="section section--alt" aria-labelledby="team-h">
-    <div class="container">
-      <div class="sec-head sec-head--center">
-        <p class="eyebrow">Top producers</p>
-        <h2 class="section-title" id="team-h">Meet a few of our top producers</h2>
-        <p class="section-subtitle">
-          Licensed agents who work with boards, property managers and owners every day.
-        </p>
-      </div>
-      <ul class="tm-producers">
-        {PRODUCERS.map((p) => (
-          <li class="tm-producer">
-            <img class="tm-producer__photo" src={p.photo} alt={p.name} width="640" height="800" loading="lazy" decoding="async" />
-            <h3 class="tm-producer__name">{p.name}</h3>
-          </li>
-        ))}
-      </ul>
-    </div>
-  </section>
-
-  {/* ═══ 04 · CTA ═════════════════════════════════════════════════════ */}
-  <section class="section" aria-labelledby="team-cta-h">
-    <div class="container tm-cta">
-      <h2 class="section-title" id="team-cta-h">Talk to someone who knows associations</h2>
-      <div class="tm-cta__actions">
-        <a href="/contact/" class="btn btn-primary">Speak with a licensed agent</a>
-        <a href={QUOTE_URL} class="btn tm-cta__alt">Request Insurance Review</a>
-      </div>
-      <p class="tm-cta__note">{AGENCY.name}, licensed in {AGENCY.areaServed}. Fees disclosed before purchase.</p>
-    </div>
-  </section>
+  {/* ═══ 04 · Our standards (shared with /what-we-do and /condo-insurance) ═ */}
+  <AgencyStandards />
 </Layout>

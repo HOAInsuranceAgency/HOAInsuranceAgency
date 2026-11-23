@@ -1,8 +1,38 @@
 /* ── Our standards ────────────────────────────────────────────────────
    Navy band. Left: heading, a two-column checklist and the indication CTA.
    Right: four figures in a hairline 2×2 panel. Below: the appointed markets.
-   No boxed cards on the navy ground, only hairlines and gold accents, on the
-   site-wide type scale (32px heading, 16px standfirst, 15.5px list). */
+   Modern treatment: a soft gold glow on the navy, glass figure cards with a
+   gold accent and checklist tiles. Carrier logos keep their own colours. */
+.std-band {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.std-band::before,
+.std-band::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.std-band::before {
+  top: -220px;
+  right: -160px;
+  width: 560px;
+  height: 560px;
+  background: radial-gradient(circle, rgba(229, 193, 106, 0.18), transparent 65%);
+}
+
+.std-band::after {
+  bottom: -260px;
+  left: -200px;
+  width: 620px;
+  height: 620px;
+  background: radial-gradient(circle, rgba(77, 166, 255, 0.14), transparent 65%);
+}
 .std-layout {
   display: grid;
   grid-template-columns: 1.15fr 0.85fr;
@@ -17,7 +47,7 @@
 .std-list {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  column-gap: 32px;
+  gap: 10px;
   margin: 28px 0 0;
   padding: 0;
   list-style: none;
@@ -27,9 +57,11 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 14px 0;
-  border-top: 1px solid rgba(255, 255, 255, 0.12);
-  font-size: 15px;
+  padding: 12px 14px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  font-size: 14.5px;
   font-weight: 500;
   line-height: 1.4;
   color: var(--color-white);
@@ -43,8 +75,8 @@
   width: 22px;
   height: 22px;
   border-radius: 50%;
-  border: 1px solid rgba(229, 193, 106, 0.6);
-  color: var(--color-gold);
+  background: var(--color-gold);
+  color: var(--color-navy);
 }
 
 .std-cta {
@@ -63,52 +95,63 @@
 .std-figs {
   display: grid;
   grid-template-columns: 1fr 1fr;
+  gap: 14px;
   margin: 0;
   padding: 0;
   list-style: none;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 16px;
-  overflow: hidden;
 }
 
 .std-fig {
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 32px 28px;
-  border-color: rgba(255, 255, 255, 0.14);
-  border-style: solid;
-  border-width: 0;
+  gap: 10px;
+  padding: 28px 24px 24px;
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.03));
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 16px;
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  transition: transform 0.2s ease, border-color 0.2s ease;
 }
 
-.std-fig:nth-child(odd) {
-  border-right-width: 1px;
+.std-fig::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 24px;
+  width: 36px;
+  height: 3px;
+  background: var(--color-gold);
+  border-radius: 0 0 3px 3px;
 }
 
-.std-fig:nth-child(-n + 2) {
-  border-bottom-width: 1px;
+.std-fig:hover {
+  transform: translateY(-3px);
+  border-color: rgba(229, 193, 106, 0.45);
 }
 
 .std-fig__v {
-  font-size: clamp(30px, 3vw, 40px);
+  font-size: clamp(24px, 2.4vw, 32px);
   font-weight: 700;
-  line-height: 1;
-  letter-spacing: -0.03em;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
   color: var(--color-gold);
 }
 
 .std-fig__l {
   font-size: 13.5px;
   line-height: 1.5;
-  color: rgba(255, 255, 255, 0.72);
+  color: rgba(255, 255, 255, 0.75);
 }
 
 /* One slim white strip so the logos keep their own colours on the navy. */
 .std-markets {
   margin-top: 48px;
-  padding: 14px 24px 10px;
+  padding: 18px 28px 14px;
   background: var(--color-white);
-  border-radius: 14px;
+  border-radius: 16px;
+  box-shadow: 0 24px 48px -28px rgba(0, 0, 0, 0.55);
   text-align: center;
 }
 
@@ -165,10 +208,20 @@
   }
 
   .std-fig {
-    padding: 24px 18px;
+    padding: 24px 16px 18px;
   }
 
   .std-markets__list {
     grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .std-fig {
+    transition: none;
+  }
+
+  .std-fig:hover {
+    transform: none;
   }
 }
