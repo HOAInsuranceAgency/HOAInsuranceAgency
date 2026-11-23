@@ -1,3 +1,4 @@
+import { policyCollectionWrites, assertHoaCollection, IpfsInvoiceBlocked } from "../ipfs-invoice";
 import { assertPremiumNotFinanced, LegacyPremiumBillingBlocked } from "../legacy-premium-billing";
 import { captureHandledFailure } from "../monitoring";
 import { initialQuotePublicationWrites } from "../quote-source-billing";
@@ -548,6 +549,7 @@ export const handler = async (event: {
      * policy — and a lost or declined quote bills coverage that will never
      * exist.
      */
+    if (!paymentStatus) { assertHoaCollection(policy); assertHoaCollection(quoteAnchor); }
     if (!paymentStatus && quoteAnchor && !isOpenQuoteStatus(quoteAnchor.status)) {
       return {
         ok: false,
@@ -671,10 +673,15 @@ export const handler = async (event: {
 
     // Completed retries must return before starting another fee link claim.
     // This lease also serializes same-invoice Stripe retries in production.
+    const policyWrites = !paymentStatus && invoiceTotals(lines).retail > 0
+      ? await policyCollectionWrites(invoice.accountId, invoice.id, [...linePolicyIds, ...(headerPolicyId ? [headerPolicyId] : [])], headerPolicyId) : [];
     const tracked = ["resend", "ses"].includes(process.env.HOA_TRANSACTIONAL_MAIL_PROVIDER ?? "")
-      ? await beginInvoiceSend(invoice, to, event.arguments?.expectedSentAt, { database: ddb })
+      ? await beginInvoiceSend(invoice, to, event.arguments?.expectedSentAt, { database: ddb, policyWrites })
       : undefined;
     if (tracked?.completed) return tracked.completed;
+    if (!tracked && policyWrites.length) {
+      await ddb.send(new TransactWriteCommand({ TransactItems: policyWrites }));
+    }
 
     let disclosureUrl: string | undefined;
     let paymentLabel: string | undefined;
@@ -870,7 +877,7 @@ export const handler = async (event: {
     console.log(`send-invoice sent ${invoice.number ?? invoiceId} to ${to.join(", ")}`);
     return result;
   } catch (err) {
-    if (err instanceof SendBlocked || err instanceof LegacyPremiumBillingBlocked || err instanceof InvoiceSendBlocked || err instanceof MailDeliveryError) {
+    if (err instanceof SendBlocked || err instanceof IpfsInvoiceBlocked || err instanceof LegacyPremiumBillingBlocked || err instanceof InvoiceSendBlocked || err instanceof MailDeliveryError) {
       return { ok: false, error: err.message };
     }
     captureHandledFailure(err);

@@ -13,11 +13,11 @@ import { useFormState } from "../lib/useFormState";
 import { SELECTABLE_QUOTE_STATUSES } from "../lib/quoteStatus";
 import {
   AGGREGATE_APPLIES_TO_OPTIONS,
-  BILL_TYPE_OPTIONS,
   POLICY_STATUSES,
   REPLACEMENT_COST_OPTIONS,
 } from "../lib/enums";
 import { DateInput, MoneyInput, PercentInput } from "./inputs";
+import { ipfsFeeSplit, ipfsFinancedCents, needsIpfsClosure, usesIpfs } from "../../../shared/ipfsCollection";
 import { brokerFeeCents } from "../../../shared/brokerFees";
 import { normalizeClientConditions, normalizePassThroughCharges, type PassThroughCharge } from "../../../shared/passThroughCharges";
 import { formatMoney } from "../lib/invoiceTotals";
@@ -66,7 +66,13 @@ export default function CoverageForm({
     renewalPolicyId: (existing as Quote | null)?.renewalPolicyId ?? "",
     offerExpiresAt: (existing as Quote | null)?.offerExpiresAt ?? "",
     policyNumber: asPolicy?.policyNumber ?? "",
-    billType: asPolicy?.billType ?? "",
+    billType: existing?.billType ?? "",
+    financeWithIpfs: usesIpfs(existing),
+    ipfsAmountFinanced: str(existing?.ipfsAmountFinanced),
+    ipfsPriorBrokerFees: str(existing?.ipfsPriorBrokerFees),
+    ipfsReleaseReference: "",
+    ipfsQuoteRef: (isPolicy ? asPolicy?.ipfsAgreementRef : (existing as Quote | null)?.ipfsQuoteRef) ?? "",
+    carrierBillToAgency: existing?.carrierBillToAgency === true,
     // MEP rides along as underwriting data. Its screen — and auditable's,
     // and producer-of-record's — all retired 2026-08-24 by signed decision;
     // the form no longer asks any of them.
@@ -106,6 +112,16 @@ export default function CoverageForm({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
+  const leavingIpfs = needsIpfsClosure(existing) && !form.financeWithIpfs;
+  const lockedCollection = existing?.status === "BOUND" || (isPolicy && (usesIpfs(existing) || !!asPolicy?.carrierBillType));
+  const collector = form.financeWithIpfs ? "IPFS" : form.billType;
+  let feeSplit: ReturnType<typeof ipfsFeeSplit> | undefined;
+  try {
+    if (form.financeWithIpfs && Number(form.ipfsAmountFinanced) > 0) {
+      feeSplit = ipfsFeeSplit({ ipfsAmountFinanced: Number(form.ipfsAmountFinanced), ipfsPriorBrokerFees: num(form.ipfsPriorBrokerFees), brokerFee: num(form.brokerFee) });
+    }
+  } catch { /* Incomplete amounts are still editable. */ }
+
   function toggleLine(line: string) {
     setF("lines", (ls) =>
       ls.includes(line) ? ls.filter((l) => l !== line) : [...ls, line]
@@ -124,14 +140,18 @@ export default function CoverageForm({
   async function save() {
     if (savingNow.current) return;
     let brokerFee: number, passThroughCharges: PassThroughCharge[], clientConditions: string;
+    const ipfsAmount = form.financeWithIpfs ? Number(form.ipfsAmountFinanced) : null;
     try {
+      ipfsFinancedCents(ipfsAmount);
+      if (form.financeWithIpfs) brokerFeeCents(num(form.ipfsPriorBrokerFees));
+      if (leavingIpfs && !form.ipfsReleaseReference.trim()) throw new Error("Enter the IPFS closure reference.");
       brokerFee = brokerFeeCents(form.brokerFee.trim() === "" ? 0 : Number(form.brokerFee)) / 100;
       passThroughCharges = normalizePassThroughCharges(form.passThroughCharges.map(({ id, kind, description, amount }) => ({ id, kind, description, amountCents: brokerFeeCents(Number(amount)) })));
       clientConditions = normalizeClientConditions(form.clientConditions);
     }
     catch (error) { setError(error instanceof Error ? error.message : "Check the broker fee."); return; }
     if (brokerFee > 0 && form.billType !== "AGENCY") {
-      setError("HOA broker fees require agency billing. Choose Agency bill before saving.");
+      setError("HOA broker fees require agency billing. Choose HOA CRM or IPFS before saving.");
       return;
     }
     if (
@@ -151,7 +171,14 @@ export default function CoverageForm({
       lines: form.lines,
       premium: num(form.premium),
       commissionPct: num(form.commissionPct),
-      ...(!isPolicy && existing?.status !== "BOUND" ? { brokerFee, billType: (form.billType || null) as Quote["billType"],
+      ...(!isPolicy && existing?.status !== "BOUND" ? { brokerFee,
+        ...(!existing || existing.billType !== form.billType || usesIpfs(existing) !== form.financeWithIpfs || (existing as Quote | null)?.clientBillingSelected ? { clientBillingSelected: !!form.billType } : {}),
+        ...((form.financeWithIpfs && form.ipfsQuoteRef.trim()) || (existing as Quote | null)?.ipfsQuoteRef ? { ipfsQuoteRef: form.financeWithIpfs ? form.ipfsQuoteRef.trim() || null : null } : {}),
+        ...(form.financeWithIpfs || usesIpfs(existing) ? { ipfsAmountFinanced: ipfsAmount } : {}),
+        ...((form.financeWithIpfs && form.ipfsPriorBrokerFees !== "") || existing?.ipfsPriorBrokerFees != null ? { ipfsPriorBrokerFees: form.financeWithIpfs ? num(form.ipfsPriorBrokerFees) : null } : {}),
+        ...(form.carrierBillToAgency || existing?.carrierBillToAgency ? { carrierBillToAgency: form.carrierBillToAgency } : {}),
+        ...(leavingIpfs ? { ipfsReleaseReference: form.ipfsReleaseReference.trim() } : {}),
+        billType: (form.billType || null) as Quote["billType"],
         ...(!existing || existing.passThroughCharges != null || passThroughCharges.length > 0 ? { passThroughCharges: JSON.stringify(passThroughCharges) } : {}),
         clientConditions: clientConditions || null } : {}),
       perOccurrenceDeductible: num(form.perOccDed),
@@ -274,27 +301,37 @@ export default function CoverageForm({
             </div>
           </>
         )}
-        {/* Fee-bearing quotes need this existing billing answer before the
-            client payment request; fee-free quotes still answer it at bind. */}
-        {(isPolicy || Number(form.brokerFee) > 0) && (
-          <div className="field">
-            <label htmlFor="coverage-bill-type">Bill type</label>
-            <select
-              id="coverage-bill-type"
-              disabled={!isPolicy && existing?.status === "BOUND"}
-              value={form.billType}
-              onChange={(e) => setF("billType", e.target.value)}
-            >
-              <option value="">Not recorded</option>
-              {BILL_TYPE_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value} disabled={o.value === "DIRECT" && Number(form.brokerFee) > 0}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-            {!isPolicy && <p className="small muted">{Number(form.brokerFee) > 0 ? "HOA broker fees require agency billing." : "Choose who collects the premium so the client’s payment request includes only the amount the agency collects."}</p>}
-          </div>
-        )}
+        <label className="field">Client pays
+          <select value={collector} disabled={lockedCollection} onChange={event => {
+            const route = event.target.value;
+            patch({ billType: (route === "IPFS" ? "AGENCY" : route) as typeof form.billType, financeWithIpfs: route === "IPFS",
+              carrierBillToAgency: route === "DIRECT" || !route ? false : form.carrierBillToAgency });
+          }}>
+            <option value="" disabled={Number(form.brokerFee) > 0}>Select…</option>
+            <option value="DIRECT" disabled={Number(form.brokerFee) > 0}>Carrier</option>
+            <option value="AGENCY">HOA CRM</option>
+            {(!isPolicy || usesIpfs(existing)) && <option value="IPFS">IPFS</option>}
+          </select>
+        </label>
+        {form.financeWithIpfs && <label className="field">IPFS agreement amount financed ($)
+          <MoneyInput value={form.ipfsAmountFinanced} disabled={lockedCollection} onChange={value => setF("ipfsAmountFinanced", value)} />
+        </label>}
+        {form.financeWithIpfs && <label className="field">IPFS reference
+          <input value={form.ipfsQuoteRef} maxLength={200} disabled={lockedCollection} onChange={event => setF("ipfsQuoteRef", event.target.value)} />
+        </label>}
+        {form.financeWithIpfs && <details open={Number(existing?.ipfsPriorBrokerFees) > 0 || undefined}>
+          <summary>Shared IPFS agreement</summary>
+          <label className="field">Broker fees allocated before this policy ($)
+            <MoneyInput value={form.ipfsPriorBrokerFees} disabled={lockedCollection} onChange={value => setF("ipfsPriorBrokerFees", value)} />
+          </label>
+        </details>}
+        {leavingIpfs && <label className="field">IPFS closure reference
+          <input value={form.ipfsReleaseReference} maxLength={200} onChange={event => setF("ipfsReleaseReference", event.target.value)} />
+        </label>}
+        {form.billType === "AGENCY" && (!isPolicy || form.carrierBillToAgency) && <label className="field">
+          <span><input type="checkbox" checked={form.carrierBillToAgency} disabled={lockedCollection}
+            onChange={event => setF("carrierBillToAgency", event.target.checked)} /> Carrier direct bill addressed to HOA</span>
+        </label>}
         {!isPolicy && policies.data.length > 0 && <label className="field">Renewal of<select value={form.renewalPolicyId} onChange={e => { const p = policies.data.find(p => p.id === e.target.value); setF("renewalPolicyId", e.target.value); if (p?.expirationDate && !form.effectiveDate) setF("effectiveDate", p.expirationDate); }}><option value="">New business</option>{policies.data.map(p => <option value={p.id} key={p.id}>{p.policyNumber || "Policy"} · {p.lines?.join(", ")} · expires {p.expirationDate}</option>)}</select></label>}
         {!isPolicy && <label className="field">Offer valid through (if specified by carrier)<DateInput value={form.offerExpiresAt} onChange={v => setF("offerExpiresAt", v)} /></label>}
         <div className="field">
@@ -331,8 +368,10 @@ export default function CoverageForm({
         <div className="field">
           <label htmlFor="coverage-broker-fee">HOA broker fee ($)</label>
           <MoneyInput id="coverage-broker-fee" value={form.brokerFee} disabled={isPolicy || existing?.status === "BOUND"} onChange={v => patch({ brokerFee: v, ...(Number(v) > 0 ? { billType: "AGENCY" } : {}) })} />
-          <p className="small muted">Optional agency fee, separate from premium. Disclosed before purchase; the producer’s usual share applies.{(isPolicy || existing?.status === "BOUND") ? " The bound fee is preserved with its signed agreement." : " New and renewal quotes start at $0."}</p>
         </div>
+        {feeSplit && feeSplit.feeCents > 0 && <p className="small" role="status">
+          Broker fee: {formatMoney(feeSplit.financedFeeCents / 100)} financed · {formatMoney(feeSplit.downPaymentFeeCents / 100)} in down payment
+        </p>}
         <div className="field full">
           <h4 style={{ margin: "6px 0" }}>Supplier charges and taxes</h4>
           <p className="small muted">Itemize charges from the carrier or wholesaler. These pass through at cost and do not increase agency revenue.</p>

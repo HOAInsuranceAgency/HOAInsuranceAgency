@@ -350,7 +350,7 @@ See [Commission exceptions, shared credit, and departures](COMMISSION-EXCEPTIONS
 
 ## IPFS financing fees
 
-In **Commissions → IPFS fees**, the Owner selects a bound policy term and records the agency fee entered in IPFS and its agreement reference. For a multi-policy agreement, allocate the agreed fee across the covered terms. Each renewal has its own fee. The fee belongs to that policy term.
+In Commissions, apply the broker-fee portion of an IPFS remittance to the policy’s agreed broker fee. The financed and down-payment portions settle that one fee. Record separate lender compensation only when the IPFS statement identifies an additional payment to the agency. Allocate shared remittances to their policy terms.
 
 Match the fee portion of an actual IPFS remittance to the term using its settlement date, a unique transaction or allocation reference, and the deposit or remittance reference. For a shared deposit, enter the total agency fees shown on the remittance, reuse the deposit reference and date, and enter a different allocation reference for each term. Allocations across all terms and accounts are capped by the verified subtotal for that transaction type. Partial receipts accumulate against the expected fee. An amount entered before collecting it contributes to the agency estimate. Only verified receipts create producer earnings, using the policy's frozen eligible producer share.
 

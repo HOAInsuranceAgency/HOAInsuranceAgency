@@ -30,7 +30,7 @@ vi.mock('../../amplify/functions/broker-fees/store', async original => {
 });
 import { prepareBrokerFeeAgreement, brokerFeeDisclosure, signBrokerFeeDisclosure, jurisdictionRule, safePaymentUrl, type BrokerFeeJurisdictionRule } from '../../amplify/functions/broker-fees/agreements';
 import { authorizedQuoteTerms } from '../../../shared/quoteAuthorization';
-import type { BrokerFeeQuote } from '../../../shared/brokerFees';
+import { IPFS_DISCLOSURE_VERSION, type BrokerFeeQuote } from '../../../shared/brokerFees';
 const NOW = '2026-11-04T15:00:00.000Z';
 const rule = (): BrokerFeeJurisdictionRule => ({ approved: true, version: 'review1', reviewedAt: '2026-11-01T15:00:00Z', reviewedBy: 'Owner', evidenceUrl: 'https://regulator.example.test/fees', allowedLines: ['Property'], allowedBillTypes: ['AGENCY', 'DIRECT'], allowsCarrierCommission: true, maxFeeCents: 100000, forms: [{ title: 'Approved state disclosure', paragraphs: ['State disclosure text reviewed for this program.'] }] });
 const snapshot = (id = 'q1'): BrokerFeeQuote => { const quote = h.models.get(`Quote:${id}`); return { ...quote, carrierName: 'Example Mutual', terms: authorizedQuoteTerms(quote) }; };
@@ -223,4 +223,89 @@ describe('reviewed broker fee jurisdiction restrictions', () => {
     expect(() => jurisdictionRule({ MA: { ...rule(), requiresBrokerSignature: true, agencySigner: { name: 'Agent', title: 'Broker', licenseNumber: '123', authorized: true, authorizedBy: 'owner-id', authorizedAt: '2026-11-01T15:00:00Z' } } }, 'MA', [snapshot()])).not.toThrow();
   });
   it.each(['http://buy.stripe.com/x', 'https://buy.stripe.com.attacker.test/x', 'javascript:alert(1)', 'https://user:password@buy.stripe.com/x'])('rejects unsafe payment destination %s', value => expect(safePaymentUrl(value)).toBe(false));
+});
+
+it('freezes the externally financed amount, closes stale links, and retains the original signed document', async () => {
+  const pif = await prepared();
+  await signBrokerFeeDisclosure(pif.token, signer);
+  const original = structuredClone(h.rows.get(pif.agreementId)), signedFile = h.objects.get(original.signedDocumentKey);
+  Object.assign(h.models.get('Quote:q1'), { ipfsAmountFinanced: 500, ipfsQuoteRef: 'A' });
+  expect((await brokerFeeDisclosure(pif.token)).state).toBe('closed');
+  await expect(prepared([{ ...snapshot(), ipfsAmountFinanced: null }])).rejects.toThrow('package changed');
+  const external = await prepared();
+  expect(external.agreementId).not.toBe(pif.agreementId);
+  expect(await brokerFeeDisclosure(external.token)).toMatchObject({ state: 'closed', requiresIpfsDisclosureVersion: true });
+  await expect(signBrokerFeeDisclosure(external.token, signer)).rejects.toThrow('IPFS payment instructions');
+  expect(h.rows.get(external.agreementId).signature).toBeUndefined();
+  expect(await brokerFeeDisclosure(external.token, IPFS_DISCLOSURE_VERSION)).toMatchObject({ state: 'open', quotes: [{ id: 'q1', ipfsAmountFinanced: 500 }] });
+  h.models.get('Quote:q1').ipfsPriorBrokerFees = 25;
+  await expect(signBrokerFeeDisclosure(external.token, signer)).rejects.toThrow('no longer available');
+  expect(h.rows.get(pif.agreementId)).toEqual(original);
+  expect(h.objects.get(original.signedDocumentKey)).toEqual(signedFile);
+});
+
+it('suppresses IPFS and mixed-collection checkout links while allowing an agency-only invoice in a mixed package', async () => {
+  h.models.set('Quote:q2', { ...h.models.get('Quote:q1'), id: 'q2', ipfsAmountFinanced: 500, ipfsQuoteRef: 'A' });
+  const p = await prepared([snapshot(), snapshot('q2')]);
+  for (const [id, quoteIds] of [['agency', ['q1']], ['external', ['q2']], ['both', ['q1', 'q2']]] as const) {
+    h.models.set(`Invoice:${id}`, { id, accountId: 'a1', status: 'SENT', quoteId: quoteIds[0], paymentUrl: `https://buy.stripe.com/${id}`, brokerFeeAllocations: quoteIds.map(quoteId => ({ quoteId, amountCents: 25000 })) });
+  }
+  const ipfsSigner = { ...signer, ipfsDisclosureVersion: IPFS_DISCLOSURE_VERSION };
+  const signed = await signBrokerFeeDisclosure(p.token, ipfsSigner);
+  expect(h.rows.get(p.agreementId).signature.ipfsDisclosureVersion).toBe(IPFS_DISCLOSURE_VERSION);
+  expect(signed.payments?.map(payment => payment.url)).toEqual(['https://buy.stripe.com/agency']);
+  const only = await prepared([snapshot('q2')]); await signBrokerFeeDisclosure(only.token, ipfsSigner);
+  expect((await brokerFeeDisclosure(only.token, IPFS_DISCLOSURE_VERSION)).payments).toEqual([]);
+});
+
+describe('IPFS proposal and signature cap reservations', () => {
+  const setQuote = (id: string, fee: number, ref?: string, prior = 0) => {
+    h.models.set(`Quote:${id}`, { ...h.models.get('Quote:q1'), id, brokerFee: fee, ipfsAmountFinanced: 1000, ipfsPriorBrokerFees: prior, ipfsQuoteRef: ref });
+    return snapshot(id);
+  };
+  const signed = { ...signer, ipfsDisclosureVersion: IPFS_DISCLOSURE_VERSION };
+
+  it('rejects a single unreferenced IPFS fee and excessive shared financing before issuing a disclosure', async () => {
+    await expect(prepared([setQuote('q1', 200)])).rejects.toThrow('reference');
+    await expect(prepared([setQuote('q1', 200, 'Q-17'), setQuote('q2', 200, ' q-17 ')])).rejects.toThrow('other policies');
+    expect(h.rows.size).toBe(0);
+    const p = await prepared([snapshot(), setQuote('q2', 200, ' q-17 ', 200)]);
+    await signBrokerFeeDisclosure(p.token, signed);
+    const balance = [...h.rows.values()].find(row => row.kind === 'IPFS_AGREEMENT');
+    expect(balance.offers.q1).toMatchObject({ financedFeeCents: 20000, expiresAt: null });
+    expect(balance.offers.q2).toMatchObject({ financedFeeCents: 10000, expiresAt: null });
+    expect(JSON.stringify(await brokerFeeDisclosure(p.token, IPFS_DISCLOSURE_VERSION))).not.toContain('Q-17');
+  });
+
+  it('reserves earlier proposals separately from bound allocations while allowing independent equal-sized lender agreements', async () => {
+    const first = await prepared([setQuote('q1', 200, 'A')]);
+    await expect(prepared([setQuote('q2', 200, 'a')])).rejects.toThrow('other policies');
+    await prepared([setQuote('q2', 200, 'a', 200)]);
+    await prepared([setQuote('q3', 200, 'B')]);
+    await signBrokerFeeDisclosure(first.token, signed);
+    vi.advanceTimersByTime(15 * 86_400_000);
+    await expect(prepared([setQuote('q4', 200, 'a')])).rejects.toThrow('other policies');
+    const renewal = await prepared([setQuote('q4', 200, 'a', 200)]);
+    expect(renewal.agreementId).toBeTruthy();
+    const a = [...h.rows.values()].find(row => row.kind === 'IPFS_AGREEMENT' && row.offers.q1);
+    expect(Object.keys(a.offers).sort()).toEqual(['q1', 'q4']);
+    expect(a.brokerFeesCents).toBe(0); expect(a.financedBrokerFeesCents).toBe(0);
+  });
+
+  it('can replace a changed unsigned quote, while closing the obsolete signing link', async () => {
+    const first = await prepared([setQuote('q1', 200, 'A')]);
+    await prepared([setQuote('q1', 50, 'A')]);
+    await prepared([setQuote('q2', 250, 'A', 50)]);
+    await expect(signBrokerFeeDisclosure(first.token, signed)).rejects.toThrow('no longer available');
+  });
+
+  it('fences concurrent proposals and makes an interrupted signer retry against the newer balance', async () => {
+    const quote = setQuote('q1', 200, 'A');
+    const first = await prepared([quote]);
+    const row = [...h.rows.values()].find(row => row.kind === 'IPFS_AGREEMENT');
+    h.beforeCommit = () => { ++h.rows.get(row.id).version; };
+    await expect(signBrokerFeeDisclosure(first.token, signed)).rejects.toThrow('Concurrent');
+    expect(h.rows.get(first.agreementId).signature).toBeUndefined();
+    expect((await signBrokerFeeDisclosure(first.token, signed)).state).toBe('signed');
+  });
 });

@@ -23,6 +23,8 @@ export interface BusinessDeliverySender {
 }
 export interface PublicProposalQuote {
   id: string; carrierName: string; lines: string[]; premium: number; brokerFee?: number | null; billType?: string | null;
+  ipfsAmountFinanced?: number | null;
+  ipfsPriorBrokerFees?: number | null;
   passThroughCharges?: PassThroughCharge[];
   /** Reviewed client-facing conditions; never the quote's internal notes. */
   clientConditions?: string | null;

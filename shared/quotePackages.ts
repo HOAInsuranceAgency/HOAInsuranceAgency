@@ -12,6 +12,11 @@ export interface PackageQuote {
   premium?: number | null;
   commissionPct?: number | null;
   brokerFee?: number | null;
+  ipfsAmountFinanced?: number | null;
+  ipfsQuoteRef?: string | null;
+  clientBillingSelected?: boolean | null;
+  ipfsPriorBrokerFees?: number | null;
+  carrierBillToAgency?: boolean | null;
   passThroughCharges?: unknown;
   clientConditions?: string | null;
   billType?: string | null;

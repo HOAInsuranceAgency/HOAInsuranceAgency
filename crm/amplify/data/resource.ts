@@ -839,6 +839,12 @@ const schema = a
       premium: a.float(),
       /** Optional agency fee; never part of carrier premium. */
       brokerFee: a.float(),
+      ipfsAmountFinanced: a.float(),
+      ipfsPriorBrokerFees: a.float(),
+      ipfsReleaseReference: a.string(),
+      ipfsQuoteRef: a.string(),
+      clientBillingSelected: a.boolean(),
+      carrierBillToAgency: a.boolean(),
       passThroughCharges: a.json(),
       clientConditions: a.string(),
       billType: a.ref("BillType"),
@@ -912,6 +918,13 @@ const schema = a
        * existed, turning a missing answer into an unopenable record.
        */
       billType: a.ref("BillType"),
+      carrierBillType: a.ref("BillType"),
+      carrierBillToAgency: a.boolean(),
+      ipfsAmountFinanced: a.float(),
+      ipfsPriorBrokerFees: a.float(),
+      ipfsAgreementRef: a.string(),
+      ipfsConfirmedAt: a.datetime(),
+      ipfsConfirmedBy: a.string(),
       /**
        * ── Premium-finance eligibility facts (W3), mostly retired ──
        *
@@ -2201,11 +2214,11 @@ const schema = a
       .handler(a.handler.function(uploadPortal)),
 
     brokerFeeDisclosure: a.query()
-      .arguments({ token: a.string().required() }).returns(a.json())
+      .arguments({ token: a.string().required(), ipfsDisclosureVersion: a.string() }).returns(a.json())
       .authorization(allow => [allow.publicApiKey()])
       .handler(a.handler.function(brokerFees)),
     signBrokerFeeDisclosure: a.mutation()
-      .arguments({ token: a.string().required(), signerName: a.string().required(), signerEmail: a.string().required(), signerRole: a.string().required(), consent: a.boolean().required() })
+      .arguments({ token: a.string().required(), signerName: a.string().required(), signerEmail: a.string().required(), signerRole: a.string().required(), consent: a.boolean().required(), ipfsDisclosureVersion: a.string() })
       .returns(a.json()).authorization(allow => [allow.publicApiKey()])
       .handler(a.handler.function(brokerFees)),
     brokerFeeAction: a.mutation()

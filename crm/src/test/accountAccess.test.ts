@@ -582,3 +582,28 @@ describe('relationship access boundaries', () => {
     await expect(admin().write('Contact', 'delete', { id: 'managed' })).resolves.toBeUndefined();
   });
 });
+
+it('requires fresh IPFS closure evidence when changing back to agency collection', async () => {
+  records['Quote:qa'] = { ...records['Quote:qa'], status: 'QUOTED', billType: 'AGENCY', ipfsAmountFinanced: 10000, ipfsQuoteRef:'IPFS-123', ipfsReleaseReference: 'old agreement' };
+  const referenced = records['Quote:qa'];
+  records['Quote:qa'] = { ...referenced, status:'DRAFT', ipfsQuoteRef:null };
+  await expect(admin().write('Quote','update',{ id:'qa', ipfsAmountFinanced:null })).resolves.toBeUndefined();
+  records['Quote:qa'] = { ...referenced, ipfsQuoteRef:null, presentedAt:'2026-11-05T00:00:00Z' };
+  await expect(admin().write('Quote','update',{ id:'qa', ipfsAmountFinanced:null })).rejects.toThrow('Confirm the IPFS payment request');
+  await expect(admin().write('Quote','update',{ id:'qa', ipfsAmountFinanced:null, ipfsReleaseReference:'Closed IPFS-123' })).resolves.toBeUndefined();
+  await expect(admin().write('Quote','update',{ id:'qa', ipfsReleaseReference:'unrelated update' })).rejects.toThrow();
+  records['Quote:qa'].status='BOUND';
+  await expect(admin().write('Quote','update',{ id:'qa', ipfsAmountFinanced:null, ipfsReleaseReference:'Closed IPFS-123' })).rejects.toThrow('Bound billing terms');
+});
+
+it('keeps the bound external collector and evidence immutable', async () => {
+  records['Policy:pa'] = { ...records['Policy:pa'], ipfsAmountFinanced:10000, ipfsAgreementRef:'IPFS-123', billType:'AGENCY' };
+  for (const change of [{ipfsAmountFinanced:null},{ipfsPriorBrokerFees:500},{ipfsAgreementRef:'new'},{ipfsConfirmedAt:'2027-01-01T00:00:00Z'},{carrierBillToAgency:true},{billType:'DIRECT'}]) {
+    await expect(admin().write('Policy','update',{id:'pa', ...change})).rejects.toThrow();
+  }
+});
+
+it.each([['Quote', 'qa', 'quoteId'], ['Policy', 'pa', 'policyId']])('refuses API invoice creation on an IPFS %s', async (model, key, field) => {
+  records[model + ':' + key] = { id: key, accountId: 'a', billType: 'AGENCY', ipfsAmountFinanced: 1000 };
+  await expect(admin().write('Invoice','create',{ accountId: 'a', status: 'DRAFT', sourcePricingVersion: 1, [field]: key })).rejects.toThrow(/IPFS collects/);
+});

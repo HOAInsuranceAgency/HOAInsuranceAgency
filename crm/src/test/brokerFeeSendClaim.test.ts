@@ -36,7 +36,7 @@ const claim = { invoiceId: 'i', token: 'stable', createdAt: '2026-11-04T15:00:00
 beforeEach(() => {
   vi.resetAllMocks(); vi.useFakeTimers(); vi.setSystemTime(new Date('2026-11-04T15:00:00Z'));
   vi.spyOn(console, 'log').mockImplementation(() => {}); vi.spyOn(console, 'warn').mockImplementation(() => {}); vi.spyOn(console, 'error').mockImplementation(() => {});
-  vi.stubEnv('HOA_TRANSACTIONAL_MAIL_PROVIDER', 'resend'); vi.stubEnv('STRIPE_SECRET_KEY', 'fixture'); vi.stubEnv('INVOICE_TABLE', 'Invoice');
+  vi.stubEnv('HOA_TRANSACTIONAL_MAIL_PROVIDER', 'resend'); vi.stubEnv('STRIPE_SECRET_KEY', 'fixture'); vi.stubEnv('INVOICE_TABLE', 'Invoice'); vi.stubEnv('BROKER_FEE_TABLE','Fees');
   vi.stubEnv('PF_LOAN_TABLE', ''); vi.stubEnv('SITE_URL', '');
   vi.stubEnv('ACCESS_TABLES', JSON.stringify({ Policy: 'Policy', Quote: 'Quote', Invoice: 'Invoice', InvoiceLine: 'InvoiceLine', PfLoan: 'PfLoan' }));
   vi.stubEnv('ACCESS_INDEXES', JSON.stringify({ 'Invoice.accountId': 'by-account', 'InvoiceLine.invoiceId': 'by-invoice' }));
@@ -541,4 +541,17 @@ describe('actual fee-free initial quote publication',()=>{
     h.records.set('Invoice:other',{id:'other',accountId:'a',quoteId:'q',sourcePricingVersion:1,status:'SENT',updatedAt:'2026-11-04T13:00:00Z',stripePaymentLinkId:'other-link'});
     expect(await send()).toMatchObject({ok:false});expect(h.link).not.toHaveBeenCalled();expect(h.mail).not.toHaveBeenCalled();
   });
+});
+
+it.each(['DRAFT','SENT'])('blocks a payable %s IPFS invoice on both sides of bind, including a fee-free term', async status => {
+  Object.assign(h.quote, { ipfsAmountFinanced: 1000, brokerFee: 0 });
+  Object.assign(h.invoice, { status, stripePaymentLinkId: 'prior', paymentUrl: 'https://example.test/prior' });
+  await expect(send()).resolves.toMatchObject({ ok: false, error: expect.stringContaining('IPFS collects') });
+  h.invoice.policyId = 'p';
+  h.records.set('Policy:p', { ...h.quote, id: 'p', quoteId: 'q', brokerFee: 500 });
+  await expect(send()).resolves.toMatchObject({ ok: false, error: expect.stringContaining('IPFS collects') });
+  expect(h.begin).not.toHaveBeenCalled();
+  expect(h.mail).not.toHaveBeenCalled();
+  expect(h.link).not.toHaveBeenCalled();
+  expect(h.retrieve).not.toHaveBeenCalled();
 });

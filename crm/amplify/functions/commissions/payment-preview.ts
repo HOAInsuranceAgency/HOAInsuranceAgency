@@ -16,7 +16,7 @@ export async function previewCarrierPaymentTerms(event: Event) {
   const selected = selectCarrierPaymentTerms(terms, {
     effectiveDate: day(quote.effectiveDate),
     lines: Array.isArray(quote.lines) ? quote.lines.filter((v): v is string => typeof v === 'string') : [],
-    billType,
+    billType: quote.carrierBillToAgency === true ? 'DIRECT' : billType,
     transaction: quote.renewalPolicyId ? 'RENEWAL' : 'NEW',
   });
   const p = selected.payment;

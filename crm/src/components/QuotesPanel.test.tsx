@@ -257,3 +257,41 @@ describe("binding recovery", () => {
     expect(changed).not.toHaveBeenCalled();
   });
 });
+
+it('requires the IPFS reference and fresh down payment confirmation for a redirected carrier quote', async () => {
+  const external = { ...quote, billType: 'AGENCY', carrierBillToAgency: true, ipfsAmountFinanced: 10000 };
+  h.quotes.mockResolvedValue({ data: [external] });
+  render(<QuotesPanel account={account} onAccountChange={vi.fn()} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Bind' }));
+  await waitFor(() => expect(h.preview).toHaveBeenCalledWith({ quoteId: quote.id, billType: 'DIRECT' }));
+  fireEvent.click(screen.getByLabelText('I confirmed the exact premium and agency commission percentage.'));
+  const submit = screen.getByRole('button', { name: 'Confirm bind' });
+  const reference = screen.getByLabelText('IPFS agreement reference');
+  const confirmed = screen.getByLabelText(/I verified the signed IPFS agreement/);
+  expect(submit).toBeDisabled();
+  fireEvent.change(reference, { target: { value: 'ipfs-original' } });
+  fireEvent.click(confirmed);
+  await waitFor(() => expect(submit).toBeEnabled());
+  fireEvent.change(reference, { target: { value: 'ipfs-final' } });
+  expect(submit).toBeDisabled();
+  fireEvent.click(confirmed);
+  fireEvent.click(submit);
+  await waitFor(() => expect(h.bind).toHaveBeenCalledOnce());
+  expect(JSON.parse(h.bind.mock.calls[0][0].input)).toMatchObject({ billType: 'AGENCY', ipfsAgreementRef: 'ipfs-final', ipfsConfirmed: true });
+});
+
+
+it('prefills the accepted lender reference and requires its verified disclosure for a broker fee', async () => {
+  const external = { ...quote, billType: 'AGENCY', clientBillingSelected: true, ipfsQuoteRef: 'IPFS-ABC', ipfsAmountFinanced: 1000, brokerFee: 500 };
+  h.quotes.mockResolvedValue({ data: [external] });
+  h.fee.mockResolvedValue({ data: { ok: true, fees: [] } });
+  render(<QuotesPanel account={account} onAccountChange={vi.fn()} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Bind' }));
+  expect(screen.getByLabelText('IPFS agreement reference')).toHaveValue('IPFS-ABC');
+  expect(screen.getByLabelText('IPFS agreement reference')).toHaveAttribute('readonly');
+  fireEvent.click(screen.getByLabelText(/I verified the signed IPFS agreement/));
+  fireEvent.click(screen.getByLabelText('I confirmed the exact premium and agency commission percentage.'));
+  await screen.findByText('Client signature is needed on the current broker fee disclosure.');
+  expect(screen.getByRole('button', { name:'Confirm bind' })).toBeDisabled();
+  expect(h.bind).not.toHaveBeenCalled();
+});

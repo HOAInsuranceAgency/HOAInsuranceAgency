@@ -1,3 +1,4 @@
+import { usesIpfs } from "../../../shared/ipfsCollection";
 import { useEffect, useRef, useState } from "react";
 import QuotePackages from "./QuotePackages";
 import "./QuotesPanel.css";
@@ -495,12 +496,20 @@ function BindForm({
    * first policy silently marked agency bill when the carrier is billing the
    * association directly is an invoice sent for money already paid.
    */
-  const [billType, setBillType] = useState<BillType | "">(quote.billType ?? "");
+  const [chosenBillType, setBillType] = useState<BillType | "">(quote.billType ?? "");
+  const billType = quote.clientBillingSelected === true || usesIpfs(quote) ? quote.billType ?? "" : chosenBillType;
+  const redirected = quote.carrierBillToAgency === true;
+  const ipfs = usesIpfs(quote);
+  const carrierBillType = redirected ? "DIRECT" : billType;
+  const [enteredIpfsRef, setIpfsAgreementRef] = useState("");
+  const ipfsAgreementRef = quote.ipfsQuoteRef || enteredIpfsRef;
+  const [ipfsConfirmation, setIpfsConfirmation] = useState("");
+  const ipfsKey = JSON.stringify([quote.id, packageTerms(quote), ipfsAgreementRef.trim()]);
   const hasBrokerFee = (quote.brokerFee ?? 0) > 0;
   const [paymentConfirmation, setPaymentConfirmation] = useState('');
   const paymentPreview = useAsyncResource(
-    () => readCarrierPaymentPreview(quote.id, billType),
-    [quote.id, quote.updatedAt, billType],
+    () => readCarrierPaymentPreview(quote.id, carrierBillType),
+    [quote.id, quote.updatedAt, carrierBillType],
     { manual: !billType || (hasBrokerFee && billType !== "AGENCY"), clearDataOnError: () => true },
   );
   const paymentKey = JSON.stringify({ billType, preview: paymentPreview.data });
@@ -516,6 +525,7 @@ function BindForm({
     return result.fees.find(fee => fee.quoteId === quote.id) ?? null;
   }, [quote.id, quote.brokerFee, account.id], { initialData: null as BrokerFeeRecord | null, errorMessage: "Could not load broker fee status" });
   const currentFeeSigned = Boolean(feeStatus.data?.signedAt && feeStatus.data.amountCents === brokerFeeCents(quote.brokerFee) && feeStatus.data.terms === authorizedQuoteTerms(quote));
+  const ipfsReady = !ipfs || Boolean(ipfsAgreementRef.trim() && ipfsConfirmation === ipfsKey && (!hasBrokerFee || currentFeeSigned));
   const bindLock = useRef(false);
   const live = useRef(true);
   useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
@@ -535,7 +545,7 @@ function BindForm({
   async function bind() {
     // Belt and braces: the button is disabled without one, but `bind` is the
     // thing that writes the row and an unset bill type must never reach it.
-    if (!billType || (hasBrokerFee && billType !== "AGENCY") || !confirmed || !paymentReady || bindLock.current) return;
+    if (!billType || (hasBrokerFee && billType !== "AGENCY") || !confirmed || !paymentReady || !ipfsReady || bindLock.current) return;
     bindLock.current = true;
     let policyCreated = false;
     setSaving(true);
@@ -543,6 +553,7 @@ function BindForm({
     try {
       const response = await client.mutations.bindCommissionPolicy({ input: JSON.stringify({
         quoteId: quote.id, terms: packageTerms(quote), premium, agencyRate, billType, policyNumber,
+        ...(ipfs ? { ipfsAgreementRef: ipfsAgreementRef.trim(), ipfsConfirmed: true } : {}),
         carrierTermsVersion: paymentPreview.data!.carrierTermsVersion,
         carrierArrangementId: paymentPreview.data!.payment?.id,
       }) });
@@ -564,7 +575,7 @@ function BindForm({
        */
       const rollFailures: string[] = [];
       try {
-        const quoteInvoices = await listAllPages((nextToken) =>
+        const quoteInvoices = ipfs ? [] : await listAllPages((nextToken) =>
           client.models.Invoice.list({
             filter: { quoteId: { eq: quote.id } },
             nextToken,
@@ -598,7 +609,7 @@ function BindForm({
             rollFailures.push(`document ${doc.name}: ${errors[0].message}`);
           }
         }
-        const quoteLoans = await listAllPages((nextToken) =>
+        const quoteLoans = ipfs ? [] : await listAllPages((nextToken) =>
           client.models.PfLoan.list({
             filter: { quoteId: { eq: quote.id } },
             nextToken,
@@ -667,7 +678,7 @@ function BindForm({
       ) : (
         <>
           <p className="small muted">Confirm the exact commissionable premium and agency percentage from the accepted quote. To change either amount, edit the quote first. Producer earnings follow receipts and the agreement saved by the Owner. Broker fees use the same producer share, separately from carrier commission.</p>
-          {(quote.brokerFee ?? 0) > 0 && <div className="small" role="status"><strong>Broker fee: {fmtMoney(quote.brokerFee)}</strong><p>{feeStatus.loading ? "Checking signed disclosure and payment…" : feeStatus.error || (!currentFeeSigned ? "Client signature is needed on the current broker fee disclosure." : feeStatus.data!.collectedCents >= feeStatus.data!.amountCents ? "Disclosure signed · payment received." : feeStatus.data!.submittedCents >= feeStatus.data!.amountCents ? "Disclosure signed · payment submitted and clearing." : "Disclosure signed · fee payment is still needed.")}</p><button className="link" disabled={feeStatus.loading || saving} onClick={() => void feeStatus.refetch()}>Refresh fee status</button></div>}
+          {(quote.brokerFee ?? 0) > 0 && <div className="small" role="status"><strong>Broker fee: {fmtMoney(quote.brokerFee)}</strong><p>{feeStatus.loading ? "Checking signed disclosure and payment…" : feeStatus.error || (!currentFeeSigned ? "Client signature is needed on the current broker fee disclosure." : ipfs ? "Disclosure signed. Confirm the agreement and down payment with IPFS." : feeStatus.data!.collectedCents >= feeStatus.data!.amountCents ? "Disclosure signed · payment received." : feeStatus.data!.submittedCents >= feeStatus.data!.amountCents ? "Disclosure signed · payment submitted and clearing." : "Disclosure signed · fee payment is still needed.")}</p><button className="link" disabled={feeStatus.loading || saving} onClick={() => void feeStatus.refetch()}>Refresh fee status</button></div>}
           <div className="form-grid">
             <label className="field">Exact policy premium ($)<input aria-label="Exact policy premium" inputMode="decimal" value={premium} disabled={saving} onChange={e => { setPremium(e.target.value); setConfirmed(false); }} /></label>
             <label className="field">Agency commission (%)<input aria-label="Agency commission percentage" inputMode="decimal" value={agencyRate} disabled={saving} onChange={e => { setAgencyRate(e.target.value); setConfirmed(false); }} /></label>
@@ -675,18 +686,18 @@ function BindForm({
               <label htmlFor="bind-bill-type">Bill type (required)</label>
               <select
                 id="bind-bill-type"
-                value={billType}
-                disabled={saving || (quote.brokerFee ?? 0) > 0}
+                value={carrierBillType}
+                disabled={saving || hasBrokerFee || ipfs || redirected || quote.clientBillingSelected === true}
                 onChange={(e) => setBillType(e.target.value as BillType | "")}
               >
                 <option value="">Choose…</option>
                 {BILL_TYPE_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value} disabled={hasBrokerFee && o.value === "DIRECT"}>
+                  <option key={o.value} value={o.value} disabled={hasBrokerFee && !redirected && o.value === "DIRECT"}>
                     {o.label}
                   </option>
                 ))}
               </select>
-              {hasBrokerFee && <p className="small muted">Broker fees require agency billing, as set on the accepted quote.</p>}
+              {redirected ? <p className="small muted">The carrier bills HOA directly. {ipfs ? "IPFS collects from the client." : "HOA collects from the client."}</p> : hasBrokerFee && <p className="small muted">Broker fees require agency billing, as set on the accepted quote.</p>}
             </div>
             <div className="field">
               <label htmlFor="bind-policy-number">
@@ -700,7 +711,22 @@ function BindForm({
               />
             </div>
           </div>
-          {billType === "DIRECT" && (
+          {ipfs && (
+            <fieldset disabled={saving}>
+              <legend>IPFS collection confirmation</legend>
+              <label className="field">
+                IPFS agreement reference
+                <input value={ipfsAgreementRef} readOnly={Boolean(quote.ipfsQuoteRef)} maxLength={200}
+                  onChange={e => { setIpfsAgreementRef(e.target.value); setIpfsConfirmation(""); }} />
+              </label>
+              <label>
+                <input type="checkbox" checked={ipfsConfirmation === ipfsKey} disabled={!ipfsAgreementRef.trim()}
+                  onChange={e => setIpfsConfirmation(e.target.checked ? ipfsKey : "")} />
+                {' '}I verified the signed IPFS agreement and confirmed that IPFS received the client’s down payment.
+              </label>
+            </fieldset>
+          )}
+          {billType === "DIRECT" && !redirected && (
             <p className="small muted">
               The carrier bills the association and pays us commission
               afterwards.
@@ -735,7 +761,7 @@ function BindForm({
           <div className="form-actions quote-flow-actions">
             <button
               className="primary"
-              disabled={saving || !billType || (hasBrokerFee && billType !== "AGENCY") || !confirmed || !paymentReady || !premium || !agencyRate}
+              disabled={saving || !billType || (hasBrokerFee && billType !== "AGENCY") || !confirmed || !paymentReady || !ipfsReady || !premium || !agencyRate}
               onClick={bind}
             >
               {saving ? "Binding…" : "Confirm bind"}

@@ -10,7 +10,7 @@ import { activeTeamUserCheck } from './user-status';
 
 // This is a native updateQuote input whitelist, never a generic JSON update API.
 // GraphQL validates field types and Amplify authorization runs before this stage.
-const QUOTE_INPUT_FIELDS = new Set(['id','accountId','lastWriteBy','carrierId','status','renewalPolicyId','readyAt','presentedAt','bindAuthorizedAt','bindAuthorizedBy','bindAuthorizedTerms','offerExpiresAt','lines','premium','brokerFee','passThroughCharges','clientConditions','billType','commissionPct','glEachOccurrence','glDamageToRentedPremises','glMedicalExpense','glPersonalAdvInjury','glGeneralAggregate','glProductsCompletedOps','glClaimsMade','glAggregateAppliesTo','perOccurrenceDeductible','perUnitDeductible','blanketLimit','coinsurancePct','replacementCostType','effectiveDate','expirationDate','notes','producerOfRecord','isAuditable','minimumEarnedPremiumPct']);
+const QUOTE_INPUT_FIELDS = new Set(['id','accountId','lastWriteBy','carrierId','status','renewalPolicyId','readyAt','presentedAt','bindAuthorizedAt','bindAuthorizedBy','bindAuthorizedTerms','offerExpiresAt','lines','premium','brokerFee','ipfsAmountFinanced','ipfsPriorBrokerFees','ipfsQuoteRef','clientBillingSelected','ipfsReleaseReference','carrierBillToAgency','passThroughCharges','clientConditions','billType','commissionPct','glEachOccurrence','glDamageToRentedPremises','glMedicalExpense','glPersonalAdvInjury','glGeneralAggregate','glProductsCompletedOps','glClaimsMade','glAggregateAppliesTo','perOccurrenceDeductible','perUnitDeductible','blanketLimit','coinsurancePct','replacementCostType','effectiveDate','expirationDate','notes','producerOfRecord','isAuditable','minimumEarnedPremiumPct']);
 export interface NativeQuoteUpdateContext { model?: string; field?: string; operation?: string; nativeConditions?: unknown; nativeAuthFilter?: unknown; arguments?: RecordData; }
 
 /** The fixed AppSync pipeline invokes this after native authorization. Its
@@ -82,7 +82,7 @@ export async function updateFeeQuoteAtomically(access: AccountAccess, context: N
   const conditions = ['#version = :old'];
   // Native metadata writes use wall-clock timestamps. Preserve explicit
   // pointer fences even if another writer repeats an earlier millisecond.
-  for(const [index,pointer] of ['sourcePricingInvoiceId','sourcePricingLoanId'].entries()) {
+  for(const [index,pointer] of ['sourcePricingInvoiceId','sourcePricingLoanId','status','presentedAt','bindAuthorizedAt','ipfsQuoteRef'].entries()) {
     const name=`#pointer${index}`, value=`:pointer${index}`; names[name]=pointer;
     if(Object.hasOwn(previous,pointer)){conditions.push(`${name} = ${value}`);values[value]=previous[pointer];}
     else conditions.push(`attribute_not_exists(${name})`);

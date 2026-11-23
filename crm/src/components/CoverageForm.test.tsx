@@ -22,11 +22,11 @@ it('starts new quotes at zero broker fee and validates cents before saving', asy
 it('automatically uses agency billing for a positive HOA fee and disables direct billing', async () => {
   h.create.mockResolvedValue({ data: {} });
   render(<CoverageForm kind="quote" accountId="a" carriers={[]} existing={null} onSaved={() => {}} onCancel={() => {}} />);
-  expect(screen.queryByLabelText('Bill type')).not.toBeInTheDocument();
+  expect(screen.getByLabelText('Client pays')).toHaveValue('');
   fireEvent.change(screen.getByLabelText('HOA broker fee ($)'), { target: { value: '500' } });
   fireEvent.change(screen.getByRole('option', { name: 'QUOTED' }).parentElement!, { target: { value: 'QUOTED' } });
-  expect(screen.getByLabelText('Bill type')).toHaveValue('AGENCY');
-  expect(screen.getByLabelText('Bill type').querySelector('option[value="DIRECT"]')).toBeDisabled();
+  expect(screen.getByLabelText('Client pays')).toHaveValue('AGENCY');
+  expect(screen.getByLabelText('Client pays').querySelector('option[value="DIRECT"]')).toBeDisabled();
   await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Save quote' })));
   expect(h.create).toHaveBeenCalledWith(expect.objectContaining({ brokerFee: 500, billType: 'AGENCY' }));
 });
@@ -35,7 +35,7 @@ it('rejects an existing direct-bill fee combination until the quote is corrected
   render(<CoverageForm kind="quote" accountId="a" carriers={[]} existing={{ id: 'q', brokerFee: 500, billType: 'DIRECT' } as import('../lib/client').Quote} onSaved={() => {}} onCancel={() => {}} />);
   fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
   expect(h.update).not.toHaveBeenCalled();
-  expect(screen.getByText(/Choose Agency bill before saving/)).toBeVisible();
+  expect(screen.getByText(/Choose HOA CRM or IPFS/)).toBeVisible();
 });
 
 it("locks quote fields and cancellation until a pending save settles, then permits recovery", async () => {
@@ -110,4 +110,28 @@ it('preserves absent structured charges on ordinary legacy quote edits', async (
   render(<CoverageForm kind="quote" accountId="a" carriers={[]} existing={{ id: 'legacy', status: 'DRAFT', notes: 'Legacy tax invoice remains valid' } as import('../lib/client').Quote} onSaved={() => {}} onCancel={() => {}} />);
   await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Save changes' })));
   expect(h.update.mock.calls[0][0]).not.toHaveProperty('passThroughCharges');
+});
+
+it('shows the IPFS split without adding either portion to quoted cost', async () => {
+  h.create.mockResolvedValue({ data: {} });
+  render(<CoverageForm kind="quote" accountId="a" carriers={[]} existing={null} onSaved={() => {}} onCancel={() => {}} />);
+  fireEvent.change(screen.getByLabelText('Client pays'), { target: { value: 'IPFS' } });
+  fireEvent.change(screen.getByLabelText('IPFS agreement amount financed ($)'), { target: { value: '10000' } });
+  fireEvent.change(screen.getByLabelText('HOA broker fee ($)'), { target: { value: '3500' } });
+  expect(screen.getByLabelText('Client pays')).toHaveValue('IPFS');
+  expect(screen.getByText(/Broker fee: \$3,000.00 financed · \$500.00 in down payment/)).toBeVisible();
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Save quote' })));
+  expect(h.create).toHaveBeenCalledWith(expect.objectContaining({ brokerFee: 3500, ipfsAmountFinanced: 10000, billType: 'AGENCY' }));
+});
+
+it('requires closure evidence before replacing a saved IPFS collection with an HOA invoice', async () => {
+  h.update.mockResolvedValue({ data: {} });
+  const existing = { id: 'external', status: 'PRESENTED', billType: 'AGENCY', ipfsAmountFinanced: 10000 } as import('../lib/client').Quote;
+  render(<CoverageForm kind="quote" accountId="a" carriers={[]} existing={existing} onSaved={() => {}} onCancel={() => {}} />);
+  fireEvent.change(screen.getByLabelText('Client pays'), { target: { value: 'AGENCY' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+  expect(h.update).not.toHaveBeenCalled();
+  fireEvent.change(screen.getByLabelText('IPFS closure reference'), { target: { value: 'Closed TEST-123' } });
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Save changes' })));
+  expect(h.update).toHaveBeenCalledWith(expect.objectContaining({ ipfsAmountFinanced: null, ipfsReleaseReference: 'Closed TEST-123' }));
 });

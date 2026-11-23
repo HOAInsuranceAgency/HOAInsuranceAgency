@@ -49,12 +49,13 @@ export function installBrokerFees(backend: typeof Backend, communicationTable: D
   backend.brokerFees.addEnvironment('DOCUMENT_BUCKET',backend.storage.resources.bucket.bucketName);
   add(backend.brokerFees,['s3:GetObject','s3:PutObject'],[backend.storage.resources.bucket.arnForObjects('documents/*')]);
   const modelArn=(model:string)=>Stack.of(api).formatArn({service:'dynamodb',resource:'table',resourceName:`${model}-${api.apiId}-NONE`});
+  add(backend.commissions,['dynamodb:Scan','dynamodb:ConditionCheckItem'],['Invoice','InvoiceLine','PfLoan'].map(modelArn));
   for(const fn of [backend.brokerFees,backend.communications,backend.stripeWebhook,backend.commissions,backend.sendInvoice,backend.voidInvoice]) {
     fn.addEnvironment('ACCESS_API_ID',api.apiId);
     const models=fn===backend.brokerFees?['Account','Quote','Policy','Invoice','InvoiceLine','Document','AgencySettings','PfLoan']
       :fn===backend.voidInvoice?['Quote','Policy','Invoice']
       :[backend.communications,backend.sendInvoice].includes(fn as typeof backend.communications)?['AgencySettings','Quote','Account','Policy','Invoice','PfLoan',...(fn===backend.sendInvoice?['InvoiceLine']:[])]
-      :['Quote','Policy','Document','AgencySettings'];
+      :fn===backend.commissions?['Quote','Policy','Document','AgencySettings','Invoice','PfLoan']:['Quote','Policy','Document','AgencySettings'];
     add(fn,reads,models.flatMap(model=>[modelArn(model),`${modelArn(model)}/index/*`]));
     const writable=fn===backend.brokerFees?['Account','Invoice','Document','Policy','AgencySettings']:fn===backend.stripeWebhook?['Policy']:fn===backend.commissions?['Document']:fn===backend.voidInvoice?['Invoice']:[];
     if(writable.length)add(fn,writes,writable.map(modelArn));
@@ -64,7 +65,7 @@ export function installBrokerFees(backend: typeof Backend, communicationTable: D
   add(backend.crmAccess,['dynamodb:UpdateItem','dynamodb:ConditionCheckItem'],['Quote','PfLoan'].map(modelArn));
   add(backend.crmAccess,['dynamodb:ConditionCheckItem'],[modelArn('Invoice'),communicationTable.tableArn]);
   add(backend.crmAccess,['dynamodb:UpdateItem'],[modelArn('Invoice')]);
-  for(const fn of [backend.sendInvoice])add(fn,['dynamodb:UpdateItem'],[modelArn('Quote')]);
+  for(const fn of [backend.sendInvoice,backend.brokerFees])add(fn,['dynamodb:UpdateItem'],[modelArn('Quote')]);
   let index=0;
   for(const [fn,statements]of grants)new ManagedPolicy(permissions,`BrokerFeeAccess${index++}`,{roles:[fn.resources.lambda.role!],statements});
   new Rule(Stack.of(backend.brokerFees.resources.lambda),'BrokerFeeReceiptRecovery',{

@@ -306,3 +306,11 @@ describe('paid original invoice eligibility', () => {
     }
   });
 });
+
+it('excludes externally financed quotes and policies and permits a reviewed redirected carrier PIF', () => {
+  const pif = agency('pif', { carrierBillType: 'DIRECT', carrierBillToAgency: true });
+  const ipfs = agency('ipfs', { ipfsAmountFinanced: 1000 });
+  const grouped = agency('grouped', { carrierBillType: 'DIRECT' });
+  expect(unbilledAgencyPolicies([ipfs, pif, grouped], new Set())).toEqual([pif]);
+  expect(invoiceableQuotes([ipfs, pif], new Set(), () => true)).toEqual([pif]);
+});

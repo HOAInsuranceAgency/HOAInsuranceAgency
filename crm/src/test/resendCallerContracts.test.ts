@@ -54,7 +54,12 @@ beforeEach(() => {
   h.mail.mockReset().mockImplementation(async () => { h.order.push("mail"); return { MessageId: "synthetic-provider-receipt" }; });
   h.order.length = 0; h.reportUpdates.length = 0; h.createdSub = "synthetic-member-1";
   h.price.mockReset().mockResolvedValue({ id: "price_synthetic" }); h.link.mockReset().mockResolvedValue({ id: "plink_synthetic", url: "https://pay.example.com/synthetic" });
-  h.db.mockReset().mockImplementation(async () => { h.order.push("business-write"); return {}; });
+  h.db.mockReset().mockImplementation(async command => {
+    if (command.input.TransactItems?.some((item: any) => item.Update?.Key?.id === 'hoa-collection-policy:synthetic-policy')) {
+      h.order.push("collection-reserved"); return {};
+    }
+    h.order.push("business-write"); return {};
+  });
   h.cognito.mockReset().mockImplementation(async command => command.constructor.name === "AdminCreateUserCommand" ? { User: { Username: "synthetic-member", Attributes: [{ Name: "sub", Value: h.createdSub }] } } : {});
   h.writePayment.mockReset().mockImplementation(async () => { h.order.push("payment-write"); return true; });
   for (const [key, value] of Object.entries({
@@ -65,7 +70,7 @@ beforeEach(() => {
     HOA_MIGRATION_APP_ID: "d1nuh9rw1hcuxo", HOA_MIGRATION_PREVIEW: "false", HOA_MIGRATION_WORKERS_ENABLED: "true",
     MAGIC_LINK_BASE_URL: "https://crm.protectmyhoa.com", MAGIC_LINK_FROM: "noreply@protectmyhoa.com",
     USER_POOL_ID: "synthetic-destination-pool", PORTAL_URL: "https://crm.protectmyhoa.com", INVITE_FROM: "noreply@protectmyhoa.com",
-    AGENCY_MAILBOX: "insurance@protectmyhoa.com", ACCOUNTING_MAILBOX: "accounting@example.com", INVOICE_TABLE: "synthetic-invoice-table",
+    AGENCY_MAILBOX: "insurance@protectmyhoa.com", ACCOUNTING_MAILBOX: "accounting@example.com", INVOICE_TABLE: "synthetic-invoice-table", BROKER_FEE_TABLE: "synthetic-fees", POLICY_TABLE: "synthetic-policy-table",
     MARKETING_REPORT_FROM: "insurance@protectmyhoa.com", STRIPE_WEBHOOK_SECRET: "whsec_synthetic_only",
   })) vi.stubEnv(key, value);
   vi.stubEnv("STRIPE_SECRET_KEY", ""); vi.stubEnv("PF_LOAN_TABLE", ""); vi.stubEnv("SITE_URL", "");
@@ -124,13 +129,14 @@ describe("real sender to Resend adapter contracts", () => {
     expect(body.text).toContain("Synthetic HOA"); expect(body.html).toContain("INV-SYN-001"); expect(details.idempotencyKey).toContain("synthetic-invoice");
     expect(Buffer.from(body.attachments![0].content, "base64").toString()).toBe("%PDF-1.7");
     const mime = Buffer.from(command.input.Content.Raw.Data).toString(); expect(mime).not.toMatch(/^Bcc:/mi); expect(mime).toContain(body.attachments![0].content);
+    expect(h.order.indexOf("collection-reserved")).toBeLessThan(h.order.indexOf("mail"));
     expect(h.order.indexOf("mail")).toBeLessThan(h.order.indexOf("business-write"));
   });
   it("invoice does not mark a deferred message sent", async () => {
     const { handler } = await import("../../amplify/functions/send-invoice/handler");
     h.mail.mockRejectedValue(new MailDeliveryError("DEFERRED", "OP#synthetic"));
     expect(await handler({ arguments: { invoiceId: h.invoice.id, toEmail: "board@example.com" } })).toMatchObject({ ok: false });
-    expect(h.db).not.toHaveBeenCalled();
+    expect(h.order).not.toContain("business-write");
   });
   it.each(["resend", "ses"])("real invoice handler (%s) reserves before storeLink and never resends a lost acceptance using the newer updatedAt", async provider => {
     vi.setSystemTime(new Date("2026-11-02T14:00:00Z"));
@@ -145,7 +151,7 @@ describe("real sender to Resend adapter contracts", () => {
       invoiceOperationCount: 0, consistentRead: true, completePagination: true };
     h.models.Invoice.get = async () => ({ data: structuredClone(h.invoice) });
     h.db.mockImplementation(async command => {
-      const a = command.input;
+      const a = command.constructor.name === "TransactWriteCommand" ? command.input.TransactItems[0].Update : command.input;
       if (command.constructor.name === "GetCommand") return { Item: structuredClone(a.TableName === "synthetic-invoice-table" ? h.invoice : a.Key.pk.startsWith("CONTROL#") ? proof : deliveries.get(a.Key.pk)) };
       const v = a.ExpressionAttributeValues;
       if (a.UpdateExpression === "SET #op = :op") { h.order.push("reserved"); h.invoice.invoiceSendOperation = structuredClone(v[":op"]); }

@@ -12,12 +12,12 @@ export const handler = async (event: Event) => {
   if (event.source === 'aws.events') return { ok: true, ...await (await import('./payments')).reconcilePendingPayments() };
   try {
     const args = event.arguments ?? {};
-    if (field === 'brokerFeeDisclosure') return await brokerFeeDisclosure(String(args.token ?? ''));
+    if (field === 'brokerFeeDisclosure') return await brokerFeeDisclosure(String(args.token ?? ''), args.ipfsDisclosureVersion);
     if (field === 'signBrokerFeeDisclosure') {
       const forwarded = Object.entries(event.request?.headers ?? {}).find(([name]) => name.toLowerCase() === 'x-forwarded-for')?.[1];
       const source = typeof forwarded === 'string' ? forwarded.split(',')[0].trim() : undefined;
       const ip = source && /^[0-9a-f:.]{3,80}$/i.test(source) ? source : undefined;
-      return await signBrokerFeeDisclosure(String(args.token ?? ''), { signerName: args.signerName, signerEmail: args.signerEmail, signerRole: args.signerRole, consent: args.consent }, ip);
+      return await signBrokerFeeDisclosure(String(args.token ?? ''), { signerName: args.signerName, signerEmail: args.signerEmail, signerRole: args.signerRole, consent: args.consent, ipfsDisclosureVersion: args.ipfsDisclosureVersion }, ip);
     }
     await assertUserSession(event.identity);
     const access = new AccountAccess(event.identity, undefined, event.request), input = object(args.input);

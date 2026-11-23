@@ -1,3 +1,4 @@
+import { assertHoaCollection } from '../ipfs-invoice';
 import { createHash, randomUUID } from 'node:crypto';
 import { QueryCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
 import { assertBrokerFeeAgencyBilling, brokerFeeCents, feeAllocations, type BrokerFeeAllocation, type BrokerFeeRecord, type BrokerFeeInvoiceSendClaim } from '../../../../shared/brokerFees';
@@ -101,6 +102,8 @@ export async function reserveFeeInvoice(source:Record<string,unknown>|string,inv
     const invoice=await getModel<Record<string,unknown>>('Invoice',invoiceId);
     if(!quote||!invoice||quote.accountId!==invoice.accountId||!['DRAFT','SENT'].includes(String(invoice.status)))throw new Error('The fee invoice or quote changed before payment was prepared.');
     const policy=invoice.policyId?await getModel<Record<string,unknown>>('Policy',String(invoice.policyId)):undefined;
+    assertHoaCollection(quote);
+    assertHoaCollection(policy);
     if(invoice.quoteId!==quoteId&&policy?.quoteId!==quoteId)throw new Error('The fee invoice must belong to its quoted policy term.');
     const amount=brokerFeeCents(quote.brokerFee as number|undefined);
     assertBrokerFeeAgencyBilling(quote as {brokerFee?:number|null;billType?:string|null});
@@ -215,6 +218,8 @@ export async function syncBrokerFeePayment(input: BrokerFeePaymentInput, extraWr
     let allocatedRefund=0;
     for (let i=0;i<allocations.length;i++) {
       const allocation=allocations[i], old=await getFee(allocation.quoteId);
+      if (old?.ipfsCollectionRef && status !== 'FAILED')
+        throw new Error('IPFS collects this policy fee. Review the payment and reconcile the IPFS remittance.');
       if (Object.hasOwn(expectedFeeVersions, allocation.quoteId) && old?.version !== expectedFeeVersions[allocation.quoteId]) throw new Error('The fee payment source changed. Refresh and review its financing offers before confirming payment.');
       const quote=await getModel<Record<string,unknown>>('Quote',allocation.quoteId);
       if (old ? old.accountId!==input.accountId||old.amountCents!==allocation.amountCents : !quote||quote.accountId!==input.accountId||brokerFeeCents(quote.brokerFee as number|undefined)!==allocation.amountCents) throw new Error('The collected broker fee differs from its frozen payment allocation.');
@@ -227,10 +232,10 @@ export async function syncBrokerFeePayment(input: BrokerFeePaymentInput, extraWr
       const paymentSources={...base.paymentSources,[id]:{status,amountCents:allocation.amountCents,refundedCents:sourceRefund}};
       if (Object.keys(paymentSources).length>100) throw new Error('This fee payment history needs review before another receipt is recorded.');
       const sources=Object.values(paymentSources);
-      const collectedCents=sources.filter(s=>['PAID','REFUNDED'].includes(s.status)).reduce((n,s)=>n+s.amountCents,0);
-      const submittedCents=sources.filter(s=>s.status!=='FAILED').reduce((n,s)=>n+s.amountCents,0);
+      const collectedCents=sources.filter(s=>['PAID','REFUNDED'].includes(s.status)).reduce((n,s)=>n+s.amountCents,base.ipfsRemittance?.collectedCents ?? 0);
+      const submittedCents=sources.filter(s=>s.status!=='FAILED').reduce((n,s)=>n+s.amountCents,base.ipfsRemittance?.collectedCents ?? 0);
       if (collectedCents>expected || submittedCents>expected) throw new Error('Duplicate broker fee collection requires payment review; it cannot create additional producer earnings.');
-      writes.push(feePut({...base,paymentSources,collectedCents,submittedCents,refundedCents:sources.reduce((n,s)=>n+s.refundedCents,0)},old));
+      writes.push(feePut({...base,paymentSources,collectedCents,submittedCents,refundedCents:sources.reduce((n,s)=>n+s.refundedCents,base.ipfsRemittance?.refundedCents ?? 0)},old));
     }
     try { await transact(writes); await allocatePayment(id); return; }
     catch(error) { if (!retryable(error)||attempt===4) throw error; }
