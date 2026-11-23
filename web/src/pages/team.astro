@@ -1,0 +1,98 @@
+---
+/**
+ * Team.
+ *
+ *   01 hero
+ *   02 intro: the agency and its founder, beside a photo
+ *   03 how the team works (three functions, no headcount claims)
+ *   04 "Our standards" band (shared component): figures, carriers and CTA
+ */
+import Layout from "../layouts/Layout.astro";
+import Hero from "../components/Hero.astro";
+import AgencyStandards from "../components/AgencyStandards.astro";
+import { AGENCY } from "../../../shared/agency";
+import "./Team.css";
+
+/* How an account is handled. Describes the work, not the number of people. */
+const FUNCTIONS = [
+  { title: "Placement", desc: "Licensed agents take your association to the markets that write it and compare every option." },
+  { title: "Account service", desc: "Certificates, policy changes and lender requests handled without the runaround." },
+  { title: "Renewal planning", desc: "Valuations and loss history updated early, so your board has time to decide." },
+];
+---
+
+<Layout
+  title="Our Team — HOA Insurance Agency"
+  description="Meet the licensed Insurance professionals at HOA Insurance Agency who place coverage for homeowners and condominium associations."
+  canonicalPath="/team/"
+>
+  <Hero
+    eyebrow="Our team"
+    title="Dedicated to your association’s coverage"
+    subtitle="Licensed Insurance professionals focused on homeowners and condominium associations."
+    backgroundImage="/images/practice-team.jpg"
+    compact
+    short
+  />
+
+  {/* ═══ 02 · Intro ═══════════════════════════════════════════════════ */}
+  <section class="section" aria-labelledby="team-intro-h">
+    <div class="container tm-intro">
+      <div class="tm-intro__copy">
+        <p class="eyebrow">Who we are</p>
+        <h2 class="section-title" id="team-intro-h">An independent agency built for community associations</h2>
+        <p class="tm-intro__lead">
+          {AGENCY.name} focuses on homeowners and condominium associations, their
+          boards, property managers and unit owners. Every account is placed, serviced and
+          renewed by licensed agents who know how association master policies are written.
+        </p>
+        <p class="tm-intro__lead">
+          The agency is led by{" "}
+          <strong class="tm-intro__founder">{AGENCY.founderDisplayName}</strong>,
+          {AGENCY.founderJobTitle}. It is based in {AGENCY.city}, {AGENCY.state}, and licensed
+          in {AGENCY.areaServed}.
+        </p>
+        <p class="tm-intro__sign">
+          <strong>{AGENCY.founderDisplayName}</strong>
+          <span>{AGENCY.founderJobTitle}, HOA Insurance Agency</span>
+        </p>
+      </div>
+      <figure class="tm-intro__media">
+        <img
+          src="/images/board-meeting.jpg"
+          alt="Modern condominium buildings with glass balconies against a blue sky"
+          width="1600"
+          height="1066"
+          loading="lazy"
+          decoding="async"
+        />
+      </figure>
+    </div>
+  </section>
+
+  {/* ═══ 03 · How the team works ═════════════════════════════════════ */}
+  <section class="section section--alt" aria-labelledby="team-work-h">
+    <div class="container">
+      <div class="sec-head sec-head--center">
+        <p class="eyebrow">How we work</p>
+        <h2 class="section-title" id="team-work-h">The same team, from first review to renewal</h2>
+        <p class="section-subtitle">
+          Your association is supported from first review to renewal, by people who
+          specialize in community associations.
+        </p>
+      </div>
+      <ol class="tm-functions">
+        {FUNCTIONS.map((fn, i) => (
+          <li class="tm-function">
+            <span class="tm-function__num" aria-hidden="true">{String(i + 1).padStart(2, "0")}</span>
+            <h3>{fn.title}</h3>
+            <p>{fn.desc}</p>
+          </li>
+        ))}
+      </ol>
+    </div>
+  </section>
+
+  {/* ═══ 04 · Our standards (shared with /what-we-do and /condo-insurance) ═ */}
+  <AgencyStandards />
+</Layout>
