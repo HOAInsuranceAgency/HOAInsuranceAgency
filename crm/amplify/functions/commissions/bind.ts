@@ -1,5 +1,5 @@
 import { ipfsFinancedCents, usesIpfs, validateCollectionRoute } from '../../../../shared/ipfsCollection';
-import { allocateIpfsAgreement, normalizedIpfsRef, assertPriorIpfsBilling } from './ipfs-bind';
+import { allocateIpfsAgreement, bindBillingConditions, normalizedIpfsRef, assertPriorIpfsBilling } from './ipfs-bind';
 import { quoteSourceBillingHistory } from '../quote-source-billing';
 import { getFee } from '../broker-fees/store';
 import { brokerFeeCents } from '../../../../shared/brokerFees';
@@ -273,6 +273,7 @@ export async function bindPolicy(event: Event, input: Data) {
     carrierTerms: carrierSnapshotTerms,
     entries: [],
   };
+  const billingGuard = bindBillingConditions(quote);
   const guards: Transaction = [
     ...(agreement ? [agreement.write] : []),
     ...await brokerFeeBindWrites(quote,policyId,String(input.billType),initialFee?.version,ipfsAgreementRef),
@@ -289,9 +290,10 @@ export async function bindPolicy(event: Event, input: Data) {
         TableName: tableName('Quote'),
         Key: { id: quoteId },
         UpdateExpression: 'SET #s = :bound, updatedAt = :at, lastWriteBy = :actor',
-        ConditionExpression: 'updatedAt = :old AND #s = :status',
-        ExpressionAttributeNames: { '#s': 'status' },
+        ConditionExpression: 'updatedAt = :old AND #s = :status AND ' + billingGuard.expression,
+        ExpressionAttributeNames: { ...billingGuard.names, '#s': 'status' },
         ExpressionAttributeValues: {
+          ...billingGuard.values,
           ':bound': 'BOUND',
           ':at': at,
           ':actor': access.actor,

@@ -884,7 +884,7 @@ it('requires an attached term document and explicit confirmation before register
   fireEvent.change(screen.getByLabelText('Signed IPFS agreement reference'), { target: { value: 'PFA-1' } });
   fireEvent.change(screen.getByLabelText('Agreement amount financed ($)'), { target: { value: '1000' } });
   fireEvent.change(screen.getByLabelText('Signed agreement document'), { target: { value: 'doc' } });
-  fireEvent.click(screen.getByLabelText(/I verified this term/));
+  fireEvent.click(screen.getByLabelText(/Verified zero broker fee/));
   fireEvent.click(register);
   await waitFor(() => expect(h.action).toHaveBeenCalledWith('registerLegacyIpfsCollection', {
     policyId: 'p', version: 1, agreementRef: 'PFA-1', amountFinancedCents: 100000, documentId: 'doc', confirmed: true,

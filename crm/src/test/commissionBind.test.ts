@@ -451,3 +451,18 @@ it('shares one fee cap across terms with the same agreement and uses the observe
   expect((await allocateIpfsAgreement('other', 'IPFS101', term)).write.Put!.Item!.id).not.toBe(existing.id);
   expect((await allocateIpfsAgreement('a', 'IPFS102', term)).write.Put!.Item!.id).not.toBe(existing.id);
 });
+
+
+it('keeps live or settled HOA billing out of a new IPFS bind and preserves verified void history', async () => {
+  const { assertPriorIpfsBilling } = await import('../../amplify/functions/commissions/ipfs-bind');
+  vi.stubEnv('ACCESS_TABLES', JSON.stringify({ Invoice:'Invoice', PfLoan:'PfLoan' }));
+  const invoice = { id:'invoice', status:'DRAFT', updatedAt:'2026-01-01T00:00:00Z' };
+  for (const status of ['DRAFT','SENT','PROCESSING','PAID'])
+    expect(() => assertPriorIpfsBilling([{...invoice,status}],[])).toThrow(/existing HOA invoice/);
+  expect(() => assertPriorIpfsBilling([{ ...invoice, status:'VOID', stripePaymentLinkId:'legacy-link' }],[])).toThrow(/resolve its payment/);
+  expect(() => assertPriorIpfsBilling([], [{ id:'loan', status:'ACTIVE', downPaidAt:invoice.updatedAt }])).toThrow(/finance agreement/);
+  const withdrawn = { ...invoice, status:'VOID', sourcePricingVersion:1 };
+  expect(assertPriorIpfsBilling([withdrawn],[])).toEqual([expect.objectContaining({
+    ConditionCheck:expect.objectContaining({ TableName:'Invoice', Key:{id:invoice.id} }),
+  })]);
+});

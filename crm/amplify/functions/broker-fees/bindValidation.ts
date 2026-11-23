@@ -67,6 +67,9 @@ export async function brokerFeeBindWrites(quote:Record<string,unknown>,policyId:
   if(fee.policyId && fee.policyId!==policyId)throw new Error('This policy term fee already belongs to another bound policy.');
   const doc=await getModel<Record<string,unknown>>('Document',agreement.signedDocumentId!);
   if(!doc || doc.entityId!==quote.accountId || doc.category!=='BROKER_FEE_DISCLOSURE')throw new Error('The signed broker fee disclosure could not be verified.');
+  if (usesIpfs(quote) && (agreement.signature?.consent !== true || !Number.isFinite(Date.parse(agreement.signature.signedAt)) ||
+      doc.entityType !== 'ACCOUNT' || doc.brokerFeeAgreementId !== agreement.id ||
+      !Array.isArray(doc.quoteIds) || !doc.quoteIds.includes(quote.id))) throw new Error('The signed disclosure for this IPFS policy term could not be verified.');
   const policyIds=[...new Set([...(Array.isArray(doc.policyIds)?doc.policyIds.map(String):[]),policyId])];
   return [feePut({...fee,policyId,...(ipfsAgreementRef ? {ipfsCollectionRef:ipfsAgreementRef} : {})},fee),versionCheck(table(),agreement),
     ...(settings?[versionCheck(modelTable('AgencySettings'),settings as {id:string;updatedAt:string})]:[]),
