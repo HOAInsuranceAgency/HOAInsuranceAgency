@@ -54,6 +54,8 @@ export interface IntakeRow {
   deleted?: boolean;
   raw?: string[];
   importIssue?: string;
+  /** Suggestion only; summaries remain included until a person explicitly excludes them. */
+  summaryLabel?: string;
 }
 export interface IntakeAllocation {
   rowId: string;
@@ -173,6 +175,9 @@ export function validateIntakeRow(
     ...(input.deleted ? { deleted: true } : {}),
     ...(input.raw
       ? { raw: input.raw.slice(0, 5).map((v) => String(v).slice(0, 500)) }
+      : {}),
+    ...(input.summaryLabel
+      ? { summaryLabel: required(input.summaryLabel, "source summary label", 300) }
       : {}),
     ...(input.importIssue
       ? { importIssue: required(input.importIssue, "import review note", 500) }
@@ -365,6 +370,24 @@ export function reuseImportMapping(
   }
   return result;
 }
+/** Recognize narrowly named financial summaries without guessing from a missing policy alone. */
+export function statementSummaryLabel(source: string[], mapping: StatementImportMapping): string | undefined {
+  const summary = /^(?:(?:grand\s+)?total(?:\s+comm(?:ission)?\.?\s+activity(?:\s+direct\s+bill)?|\s+commission(?:\s+due)?)?|sub[ -]?total|(?:year\s+to\s+date|ytd)\s+comm(?:ission)?\.?|(?:(?:january|february|march|april|may|june|july|august|september|october|november|december)\s+)?commission\s+payable)\s*:?$/i;
+  const label = source.map(cell => cell.trim().replace(/\s+/g, ' ')).find(cell => summary.test(cell));
+  if (!label) return;
+  // A summary label in an insured name is not enough to exclude a transaction candidate.
+  if ([mapping.policy, mapping.reference].some(index => {
+    const value = source[index]?.trim().replace(/\s+/g, ' ');
+    return value && value !== label;
+  })) return;
+  return label.slice(0, 300);
+}
+/** US carrier dates; two-digit years are shown as 20xx for explicit source review. */
+export function importedPolicyDate(value: string): string {
+  const text = value.trim();
+  const us = /^(\d{1,2})\/(\d{1,2})\/(\d{4}|\d{2})$/.exec(text);
+  return day(us ? `${us[3].length === 2 ? '20' : ''}${us[3]}-${us[1].padStart(2, '0')}-${us[2].padStart(2, '0')}` : text);
+}
 /** Preserve invalid source rows for correction; never silently drop money from an import. */
 export function prepareIntakeRows(
   table: string[][],
@@ -404,6 +427,7 @@ export function prepareIntakeRows(
       reviewStatus: "PENDING",
       note: "",
       postedCents: 0,
+      ...(statementSummaryLabel(source, mapping) ? { summaryLabel: statementSummaryLabel(source, mapping) } : {}),
       raw: [
         cell("policy"),
         cell("reference"),
@@ -419,7 +443,7 @@ export function prepareIntakeRows(
       issues.push("Correct the imported agency amount");
     }
     try {
-      row.effectiveDate = cell("effective") ? day(cell("effective")) : "";
+      row.effectiveDate = cell("effective") ? importedPolicyDate(cell("effective")) : "";
     } catch {
       issues.push("Confirm the policy effective date");
     }
@@ -428,7 +452,7 @@ export function prepareIntakeRows(
       row.transactionType = type;
     else if (
       mapping.transaction >= 0 &&
-      !["RECEIPT", "COMMISSION", "NEW", "RENEWAL"].includes(type)
+      !["RECEIPT", "COMMISSION", "NEW", "NEW BUSINESS", "RENEWAL"].includes(type)
     )
       issues.push("Confirm the imported transaction type");
     const matches = exactPolicyMatches(row, carrierId, policies);

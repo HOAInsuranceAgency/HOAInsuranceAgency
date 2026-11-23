@@ -1151,6 +1151,7 @@ function IntakeImport({
               )}
               <div className="intake-import-confirm">
               <h4>Confirm the preview to continue</h4>
+              {!!preview.some(r => r.summaryLabel) && <p><strong>{preview.filter(r => r.summaryLabel).length} possible summary rows detected.</strong> They will be retained for review. In the next step, compare their labels with the original and choose Exclude these summary rows.</p>}
               <p className="small">{reviewed ? "Ready to import. The next screen section is policy and eligibility review." : "The import button becomes available after you check the confirmation below."}</p>
               <label className="commission-check">
                 <Input
@@ -1223,7 +1224,8 @@ function RowsEditor({
     [selected, setSelected] = useState<string[]>([]),
     [confirmed, setConfirmed] = useState(false),
     [setupRow, setSetupRow] = useState(""),
-    [showDetails, setShowDetails] = useState(false);
+    [showDetails, setShowDetails] = useState(false),
+    [exclusionReason, setExclusionReason] = useState("");
   const [amounts, setAmounts] = useState<Record<string, string>>(() =>
     Object.fromEntries(
       detail.rows.map((r) => [
@@ -1264,6 +1266,12 @@ function RowsEditor({
   const mobileRow = filtered.find(r => r.id === focus);
   const displayed = mobileRow && !visible.some(r => r.id === mobileRow.id) ? [...visible, mobileRow] : visible;
   const routine = drafts.filter(r => !locked(r) && !r.deleted && r.reviewStatus === 'PENDING' && r.transactionType === 'RECEIPT' && !r.importIssue && (r.agencyCents ?? 0) > 0 && exactPolicyMatches(r,detail.intake.carrierId,data.policies).length === 1 && !rowIssues({...r,reviewStatus:'ELIGIBLE'},detail.intake.carrierId,data.policies,drafts).length);
+  const summaries = drafts.filter(r => !locked(r) && !r.deleted && r.summaryLabel);
+  const excludeRows = (ids: string[], reason: (row: IntakeRow) => string) => {
+    setDrafts(prev => prev.map(r => ids.includes(r.id) && !locked(r) && !r.deleted
+      ? {...r, deleted: true, note: [reason(r), r.note].filter(Boolean).join("; ").slice(0, 2000)} : r));
+    setConfirmed(false); setSelected([]);
+  };
   const missingGroups = [...new Map(drafts.filter(r=>!locked(r)&&!r.deleted&&!r.policyId).map(r=>[r.policyNumber+'|'+r.effectiveDate,r])).values()];
   useEffect(() => {
     setDrafts(prev => prev.map(r => {
@@ -1313,7 +1321,7 @@ function RowsEditor({
         task.setMessage("No row changes to save.");
         return;
       }
-      if (changed.some((r) => r.reviewStatus !== "PENDING") && !confirmed)
+      if (changed.some((r) => r.reviewStatus !== "PENDING" || !!r.deleted !== !!detail.rows.find(old => old.id === r.id)?.deleted) && !confirmed)
         throw new Error(
           "Confirm the changed source values and eligibility decisions before saving reviewed rows.",
         );
@@ -1341,15 +1349,28 @@ function RowsEditor({
       </div>
       {reviewed && !dirty && <div className="intake-completion-note"><strong>All row decisions are saved.</strong><Button type="button" variant="primary" onClick={onContinue}>Continue to payment</Button><Button type="button" variant="secondary" onClick={() => setRowFilter("all")}>View reviewed rows</Button></div>}
       {!!drafts.length && detail.intake.totalCents !== detail.intake.rowTotalCents && <p role="alert" className="commission-notice">Check the statement control total above. It must equal the imported rows before continuing to payment.</p>}
-      {!reviewed && <p className="intake-step-help">Check each policy, amount and employee rate below. Choose Eligible or Ineligible for each row, confirm your review, then save to continue. Open Edit details only to correct a row or explain an exception.</p>}
+      {!reviewed && <p className="intake-step-help">Check each policy, amount and employee rate below. Choose Eligible or Ineligible for each row, confirm your review, then save to continue. Use Exclude selected non-transaction rows for totals or summaries; Ineligible is for a real policy receipt that earns no employee commission. Open Edit details to correct a row or explain an exception.</p>}
       <div className="intake-filters"><label className="field">Rows to review<Select value={rowFilter} onChange={e=>{setRowFilter(e.target.value);setPage(0);}}><option value="unresolved">Needs review or saving ({drafts.filter(r => unresolved(r) || rowChanged(r)).length})</option><option value="all">All rows ({drafts.length})</option></Select></label>
       <label className="field intake-mobile-picker" hidden={!showDetails || !filtered.length}>Focused source row<Select value={focus ?? ''} onChange={e=>setFocusedRow(e.target.value)}>{filtered.map(r=><option key={r.id} value={r.id}>{r.lineRef || r.policyNumber || 'New row'}</option>)}</Select></label></div>
+      {!!summaries.length && <div className="commission-notice" role="region" aria-label="Possible statement summaries">
+        <strong>{summaries.length} possible summary rows</strong>
+        <p>Compare these labels and amounts with the original. Totals and year-to-date balances are not additional policy receipts. They remain included until you exclude them and save your confirmed review.</p>
+        <ul>{summaries.map(r => <li key={r.id}>Row {r.sourceRow ?? r.id}: {r.summaryLabel} · {displayCommissionAmount(amounts[r.id] ?? "")}</li>)}</ul>
+        <Button type="button" variant="secondary" disabled={task.busy} onClick={() => excludeRows(summaries.map(r => r.id), r => "Excluded after source review: " + r.summaryLabel)}>Exclude these summary rows</Button>
+      </div>}
       {!!missingGroups.length && <CommissionPanel title="Resolve missing policy groups" hint="Complete tracking once, then recheck every matching row">
         {missingGroups.map(r=><p key={r.id}>{r.policyNumber || 'Missing policy number'} · {r.effectiveDate || 'Term required if ambiguous'} · {drafts.filter(x=>x.policyNumber===r.policyNumber&&x.effectiveDate===r.effectiveDate&&!x.policyId).length} rows <Button variant="secondary" onClick={()=>setSetupRow(r.id)}>Find policy / complete tracking</Button></p>)}
       </CommissionPanel>}
 
       <form onSubmit={(e) => void submit(e)} hidden={!filtered.length && !dirty}>
         <fieldset disabled={task.busy}>
+          {!!selected.length && <div className="commission-notice">
+            <label className="field">Reason for excluding selected non-transaction rows
+              <Input maxLength={1000} value={exclusionReason} onChange={e => setExclusionReason(e.target.value)} placeholder="For example: statement totals, not policy transactions" />
+            </label>
+            <Button type="button" variant="secondary" disabled={!exclusionReason.trim()} onClick={() => excludeRows(selected, () => exclusionReason.trim())}>Exclude selected non-transaction rows</Button>
+            <p className="small">Excludes the selected rows from the control total. Their source values and reason remain saved. Confirm your review below to save.</p>
+          </div>}
           <details className="intake-source-options"><summary>Group review tools</summary>
             {!!routine.length && <p className="small">{routine.length} routine rows have exact matches and no source issues. <Button type="button" variant="secondary" onClick={() => setSelected(routine.map(r => r.id))}>Select routine review group</Button></p>}
           <div className="intake-actions">
@@ -1409,7 +1430,7 @@ function RowsEditor({
                 const issues = rowIssues(r, detail.intake.carrierId, data.policies, drafts);
                 return <tr key={r.id}>
                   <td><Input type="checkbox" aria-label={"Select source row " + (r.sourceRow ?? r.id)} disabled={locked(r) || r.deleted} checked={selected.includes(r.id)} onChange={e => { const checked = e.currentTarget.checked; setSelected(ids => checked ? [...ids, r.id] : ids.filter(id => id !== r.id)); }} /></td>
-                  <td><strong>{r.policyNumber || "Policy needed"}</strong><span className="small muted">{r.lineRef || "Reference needed"}</span><span className="small muted">{r.effectiveDate || "Term not supplied"}</span>{!policy && <span className="error-text small">Match a policy in Edit details</span>}</td>
+                  <td><strong>{r.summaryLabel || r.policyNumber || "Policy needed"}</strong><span className="small muted">{r.lineRef || "Reference needed"}</span><span className="small muted">{r.effectiveDate || "Term not supplied"}</span>{!policy && !r.deleted && <span className="error-text small">Match a policy in Edit details</span>}</td>
                   <td><strong>{displayCommissionAmount(amounts[r.id] ?? "") || "Amount needed"}</strong><span className="small muted">{policy ? `${policy.producerName} · ${policy.producerBps / 100}%` : "Employee not matched"}</span></td>
                   <td><Select aria-label={"Review decision " + r.id} disabled={locked(r) || r.deleted} value={r.reviewStatus} onChange={e => update(r.id, {reviewStatus:e.target.value as IntakeRow["reviewStatus"]})}><option value="PENDING">Needs review</option><option value="ELIGIBLE">Eligible</option><option value="INELIGIBLE">Ineligible</option></Select>{r.deleted ? <span className="small">Excluded</span> : issues.filter(issue => issue !== "Eligibility review required").map(issue => <span className="error-text small" key={issue}>{issue}</span>)}</td>
                   <td><Button type="button" variant="secondary" aria-label={"Edit details " + r.lineRef} onClick={() => {setFocusedRow(r.id); setShowDetails(true);}}>Edit details</Button></td>

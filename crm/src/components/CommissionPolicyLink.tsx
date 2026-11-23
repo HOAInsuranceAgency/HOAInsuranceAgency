@@ -6,6 +6,7 @@ CommissionOverview,
 } from "../../../shared/commissions";
 import { isAuthorizationError } from "../../../shared/authorizationError";
 import { client } from "../lib/client";
+import { policySearchTerms, searchPolicyPages } from "../lib/commissionPolicySearch";
 import { useCommissionUnsavedChanges as useUnsavedChanges } from "../lib/commissionEditProtection";
 import { commissionWorkflowAction as commissionAction } from "../lib/commissions";
 import { communicationRequest } from "../lib/communications";
@@ -53,18 +54,21 @@ export default function CommissionPolicyLink({
   const resource = useAsyncResource(
     async () => {
       if (query.trim().length < 2) return { data: [], nextToken: null };
-      const page = await client.models.Policy.list({
-        filter: {
-          and: [
-            { carrierId: { eq: carrierId } },
-            { policyNumber: { contains: query.trim() } },
-          ],
-        },
-        limit: 25,
-        nextToken: cursor,
-      });
-      if (page.errors?.length) throw new Error(page.errors[0].message);
-      return page;
+      try {
+        return await searchPolicyPages(nextToken => client.models.Policy.list({
+          filter: {
+            and: [
+              { carrierId: { eq: carrierId } },
+              { or: policySearchTerms(query).map(term => ({ policyNumber: { contains: term } })) },
+            ],
+          },
+          limit: 100,
+          nextToken,
+        }), cursor);
+      } catch (error) {
+        if (isAuthorizationError(error)) denied(error);
+        throw error;
+      }
     },
     [query, cursor, carrierId],
     { clearDataOnError: () => true },
@@ -82,7 +86,9 @@ export default function CommissionPolicyLink({
       <p className="small muted">
         Search CRM policies for this carrier. Existing account details and
         policy terms are reused. Confirm the original producer; the current
-        assignment is a suggestion.
+        assignment is a suggestion. Search also checks the core policy number when
+        the statement formats its prefix or suffix differently. Confirm the term
+        before choosing a result.
       </p>
       <div className="intake-actions">
         <label className="field">
@@ -152,13 +158,14 @@ export default function CommissionPolicyLink({
           variant="secondary"
           onClick={() => setCursor(resource.data?.nextToken ?? undefined)}
         >
-          Next policy results
+          {resource.data.data.length ? "More matching policies" : "Continue searching more policies"}
         </Button>
       )}
       {!resource.loading && resource.data && !resource.data.data.length && (
         <p className="small muted">
-          No matching policy on this page. Check the policy number or use Next
-          policy results when available.
+          {resource.data.nextToken
+            ? "Still searching this carrier's policies. Continue searching more policies; this is not a final no-match result."
+            : "No matching policy found for this carrier. Check the statement carrier and search the core policy number without its prefix or suffix."}
         </p>
       )}
       {context.error && (

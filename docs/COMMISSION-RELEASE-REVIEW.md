@@ -73,3 +73,14 @@ The inbox reuses durable posted totals plus the unposted portion of pending rece
 Receipt posting looks up current payroll approvals across monthly and off-cycle runs. The writer adds or removes a cycle ID when the approval status changes. During rollout the receipt reader can still find approvals created by the previous version.
 
 After all commission writers in each environment are live, run `npx tsx scripts/backfill-approved-payroll.ts --table <verified-ledger-table> --region <verified-region>` from `crm`. The dry run counts examined cycles and approved cycles. If `ready` is false, repeat with `--apply` to write the approved IDs and mark the lookup ready, including on an empty ledger. Repeat the dry run to verify `ready: true`. A concurrent payment or cancellation takes precedence, and an interrupted run can restart.
+
+
+### Statement import and policy-search recovery
+
+The guided import identifies narrowly named summary rows, including commission totals, year-to-date balances and monthly commission payable. These remain included until the Owner compares the original, explicitly excludes them and saves a confirmed review. Unknown or malformed transaction rows are never silently dropped. Existing imports can select non-transaction rows, enter an exclusion reason and save the confirmed exclusions without reimporting the statement. Excluded source values remain available in All rows. Ineligible remains the decision for a real policy receipt with no employee earnings.
+
+Policy search continues through empty filtered pages. It also searches a single recognizable core number when a statement places product codes or term suffixes differently. Results remain carrier-scoped and the Owner chooses the policy term; this does not add fuzzy automatic financial matching. A bounded search retains a clear continuation when more policies remain. Errors, including access denial on a later page, do not become an empty successful result.
+
+US statement dates such as `08/28/26` and `08/28/2026` display as `2026-08-28` for source review. Two-digit years use 20xx. Invalid dates remain flagged, original values remain preserved, and importing never confirms eligibility or posts earnings.
+
+Regression checks use fictional rows and policy identities only. No source PDFs, real statement records, receipt postings, report delivery settings or production configuration are changed by this fix.

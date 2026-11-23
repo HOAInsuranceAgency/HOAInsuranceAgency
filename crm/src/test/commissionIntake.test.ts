@@ -994,3 +994,17 @@ it.each(['manual', 'guided'])('holds an intervening approval atomically at %s po
   expect(await submit()).toMatchObject({ok: true});
   expect(h.commit).toHaveBeenCalledTimes(count);
 });
+
+it('requires explicit confirmation to exclude or restore a pending source row', async () => {
+  const pending = row({reviewStatus:'PENDING',policyId:'',policyNumber:'',lineRef:'',summaryLabel:'TOTAL COMMISSION'});
+  expect(await save([pending])).toMatchObject({ok:true});
+  const excluded = {...get<IntakeRow>(intakeRowsKind('inbox'),'row1'),deleted:true,note:'Confirmed source summary'};
+  expect(await call('saveIntakeRows',{id:'inbox',version:version(),rows:[excluded]})).toMatchObject({ok:false});
+  expect(get<StatementIntake>('STATEMENT_INTAKE','inbox').rowTotalCents).toBe(10000);
+  expect(await save([excluded])).toMatchObject({ok:true});
+  expect(get<StatementIntake>('STATEMENT_INTAKE','inbox')).toMatchObject({rowTotalCents:0,rowCount:0});
+  const restored = {...get<IntakeRow>(intakeRowsKind('inbox'),'row1'),deleted:false};
+  expect(await call('saveIntakeRows',{id:'inbox',version:version(),rows:[restored]})).toMatchObject({ok:false});
+  expect(await save([restored])).toMatchObject({ok:true});
+  expect(get<StatementIntake>('STATEMENT_INTAKE','inbox')).toMatchObject({rowTotalCents:10000,rowCount:1});
+});

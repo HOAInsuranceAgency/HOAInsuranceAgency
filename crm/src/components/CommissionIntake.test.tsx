@@ -461,3 +461,40 @@ it.each(['intakeWorkspace','getStatementIntake'])('forwards %s access denial to 
   await waitFor(()=>expect(denied).toHaveBeenCalledWith(error));
   expect(screen.queryByText('TEST-SOURCE')).toBeNull();
 });
+
+it("keeps suggested summaries until explicit exclusion and confirmed save", async () => {
+  const summary = {...row,id:'summary',policyId:'',policyNumber:'',lineRef:'',summaryLabel:'YEAR TO DATE COMMISSION',agencyCents:90000};
+  h.action.mockImplementation(async op => op === 'intakeWorkspace' ? {intakes:[intake],settlements:[],templates:[]}
+    : op === 'getStatementIntake' ? {...detail,rows:[row,summary]} : {ok:true});
+  renderInbox();
+  fireEvent.click(await screen.findByRole('button',{name:'Open'}));
+  const suggestion = await screen.findByRole('region',{name:'Possible statement summaries'});
+  expect(within(suggestion).getByText(/YEAR TO DATE COMMISSION/)).toBeInTheDocument();
+  expect(h.action.mock.calls.some(([op])=>op==='saveIntakeRows')).toBe(false);
+  fireEvent.click(within(suggestion).getByRole('button',{name:'Exclude these summary rows'}));
+  fireEvent.click(screen.getByRole('button',{name:'Save source rows'}));
+  await screen.findByText('Confirm the changed source values and eligibility decisions before saving reviewed rows.');
+  expect(h.action.mock.calls.some(([op])=>op==='saveIntakeRows')).toBe(false);
+  fireEvent.click(screen.getByLabelText(/I checked changed source values/));
+  fireEvent.click(screen.getByRole('button',{name:'Save source rows'}));
+  await waitFor(()=>expect(h.action).toHaveBeenCalledWith('saveIntakeRows',expect.objectContaining({
+    confirmed:true,rows:[expect.objectContaining({id:'summary',deleted:true,note:expect.stringContaining('YEAR TO DATE COMMISSION')})]
+  })));
+});
+it("lets existing imports exclude selected non-transaction rows with an explanation", async () => {
+  const summary = {...row,id:'old-summary',policyId:'',policyNumber:'',lineRef:'',agencyCents:90000};
+  h.action.mockImplementation(async op => op === 'intakeWorkspace' ? {intakes:[intake],settlements:[],templates:[]}
+    : op === 'getStatementIntake' ? {...detail,rows:[row,summary]} : {ok:true});
+  renderInbox();
+  fireEvent.click(await screen.findByRole('button',{name:'Open'}));
+  fireEvent.click(await screen.findByLabelText('Select source row old-summary'));
+  const exclude=screen.getByRole('button',{name:'Exclude selected non-transaction rows'});
+  expect(exclude).toBeDisabled();
+  fireEvent.change(screen.getByLabelText('Reason for excluding selected non-transaction rows'),{target:{value:'Statement total, not another receipt'}});
+  fireEvent.click(exclude);
+  fireEvent.click(screen.getByLabelText(/I checked changed source values/));
+  fireEvent.click(screen.getByRole('button',{name:'Save source rows'}));
+  await waitFor(()=>expect(h.action).toHaveBeenCalledWith('saveIntakeRows',expect.objectContaining({
+    confirmed:true,rows:[expect.objectContaining({id:'old-summary',deleted:true,note:'Statement total, not another receipt'})]
+  })));
+});
