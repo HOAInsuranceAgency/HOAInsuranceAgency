@@ -829,6 +829,8 @@ const schema = a
       premium: a.float(),
       /** Optional agency fee; never part of carrier premium. */
       brokerFee: a.float(),
+      /** Servicing-only link for a previously bound external-collection term. */
+      ipfsRegisteredPolicyId: a.id(),
       ipfsAmountFinanced: a.float(),
       ipfsPriorBrokerFees: a.float(),
       ipfsReleaseReference: a.string(),

@@ -178,10 +178,12 @@ export class AccountAccess {
       if(fee&&(fee.signedAt||fee.submittedCents>0||fee.collectedCents>0||fee.policyId))throw new Error("Quotes with signed fee or payment history cannot be deleted. Preserve the record and its adjustments.");
     }
     if (model === "Quote" && ["create","update"].includes(operation)) {
+      if (Object.hasOwn(input, 'ipfsRegisteredPolicyId')) throw new Error('The historical IPFS collection link is server-owned.');
       if(Object.hasOwn(input,"passThroughCharges"))normalizePassThroughCharges(input.passThroughCharges);
       if(Object.hasOwn(input,"clientConditions"))normalizeClientConditions(input.clientConditions);
       if (Object.hasOwn(input,"brokerFee")) brokerFeeCents(input.brokerFee as number|null);
       const previous = input.id ? await this.get("Quote",id(input.id)) : undefined;
+      if (previous?.ipfsRegisteredPolicyId != null) throw new Error('This registered IPFS quote is retained with its bound policy.');
       const nextBilling = { ...previous, ...input };
       validateCollectionRoute(nextBilling);
       const leavingIpfs = needsIpfsClosure(previous) && !usesIpfs(nextBilling);
@@ -217,7 +219,11 @@ export class AccountAccess {
       const previous = input.id ? await this.get("Invoice",id(input.id)) : undefined;
       if(operation==="create") {
         if(![1,2].includes(input.sourcePricingVersion as number)||input.status!=="DRAFT"||!input.quoteId&&!input.policyId)throw new Error("Create a source-priced draft invoice from its quote or policy.");
-        if(input.quoteId)assertHoaCollection(await this.get('Quote',id(input.quoteId)));
+        if (input.quoteId) {
+          const quote = await this.get('Quote',id(input.quoteId));
+          assertHoaCollection(quote);
+          if (!input.policyId && quote?.status === 'BOUND') throw new Error('Use the bound policy when creating its invoice.');
+        }
         if(input.policyId)assertHoaCollection(await this.get('Policy',id(input.policyId)));
         if(input.sourcePricingVersion===2)await assertAdjustmentInvoiceProof(input,(model,key)=>this.get(model,key));
         else {
@@ -289,7 +295,7 @@ export class AccountAccess {
     if (model === "Policy" && operation === "update") {
       const prior = await this.get("Policy", id(input.id));
       if (['carrierBillType','carrierBillToAgency','ipfsAmountFinanced','ipfsPriorBrokerFees','ipfsAgreementRef','ipfsConfirmedAt','ipfsConfirmedBy'].some(field => Object.hasOwn(input, field) && (input[field] ?? null) !== (prior?.[field] ?? null))) throw new Error('Bound billing evidence is server-owned.');
-      if ((prior?.carrierBillType || usesIpfs(prior)) && Object.hasOwn(input, 'billType') && input.billType !== prior?.billType) throw new Error('Preserve the bound collection route.');
+      if ((prior?.clientBillingSelected === true || prior?.carrierBillType || usesIpfs(prior)) && Object.hasOwn(input, 'billType') && input.billType !== prior?.billType) throw new Error('Preserve the bound collection route.');
       assertBrokerFeeAgencyBilling({...prior,...input} as {brokerFee?:number|null;billType?:string|null});
       if(Object.hasOwn(input,"passThroughCharges")&&((input.passThroughCharges!=null)!==(prior?.passThroughCharges!=null)||JSON.stringify(normalizePassThroughCharges(input.passThroughCharges))!==JSON.stringify(normalizePassThroughCharges(prior?.passThroughCharges)))||Object.hasOwn(input,"clientConditions")&&normalizeClientConditions(input.clientConditions)!==normalizeClientConditions(prior?.clientConditions))throw new Error("Bound policy charges and client conditions are immutable. Record a reviewed adjustment instead.");
       if (Object.hasOwn(input, "commissionSnapshotId") && input.commissionSnapshotId !== prior?.commissionSnapshotId) throw new Error("Commission provenance is server-owned.");

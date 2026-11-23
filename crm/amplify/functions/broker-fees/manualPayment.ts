@@ -1,4 +1,4 @@
-import { policyCollectionWrites, assertHoaCollection } from '../ipfs-invoice';
+import { policyCollectionWrites, assertHoaCollection, hoaQuoteCollectionGuard } from '../ipfs-invoice';
 import { initialQuotePublicationWrites } from '../quote-source-billing';
 import { assertPremiumNotFinanced } from '../legacy-premium-billing';
 import { isPositiveNonBrokerCharge } from "../../../../shared/invoiceAdjustments";
@@ -74,7 +74,7 @@ export async function confirmInvoicePayment(event:{identity?:Identity;request?:R
   const workflow=await access.get('Communication',`workflow:${invoice.accountId}`);
   const sourceGuards = !policy && quote && invoice.status !== 'PAID' && invoice.sourcePricingVersion === 1 && !allocations.length
     ? await initialQuotePublicationWrites(invoice,quote,'manual')
-    : source ? [versionCheck(modelTable(policy?'Policy':'Quote'),source as {id:string;updatedAt:string})] : [];
+    : source ? [policy ? versionCheck(modelTable('Policy'),source as {id:string;updatedAt:string}) : hoaQuoteCollectionGuard(source as {id:string;updatedAt:string})] : [];
   const guards:Write[]=[activeTeamUserCheck(access.actor),...invoiceGuards,...loanGuards,...lines.map(line=>versionCheck(modelTable('InvoiceLine'),line as {id:string;updatedAt:string})),...sourceGuards,...collectionGuards.filter(write => !policy || write.ConditionCheck?.Key?.id !== policy.id)];
   if(!access.admin){
     if(!workflow)throw new Error('The account assignment could not be verified.');

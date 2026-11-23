@@ -1,4 +1,4 @@
-import { policyCollectionWrites, assertHoaCollection, IpfsInvoiceBlocked } from "../ipfs-invoice";
+import { policyCollectionWrites, assertHoaCollection, hoaQuoteCollectionGuard, IpfsInvoiceBlocked } from "../ipfs-invoice";
 import { assertPremiumNotFinanced, LegacyPremiumBillingBlocked } from "../legacy-premium-billing";
 import { captureHandledFailure } from "../monitoring";
 import { initialQuotePublicationWrites } from "../quote-source-billing";
@@ -675,12 +675,14 @@ export const handler = async (event: {
     // This lease also serializes same-invoice Stripe retries in production.
     const policyWrites = !paymentStatus && invoiceTotals(lines).retail > 0
       ? await policyCollectionWrites(invoice.accountId, invoice.id, [...linePolicyIds, ...(headerPolicyId ? [headerPolicyId] : [])], headerPolicyId) : [];
+    const quoteGuard = !paymentStatus && quoteAnchor ? hoaQuoteCollectionGuard(quoteAnchor) : undefined;
+    const sourceWrites = quoteGuard ? [...policyWrites, quoteGuard] : policyWrites;
     const tracked = ["resend", "ses"].includes(process.env.HOA_TRANSACTIONAL_MAIL_PROVIDER ?? "")
-      ? await beginInvoiceSend(invoice, to, event.arguments?.expectedSentAt, { database: ddb, policyWrites })
+      ? await beginInvoiceSend(invoice, to, event.arguments?.expectedSentAt, { database: ddb, sourceWrites })
       : undefined;
     if (tracked?.completed) return tracked.completed;
-    if (!tracked && policyWrites.length) {
-      await ddb.send(new TransactWriteCommand({ TransactItems: policyWrites }));
+    if (!tracked && sourceWrites.length) {
+      await ddb.send(new TransactWriteCommand({ TransactItems: sourceWrites }));
     }
 
     let disclosureUrl: string | undefined;
@@ -712,7 +714,7 @@ export const handler = async (event: {
       split,
       allocations,
       feeSendClaim,
-      adjustmentProof?[...adjustmentProof.guards,versionCheck(modelTable('Policy'),adjustmentProof.policy as {id:string;updatedAt:string})]:invoice.sourcePricingVersion===1&&quoteAnchor&&!allocations.length?await initialQuotePublicationWrites(invoice,quoteAnchor):[]
+      adjustmentProof?[...adjustmentProof.guards,versionCheck(modelTable('Policy'),adjustmentProof.policy as {id:string;updatedAt:string})]:invoice.sourcePricingVersion===1&&quoteAnchor&&!allocations.length?await initialQuotePublicationWrites(invoice,quoteAnchor):quoteGuard?[quoteGuard]:[]
     );
 
     /**

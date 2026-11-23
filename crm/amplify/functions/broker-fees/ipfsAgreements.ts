@@ -2,9 +2,10 @@ import { createHash } from 'node:crypto';
 import type { BrokerFeeQuote } from '../../../../shared/brokerFees';
 import { brokerFeeCents } from '../../../../shared/brokerFees';
 import { ipfsFeeSplit, ipfsFinancedCents } from '../../../../shared/ipfsCollection';
-import { IpfsAllocationError, ipfsOfferGroups, normalizeIpfsQuoteRef, validateIpfsOffers, type IpfsAgreementBalance, type IpfsFeeOffer } from '../../../../shared/ipfsAgreementAllocation';
+import { IpfsAllocationError, ipfsOfferGroups, normalizeIpfsQuoteRef, validateIpfsOffers, type IpfsAgreementBalance } from '../../../../shared/ipfsAgreementAllocation';
 import { authorizedQuoteTerms } from '../../../../shared/quoteAuthorization';
-import { feePut, getModel, getRow, type Write } from './store';
+import { batchGetComplete } from '../storage/batchGet';
+import { db, feePut, getRow, modelTable, type Write } from './store';
 
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 export function ipfsAgreementKey(accountId: string, reference: string): string {
@@ -16,16 +17,21 @@ export async function readIpfsAgreementBalance(accountId: string, reference: str
   const row = await getRow<IpfsAgreementBalance>(id);
   if (!row) return undefined;
   if (row.id !== id || row.kind !== 'IPFS_AGREEMENT' || row.accountId !== accountId) throw new Error('The stored IPFS agreement could not be verified.');
-  const entries = Object.entries(row.offers ?? {}), active: [string, IpfsFeeOffer][] = [];
-  for (let offset = 0; offset < entries.length; offset += 5) {
-    const batch = await Promise.all(entries.slice(offset, offset + 5).map(async ([quoteId, offer]) => {
-      if (offer.expiresAt != null && Date.parse(offer.expiresAt) <= Date.now()) return null;
-      const quote = await getModel<Record<string, unknown>>('Quote', quoteId);
-      if (quote?.accountId !== accountId || !['QUOTED', 'PRESENTED'].includes(String(quote.status)) || hash(authorizedQuoteTerms(quote)) !== offer.termsHash) return null;
-      return [quoteId, offer] as [string, IpfsFeeOffer];
-    }));
-    for (const item of batch) if (item) active.push(item);
-  }
+  const offers = Object.entries(row.offers ?? {}).filter(([, offer]) =>
+    offer.expiresAt == null || Date.parse(offer.expiresAt) > Date.now());
+  if (!offers.length) return { ...row, offers: {} };
+  const unavailable = () => new Error('The IPFS agreement could not be checked completely. Try again.');
+  const quotes = await batchGetComplete<Record<string, unknown>>({
+    table: modelTable('Quote'), keys: offers.map(([id]) => ({ id })), read: { ConsistentRead: true },
+    send: command => db.send(command), maxKeys: offers.length, attempts: 5,
+    sizeError: unavailable, incompleteError: unavailable,
+  });
+  const current = new Map(quotes.map(quote => [quote.id, quote]));
+  const active = offers.filter(([quoteId, offer]) => {
+    const quote = current.get(quoteId);
+    return quote?.accountId === accountId && ['QUOTED', 'PRESENTED'].includes(String(quote.status))
+      && hash(authorizedQuoteTerms(quote)) === offer.termsHash;
+  });
   return { ...row, offers: Object.fromEntries(active) };
 }
 

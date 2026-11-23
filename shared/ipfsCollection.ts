@@ -1,6 +1,7 @@
 import { brokerFeeCents } from './brokerFees';
 
 export interface IpfsCollectionSource {
+  ipfsRegisteredPolicyId?: unknown;
   ipfsAmountFinanced?: unknown;
   ipfsPriorBrokerFees?: number | null;
   ipfsQuoteRef?: unknown;
@@ -22,7 +23,8 @@ export function ipfsFinancedCents(amount: unknown): number {
 }
 
 export function usesIpfs(source: object | null | undefined): boolean {
-  return !!source && 'ipfsAmountFinanced' in source && source.ipfsAmountFinanced != null;
+  return !!source && ('ipfsAmountFinanced' in source && source.ipfsAmountFinanced != null ||
+    'ipfsRegisteredPolicyId' in source && source.ipfsRegisteredPolicyId != null);
 }
 
 /** An unpresented draft with no lender reference has no issued request to close. */

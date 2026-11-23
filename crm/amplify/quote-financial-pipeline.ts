@@ -1,7 +1,9 @@
 import type { CfnFunctionConfiguration, CfnResolver } from 'aws-cdk-lib/aws-appsync';
 
 export const QUOTE_FINANCIAL_STASH = 'serverCommittedFeeQuote';
-export const QUOTE_FINANCIAL_RESPONSE = `#if($ctx.result.committed == true)\n$util.qr($ctx.stash.put("${QUOTE_FINANCIAL_STASH}", $ctx.result.quote))\n#end\n$util.toJson($ctx.prev.result)`;
+/** Amplify ANDs the native conditions immediately before its DynamoDB operation. */
+export const QUOTE_REGISTRATION_FENCE = '$util.qr($ctx.stash.conditions.add({"ipfsRegisteredPolicyId":{"attributeExists":false}}))\n';
+export const QUOTE_FINANCIAL_RESPONSE = `#if($ctx.result.committed == true)\n$util.qr($ctx.stash.put("${QUOTE_FINANCIAL_STASH}", $ctx.result.quote))\n#else\n${QUOTE_REGISTRATION_FENCE}#end\n$util.toJson($ctx.prev.result)`;
 /** Native auth remains before the financial transaction. Only the Lambda's
  * trusted response can populate this private stash; arguments are never copied. */
 export function installQuoteFinancialStage(resolver: CfnResolver, data: CfnFunctionConfiguration, requestTemplate: string, guardId: string) {

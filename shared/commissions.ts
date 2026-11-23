@@ -156,6 +156,7 @@ export interface CommissionPolicy {
   ipfsConfirmedAt?: string;
   ipfsConfirmedBy?: string;
   ipfsLegacyDocumentId?: string;
+  ipfsLegacyEvidence?: { key: string; versionId: string; filename: string; sha256: string };
   producerBps: number;
   agreement: string;
   planVersion: number;

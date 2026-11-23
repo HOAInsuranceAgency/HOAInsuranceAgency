@@ -555,3 +555,34 @@ it.each(['DRAFT','SENT'])('blocks a payable %s IPFS invoice on both sides of bin
   expect(h.link).not.toHaveBeenCalled();
   expect(h.retrieve).not.toHaveBeenCalled();
 });
+
+
+it('rejects a historical quote registered to an IPFS policy before starting a resend', async () => {
+  h.quote.ipfsRegisteredPolicyId = 'legacy-policy';
+  Object.assign(h.invoice, {status:'SENT', sourcePricingVersion:1});
+  await expect(send()).resolves.toMatchObject({ ok:false, error:expect.stringContaining('IPFS collects') });
+  expect(h.begin).not.toHaveBeenCalled();
+  expect(h.mail).not.toHaveBeenCalled();
+  expect(h.link).not.toHaveBeenCalled();
+});
+
+it('fences the original quote and its registration marker before any payable send is reserved', async () => {
+  h.begin.mockRejectedValueOnce(new Error('Concurrent registration.'));
+  await expect(send()).resolves.toMatchObject({ok:false});
+  expect(h.begin).toHaveBeenCalledOnce();
+  const options = h.begin.mock.calls[0][3];
+  const guard = options.sourceWrites.find((write: any) => write.ConditionCheck?.TableName === 'Quote')?.ConditionCheck;
+  expect(guard).toMatchObject({ Key:{id:'q'}, ExpressionAttributeValues:expect.objectContaining({ ':bound':'BOUND', ':account':'a' }) });
+  expect(guard.ConditionExpression).toContain('attribute_not_exists(ipfsRegisteredPolicyId)');
+  expect(h.link).not.toHaveBeenCalled();
+  expect(h.mail).not.toHaveBeenCalled();
+});
+
+
+it('keeps a signed carrier-only client route out of HOA sends without changing historic unflagged direct terms', async () => {
+  Object.assign(h.quote,{clientBillingSelected:true, billType:'DIRECT', brokerFee:0});
+  await expect(send()).resolves.toMatchObject({ok:false, error:expect.stringContaining('carrier bills this client directly')});
+  expect(h.begin).not.toHaveBeenCalled();
+  expect(h.mail).not.toHaveBeenCalled();
+  expect(h.link).not.toHaveBeenCalled();
+});

@@ -1,10 +1,21 @@
 import { usesIpfs } from '../../../shared/ipfsCollection';
-import { getModel, modelTable, table, type Write } from './broker-fees/store';
+import { getModel, modelTable, table, versionCheck, type Write } from './broker-fees/store';
 
 export class IpfsInvoiceBlocked extends Error {}
 
-export function assertHoaCollection(source: { ipfsAmountFinanced?: unknown } | null | undefined) {
-  if (usesIpfs(source)) throw new IpfsInvoiceBlocked('IPFS collects from the client. Do not create or collect an HOA invoice for this term.');
+export function assertHoaCollection(source: { ipfsAmountFinanced?: unknown; ipfsRegisteredPolicyId?: unknown; clientBillingSelected?: unknown; billType?: unknown } | null | undefined) {
+  if (source?.clientBillingSelected === true && source.billType === 'DIRECT')
+    throw new IpfsInvoiceBlocked('The carrier bills this client directly. Skip the HOA invoice.');
+  if (usesIpfs(source) || source?.ipfsRegisteredPolicyId != null) throw new IpfsInvoiceBlocked('IPFS collects from the client. Do not create or collect an HOA invoice for this term.');
+}
+
+export function hoaQuoteCollectionGuard(quote: { id:string; accountId?:unknown; updatedAt?:unknown }) {
+  const version = versionCheck(modelTable('Quote'),quote).ConditionCheck!;
+  return { ConditionCheck: { ...version,
+    ConditionExpression: version.ConditionExpression + ' AND accountId = :account AND (attribute_not_exists(ipfsAmountFinanced) OR ipfsAmountFinanced = :nil) AND (attribute_not_exists(ipfsRegisteredPolicyId) OR ipfsRegisteredPolicyId = :nil) AND NOT (#status = :bound) AND NOT (clientBillingSelected = :yes AND billType = :direct)',
+    ExpressionAttributeNames: { ...version.ExpressionAttributeNames, '#status':'status' },
+    ExpressionAttributeValues: { ...version.ExpressionAttributeValues, ':account':quote.accountId, ':nil':null, ':bound':'BOUND', ':yes':true, ':direct':'DIRECT' },
+  } };
 }
 
 /** Reserve every invoiced policy, including historical line-only terms. The
@@ -20,8 +31,8 @@ export async function policyCollectionWrites(accountId: string, invoiceId: strin
       assertHoaCollection(policy);
     }
     writes.push({ ConditionCheck: { TableName:modelTable('Policy'), Key:{id},
-      ConditionExpression:'accountId = :account AND (attribute_not_exists(ipfsAmountFinanced) OR ipfsAmountFinanced = :nil)',
-      ExpressionAttributeValues:{':account':accountId,':nil':null} } });
+      ConditionExpression:'accountId = :account AND (attribute_not_exists(ipfsAmountFinanced) OR ipfsAmountFinanced = :nil) AND NOT (clientBillingSelected = :yes AND billType = :direct)',
+      ExpressionAttributeValues:{':account':accountId,':nil':null,':yes':true,':direct':'DIRECT'} } });
     writes.push({ Update: { TableName:table(), Key:{id:'hoa-collection-policy:' + id},
       UpdateExpression:'SET accountId = :account, invoiceId = :invoice, #kind = :kind ADD #version :one',
       ExpressionAttributeNames:{'#kind':'kind','#version':'version'},

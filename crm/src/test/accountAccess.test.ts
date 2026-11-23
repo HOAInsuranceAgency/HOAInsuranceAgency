@@ -607,3 +607,17 @@ it.each([['Quote', 'qa', 'quoteId'], ['Policy', 'pa', 'policyId']])('refuses API
   records[model + ':' + key] = { id: key, accountId: 'a', billType: 'AGENCY', ipfsAmountFinanced: 1000 };
   await expect(admin().write('Invoice','create',{ accountId: 'a', status: 'DRAFT', sourcePricingVersion: 1, [field]: key })).rejects.toThrow(/IPFS collects/);
 });
+
+
+it('freezes the historical bound quote and refuses quote-only HOA invoicing even for an Owner', async () => {
+  const quote = { id: 'qa', accountId: 'a', billType: 'AGENCY', status: 'BOUND', ipfsRegisteredPolicyId: 'pa' };
+  records['Quote:qa'] = quote;
+  for (const input of [{status:'QUOTED'}, {accountId:'b'}, {premium:100}, {ipfsRegisteredPolicyId:null}]) {
+    await expect(admin().write('Quote','update',{id:'qa', ...input})).rejects.toThrow(/IPFS/);
+  }
+  await expect(admin().write('Quote','delete',{id:'qa'})).rejects.toThrow(/IPFS/);
+  await expect(admin().write('Quote','create',{id:'fake',accountId:'a',status:'DRAFT',ipfsRegisteredPolicyId:'pa'})).rejects.toThrow(/IPFS/);
+  // Even a stale open status cannot turn the source into a collectible quote.
+  records['Quote:qa'] = { ...quote, status:'QUOTED' };
+  await expect(admin().write('Invoice','create',{accountId:'a',quoteId:'qa',status:'DRAFT',sourcePricingVersion:1})).rejects.toThrow(/IPFS/);
+});

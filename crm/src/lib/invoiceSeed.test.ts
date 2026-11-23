@@ -314,3 +314,16 @@ it('excludes externally financed quotes and policies and permits a reviewed redi
   expect(unbilledAgencyPolicies([ipfs, pif, grouped], new Set())).toEqual([pif]);
   expect(invoiceableQuotes([ipfs, pif], new Set(), () => true)).toEqual([pif]);
 });
+
+
+it('omits a client-selected carrier-only quote while preserving the legacy quote review path', () => {
+  const carrier = { id:'carrier', status:'QUOTED', premium:100, billType:'DIRECT', clientBillingSelected:true };
+  const legacy = { id:'legacy', status:'QUOTED', premium:100, billType:'DIRECT' };
+  const redirected = { ...carrier, id:'redirected', billType:'AGENCY', carrierBillToAgency:true };
+  expect(invoiceableQuotes([carrier,legacy,redirected],new Set(),() => true)).toEqual([legacy,redirected]);
+});
+
+it('excludes a registered historical IPFS quote even with a stale open status and no quoted finance amount', () => {
+  const quote = { id:'q', status:'QUOTED', premium:1000, billType:'AGENCY', ipfsRegisteredPolicyId:'policy' };
+  expect(invoiceableQuotes([quote], new Set(), () => true)).toEqual([]);
+});
