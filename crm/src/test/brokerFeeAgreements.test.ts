@@ -1,18 +1,23 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
-const h = vi.hoisted(() => ({ quoteBatches: [] as string[][], rows: new Map<string, any>(), models: new Map<string, any>(), objects: new Map<string, Uint8Array>(), beforeCommit: undefined as (() => void) | undefined, modelReads: [] as [string, string][], indexInvoices: undefined as any[] | undefined, invoiceInFlight: 0, maxInvoiceInFlight: 0, failedInvoice: undefined as string | undefined }));
+const h = vi.hoisted(() => ({ batches: [] as { table: string; ids: string[] }[], rows: new Map<string, any>(), models: new Map<string, any>(), objects: new Map<string, Uint8Array>(), beforeCommit: undefined as (() => void) | undefined, modelReads: [] as [string, string][], indexInvoices: undefined as any[] | undefined, invoiceInFlight: 0, maxInvoiceInFlight: 0, failedInvoice: undefined as string | undefined }));
 vi.mock('@aws-sdk/client-s3', () => ({ S3Client: class { async send(command: any) { if (command.constructor.name === 'PutObjectCommand') h.objects.set(command.input.Key, command.input.Body); return {}; } }, PutObjectCommand: class PutObjectCommand { constructor(public input: any) {} }, GetObjectCommand: class GetObjectCommand { constructor(public input: any) {} } }));
 vi.mock('@aws-sdk/s3-request-presigner', () => ({ getSignedUrl: async () => 'https://documents.example.test/signed.pdf' }));
 vi.mock('../../amplify/functions/broker-fees/disclosurePdf', () => ({ createBrokerFeeDisclosurePdf: async () => ({ bytes: new TextEncoder().encode('%PDF-1.7 signed test fixture') }) }));
 vi.mock('../../amplify/functions/broker-fees/store', async original => {
   const actual = await original<typeof import('../../amplify/functions/broker-fees/store')>();
   return { ...actual, table: () => 'Fees', modelTable: (model: string) => model,
-    db: { send: async (command: { input: { RequestItems: { Quote: { ConsistentRead: boolean; Keys: { id: string }[] } } } }) => {
-      const request = command.input.RequestItems.Quote;
-      if (!request.ConsistentRead) throw new Error('Expected a consistent quote read');
+    db: { send: async (command: { input: { RequestItems: Record<string, { ConsistentRead: boolean; Keys: { id: string }[] }> } }) => {
+      const [[table, request]] = Object.entries(command.input.RequestItems);
+      expect(Object.keys(command.input.RequestItems)).toEqual([table]);
+      expect(['Quote', 'Policy', 'Fees']).toContain(table);
+      expect(request.ConsistentRead).toBe(true);
       const ids = request.Keys.map(key => key.id);
-      h.quoteBatches.push(ids);
-      return { Responses: { Quote: ids.map(id => h.models.get('Quote:' + id)).filter(Boolean) } };
+      expect(ids.length).toBeGreaterThan(0); expect(ids.length).toBeLessThanOrEqual(100);
+      expect(new Set(ids).size).toBe(ids.length);
+      h.batches.push({ table, ids });
+      const rows = ids.map(id => table === 'Fees' ? h.rows.get(id) : h.models.get(table + ':' + id)).filter(Boolean);
+      return { Responses: { [table]: rows.reverse() } };
     } },
     getRow: async (id: string) => h.rows.get(id), getFee: async (id: string) => h.rows.get(`fee:${id}`), getAgreement: async (id: string) => h.rows.get(id),
     getModel: async (model: string, id: string) => {
@@ -44,7 +49,7 @@ const snapshot = (id = 'q1'): BrokerFeeQuote => { const quote = h.models.get(`Qu
 const signer = { signerName: 'Pat Manager', signerEmail: 'pat@example.com', signerRole: 'Property Manager', consent: true };
 const prepared = async (quotes = [snapshot()]) => { const value = await prepareBrokerFeeAgreement('a1', quotes); return { ...value, token: new URL(value.url).searchParams.get('t')! }; };
 beforeEach(() => {
-  vi.useFakeTimers(); vi.setSystemTime(new Date(NOW)); h.rows.clear(); h.models.clear(); h.objects.clear(); h.beforeCommit = undefined; h.modelReads = []; h.indexInvoices = undefined; h.invoiceInFlight = 0; h.maxInvoiceInFlight = 0; h.failedInvoice = undefined;
+  vi.useFakeTimers(); vi.setSystemTime(new Date(NOW)); h.rows.clear(); h.models.clear(); h.objects.clear(); h.batches.length = 0; h.beforeCommit = undefined; h.modelReads = []; h.indexInvoices = undefined; h.invoiceInFlight = 0; h.maxInvoiceInFlight = 0; h.failedInvoice = undefined;
   process.env.BROKER_FEE_TABLE = 'Fees'; process.env.SITE_URL = 'https://agency.example.test'; process.env.DOCUMENT_BUCKET = 'Documents';
   h.models.set('Account:a1', { id: 'a1', name: 'Maple HOA', state: 'MA', updatedAt: NOW });
   h.models.set('AgencySettings:AGENCY', { id: 'AGENCY', updatedAt: NOW, brokerFeeJurisdictions: { MA: rule() } });
@@ -177,6 +182,8 @@ describe('broker fee client disclosure', () => {
     };
     // A rollover can retain an older quote anchor; frozen fee allocations
     // identify the covered quote even when only the policy anchor is current.
+    h.models.set('Quote:old-quote-anchor', { id: 'old-quote-anchor', accountId: 'a1', billType: 'AGENCY' });
+    h.models.set('Policy:bound-q1', { id: 'bound-q1', accountId: 'a1', billType: 'AGENCY' });
     add('live', { quoteId: 'old-quote-anchor', policyId: 'bound-q1', paymentUrl: 'https://buy.stripe.com/live', brokerFeeFinanceUrl: 'https://agency.example.test/finance/?t=existing-one' });
     add('finance-only', { quoteId: undefined, policyId: 'bound-q2', brokerFeeAllocations: [{ quoteId: 'q2', policyId: 'bound-q2', amountCents: 10000 }], paymentUrl: undefined, brokerFeeFinanceUrl: 'https://agency.example.test/finance/?t=existing-two' }, { quoteId: undefined, policyId: 'bound-q2', brokerFeeAllocations: [{ quoteId: 'q2', policyId: 'bound-q2', amountCents: 10000 }], paymentUrl: undefined, brokerFeeFinanceUrl: 'https://agency.example.test/finance/?t=existing-two' });
     add('retry-after-failure', { paymentUrl: 'https://buy.stripe.com/retry' }, { status: 'PROCESSING' });
@@ -191,6 +198,40 @@ describe('broker fee client disclosure', () => {
     expect(h.modelReads.filter(([model]) => model === 'Invoice').map(([, id]) => id)).toEqual(candidateIds.filter(id => id !== 'finance-only'));
     expect(h.maxInvoiceInFlight).toBe(5); expect(h.invoiceInFlight).toBe(0);
     expect(dto.payments?.map(payment => payment.url)).toEqual(['https://buy.stripe.com/live', 'https://buy.stripe.com/retry']);
+  });
+  it('batches shared sources across signed links and omits invoices whose collection route cannot be verified', async () => {
+    h.models.set('Quote:q2', { ...h.models.get('Quote:q1'), id: 'q2', brokerFee: 100 });
+    const p = await prepared(), other = await prepared([snapshot('q2')]);
+    await signBrokerFeeDisclosure(p.token, signer); await signBrokerFeeDisclosure(other.token, signer);
+    h.rows.get('fee:q1').policyId = 'fee-policy';
+    for (const [table, id, fields] of [
+      ['Quote', 'anchor', { billType: 'AGENCY' }], ['Quote', 'adopted', { ipfsRegisteredPolicyId: 'older' }],
+      ['Quote', 'carrier', { clientBillingSelected: true, billType: 'DIRECT' }], ['Quote', 'other-account', { accountId: 'a2' }],
+      ['Policy', 'policy', { clientBillingSelected: true, billType: 'AGENCY', carrierBillToAgency: true }],
+      ['Policy', 'fee-policy', { billType: 'AGENCY' }], ['Policy', 'allocation-policy', { billType: 'AGENCY' }],
+      ['Policy', 'ipfs', { ipfsAmountFinanced: 1000 }], ['Policy', 'direct', { clientBillingSelected: true, billType: 'DIRECT' }],
+    ] as const) h.models.set(table + ':' + id, { id, accountId: 'a1', ...fields });
+    const allocations = [{ quoteId: 'q1', amountCents: 25000 }, { quoteId: 'q2', amountCents: 10000, policyId: 'allocation-policy' }];
+    const add = (id: string, fields: Record<string, unknown> = {}) => h.models.set('Invoice:' + id, {
+      id, accountId: 'a1', status: 'SENT', quoteId: 'anchor', policyId: 'policy', brokerFeeAllocations: allocations,
+      paymentUrl: 'https://buy.stripe.com/' + id, ...fields,
+    });
+    add('first'); add('second');
+    for (const quoteId of ['missing-quote', 'adopted', 'carrier', 'other-account']) add(quoteId, { quoteId });
+    add('missing-policy', { policyId: 'missing' });
+    add('grouped-ipfs', { groupedPolicyIds: ['policy', 'ipfs'] });
+    add('allocation-direct', { brokerFeeAllocations: [allocations[0], { ...allocations[1], policyId: 'direct' }] });
+    h.batches.length = 0; h.modelReads = [];
+    const dto = await brokerFeeDisclosure(p.token);
+    expect(dto.payments?.map(payment => payment.url)).toEqual(['https://buy.stripe.com/first', 'https://buy.stripe.com/second']);
+    expect(h.batches.map(({ table, ids }) => ({ table, ids: [...ids].sort() }))).toEqual([
+      { table: 'Quote', ids: ['adopted', 'anchor', 'carrier', 'missing-quote', 'other-account', 'q2'] },
+      { table: 'Fees', ids: ['fee:q1', 'fee:q2'] },
+      { table: 'Policy', ids: ['allocation-policy', 'direct', 'fee-policy', 'ipfs', 'missing', 'policy'] },
+    ]);
+    expect(h.modelReads.filter(([table]) => table === 'Quote' || table === 'Policy')).toEqual([['Quote', 'q1']]);
+    h.rows.get('fee:q1').ipfsCollectionRef = 'confirmed';
+    expect((await brokerFeeDisclosure(p.token)).payments).toEqual([]);
   });
   it('propagates a candidate invoice read failure instead of presenting an incomplete payment list', async () => {
     const p = await prepared(); await signBrokerFeeDisclosure(p.token, signer);
@@ -296,11 +337,11 @@ describe('IPFS proposal and signature cap reservations', () => {
   it('checks a shared lender offer in one consistent read for all current quotes', async () => {
     const quotes = Array.from({ length: 10 }, (_, i) => setQuote('batch-' + i, 5, 'batch-ref', i * 5));
     await prepared(quotes);
-    h.quoteBatches.length = 0;
+    h.batches.length = 0;
     const { readIpfsAgreementBalance } = await import('../../amplify/functions/broker-fees/ipfsAgreements');
     const balance = await readIpfsAgreementBalance('a1', 'batch-ref');
     expect(Object.keys(balance?.offers ?? {})).toHaveLength(10);
-    expect(h.quoteBatches).toEqual([quotes.map(q => q.id)]);
+    expect(h.batches).toEqual([{ table: 'Quote', ids: quotes.map(q => q.id) }]);
   });
 
   it('reserves earlier proposals separately from bound allocations while allowing independent equal-sized lender agreements', async () => {

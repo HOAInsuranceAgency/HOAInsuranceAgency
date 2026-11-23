@@ -1,4 +1,4 @@
-import { QueryCommand, BatchGetCommand } from '@aws-sdk/lib-dynamodb';
+import { QueryCommand, BatchGetCommand, ExecuteStatementCommand } from '@aws-sdk/lib-dynamodb';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { authorizedQuoteTerms } from '../../../shared/quoteAuthorization';
 import { packageTerms } from '../../../shared/quotePackages';
@@ -7,6 +7,7 @@ import type { CommissionPolicy } from '../../../shared/commissions';
 
 const h = vi.hoisted(() => ({ get: vi.fn(), getModel: vi.fn(), getFee: vi.fn(), getRow: vi.fn(),
   read: vi.fn(), commit: vi.fn(), allocate: vi.fn(), retain: vi.fn() }));
+vi.mock('../../amplify/functions/communications/store', () => ({ db: { send: h.read } }));
 vi.mock('../../amplify/functions/commissions/ipfs-evidence', () => ({retainIpfsEvidence: h.retain}));
 vi.mock('../../amplify/functions/commissions/store', () => ({ get: h.get, commit: h.commit }));
 vi.mock('../../amplify/functions/commissions/ipfs-bind', async original => ({
@@ -22,12 +23,17 @@ import { registerLegacyIpfsCollection } from '../../amplify/functions/commission
 let policy: CommissionPolicy;
 let models: Record<string, Record<string, unknown>>;
 let billing: Record<string, Record<string, unknown>[]>;
-const readHistory = async (command: QueryCommand | BatchGetCommand) => {
+const readHistory = async (command: QueryCommand | BatchGetCommand | ExecuteStatementCommand) => {
   if (command instanceof QueryCommand) {
     const { TableName, ExpressionAttributeNames, ExpressionAttributeValues } = command.input;
     const field = ExpressionAttributeNames!['#owner'], owner = ExpressionAttributeValues![':owner'];
     const rows = billing[TableName!].filter(row => row[field] === owner);
     return { Items: rows.map(({ id }) => ({ id })) };
+  }
+  if (command instanceof ExecuteStatementCommand) {
+    expect(command.input.Statement).toMatch(/^SELECT "id" FROM "InvoiceLine"\."parent-invoice" WHERE "invoiceId" IN \[/);
+    const ids = new Set(command.input.Parameters);
+    return { Items: billing.InvoiceLine.filter(line => ids.has(line.invoiceId as string)).map(({ id }) => ({ id })) };
   }
   if (!(command instanceof BatchGetCommand)) throw new Error('Expected a scoped query or consistent batch get.');
   const [table, read] = Object.entries(command.input.RequestItems!)[0];
@@ -56,7 +62,7 @@ beforeEach(() => {
 it('registers actual signed evidence on a clean historic term once, preserves its separate lender compensation and creates no cash', async () => {
   billing.Invoice.push({ id: 'other', accountId: 'a', policyId: 'other', status: 'PAID' });
   await registerLegacyIpfsCollection(input, 'owner');
-  expect(h.read.mock.calls.filter(([command]) => command instanceof QueryCommand).map(([command]) => [command.input.IndexName, command.input.ExpressionAttributeValues[':owner']])).toEqual(expect.arrayContaining([['account-invoice', 'a'], ['account-loan','a'], ['parent-invoice','other']]));
+  expect(h.read.mock.calls.filter(([command]) => command instanceof QueryCommand).map(([command]) => [command.input.IndexName, command.input.ExpressionAttributeValues[':owner']])).toEqual(expect.arrayContaining([['account-invoice', 'a'], ['account-loan','a']]));
   expect(h.read.mock.calls.some(([command]) => command instanceof BatchGetCommand)).toBe(true);
   const [changes, actor, extras] = h.commit.mock.calls[0];
   expect(actor).toBe('owner');
@@ -109,20 +115,20 @@ it.each(['signed fee','paid invoice','draft invoice','line-only invoice','unanch
 it('follows an empty index page and rechecks current line-only history from the account invoice', async () => {
   billing.Invoice.push({ id: 'old', accountId: 'a', policyId: 'other', status: 'SENT' });
   billing.InvoiceLine.push({ id: 'old-line', invoiceId: 'old', brokerFeeQuoteId: 'q' });
-  h.read.mockImplementation(async (command: QueryCommand | BatchGetCommand) => {
-    if (command instanceof QueryCommand && command.input.TableName === 'InvoiceLine' && !command.input.ExclusiveStartKey) {
-      return { Items: [], LastEvaluatedKey: { id: 'earlier' } };
+  h.read.mockImplementation(async (command: QueryCommand | BatchGetCommand | ExecuteStatementCommand) => {
+    if (command instanceof ExecuteStatementCommand && !command.input.NextToken) {
+      return { Items: [], NextToken: 'line-page-2' };
     }
     return readHistory(command);
   });
   await expect(registerLegacyIpfsCollection(input, 'owner')).rejects.toThrow(/invoice/);
   expect(h.commit).not.toHaveBeenCalled();
-  expect(h.read.mock.calls.some(([command]) => command instanceof QueryCommand && command.input.ExclusiveStartKey?.id === 'earlier')).toBe(true);
+  expect(h.read.mock.calls.some(([command]) => command instanceof ExecuteStatementCommand && command.input.NextToken === 'line-page-2')).toBe(true);
 });
 
 it('uses current scope and billing status when an index key points to a moved or updated record', async () => {
   billing.Invoice.push({ id: 'moved', accountId: 'other', policyId: 'p', status: 'PAID' }, { id: 'current', accountId: 'a', policyId: 'p', status: 'PAID' });
-  h.read.mockImplementation(async (command: QueryCommand | BatchGetCommand) => {
+  h.read.mockImplementation(async (command: QueryCommand | BatchGetCommand | ExecuteStatementCommand) => {
     if (command instanceof QueryCommand && command.input.TableName === 'Invoice') {
       return { Items: [{ id: 'moved', accountId: 'a', status: 'PAID' }, { id: 'current', accountId: 'a', status: 'VOID' }] };
     }
@@ -139,4 +145,22 @@ it('checks only this account when the agency has over 25,000 records elsewhere',
   await registerLegacyIpfsCollection(input, 'owner');
   expect(h.read).toHaveBeenCalledTimes(2);
   expect(h.read.mock.calls.every(([command]) => command instanceof QueryCommand && command.input.ExpressionAttributeValues?.[':owner'] === 'a')).toBe(true);
+});
+
+
+it('joins lines for 25 account invoices in one parameterized index read and verifies the base rows', async () => {
+  const ids = Array.from({length:25}, (_, i) => `historical:${i}`);
+  billing.Invoice = ids.map(id => ({ id, accountId:'a', policyId:'other', status:'PAID' }));
+  billing.InvoiceLine = [{ id:'legacy-line', invoiceId:ids[24], brokerFeeQuoteId:'q' }];
+  billing.Invoice.push({ id:'foreign', accountId:'elsewhere', status:'PAID' });
+  await expect(registerLegacyIpfsCollection(input, 'owner')).rejects.toThrow(/invoice/);
+  const reads = h.read.mock.calls.map(([command]) => command);
+  const statements = reads.filter(command => command instanceof ExecuteStatementCommand);
+  expect(statements).toHaveLength(1);
+  expect(statements[0].input.Parameters).toEqual([...ids].sort());
+  expect(statements[0].input.Statement?.match(/\?/g)).toHaveLength(25);
+  expect(statements[0].input.Statement).not.toContain('historical:');
+  expect(reads.some(command => command instanceof QueryCommand && command.input.TableName === 'InvoiceLine')).toBe(false);
+  expect(reads.some(command => command instanceof BatchGetCommand && command.input.RequestItems?.InvoiceLine?.ConsistentRead)).toBe(true);
+  expect(h.commit).not.toHaveBeenCalled();
 });

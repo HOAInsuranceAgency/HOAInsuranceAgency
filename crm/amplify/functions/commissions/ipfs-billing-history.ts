@@ -1,3 +1,4 @@
+import { partitionIndexPage } from '../communications/reportIndexPage';
 import { QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { feeAllocations } from '../../../../shared/brokerFees';
 import type { CommissionPolicy } from '../../../../shared/commissions';
@@ -6,9 +7,20 @@ import { batchGetComplete } from '../storage/batchGet';
 import { assertPriorIpfsBilling } from './ipfs-bind';
 
 type Row = Record<string, unknown> & { id: string };
-type BillingPartition = 'Invoice.accountId' | 'PfLoan.accountId' | 'InvoiceLine.invoiceId';
+type BillingPartition = 'Invoice.accountId' | 'PfLoan.accountId';
 export const priorBilling = 'This term has existing or ambiguous HOA billing or financing. Review that history before registering external collection.';
 const incomplete = () => new Error('The historical billing records could not be completely verified. Review the term before registration.');
+
+async function currentRows(table: string, candidates: Record<string, unknown>[]) {
+  const keys = candidates.map(item => {
+    if (typeof item.id !== 'string' || !item.id) throw incomplete();
+    return { id: item.id };
+  });
+  return batchGetComplete<Row>({
+    send: command => db.send(command), table, keys, maxKeys: 100, attempts: 5,
+    read: { ConsistentRead: true }, sizeError: incomplete, incompleteError: incomplete,
+  });
+}
 
 /** The partition index discovers keys only. Decisions use consistent base-table
  * reads, including lines that predate the denormalized line account ID. */
@@ -24,14 +36,7 @@ async function* currentPages(partition: BillingPartition, owner: string): AsyncG
       ExpressionAttributeNames: { '#owner': field }, ExpressionAttributeValues: { ':owner': owner },
       ProjectionExpression: 'id', ExclusiveStartKey: cursor, Limit: 100,
     }));
-    const keys = (page.Items ?? []).map(item => {
-      if (typeof item.id !== 'string' || !item.id) throw incomplete();
-      return { id: item.id };
-    });
-    const rows = await batchGetComplete<Row>({
-      send: command => db.send(command), table, keys, maxKeys: 100, attempts: 5,
-      read: { ConsistentRead: true }, sizeError: incomplete, incompleteError: incomplete,
-    });
+    const rows = await currentRows(table, page.Items ?? []);
     yield rows.filter(row => row[field] === owner);
     cursor = page.LastEvaluatedKey;
     if (cursor) {
@@ -49,25 +54,41 @@ function linkedOrAmbiguous(row: Row, policy: CommissionPolicy): boolean {
     (!row.policyId && !row.quoteId && !members.length);
 }
 
-async function coversPolicy(invoice: Row, policy: CommissionPolicy): Promise<boolean> {
-  if (linkedOrAmbiguous(invoice, policy)) return true;
-  for await (const lines of currentPages('InvoiceLine.invoiceId', invoice.id)) {
-    if (lines.some(line => line.policyId === policy.id || line.brokerFeeQuoteId === policy.quoteId)) return true;
+async function lineLinkedInvoices(invoiceIds: string[], policy: CommissionPolicy): Promise<Set<string>> {
+  const linked = new Set<string>();
+  const index = (JSON.parse(process.env.ACCESS_INDEXES ?? '{}') as Record<string, string>)['InvoiceLine.invoiceId'];
+  if (!index) throw incomplete();
+  const table = modelTable('InvoiceLine');
+  for (let offset = 0; offset < invoiceIds.length; offset += 25) {
+    const values = invoiceIds.slice(offset, offset + 25), scope = new Set(values);
+    let nextToken: string | undefined;
+    const seen = new Set<string>();
+    do {
+      const page = await partitionIndexPage({ table, index, partition: 'invoiceId', fields: ['id'], values, pageSize: 100, nextToken });
+      for (const line of await currentRows(table, page.items)) {
+        if (typeof line.invoiceId === 'string' && scope.has(line.invoiceId) &&
+          (line.policyId === policy.id || line.brokerFeeQuoteId === policy.quoteId)) linked.add(line.invoiceId);
+      }
+      nextToken = page.nextToken;
+      if (nextToken) {
+        if (seen.has(nextToken)) throw incomplete();
+        seen.add(nextToken);
+      }
+    } while (nextToken);
   }
-  return false;
+  return linked;
 }
 
 async function invoiceGuards(policy: CommissionPolicy): Promise<Write[]> {
   const guards = new Map<string, Write>();
   for await (const page of currentPages('Invoice.accountId', policy.accountId)) {
-    for (let offset = 0; offset < page.length; offset += 5) {
-      const invoices = page.slice(offset, offset + 5);
-      const matches = await Promise.all(invoices.map(invoice => coversPolicy(invoice, policy)));
-      invoices.forEach((invoice, index) => {
-        if (!matches[index]) return;
-        if (invoice.paidAt || invoice.stripePaymentIntentId) throw new Error(priorBilling);
-        guards.set(invoice.id, assertPriorIpfsBilling([invoice], [])[0]);
-      });
+    const matched = new Set(page.filter(invoice => linkedOrAmbiguous(invoice, policy)).map(invoice => invoice.id));
+    const otherIds = page.map(invoice => invoice.id).filter(id => !matched.has(id));
+    if (otherIds.length) for (const id of await lineLinkedInvoices(otherIds, policy)) matched.add(id);
+    for (const invoice of page) {
+      if (!matched.has(invoice.id)) continue;
+      if (invoice.paidAt || invoice.stripePaymentIntentId) throw new Error(priorBilling);
+      guards.set(invoice.id, assertPriorIpfsBilling([invoice], [])[0]);
     }
   }
   return [...guards.values()];
