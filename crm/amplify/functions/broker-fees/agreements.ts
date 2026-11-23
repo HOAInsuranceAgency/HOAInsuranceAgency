@@ -4,7 +4,7 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { IPFS_DISCLOSURE_VERSION, BROKER_FEE_PURPOSE, BROKER_FEE_REFUND_TERMS, BROKER_FEE_TERMS_VERSION, brokerFeeCents, type BrokerFeeAgreement, type BrokerFeePublicTerms, type BrokerFeeQuote, type BrokerFeeRecord, type BrokerFeeSignature } from '../../../../shared/brokerFees';
 import { IpfsAllocationError } from '../../../../shared/ipfsAgreementAllocation';
 import { ipfsOfferWrites } from './ipfsAgreements';
-import { ipfsFinancedCents, usesIpfs, validateCollectionRoute } from '../../../../shared/ipfsCollection';
+import { ipfsFinancedCents, usesIpfs, validateCollectionRoute, type IpfsCollectionSource } from '../../../../shared/ipfsCollection';
 import { authorizedQuoteTerms } from '../../../../shared/quoteAuthorization';
 import { assertBrokerFeeAgencyBilling, feeAllocations } from '../../../../shared/brokerFees';
 import { db, getRow, getFee, getAgreement, getModel, modelTable, table, feePut, versionCheck, transact, accountModels, type Write } from './store';
@@ -15,7 +15,7 @@ import { createBrokerFeeDisclosurePdf } from './disclosurePdf';
 
 const s3 = new S3Client();
 const sha = (value: string | Uint8Array) => createHash('sha256').update(value).digest('hex');
-type Model = Record<string, unknown> & { id: string; updatedAt: string };
+type Model = Record<string, unknown> & IpfsCollectionSource & { id: string; updatedAt: string };
 interface TokenRecord { id: string; agreementId: string; expiresAt: string; version: number; }
 const frozenAgencySigner = (rule: BrokerFeeJurisdictionRule) => rule.requiresBrokerSignature && rule.agencySigner ? { name: rule.agencySigner.name, title: rule.agencySigner.title, licenseNumber: rule.agencySigner.licenseNumber, authorizedBy: rule.agencySigner.authorizedBy!, authorizedAt: rule.agencySigner.authorizedAt! } : undefined;
 /** State rules are agency-reviewed configuration, never inferred from a fee checkbox. */
