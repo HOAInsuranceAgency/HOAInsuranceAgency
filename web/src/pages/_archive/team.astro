@@ -1,16 +1,20 @@
 ---
 /**
- * Team.
+ * Team. ARCHIVED 2026-11-23: not published. Astro skips folders starting
+ * with "_", so this page has no URL. To restore it, move team.astro and
+ * Team.css back to src/pages/, revert the four "../../" import paths to
+ * "../" (shared/ becomes "../../../shared/"), and re-add the "Team" link in
+ * constants.ts NAV_LINKS.
  *
  *   01 hero
  *   02 how the team works (three functions, no headcount claims)
  *   03 top producers: photo and name
  *   04 CTA
  */
-import Layout from "../layouts/Layout.astro";
-import Hero from "../components/Hero.astro";
-import { QUOTE_URL } from "../constants";
-import { AGENCY } from "../../../shared/agency";
+import Layout from "../../layouts/Layout.astro";
+import Hero from "../../components/Hero.astro";
+import { QUOTE_URL } from "../../constants";
+import { AGENCY } from "../../../../shared/agency";
 import "./Team.css";
 
 /* How an account is handled. Describes the work, not the number of people. */

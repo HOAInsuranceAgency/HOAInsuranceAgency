@@ -1,6 +1,9 @@
 ---
 /**
- * Events.
+ * Events. ARCHIVED 2026-11-23: not published. Astro skips folders starting
+ * with "_", so this page has no URL. To restore it, move events.astro and
+ * Events.css back to src/pages/, revert the two "../../" import paths to
+ * "../", and re-add the "Events" link in constants.ts NAV_LINKS.
  *
  *   01 hero: brand-colour blend, text beside one featured event photo
  *   02 the events as a timeline: numbered node, photo card and summary
@@ -8,8 +11,8 @@
  *
  * The Google rating badge renders in local preview only until confirmed.
  */
-import Layout from "../layouts/Layout.astro";
-import { QUOTE_URL } from "../constants";
+import Layout from "../../layouts/Layout.astro";
+import { QUOTE_URL } from "../../constants";
 import "./Events.css";
 
 /* Google rating: local preview only until the five-star rating is confirmed

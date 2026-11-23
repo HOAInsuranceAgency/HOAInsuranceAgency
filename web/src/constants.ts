@@ -211,15 +211,13 @@ export const NAV_LINKS = [
     ],
   },
   { label: "Why Choose Us", path: "/why-choose-us/" },
-  // Company group: who we are, plus the events, carriers and articles pages.
+  // Company group: who we are, plus the carriers and articles pages.
   {
     label: "Company",
     children: [
       // Points at the homepage, by request. /about-us still exists and stays
       // linked from the homepage ("Meet the agency behind ProtectMyHOA").
       { label: "About Us", path: "/" },
-      { label: "Team", path: "/team/" },
-      { label: "Events", path: "/events/" },
       { label: "Carriers", path: "/carriers/" },
       { label: "Blog", path: "/blog/" },
     ],
