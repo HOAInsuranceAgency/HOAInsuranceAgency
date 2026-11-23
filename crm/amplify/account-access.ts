@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { Asset } from "aws-cdk-lib/aws-s3-assets";
 import { Stack, CfnResource, AssetStaging } from "aws-cdk-lib";
 import { CfnFunctionConfiguration, type CfnResolver } from "aws-cdk-lib/aws-appsync";
-import { PolicyStatement } from "aws-cdk-lib/aws-iam";
+import { Effect, PolicyStatement } from "aws-cdk-lib/aws-iam";
 import { grantAccountTableReads } from "./account-access-policies";
 import type { Table } from "aws-cdk-lib/aws-dynamodb";
 import type { backend as Backend } from "./backend";
@@ -51,14 +51,21 @@ export function installAccountAccess(backend: typeof Backend, communicationTable
     }
   }
   backend.commissions.addEnvironment("COMMISSION_POLICY_ACCOUNT_INDEX", indexes["Policy.accountId"]);
-  const billingIndexes = ['Invoice.accountId', 'InvoiceLine.invoiceId', 'PfLoan.accountId'];
-  backend.commissions.addEnvironment('ACCESS_INDEXES', JSON.stringify(Object.fromEntries(billingIndexes.map(key => [key, indexes[key]]))));
+  const billingIndexes = ['Invoice.accountId', 'PfLoan.accountId'];
+  backend.commissions.addEnvironment('ACCESS_INDEXES', JSON.stringify(Object.fromEntries(([...billingIndexes, 'InvoiceLine.invoiceId'] as const).map(key => [key, indexes[key]]))));
+  const lineArn = Stack.of(api).formatArn({service:'dynamodb',resource:'table',resourceName:tables.InvoiceLine});
+  const lineResources = [lineArn, `${lineArn}/index/${indexes['InvoiceLine.invoiceId']}`];
+  const lineStatements = [
+    new PolicyStatement({actions:['dynamodb:PartiQLSelect'],resources:lineResources,conditions:{Bool:{'dynamodb:FullTableScan':'false'}}}),
+    new PolicyStatement({effect:Effect.DENY,actions:['dynamodb:PartiQLSelect'],resources:lineResources,conditions:{Bool:{'dynamodb:FullTableScan':'true'}}}),
+  ];
   backend.commissions.resources.lambda.addToRolePolicy(new PolicyStatement({
     actions: ['dynamodb:Query'], resources: billingIndexes.map(key => {
       const [model] = key.split('.');
       return `${Stack.of(api).formatArn({service:'dynamodb',resource:'table',resourceName:tables[model]})}/index/${indexes[key]}`;
     }),
   }));
+  for (const statement of lineStatements) backend.commissions.resources.lambda.addToRolePolicy(statement);
   // Lead deletion checks must query the account partition, rather than mistake
   // an empty filtered scan page's continuation token for a related record.
   const deletionIndexes = ["Policy", "Invoice"].map(model => {

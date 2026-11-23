@@ -3,10 +3,17 @@ import { getModel, modelTable, table, versionCheck, type Write } from './broker-
 
 export class IpfsInvoiceBlocked extends Error {}
 
-export function assertHoaCollection(source: { ipfsAmountFinanced?: unknown; ipfsRegisteredPolicyId?: unknown; clientBillingSelected?: unknown; billType?: unknown } | null | undefined) {
+type CollectionSource = { ipfsAmountFinanced?: unknown; ipfsRegisteredPolicyId?: unknown; clientBillingSelected?: unknown; billType?: unknown };
+
+export function hoaCollectionBlockReason(source: CollectionSource | null | undefined) {
   if (source?.clientBillingSelected === true && source.billType === 'DIRECT')
-    throw new IpfsInvoiceBlocked('The carrier bills this client directly. Skip the HOA invoice.');
-  if (usesIpfs(source) || source?.ipfsRegisteredPolicyId != null) throw new IpfsInvoiceBlocked('IPFS collects from the client. Do not create or collect an HOA invoice for this term.');
+    return 'The carrier bills this client directly. Skip the HOA invoice.';
+  if (usesIpfs(source)) return 'IPFS collects from the client. Do not create or collect an HOA invoice for this term.';
+}
+
+export function assertHoaCollection(source: CollectionSource | null | undefined) {
+  const reason = hoaCollectionBlockReason(source);
+  if (reason) throw new IpfsInvoiceBlocked(reason);
 }
 
 export function hoaQuoteCollectionGuard(quote: { id:string; accountId?:unknown; updatedAt?:unknown }) {
