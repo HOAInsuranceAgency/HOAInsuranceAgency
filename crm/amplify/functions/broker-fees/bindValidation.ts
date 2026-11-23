@@ -1,4 +1,5 @@
 import { BROKER_FEE_TERMS_VERSION, assertBrokerFeeAgencyBilling, brokerFeeCents } from '../../../../shared/brokerFees';
+import { usesIpfs } from '../../../../shared/ipfsCollection';
 import { authorizedQuoteTerms } from '../../../../shared/quoteAuthorization';
 import { jurisdictionRule } from './agreements';
 import { accountAgreements, getFee, getAgreement, getModel, modelTable, table, versionCheck, feePut, type Write } from './store';
@@ -51,7 +52,7 @@ async function feeFreeDisclosureBindWrites(quote:Record<string,unknown>,policyId
 }
 
 /** Bind and fee attribution share the policy/commission snapshot transaction. */
-export async function brokerFeeBindWrites(quote:Record<string,unknown>,policyId:string,billType:string,expectedFeeVersion?:number):Promise<Write[]> {
+export async function brokerFeeBindWrites(quote:Record<string,unknown>,policyId:string,billType:string,expectedFeeVersion?:number,ipfsAgreementRef?:string):Promise<Write[]> {
   assertBrokerFeeAgencyBilling({brokerFee:quote.brokerFee as number|undefined,billType});
   if(brokerFeeCents(quote.brokerFee as number|undefined)>0 && quote.billType!==billType) throw new Error("The premium billing method must match the signed fee quote.");
   const signed=await assertBrokerFeeSigned(quote);
@@ -59,12 +60,15 @@ export async function brokerFeeBindWrites(quote:Record<string,unknown>,policyId:
   const {fee,agreement,settings}=signed;
   if(expectedFeeVersion!==undefined&&fee.version!==expectedFeeVersion)throw new Error("The fee payment changed while binding. Refresh and retry.");
   jurisdictionRule(settings?.brokerFeeJurisdictions,agreement.jurisdiction,agreement.quotes,billType);
-  if(fee.submittedCents<fee.amountCents || fee.refundedCents>0)throw new Error('The broker fee payment must be submitted before binding. A submitted ACH payment may still be clearing.');
+  if(usesIpfs(quote)) {
+    if (!ipfsAgreementRef) throw new Error('Confirm the IPFS agreement and down payment before binding.');
+    if (fee.submittedCents || fee.collectedCents || fee.refundedCents || fee.invoiceSendClaim) throw new Error('Resolve the existing HOA fee payment before binding with IPFS.');
+  } else if(fee.submittedCents<fee.amountCents || fee.refundedCents>0)throw new Error('The broker fee payment must be submitted before binding. A submitted ACH payment may still be clearing.');
   if(fee.policyId && fee.policyId!==policyId)throw new Error('This policy term fee already belongs to another bound policy.');
   const doc=await getModel<Record<string,unknown>>('Document',agreement.signedDocumentId!);
   if(!doc || doc.entityId!==quote.accountId || doc.category!=='BROKER_FEE_DISCLOSURE')throw new Error('The signed broker fee disclosure could not be verified.');
   const policyIds=[...new Set([...(Array.isArray(doc.policyIds)?doc.policyIds.map(String):[]),policyId])];
-  return [feePut({...fee,policyId},fee),versionCheck(table(),agreement),
+  return [feePut({...fee,policyId,...(ipfsAgreementRef ? {ipfsCollectionRef:ipfsAgreementRef} : {})},fee),versionCheck(table(),agreement),
     ...(settings?[versionCheck(modelTable('AgencySettings'),settings as {id:string;updatedAt:string})]:[]),
     {Update:{TableName:modelTable('Document'),Key:{id:doc.id},UpdateExpression:'SET policyIds = :ids, updatedAt = :now',ConditionExpression:'updatedAt = :old AND entityId = :account',ExpressionAttributeValues:{':ids':policyIds,':now':new Date().toISOString(),':old':doc.updatedAt,':account':quote.accountId}}}];
 }

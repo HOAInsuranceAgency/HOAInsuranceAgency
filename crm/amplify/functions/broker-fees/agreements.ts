@@ -1,7 +1,9 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { BROKER_FEE_PURPOSE, BROKER_FEE_REFUND_TERMS, BROKER_FEE_TERMS_VERSION, brokerFeeCents, type BrokerFeeAgreement, type BrokerFeePublicTerms, type BrokerFeeQuote, type BrokerFeeRecord, type BrokerFeeSignature } from '../../../../shared/brokerFees';
+import { IPFS_DISCLOSURE_VERSION, BROKER_FEE_PURPOSE, BROKER_FEE_REFUND_TERMS, BROKER_FEE_TERMS_VERSION, brokerFeeCents, type BrokerFeeAgreement, type BrokerFeePublicTerms, type BrokerFeeQuote, type BrokerFeeRecord, type BrokerFeeSignature } from '../../../../shared/brokerFees';
+import { ipfsOfferWrites } from './ipfsAgreements';
+import { ipfsFinancedCents, usesIpfs, validateCollectionRoute } from '../../../../shared/ipfsCollection';
 import { authorizedQuoteTerms } from '../../../../shared/quoteAuthorization';
 import { assertBrokerFeeAgencyBilling, feeAllocations } from '../../../../shared/brokerFees';
 import { getRow, getFee, getAgreement, getModel, modelTable, table, feePut, versionCheck, transact, accountModels, type Write } from './store';
@@ -52,6 +54,10 @@ function deletedCheck(accountId: string): Write {
   return { ConditionCheck: { TableName: modelTable('Communication'), Key: { id: `deleted-account:${accountId}` }, ConditionExpression: 'attribute_not_exists(id)' } };
 }
 function sameQuote(current: Model, frozen: BrokerFeeQuote) {
+  if (ipfsFinancedCents(current.ipfsAmountFinanced) !== ipfsFinancedCents(frozen.ipfsAmountFinanced)
+    || (current.ipfsQuoteRef ?? null) !== (frozen.ipfsQuoteRef ?? null)
+    || (current.ipfsPriorBrokerFees ?? 0) !== (frozen.ipfsPriorBrokerFees ?? 0)
+    || usesIpfs(frozen) && current.billType !== 'AGENCY') return false;
   return current.accountId === frozen.accountId && brokerFeeCents(current.brokerFee as number | null) === brokerFeeCents(frozen.brokerFee) && authorizedQuoteTerms(current) === frozen.terms && (frozen.agencyCommissionPct === undefined || current.commissionPct === frozen.agencyCommissionPct && Math.round(Number(current.premium) * frozen.agencyCommissionPct) === frozen.agencyCommissionCents);
 }
 export async function prepareBrokerFeeAgreement(accountId: string, quotes: BrokerFeeQuote[], jurisdiction?: string, options: { reuseContainingAgreement?: boolean } = {}): Promise<{ url: string; agreementId: string }> {
@@ -59,6 +65,7 @@ export async function prepareBrokerFeeAgreement(accountId: string, quotes: Broke
   const { account, settings } = await accountSources(accountId), state = String(account.state ?? '').trim().toUpperCase();
   if (jurisdiction && jurisdiction !== state) throw new Error('The fee disclosure state does not match the account.');
   const rule = jurisdictionRule(settings?.brokerFeeJurisdictions, state, quotes);
+  for (const quote of quotes) validateCollectionRoute(quote);
   const sources = await Promise.all(quotes.map(quote => getModel<Model>('Quote', quote.id)));
   sources.forEach((source, index) => { if (!source || quotes[index].accountId !== accountId || !sameQuote(source, quotes[index]) || !['QUOTED', 'PRESENTED'].includes(String(source.status))) throw new Error('The package changed. Review the current quote terms before preparing its fee disclosure.'); });
   quotes = quotes.map((quote, index) => {
@@ -106,7 +113,7 @@ export async function prepareBrokerFeeAgreement(accountId: string, quotes: Broke
       writes.push(feePut({ id: `fee:${quote.id}`, kind: 'FEE', accountId, quoteId: quote.id, amountCents, terms: quote.terms, agreementId, version: 1, submittedCents: 0, collectedCents: 0, refundedCents: 0, ...feeIssuedHistory(previous) } as BrokerFeeRecord, previous));
     }
   }
-  writes.push(...loanFences.values());
+  writes.push(...loanFences.values(), ...await ipfsOfferWrites(accountId, quotes, agreement.signature ? null : agreement.expiresAt));
   await transact(writes);
   site.pathname = '/broker-fee/'; site.search = ''; site.hash = ''; site.searchParams.set('t', token);
   return { url: site.toString(), agreementId };
@@ -136,12 +143,14 @@ async function readInBatches<T, R>(values: readonly T[], read: (value: T) => Pro
   return results;
 }
 async function termsDto(agreement: BrokerFeeAgreement): Promise<BrokerFeePublicTerms> {
-  const dto: BrokerFeePublicTerms = { ok: true, state: agreement.signature ? 'signed' : 'open', accountName: agreement.accountName, agreementId: agreement.id, quotes: agreement.quotes.map(quote => ({ id: quote.id, carrierName: quote.carrierName, lines: quote.lines, premium: quote.premium, brokerFee: quote.brokerFee, billType: quote.billType, effectiveDate: quote.effectiveDate, expirationDate: quote.expirationDate, ...(quote.agencyCommissionPct !== undefined ? { agencyCommissionPct: quote.agencyCommissionPct, agencyCommissionCents: quote.agencyCommissionCents } : {}) })), totalCents: agreement.totalCents, purpose: agreement.purpose, refundTerms: agreement.refundTerms, stateForms: agreement.stateForms };
+  const dto: BrokerFeePublicTerms = { ok: true, state: agreement.signature ? 'signed' : 'open', accountName: agreement.accountName, agreementId: agreement.id, quotes: agreement.quotes.map(quote => ({ id: quote.id, carrierName: quote.carrierName, lines: quote.lines, premium: quote.premium, brokerFee: quote.brokerFee, billType: quote.billType, ...(usesIpfs(quote) ? { ipfsAmountFinanced: quote.ipfsAmountFinanced, ...(quote.ipfsPriorBrokerFees != null ? { ipfsPriorBrokerFees: quote.ipfsPriorBrokerFees } : {}) } : {}), effectiveDate: quote.effectiveDate, expirationDate: quote.expirationDate, ...(quote.agencyCommissionPct !== undefined ? { agencyCommissionPct: quote.agencyCommissionPct, agencyCommissionCents: quote.agencyCommissionCents } : {}) })), totalCents: agreement.totalCents, purpose: agreement.purpose, refundTerms: agreement.refundTerms, stateForms: agreement.stateForms };
   if (agreement.agencySigner) dto.agencySigner = { name: agreement.agencySigner.name, title: agreement.agencySigner.title, licenseNumber: agreement.agencySigner.licenseNumber };
   if (!agreement.signature) return dto;
   dto.signedAt = agreement.signature.signedAt;
   if (agreement.signedDocumentKey) dto.downloadUrl = await getSignedUrl(s3, new GetObjectCommand({ Bucket: process.env.DOCUMENT_BUCKET!, Key: agreement.signedDocumentKey }), { expiresIn: 300 });
-  const ids = new Set(agreement.quotes.map(quote => quote.id));
+  const ids = new Set(agreement.quotes.filter(quote => !usesIpfs(quote) && brokerFeeCents(quote.brokerFee) > 0).map(quote => quote.id));
+  if (!ids.size) { dto.payments = []; return dto; }
+  const external = new Set(agreement.quotes.filter(usesIpfs).map(quote => quote.id));
   const listed = await accountModels<Record<string, unknown>>('Invoice', agreement.accountId);
   // The GSI supplies candidates only. Frozen allocations retain the covered
   // quote association when binding adds/replaces the invoice's policy anchor.
@@ -155,7 +164,13 @@ async function termsDto(agreement: BrokerFeeAgreement): Promise<BrokerFeePublicT
   for (const invoice of invoices) {
     if (!invoice || invoice.accountId !== agreement.accountId || invoice.status !== 'SENT' || !safePaymentUrl(invoice.paymentUrl)) continue;
     const allocations = feeAllocations(invoice.brokerFeeAllocations);
-    if (!allocations.some(allocation => ids.has(allocation.quoteId))) continue;
+    if (!allocations.some(allocation => ids.has(allocation.quoteId)) || external.has(String(invoice.quoteId)) || allocations.some(allocation => external.has(allocation.quoteId))) continue;
+    // An invoice can include fees outside this disclosure. Verify those policies'
+    // collection routes before publishing an agency checkout for the entire invoice.
+    const otherQuotes = await readInBatches(allocations.filter(allocation => !ids.has(allocation.quoteId)), allocation => getModel<Model>('Quote', allocation.quoteId));
+    if (otherQuotes.some(quote => !quote || quote.accountId !== agreement.accountId || usesIpfs(quote))) continue;
+    if (typeof invoice.quoteId === 'string' && !ids.has(invoice.quoteId) && usesIpfs(await getModel<Model>('Quote', invoice.quoteId))) continue;
+    if (typeof invoice.policyId === 'string' && usesIpfs(await getModel<Model>('Policy', invoice.policyId))) continue;
     const fees = await readInBatches(allocations, allocation => getFee(allocation.quoteId));
     if (fees.some((fee, index) => !fee?.signedAt || fee.accountId !== agreement.accountId || fee.amountCents !== allocations[index].amountCents)) continue;
     payable.push(invoice);
@@ -166,22 +181,32 @@ async function termsDto(agreement: BrokerFeeAgreement): Promise<BrokerFeePublicT
   }));
   return dto;
 }
-export async function brokerFeeDisclosure(token: string): Promise<BrokerFeePublicTerms> {
-  try { return await termsDto((await currentAgreement(token)).agreement); }
+const refreshDisclosure = 'Reopen the disclosure from your proposal email and refresh the page to review the IPFS payment instructions.';
+export async function brokerFeeDisclosure(token: string, ipfsDisclosureVersion?: unknown): Promise<BrokerFeePublicTerms> {
+  try {
+    const { agreement } = await currentAgreement(token);
+    if (agreement.quotes.some(usesIpfs) && ipfsDisclosureVersion !== IPFS_DISCLOSURE_VERSION) {
+      return { ok: true, state: 'closed', requiresIpfsDisclosureVersion: true, reason: refreshDisclosure };
+    }
+    return await termsDto(agreement);
+  }
   catch (error) { if (error instanceof Error && (error.message.startsWith('This fee disclosure')||error.message==='Broker fees require agency billing.')) return { ok: true, state: 'closed', reason: error.message }; throw error; }
 }
-export async function signBrokerFeeDisclosure(token: string, signer: { signerName: unknown; signerEmail: unknown; signerRole: unknown; consent: unknown }, ip?: string): Promise<BrokerFeePublicTerms> {
+export async function signBrokerFeeDisclosure(token: string, signer: { signerName: unknown; signerEmail: unknown; signerRole: unknown; consent: unknown; ipfsDisclosureVersion?: unknown }, ip?: string): Promise<BrokerFeePublicTerms> {
   const current = await currentAgreement(token), { agreement, account, settings, quotes, link } = current;
+  const hasExternalFee = agreement.quotes.some(quote => usesIpfs(quote) && brokerFeeCents(quote.brokerFee) > 0);
+  if (hasExternalFee && signer.ipfsDisclosureVersion !== IPFS_DISCLOSURE_VERSION) throw new Error(refreshDisclosure);
   if (agreement.signature) return termsDto(agreement);
   const clean = (value: unknown, max: number) => typeof value === 'string' && !/[\x00-\x1f\x7f]/.test(value) && value.trim().length <= max ? value.trim() : '';
   const name = clean(signer.signerName, 120), email = clean(signer.signerEmail, 254).toLowerCase(), role = clean(signer.signerRole, 80);
   if (signer.consent !== true || name.length < 2 || role.length < 2 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('Enter your name, email and role, and consent to signing electronically.');
-  const signature: BrokerFeeSignature = { name, email, role, consent: true, signedAt: new Date().toISOString(), ...(ip ? { ip: ip.slice(0, 80) } : {}) };
+  const signature: BrokerFeeSignature = { name, email, role, consent: true, signedAt: new Date().toISOString(), ...(ip ? { ip: ip.slice(0, 80) } : {}), ...(hasExternalFee ? { ipfsDisclosureVersion: IPFS_DISCLOSURE_VERSION } : {}) };
   const documentId = `bfd_${randomUUID().replace(/-/g, '')}`, key = `documents/ACCOUNT/${agreement.accountId}/${documentId}/signed-broker-fee-disclosure.pdf`;
   const signed: BrokerFeeAgreement = { ...agreement, signature, signedDocumentId: documentId, signedDocumentKey: key };
+  const offerWrites = await ipfsOfferWrites(agreement.accountId, agreement.quotes, null);
   const pdf = await createBrokerFeeDisclosurePdf(signed);
   await s3.send(new PutObjectCommand({ Bucket: process.env.DOCUMENT_BUCKET!, Key: key, Body: pdf.bytes, ContentType: 'application/pdf', IfNoneMatch: '*' }));
-  const writes: Write[] = [feePut(signed, agreement), versionCheck(table(), link),
+  const writes: Write[] = [...offerWrites, feePut(signed, agreement), versionCheck(table(), link),
     { Update: { TableName: modelTable('Account'), Key: { id: account.id }, UpdateExpression: 'SET brokerFeeHistory = :history, updatedAt = :now', ConditionExpression: 'updatedAt = :old', ExpressionAttributeValues: { ':history': true, ':now': signature.signedAt, ':old': account.updatedAt } } },
     deletedCheck(agreement.accountId), ...quotes.map(quote => versionCheck(modelTable('Quote'), quote))];
   if (settings) writes.push(versionCheck(modelTable('AgencySettings'), settings));

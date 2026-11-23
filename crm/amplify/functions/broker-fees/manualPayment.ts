@@ -15,6 +15,8 @@ import { validateInvoiceSourceCharges } from '../send-invoice/passThroughInvoice
 import { assertAdjustmentInvoiceProof, assertInitialInvoiceAvailable } from '../send-invoice/adjustmentInvoice';
 import { invoiceTotals } from '../../../../shared/invoiceTotals';
 import { GROUPED_INVOICE_REVIEW_ONLY, isGroupedInvoice } from '../../../../shared/groupedInvoiceGuard';
+import { initialQuotePublicationWrites } from '../quote-source-billing';
+import { policyCollectionWrites, assertHoaCollection } from '../ipfs-invoice';
 import { assertPremiumNotFinanced, assertStandalonePolicyBilling, standalonePolicyBillingGuard } from '../grouped-draft-billing';
 import { db, getFee, getModel, modelTable, versionCheck, type Write } from './store';
 import { assertBrokerFeeSigned } from './bindValidation';
@@ -33,6 +35,8 @@ export async function confirmInvoicePayment(event:{identity?:Identity;request?:R
   if(policy)await assertStandalonePolicyBilling(policy as {id:string});
   const quoteId=id(policy?.quoteId)||id(invoice.quoteId);
   const quote=quoteId?await access.requireRecord('Quote',quoteId):undefined;
+  assertHoaCollection(quote);
+  if (!policy && quote?.status === 'BOUND' && invoice.status !== 'PAID') throw new Error('Roll this invoice onto its bound policy before recording a payment.');
   let source=policy??quote;
   if(source&&source.accountId!==invoice.accountId)throw new Error('The invoice source could not be verified.');
   await assertInitialInvoiceAvailable(invoice);
@@ -51,6 +55,7 @@ export async function confirmInvoicePayment(event:{identity?:Identity;request?:R
     const policyIds = [id(invoice.policyId), ...charges.map(line => id(line.policyId))].filter(Boolean);
     await assertPremiumNotFinanced(String(invoice.accountId), policyIds, quoteId, policy?.sourcePricingLoanId ?? quote?.sourcePricingLoanId);
   }
+  const collectionGuards = invoice.status === 'PAID' ? [] : await policyCollectionWrites(String(invoice.accountId),String(invoice.id),[id(policy?.id),...lines.map(line => id(line.policyId))],id(policy?.id));
   const fee=quoteId?await getFee(quoteId):undefined;
   validateInvoiceSourceCharges({invoice:{accountId:String(invoice.accountId),policyId:invoice.policyId as string|undefined,status:invoice.status as string|undefined,sourcePricingVersion:invoice.sourcePricingVersion as number|undefined},source:source?{id:String(source.id),accountId:String(source.accountId),premium:source.premium as number|undefined,billType:source.billType as string|undefined,passThroughCharges:source.passThroughCharges}:null,lines});
   if(invoice.sourcePricingVersion===2&&invoiceTotals(lines).retail<=0)throw new Error('A zero or credit adjustment is not an incoming payment and cannot be marked paid.');
@@ -71,7 +76,13 @@ export async function confirmInvoicePayment(event:{identity?:Identity;request?:R
   }
   const loanGuards=fee&&allocations.length?await assertNoFeeLoanCheckout(fee):[];
   const workflow=await access.get('Communication',`workflow:${invoice.accountId}`);
-  const guards:Write[]=[activeTeamUserCheck(access.actor),...invoiceGuards,...loanGuards,...lines.map(line=>versionCheck(modelTable('InvoiceLine'),line as {id:string;updatedAt:string})),...(source?[policy?standalonePolicyBillingGuard(source as {id:string;updatedAt:string},true):versionCheck(modelTable('Quote'),source as {id:string;updatedAt:string})]:[])];
+  // A fee-free manual receipt can precede the first online send and invoice index propagation.
+  // Claim the quote in the same transaction so a route change observes this payment.
+  const sourceGuards = !policy && quote && invoice.status !== 'PAID' && invoice.sourcePricingVersion === 1 && !allocations.length
+    ? await initialQuotePublicationWrites(invoice, quote, 'manual')
+    : source ? [policy ? standalonePolicyBillingGuard(source as {id:string;updatedAt:string},true)
+      : versionCheck(modelTable('Quote'),source as {id:string;updatedAt:string})] : [];
+  const guards:Write[]=[activeTeamUserCheck(access.actor),...invoiceGuards,...loanGuards,...lines.map(line=>versionCheck(modelTable('InvoiceLine'),line as {id:string;updatedAt:string})),...sourceGuards, ...collectionGuards.filter(write => !policy || write.ConditionCheck?.Key?.id !== policy.id)];
   if(!access.admin){
     if(!workflow)throw new Error('The account assignment could not be verified.');
     guards.push({ConditionCheck:{TableName:modelTable('Communication'),Key:{id:`workflow:${invoice.accountId}`},ConditionExpression:'#data = :data',ExpressionAttributeNames:{'#data':'data'},ExpressionAttributeValues:{':data':workflow.data}}});

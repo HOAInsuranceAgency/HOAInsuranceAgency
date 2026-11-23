@@ -95,3 +95,22 @@ it.each<[string, (input: BusinessProposalInput) => void]>([
   const input = fixture(); change(input);
   await expect(createBusinessProposalPdf(input)).rejects.toThrow();
 });
+
+it('routes an IPFS-only proposal to the finance company, including the excess broker fee in its down payment', async () => {
+  const input = fixture();
+  Object.assign(input.quotes[0], { brokerFee: 3500, billType: 'AGENCY', ipfsAmountFinanced: 10000 });
+  const { all } = await contents((await createBusinessProposalPdf(input)).bytes);
+  for (const expected of ['Pay IPFS', '$3,000.00', '$500.00', 'down payment', 'separate signed fee agreement']) expect(all).toContain(expected);
+  expect(all).not.toMatch(/invoice payment link|Your HOA Insurance Agency invoice|excluded from premium financing/);
+});
+
+it('shows distinct payment instructions for IPFS, carrier and agency policies in the same proposal', async () => {
+  const input = fixture(), quote = input.quotes[0];
+  input.quotes = [
+    { ...quote, billType: 'AGENCY', ipfsAmountFinanced: 10000, brokerFee: 250 },
+    { ...quote, id: 'q2', billType: 'DIRECT' },
+    { ...quote, id: 'q3', billType: 'AGENCY', brokerFee: 150 },
+  ];
+  const { all } = await contents((await createBusinessProposalPdf(input)).bytes);
+  for (const expected of ['Pay IPFS', 'full $250.00 broker fee is financed', 'Pay the carrier directly', 'Agency billed - pay HOA Insurance Agency', 'broker fee is due in full']) expect(all).toContain(expected);
+});

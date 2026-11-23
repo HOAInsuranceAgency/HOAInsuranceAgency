@@ -2,7 +2,9 @@ import { receiptEarnings } from '../../../shared/commissionExceptions';
 import { createHash } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { commissionPolicy, line, statement } from './commissionFixtures';
-import { appendEntry, type CommissionPolicy } from '../../../shared/commissions';
+import { payrollPreview } from '../../../shared/commissionPayroll';
+import { brokerFeeBalances } from '../lib/brokerFeeReporting';
+import { appendEntry, ipfsFeeBalances, policyTotals, type CommissionPolicy } from '../../../shared/commissions';
 import { authorizedQuoteTerms } from '../../../shared/quoteAuthorization';
 import { BROKER_FEE_TERMS_VERSION, type BrokerFeeAgreement, type BrokerFeeRecord } from '../../../shared/brokerFees';
 
@@ -47,6 +49,7 @@ import { brokerFeeBindWrites } from '../../amplify/functions/broker-fees/bindVal
 import { confirmInvoicePayment } from '../../amplify/functions/broker-fees/manualPayment';
 import { saveJurisdiction } from '../../amplify/functions/broker-fees/settings';
 import { handler } from '../../amplify/functions/broker-fees/handler';
+import { handler as commissionAction } from '../../amplify/functions/commissions/handler';
 import { AccountAccess } from '../../amplify/functions/crm-access/access';
 
 const clone = <T,>(value: T): T => structuredClone(value);
@@ -81,7 +84,12 @@ function applyWrites(writes: readonly Row[]) {
       if (action.TableName === 'fee-table') rows.set(key, clone(action.Item));
       else models.set(`${action.TableName}:${key}`, clone(action.Item));
     }
-    if (write.Update && action.TableName === 'Policy') models.set(`Policy:${key}`, { ...current, brokerFeeCollected: values[':gross'], brokerFeeRefunded: values[':refund'], brokerFeeCollectedAt: values[':at'] });
+    if (write.Update && action.TableName === 'Policy') {
+      if (values[':agreement'] && (current?.ipfsAgreementRef !== values[':agreement'] || current?.quoteId !== values[':quote'] || current?.accountId !== values[':account']))
+        throw Object.assign(new Error('Stale collection agreement'), { name: 'TransactionCanceledException' });
+      models.set(`Policy:${key}`, { ...current, brokerFeeCollected: values[':gross'], brokerFeeRefunded: values[':refund'],
+        ...(values[':at'] ? { brokerFeeCollectedAt: values[':at'] } : {}) });
+    }
     if (write.Update && action.TableName === 'Invoice') {
       if (current?.updatedAt !== values[':old'] || current?.status !== values[':status']) throw Object.assign(new Error('Invoice changed'), { name: 'TransactionCanceledException' });
       const invoice: Row = { ...current, status: values[':paid'], paidAt: values[':date'], updatedAt: values[':now'], lastWriteBy: values[':actor'] };
@@ -147,6 +155,102 @@ afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 const sync = (status: 'PROCESSING' | 'PAID' | 'FAILED' | 'REFUNDED', extra: Row = {}) => syncBrokerFeePayment({ sourceId: 'pi-one', accountId: 'a', allocations: [{ quoteId: 'q', amountCents: 50000 }], status, ...extra });
 
 describe('broker fee receipt and compensation ledger', () => {
+  function externalTerm() {
+    h.rows.set('fee:q', { ...fee(), ipfsCollectionRef: 'PFA-1' });
+    const policy = () => h.ledger.get('p')!;
+    h.ledger.set('p', { ...policy(), ipfsCollectionRef: 'PFA-1', ipfsAmountFinancedCents: 100000 });
+    h.models.set('Policy:p', { ...h.models.get('Policy:p'), ipfsAgreementRef: 'PFA-1' });
+    const action = (operation: string, input: Record<string, unknown>) => commissionAction({
+      ...owner, fieldName: 'commissionAction', arguments: { operation, input: { policyId: 'p', version: policy().version, ...input } },
+    });
+    const post = (input: Record<string, unknown> = {}) => action('postIpfsFee', {
+      revenueKind: 'BROKER_FEE', kind: 'RECEIPT', receivedOn: '2026-10-08',
+      amountCents: 20000, settlementRef: 'Deposit', settlementTotalCents: 22000, lineRef: 'Broker-1', ...input,
+    });
+    return { policy, action, post };
+  }
+
+  it('reconciles one placement fee across partial IPFS remittances, independently earned financing compensation, refunds and reinstatements', async () => {
+    const { policy, action, post } = externalTerm();
+    expect(policyTotals(policy())).toMatchObject({ expectedAgency: 1250000, receivedAgency: 0 });
+    expect(await action('saveIpfsFee', { expectedCents: 50000, agreementRef: 'PFA-1' })).toMatchObject({ ok: false });
+    expect(await post({ revenueKind: undefined })).toMatchObject({ ok: false });
+    expect(await action('saveIpfsFee', { expectedCents: 2500, agreementRef: 'Lender schedule', revenueKind: 'IPFS_FEE' })).toEqual({ ok: true });
+    expect(await post()).toEqual({ ok: true });
+    expect(await post({ version: 1, lineRef: 'broker-1' })).toEqual({ ok: true });
+    expect(await post({ revenueKind: 'IPFS_FEE' })).toMatchObject({ ok: false });
+    expect(await post({ lineRef: 'Lender', revenueKind: 'IPFS_FEE', amountCents: 2001 })).toMatchObject({ ok: false });
+    expect(await post({ lineRef: 'Lender', revenueKind: 'IPFS_FEE', amountCents: 2000 })).toEqual({ ok: true });
+    expect(await post({ lineRef: 'Broker-2', settlementRef: 'Deposit-2', amountCents: 30000, settlementTotalCents: 30000 })).toEqual({ ok: true });
+    const refund = { kind: 'REVERSAL', receivedOn: '2026-10-10', settlementRef: 'Debit', lineRef: 'Refund',
+      amountCents: 5000, settlementTotalCents: 5000, originalId: entries()[0].id };
+    expect(await post({ ...refund, originalId: entries()[1].id })).toMatchObject({ ok: false });
+    expect(await post(refund)).toEqual({ ok: true });
+    expect(await post(refund)).toEqual({ ok: true });
+    expect(await post({ kind: 'RESTORATION', receivedOn: '2026-10-11', settlementRef: 'Credit', lineRef: 'Restore',
+      amountCents: 1000, settlementTotalCents: 1000, originalId: entries()[3].id })).toEqual({ ok: true });
+    expect(await post({ lineRef: 'Duplicate fee', settlementRef: 'Another deposit', amountCents: 1, settlementTotalCents: 1 })).toMatchObject({ ok: false });
+    expect(entries().map(e => e.revenueKind)).toEqual(['BROKER_FEE', 'IPFS_FEE', 'BROKER_FEE', 'BROKER_FEE', 'BROKER_FEE']);
+    expect(ipfsFeeBalances(policy(), 'BROKER_FEE')).toEqual({ expected: 50000, collected: 50000, refunded: 4000, net: 46000, outstanding: 0 });
+    expect(ipfsFeeBalances(policy())).toEqual({ expected: 2500, collected: 2000, refunded: 0, net: 2000, outstanding: 500 });
+    expect(policyTotals(policy())).toMatchObject({ expectedAgency: 1252500, receivedAgency: 48000, earned: 20800, proposedRecovery: 1600 });
+    expect(payrollPreview([policy()], '2026-11-01').map(row => [row.revenueKind, row.amountCents])).toEqual([
+      ['BROKER_FEE', 8000], ['BROKER_FEE', 12000], ['IPFS_FEE', 800],
+    ]);
+    expect(fee()).toMatchObject({ amountCents: 50000, collectedCents: 50000, submittedCents: 50000, refundedCents: 4000,
+      ipfsRemittance: { collectedCents: 50000, refundedCents: 4000 } });
+    const publicPolicy = h.models.get('Policy:p')!;
+    expect(brokerFeeBalances([{ id: 'p', accountId: 'a', ...publicPolicy }])).toMatchObject({ booked: 500, grossCollected: 500, refunded: 40, netCollected: 460, uncollected: 0 });
+    expect(publicPolicy.brokerFeeCollectedAt).toBe('2026-10-08T12:00:00Z');
+    await expect(sync('PAID')).rejects.toThrow(/IPFS/);
+    await sync('FAILED');
+    expect(fee()).toMatchObject({ submittedCents: 50000, collectedCents: 50000, refundedCents: 4000 });
+    await reconcileQuotePayments('q');
+    expect(entries()).toHaveLength(5);
+  });
+
+  it('attributes a shared placement fee and partial reversal to the frozen participants only once', async () => {
+    const { policy, post } = externalTerm();
+    h.ledger.set('p', { ...policy(), allocations: [{ id: 'shared', from: '2026-01-01', agreement: 'Plan',
+      approvedBy: 'owner', approvedAt: '2026-01-01', method: 'INDIVIDUAL_PLAN_RATE', houseBps: 0,
+      participants: [
+        { producerId: 'one', producerName: 'One', shareBps: 6000, producerBps: 2000, eligible: true, planVersion: 1, agreement: 'One' },
+        { producerId: 'two', producerName: 'Two', shareBps: 4000, producerBps: 1000, eligible: true, planVersion: 1, agreement: 'Two' },
+      ],
+    }] });
+    expect(await post()).toEqual({ ok: true });
+    expect(await post()).toEqual({ ok: true });
+    const refund = { kind: 'REVERSAL', originalId: entries()[0].id, amountCents: 5000,
+      lineRef: 'Refund', settlementRef: 'Debit', settlementTotalCents: 5000, receivedOn: '2026-10-10' };
+    expect(await post(refund)).toEqual({ ok: true });
+    expect(await post(refund)).toEqual({ ok: true });
+    const earnings = [...h.commissionRows].filter(([key]) => key.startsWith('EARNING:')).map(([, value]) => value);
+    expect(earnings.map(e => [e.producerId, e.amountCents, e.status, e.revenueKind])).toEqual([
+      ['one', 2400, 'PAYABLE', 'BROKER_FEE'], ['two', 800, 'PAYABLE', 'BROKER_FEE'],
+      ['one', -600, 'REVIEW', 'BROKER_FEE'], ['two', -200, 'REVIEW', 'BROKER_FEE'],
+    ]);
+    expect(entries()).toHaveLength(2);
+    expect(entries().every(entry => entry.producerCents === 0)).toBe(true);
+    expect(fee()).toMatchObject({ collectedCents: 20000, refundedCents: 5000 });
+    expect(h.commissionRows.get('PAYROLL_STATE:reconciliation')?.version).toBe(2);
+  });
+
+  it('posts no cash or earnings if the external agreement identity changes on either fee or public policy', async () => {
+    const { policy, post } = externalTerm();
+    h.rows.set('fee:q', { ...fee(), ipfsCollectionRef: 'Other' });
+    expect(await post()).toMatchObject({ ok: false });
+    h.rows.set('fee:q', { ...fee(), ipfsCollectionRef: 'PFA-1' });
+    h.models.set('Policy:p', { ...h.models.get('Policy:p'), ipfsAgreementRef: 'Other' });
+    expect(await post()).toMatchObject({ ok: false });
+    expect(fee().collectedCents).toBe(0);
+    expect(policy().version).toBe(1);
+    expect(h.commissionRows.size).toBe(0);
+    h.models.set('Policy:p', { ...h.models.get('Policy:p'), ipfsAgreementRef: 'PFA-1' });
+    expect(await post()).toEqual({ ok: true });
+    expect(policy().entries).toHaveLength(1);
+    expect(fee().collectedCents).toBe(20000);
+  });
+
   it('does not revive failed submission or permit binding when a delayed PROCESSING event arrives for the same payment', async () => {
     seedSigned(false);
     await sync('PROCESSING', { receivedOn: '2026-10-01' });

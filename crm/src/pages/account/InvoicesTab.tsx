@@ -1,3 +1,4 @@
+import { usesIpfs } from "../../../../shared/ipfsCollection";
 import { useAccountPermissions } from '../../components/AccountPermissions';
 import { assertGraphqlErrors } from '../../lib/apiResponse';
 import { reserveInvoiceNumber } from '../../lib/billingApi';
@@ -149,6 +150,7 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
         const quote = kind === "quote" ? loaded.quotes.find((q) => q.id === anchorId) : null;
         const source = policy ?? quote;
         const adjustment = policy ? findAdjustmentOriginal(policy, loaded.invoices, loaded.lines) : null;
+        if (usesIpfs(source)) throw new Error("IPFS collects from the client. Skip the HOA CRM invoice.");
         if ((source?.brokerFee ?? 0) > 0 && source?.billType !== "AGENCY") throw new Error("Broker fees require agency billing. Correct the source quote before invoicing.");
         /**
          * The number is reserved before the row exists, so two producers
@@ -276,11 +278,11 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
   const busyAnchors = liveAnchorIds(invoices, lines);
   for (const policy of policies) {
     if (policy.groupedDraftInvoiceId) busyAnchors.add(policy.id);
-    if (policy.quoteId && (policy.groupedDraftInvoiceId || policy.carrierBillType === "DIRECT")) busyAnchors.add(policy.quoteId);
+    if (policy.quoteId && (policy.groupedDraftInvoiceId || (policy.carrierBillType === "DIRECT" && policy.carrierBillToAgency !== true))) busyAnchors.add(policy.quoteId);
   }
   const adjustmentOriginals = new Map(policies.map(policy => [policy.id, findAdjustmentOriginal(policy, invoices, lines)]));
   const initialPolicyIds = new Set(unbilledAgencyPolicies(policies, busyAnchors).map(policy => policy.id));
-  const openPolicies = policies.filter(policy => policy.billType !== "DIRECT" && policy.carrierBillType !== "DIRECT" && !busyAnchors.has(policy.id)
+  const openPolicies = policies.filter(policy => !usesIpfs(policy) && policy.billType !== "DIRECT" && (policy.carrierBillType !== "DIRECT" || policy.carrierBillToAgency === true) && !busyAnchors.has(policy.id)
     && (!policy.quoteId || !busyAnchors.has(policy.quoteId))
     && (initialPolicyIds.has(policy.id) || adjustmentOriginals.get(policy.id)));
   const openQuotes = invoiceableQuotes(quotes, busyAnchors, isOpenQuoteStatus);

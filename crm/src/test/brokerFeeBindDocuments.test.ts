@@ -122,3 +122,23 @@ describe('combined signed disclosure policy links', () => {
     expect(h.rows.get('Document:doc-bfa_combined')!.policyIds).toEqual(['policy-other', 'policy-zero']);
   });
 });
+
+it('requires the signed current fee disclosure on IPFS and records its collector without inventing a receipt', async () => {
+  const quote = { ...positive, ipfsAmountFinanced: 1000 };
+  const disclosure = agreement();
+  disclosure.quotes[0] = { ...quote, terms: authorizedQuoteTerms(quote) };
+  const fee = h.rows.get('Fees:fee:fee')!;
+  Object.assign(fee, { terms: authorizedQuoteTerms(quote), submittedCents: 0 });
+  h.getAgreement.mockResolvedValue(disclosure);
+  await expect(brokerFeeBindWrites(quote, 'p', 'AGENCY')).rejects.toThrow(/IPFS agreement/);
+  await expect(brokerFeeBindWrites(quote, 'p', 'AGENCY', fee.version, 'agreement-123')).resolves.toEqual(expect.arrayContaining([
+    expect.objectContaining({ Put: expect.objectContaining({ Item: expect.objectContaining({
+      policyId: 'p', ipfsCollectionRef: 'agreement-123', amountCents: 50000, submittedCents: 0, collectedCents: 0,
+    }) }) }),
+  ]));
+  fee.submittedCents = 1;
+  await expect(brokerFeeBindWrites(quote, 'p', 'AGENCY', fee.version, 'agreement-123')).rejects.toThrow(/existing HOA fee payment/);
+  fee.submittedCents = 0;
+  h.getAgreement.mockResolvedValue({ ...disclosure, signature: undefined });
+  await expect(brokerFeeBindWrites(quote, 'p', 'AGENCY', fee.version, 'agreement-123')).rejects.toThrow(/electronically sign/);
+});

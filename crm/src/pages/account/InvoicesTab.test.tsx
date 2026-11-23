@@ -202,3 +202,21 @@ it.each([-10000, 0])('allows a later policy bill after a finalized sent adjustme
   expect(api.models.Invoice.create).toHaveBeenCalledWith(expect.objectContaining({ sourcePricingVersion: 2, adjustsInvoiceId: 'original', adjustsPremiumLineId: 'original-premium' }));
   expect(api.models.InvoiceLine.create).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ kind: 'ENDORSEMENT', retailAmount: null, costAmount: null }));
 });
+
+it('offers a redirected carrier PIF policy and omits legacy grouped-only and IPFS terms', async () => {
+  api.models.Policy.list.mockResolvedValue({ data: [
+    { ...policy, quoteId: 'qp', carrierBillType: 'DIRECT', carrierBillToAgency: true },
+    { ...policy, id: 'external', policyNumber: 'IPFS-TERM', ipfsAmountFinanced: 1000 },
+    { ...policy, id: 'review', policyNumber: 'OLD-GROUP', carrierBillType: 'DIRECT', quoteId: 'qg' },
+  ] });
+  api.models.Quote.list.mockResolvedValue({ data: [{ id: 'externalquote', accountId: 'a1', status: 'QUOTED', premium: 100, ipfsAmountFinanced: 100 }] });
+  await selectPolicy();
+  const choices = [...screen.getByRole('combobox').querySelectorAll('option')].map(o => o.value);
+  expect(choices).toContain('policy:p1');
+  expect(choices).not.toContain('policy:external');
+  expect(choices).not.toContain('policy:review');
+  expect(choices).not.toContain('quote:externalquote');
+  await userEvent.click(screen.getByRole('button', { name: 'New invoice' }));
+  await screen.findByText('Editing inv1');
+  expect(api.models.InvoiceLine.create).toHaveBeenCalledWith(expect.objectContaining({ retailAmount: 100, kind: 'PREMIUM', policyId: 'p1' }));
+});

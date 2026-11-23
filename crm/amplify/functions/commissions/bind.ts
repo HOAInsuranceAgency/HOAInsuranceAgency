@@ -1,5 +1,6 @@
 import { agencyDay } from '../../../../shared/agencyTime';
 import { getFee } from '../broker-fees/store';
+import { ipfsFinancedCents, usesIpfs, validateCollectionRoute } from '../../../../shared/ipfsCollection';
 import { brokerFeeCents } from '../../../../shared/brokerFees';
 import { normalizeClientConditions, normalizePassThroughCharges } from '../../../../shared/passThroughCharges';
 import { brokerFeeBindWrites } from '../broker-fees/bindValidation';
@@ -33,6 +34,7 @@ import {
 } from '../../../../shared/commissions';
 import { db, get, commit, table, type Data, type Transaction } from './store';
 import type { Event } from './handler';
+import { allocateIpfsAgreement, normalizedIpfsRef } from './ipfs-bind';
 import { bindLinkWrites } from './bind-links';
 
 /** Financial snapshot, policy, quote status and client conversion share one
@@ -57,7 +59,11 @@ export async function bindPolicy(event: Event, input: Data) {
       throw new Error(
         'The quote account changed after binding. Review the original policy before continuing.',
       );
-    if (previous.brokerFeeCents) await reconcileQuotePayments(quoteId);
+    if (previous.ipfsCollectionRef && (input.ipfsConfirmed !== true || typeof input.ipfsAgreementRef !== 'string' || normalizedIpfsRef(input.ipfsAgreementRef) !== normalizedIpfsRef(previous.ipfsCollectionRef)))
+      throw new Error('This term is already bound. Review the original IPFS agreement reference.');
+    if (!previous.ipfsCollectionRef && (input.ipfsAgreementRef != null || input.ipfsConfirmed != null))
+      throw new Error('This policy was already bound without IPFS collection.');
+    if (previous.brokerFeeCents && !previous.ipfsCollectionRef) await reconcileQuotePayments(quoteId);
     return { policy, account, replayed: true };
   }
   if (!['DRAFT', 'SUBMITTED', 'QUOTED', 'PRESENTED'].includes(String(quote.status)))
@@ -69,10 +75,24 @@ export async function bindPolicy(event: Event, input: Data) {
   const billType = input.billType;
   if (billType !== 'AGENCY' && billType !== 'DIRECT')
     throw new Error('Choose a bill type.');
-  const carrierBillType = issuedRenewal ? input.carrierBillType : billType;
+  validateCollectionRoute(quote);
+  if (quote.clientBillingSelected === true && input.billType !== quote.billType)
+    throw new Error('The client billing route must match the accepted quote.');
+  const external = usesIpfs(quote);
+  const redirected = quote.carrierBillToAgency === true;
+  if ((external || redirected) && billType !== 'AGENCY')
+    throw new Error('The client billing route must match the accepted quote.');
+  const ipfsAgreementRef = external ? required(input.ipfsAgreementRef, 'the IPFS agreement reference', 200) : undefined;
+  if (ipfsAgreementRef && typeof quote.ipfsQuoteRef === 'string' && normalizedIpfsRef(ipfsAgreementRef) !== normalizedIpfsRef(quote.ipfsQuoteRef))
+    throw new Error('Use the IPFS reference from the accepted quote.');
+  if (external && input.ipfsConfirmed !== true)
+    throw new Error('Confirm the signed IPFS agreement and down payment before binding.');
+  if (!external && (input.ipfsAgreementRef != null || input.ipfsConfirmed != null))
+    throw new Error('The accepted quote does not use IPFS collection.');
+  const carrierBillType = redirected ? 'DIRECT' : issuedRenewal ? input.carrierBillType : billType;
   if (carrierBillType !== 'AGENCY' && carrierBillType !== 'DIRECT')
     throw new Error('Choose the carrier bill type.');
-  if (issuedRenewal && quote.billType != null && quote.billType !== carrierBillType)
+  if (issuedRenewal && (redirected ? input.carrierBillType !== 'DIRECT' : quote.billType != null && quote.billType !== carrierBillType))
     throw new Error('The carrier’s billing type must match the recorded quote.');
   const fillQuoteBillType = issuedRenewal && quote.billType == null;
   if (carrierBillType !== billType && !(carrierBillType === 'DIRECT' && billType === 'AGENCY'))
@@ -197,6 +217,7 @@ export async function bindPolicy(event: Event, input: Data) {
   const firstBinding = commissionAccount?.neverBound === true;
   const fields = [
     'brokerFee',
+    'ipfsPriorBrokerFees',
     'carrierId',
     'lines',
     'premium',
@@ -218,10 +239,13 @@ export async function bindPolicy(event: Event, input: Data) {
     'replacementCostType',
     'minimumEarnedPremiumPct',
   ];
+  const agreement = ipfsAgreementRef ? await allocateIpfsAgreement(accountId, ipfsAgreementRef, quote) : undefined;
   const initialFee=brokerFeeCents(quote.brokerFee as number|undefined)>0?await getFee(quoteId):undefined;
   const policy = {
     commissionSnapshotId: policyId,
-    ...(initialFee?{brokerFeeReportingKey:"BROKER_FEE",brokerFeeCollected:initialFee.collectedCents/100,brokerFeeRefunded:initialFee.refundedCents/100}:{}),
+    ...(redirected ? { carrierBillToAgency: true } : {}),
+    ...(ipfsAgreementRef ? { ipfsAmountFinanced: quote.ipfsAmountFinanced, ipfsAgreementRef, ipfsConfirmedAt: at, ipfsConfirmedBy: access.actor } : {}),
+    ...(initialFee ?{brokerFeeReportingKey:"BROKER_FEE",brokerFeeCollected:initialFee.collectedCents/100,brokerFeeRefunded:initialFee.refundedCents/100}:{}),
     ...Object.fromEntries(fields.filter((f) => quote[f] != null).map((f) => [f, quote[f]])),
     passThroughCharges: normalizePassThroughCharges(quote.passThroughCharges),
     ...(quote.clientConditions != null ? { clientConditions: normalizeClientConditions(quote.clientConditions) } : {}),
@@ -255,6 +279,11 @@ export async function bindPolicy(event: Event, input: Data) {
     transaction,
     premiumCents,
     agencyRateUnits,
+    ...(ipfsAgreementRef && agreement ? {
+      ipfsCollectionRef: ipfsAgreementRef, ipfsAmountFinancedCents: ipfsFinancedCents(quote.ipfsAmountFinanced),
+      ipfsFinancedBrokerFeeCents: agreement.split.financedFeeCents, ipfsDownPaymentBrokerFeeCents: agreement.split.downPaymentFeeCents,
+      ipfsConfirmedAt: at, ipfsConfirmedBy: access.actor,
+    } : {}),
     brokerFeeCents: brokerFeeCents(quote.brokerFee as number|undefined),
     ...selectedTerms,
     planVersion: plan.version,
@@ -269,10 +298,11 @@ export async function bindPolicy(event: Event, input: Data) {
   const accountCondition = 'updatedAt = :old' +
     (accountAccessCheck?.ConditionExpression ? ` AND (${accountAccessCheck.ConditionExpression})` : '');
   const guards: Transaction = [
+    ...(agreement ? [agreement.write] : []),
     // Binding also updates/checks this Account. Fold the visibility-stage fence
     // into that operation below instead of targeting the same item twice.
     ...capabilityGuards.filter(guard => !isAccountGuard(guard)),
-    ...await brokerFeeBindWrites(quote,policyId,billType,initialFee?.version),
+    ...await brokerFeeBindWrites(quote,policyId,billType,initialFee?.version,ipfsAgreementRef),
     ...await bindLinkWrites(quote, policyId, at, { id: access.actor,
       name: typeof event.identity?.claims?.email === 'string' ? event.identity.claims.email : access.actor }, initialFee),
     {
@@ -408,7 +438,7 @@ export async function bindPolicy(event: Event, input: Data) {
     access.actor,
     guards,
   );
-  if (snapshot.brokerFeeCents) {
+  if (snapshot.brokerFeeCents && !external) {
     try { await reconcileQuotePayments(quoteId); }
     catch(error) { console.error("Broker fee allocation queued for durable recovery",error); }
   }

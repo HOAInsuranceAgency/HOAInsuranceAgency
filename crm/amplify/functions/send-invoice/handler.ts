@@ -11,6 +11,7 @@ import { validateInvoiceSourceCharges } from "./passThroughInvoice";
 import { assertAdjustmentInvoiceProof, assertInitialInvoiceAvailable } from "./adjustmentInvoice";
 import { isNonpayableAdjustmentStatement } from "../../../../shared/invoicePaymentStatus";
 import { isGroupedInvoice } from "../../../../shared/groupedInvoiceGuard";
+import { policyCollectionWrites, assertHoaCollection, IpfsInvoiceBlocked } from "../ipfs-invoice";
 import { assertPremiumNotFinanced, assertStandalonePolicyBilling, GroupedDraftBillingBlocked, standalonePolicyBillingGuard } from "../grouped-draft-billing";
 import { prepareBrokerFeeAgreement } from "../broker-fees/agreements";
 import { authorizedQuoteTerms } from "../../../../shared/quoteAuthorization";
@@ -652,6 +653,7 @@ export const handler = async (event: {
       !headerPolicyId && invoice.quoteId
         ? await getModel<Schema["Quote"]["type"] & { sourcePricingLoanId?: string }>("Quote", invoice.quoteId) ?? null
         : null;
+    if (!paymentStatus) assertHoaCollection(quoteAnchor);
     if (quoteAnchor && quoteAnchor.accountId !== invoice.accountId) throw new SendBlocked("The invoice quote could not be verified.");
     if (!headerPolicyId && !quoteAnchor) {
       return {
@@ -797,10 +799,16 @@ export const handler = async (event: {
 
     // Completed retries must return before starting another fee link claim.
     // This lease also serializes same-invoice Stripe retries in production.
+    const policyWrites = !paymentStatus && invoiceTotals(lines).retail > 0
+      ? await policyCollectionWrites(invoice.accountId, invoice.id, [...linePolicyIds, ...(headerPolicyId ? [headerPolicyId] : [])], headerPolicyId)
+      : [];
     const tracked = ["resend", "ses"].includes(process.env.HOA_TRANSACTIONAL_MAIL_PROVIDER ?? "")
-      ? await beginInvoiceSend(invoice, to, event.arguments?.expectedSentAt, { database: ddb })
+      ? await beginInvoiceSend(invoice, to, event.arguments?.expectedSentAt, { database: ddb, policyWrites })
       : undefined;
     if (tracked?.completed) return tracked.completed;
+    if (!tracked && policyWrites.length) {
+      await ddb.send(new TransactWriteCommand({ TransactItems: policyWrites }));
+    }
 
     let disclosureUrl: string | undefined;
     let paymentLabel: string | undefined;
@@ -889,7 +897,7 @@ export const handler = async (event: {
     return await deliverInvoice({ invoice, view, to, tracked, split, allocations, feeSendClaim,
       onAccepted: () => { acceptedForReview = true; } });
   } catch (err) {
-    if (err instanceof SendBlocked || err instanceof GroupedDraftBillingBlocked || err instanceof InvoiceSendBlocked || err instanceof MailDeliveryError) {
+    if (err instanceof SendBlocked || err instanceof IpfsInvoiceBlocked || err instanceof GroupedDraftBillingBlocked || err instanceof InvoiceSendBlocked || err instanceof MailDeliveryError) {
       return { ok: false, error: err.message };
     }
     captureHandledFailure(err);

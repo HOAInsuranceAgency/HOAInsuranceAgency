@@ -111,8 +111,8 @@ describe('atomic native fee-bearing Quote edits', () => {
     h.beforeCommit=()=>{fee().issuedLoanIds.push('new-loan');fee().version++;};
     await expect(save()).rejects.toThrow('Concurrent update'); expect(quote().premium).toBe(10000); expect(fee().issuedLoanIds).toEqual(['loan','new-loan']);
   });
-  it.each(['premium','brokerFee','passThroughCharges','clientConditions','billType','status'])('fences %s changes affecting accepted terms or withdrawal', async field => {
-    const values:Row={premium:11000,brokerFee:400,passThroughCharges:[{id:'tax',kind:'TAX',description:'Tax',amountCents:100}],clientConditions:'Inspection required',billType:'AGENCY',status:'LOST'};
+  it.each(['premium','brokerFee','ipfsAmountFinanced','carrierBillToAgency','passThroughCharges','clientConditions','billType','status'])('fences %s changes affecting accepted terms or withdrawal', async field => {
+    const values:Row={premium:11000,brokerFee:400,ipfsAmountFinanced:10000,carrierBillToAgency:true,passThroughCharges:[{id:'tax',kind:'TAX',description:'Tax',amountCents:100}],clientConditions:'Inspection required',billType:'AGENCY',status:'LOST'};
     const input:Row={id:'q',[field]:values[field]};
     if(field==='billType'){quote().billType='DIRECT';quote().brokerFee=0;input.brokerFee=500;}
     const result=await save(input); expect(result.committed).toBe(true);expect(h.models.get('PfLoan:loan')?.status).toBe('CANCELLED');
