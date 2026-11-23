@@ -7,14 +7,15 @@ import {
   within,
 } from "@testing-library/react";
 import { commissionPolicy } from "../test/commissionFixtures";
-const h = vi.hoisted(() => ({ action: vi.fn() }));
+const h = vi.hoisted(() => ({ action: vi.fn(), unsaved: vi.fn() }));
 vi.mock("../lib/commissions", () => ({ commissionWorkflowAction: h.action }));
 vi.mock("../lib/client", () => ({
   friendlyError: (e: unknown) => (e instanceof Error ? e.message : String(e)),
 }));
-vi.mock("../lib/editProtection", () => ({ useUnsavedChanges: vi.fn() }));
+vi.mock("../lib/editProtection", () => ({ useUnsavedChanges: h.unsaved }));
 vi.mock("./ReportDownload", () => ({ ReportDownload: () => null }));
 import CommissionExceptions from "./CommissionExceptions";
+import { CommissionWorkflowContext } from "../lib/commissionWorkflow";
 let data: any;
 beforeEach(() => {
   vi.resetAllMocks();
@@ -41,7 +42,7 @@ it("approves explicitly reviewed percentage shares using cents-safe basis points
   render(
     <CommissionExceptions refreshLedger={vi.fn()} onAccessDenied={vi.fn()} />,
   );
-  const f = await open("Approve a policy commission allocation");
+  const f = await open("Shared-production split (optional)");
   fireEvent.change(f.getByLabelText("Allocation policy"), {
     target: { value: "p" },
   });
@@ -60,7 +61,8 @@ it("approves explicitly reviewed percentage shares using cents-safe basis points
   expect(
     f.getByRole("button", { name: "Approve policy allocation" }),
   ).toBeDisabled();
-  fireEvent.click(f.getByRole("checkbox"));
+  fireEvent.click(f.getByRole("checkbox",{name:/This policy needs a documented/}));
+  fireEvent.click(f.getByRole("checkbox",{name:/I reviewed these policy shares/}));
   fireEvent.click(f.getByRole("button", { name: "Approve policy allocation" }));
   await waitFor(() =>
     expect(h.action).toHaveBeenCalledWith(
@@ -190,4 +192,26 @@ it("clears private case data on authorization failure", async () => {
   expect(await screen.findByRole("alert")).toHaveTextContent("Not authorized");
   expect(screen.queryByText("Create a departure review")).toBeNull();
   expect(denied).toHaveBeenCalled();
+});
+
+it('does not treat a preselected policy as an unsaved or required allocation',async()=>{
+  render(<CommissionWorkflowContext.Provider value={{target:{tab:'exceptions',policyId:'p'},navigate:vi.fn()}}>
+    <CommissionExceptions refreshLedger={vi.fn()} onAccessDenied={vi.fn()}/>
+  </CommissionWorkflowContext.Provider>);
+  const form = await open('Shared-production split (optional)');
+  expect(form.getByText('A single producer normally needs no allocation here.')).toBeInTheDocument();
+  expect(h.unsaved.mock.calls.every(([dirty])=>dirty===false)).toBe(true);
+  fireEvent.click(form.getByRole('checkbox',{name:/I reviewed these policy shares/}));
+  expect(form.getByRole('button',{name:'Approve policy allocation'})).toBeDisabled();
+  expect(h.action.mock.calls.some(([op])=>op==='approvePolicyAllocation')).toBe(false);
+});
+it('shows the combined effect of approved policy shares and employee rates',async()=>{
+  data.policies[0].allocations=[{id:'a',from:'2026-01-01',agreement:'Shared production agreement',approvedAt:'2026-01-01T12:00:00Z',approvedBy:'owner',houseBps:8000,
+    participants:[{producerId:'producer',producerName:'Avery',shareBps:2000,producerBps:2000,eligible:true,agreement:'Plan',planVersion:1}]}];
+  render(<CommissionExceptions refreshLedger={vi.fn()} onAccessDenied={vi.fn()}/>);
+  const title = await screen.findByText('Cedar HOA · POL-1', { selector: 'summary span' });
+  fireEvent.click(title);
+  const panel = within(title.closest('details')!);
+  expect(panel.getByText('Effective share of agency receipts')).toBeInTheDocument();
+  expect(panel.getByText('4%')).toBeInTheDocument();
 });

@@ -5,7 +5,7 @@ export const fileClient = (config: S3ClientConfig = {}) => new S3Client({ ...con
 export const fileSigningOptions = { expiresIn: 60, signableHeaders: new Set(["content-type", "content-length"]) };
 
 /** A download filename is untrusted even when a browser already cleaned it. */
-export function downloadContentDisposition(value: unknown): string | undefined {
+export function downloadContentDisposition(value: unknown, disposition: "attachment" | "inline" = "attachment"): string | undefined {
   if (value == null) return undefined;
   if (typeof value !== "string") throw new Error("Download filename must be text");
   const clean = new TextDecoder().decode(new TextEncoder().encode(value))
@@ -13,5 +13,5 @@ export function downloadContentDisposition(value: unknown): string | undefined {
   const filename = Array.from(clean).slice(0, 255).join("") || "download";
   const fallback = filename.replace(/[^\x20-\x7e]/g, "_");
   const encoded = encodeURIComponent(filename).replace(/['()*]/g, char => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
-  return `attachment; filename="${fallback}"${filename === fallback ? "" : `; filename*=UTF-8''${encoded}`}`;
+  return `${disposition}; filename="${fallback}"${filename === fallback ? "" : `; filename*=UTF-8''${encoded}`}`;
 }

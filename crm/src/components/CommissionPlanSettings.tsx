@@ -1,3 +1,4 @@
+import CommissionReferenceField from './CommissionReferenceField';
 import { useLiveUpdateBlock } from '../lib/useLiveUpdates';
 import { useEffect,useRef,useState,type FormEvent,type ReactNode } from 'react';
 import { decimal,type CommissionPlan,type CommissionPlanDefinition } from '../../../shared/commissions';
@@ -80,9 +81,9 @@ function DefinitionForm({ definition: d, selected, ...actions }: Actions & { def
   }}>
     <LabeledInput label="Plan name" value={draft.name} set={name => update({ name })} />
     <div className="form-grid"><LabeledInput label="Plan new business %" value={draft.newRate} set={newRate => update({ newRate })} /><LabeledInput label="Plan renewal %" value={draft.renewalRate} set={renewalRate => update({ renewalRate })} /></div>
-    <LabeledInput label="Plan document reference" value={draft.agreement} set={agreement => update({ agreement })} />
+    <CommissionReferenceField label="Plan document reference" value={draft.agreement} change={agreement => update({ agreement })} references={[d?.agreement,d?.gim?.agreement]} />
     <label className="commission-check"><Input type="checkbox" checked={draft.gim} onChange={e => update({ gim: e.target.checked })} /> Include GIM house-account rates</label>
-    {draft.gim && <div className="form-grid"><LabeledInput label="Plan GIM new business %" value={draft.gimNew} set={gimNew => update({ gimNew })} /><LabeledInput label="Plan GIM renewal %" value={draft.gimRenewal} set={gimRenewal => update({ gimRenewal })} /><LabeledInput label="GIM plan document reference" value={draft.gimAgreement} set={gimAgreement => update({ gimAgreement })} /></div>}
+    {draft.gim && <div className="form-grid"><LabeledInput label="Plan GIM new business %" value={draft.gimNew} set={gimNew => update({ gimNew })} /><LabeledInput label="Plan GIM renewal %" value={draft.gimRenewal} set={gimRenewal => update({ gimRenewal })} /><CommissionReferenceField label="GIM plan document reference" value={draft.gimAgreement} change={gimAgreement => update({ gimAgreement })} references={[draft.agreement,d?.gim?.agreement]} /></div>}
     <p className="small muted">Rates apply to agency commission received. Explicit 0% is allowed; blank is not zero. A plan without GIM rates cannot be used to bind a GIM account.</p>
     {d && <label className="commission-check"><Input type="checkbox" checked={draft.archived} onChange={e => update({ archived: e.target.checked })} /> Archive plan for new assignments (existing assignments remain valid)</label>}
   </Form>;
@@ -103,7 +104,7 @@ function AssignmentForm({ plan, producerId, name, definitions, ...actions }: Act
       return <section className="commission-period" key={row.id}><h3>Assignment {i + 1}</h3>
         <label className="field">Commission plan {i + 1}<Select required={!prior || !!prior.assignment} value={row.planId ? `${row.planId}:${row.planVersion}` : ''} onChange={e => { const option = choices.find(c => c.key === e.target.value); const next = definitions.find(d => d.id === option?.id); const old = definitions.find(d => d.id === row.planId); update(i, { planId: option?.id ?? '', planVersion: option?.version ?? 0, ...(!row.agreement || row.agreement === old?.agreement ? { agreement: next?.agreement ?? '' } : {}) }); }}><option value="">{prior && !prior.assignment ? `Existing individual agreement (${prior.newBps / 100}% / ${prior.renewalBps / 100}%)` : 'Choose a plan'}</option>{choices.map(c => <option key={c.key} value={c.key}>{c.name}</option>)}</Select></label>
         <LabeledInput label={`Assignment starts ${i + 1}`} type="date" value={row.from} set={from => update(i, { from })} />
-        <LabeledInput label={`Employee agreement reference ${i + 1}`} value={row.agreement} set={agreement => update(i, { agreement })} />
+        <CommissionReferenceField label={`Employee agreement reference ${i + 1}`} value={row.agreement} change={agreement => update(i, { agreement })} references={[prior?.agreement,...definitions.filter(d => d.id === row.planId).map(d => d.agreement)]} />
         <p className="small muted">The selected plan supplies its reference. Replace it above if the employee has a separate signed agreement.</p>
         <CommissionPanel title="Eligibility limits and end date (optional)" open={!!(row.to || row.accountBoundFrom || row.receiptsFrom || row.notes)}>
         <p className="small muted">Leave these blank unless the employee agreement limits eligible accounts or receipts.</p>

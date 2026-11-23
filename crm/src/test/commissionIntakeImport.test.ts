@@ -4,6 +4,7 @@ import {
   prepareIntakeRows,
   reuseImportMapping,
   rowIssues,
+  intakeSummary, importedPolicyDate, statementSummaryLabel, validateIntakeRow,
 } from "../../../shared/commissionIntake";
 import { commissionPolicy } from "./commissionFixtures";
 const h = vi.hoisted(() => ({ send: vi.fn(), commit: vi.fn() }));
@@ -177,4 +178,46 @@ it("drains successful OCR pages before returning a reviewable result", async () 
     ),
   ).toMatchObject({ status: "READY", text: "Page one\nPage two" });
   expect(h.send).toHaveBeenCalledTimes(2);
+});
+
+it("flags carrier summaries separately without dropping malformed policy rows or approving exclusions", () => {
+  const mapping = { policy: 2, reference: 1, amount: 7, effective: 4, transaction: 3 };
+  // Fictional values with the source layout; no customer statement data.
+  const rows = prepareIntakeRows([
+    ['Insured','Account','Policy','Transaction','Effective','Premium','Rate','Due'],
+    ['Fictional Harbor','REF-A','A123456 BIP','NEW BUSINESS','08/28/26','1000.00','15','150.00'],
+    ['Fictional Grove','REF-B','0123456789 LB','RENEWAL','07/27/2026','1000.00','10','100.00'],
+    ['TOTAL COMM. ACTIVITY DIRECT BILL','','','','','2000.00','','250.00'],
+    ['','','','','YEAR TO DATE COMMISSION','','','3000.00'],
+    ['','','','','OCTOBER COMMISSION PAYABLE','','','250.00'],
+    ['Unclear source','','','','','','','25.00'],
+    ['TOTAL COMMISSION','REF-C','OTHER-12345','RECEIPT','2026-08-28','','','10.00'],
+  ], mapping, 'inbox', 0, [], 'c');
+  expect(rows).toHaveLength(7);
+  expect(rows.slice(0,2).map(r => r.effectiveDate)).toEqual(['2026-08-28','2026-07-27']);
+  expect(rows.slice(0,2).every(r => !r.importIssue)).toBe(true);
+  expect(rows.filter(r => r.summaryLabel)).toHaveLength(3);
+  expect(rows.every(r => !r.deleted && r.reviewStatus === 'PENDING')).toBe(true);
+  expect(rows[5].summaryLabel).toBeUndefined();
+  expect(rows[6].summaryLabel).toBeUndefined();
+  expect(validateIntakeRow(rows[2], 'inbox').summaryLabel).toBe('TOTAL COMM. ACTIVITY DIRECT BILL');
+  const reviewed = rows.slice(0,5).map(r => r.summaryLabel ? {...r, deleted:true, note:'Confirmed summary'} : r);
+  expect(intakeSummary(reviewed,'c',[]).rowTotalCents).toBe(25000);
+  expect(intakeSummary(reviewed,'c',[]).rowCount).toBe(2);
+});
+it("does not suggest exclusion for a row just because identifiers are missing", () => {
+  const mapping = {policy:0,reference:1,amount:2,effective:-1,transaction:-1};
+  expect(statementSummaryLabel(['','','100.00'], mapping)).toBeUndefined();
+  expect(statementSummaryLabel(['POL-12345','TOTAL','100.00'], mapping)).toBeUndefined();
+  expect(statementSummaryLabel(['TOTAL','','100.00'], mapping)).toBe('TOTAL');
+});
+it("parses US effective dates while rejecting impossible dates and preserving raw source", () => {
+  expect(importedPolicyDate('10/04/26')).toBe('2026-10-04');
+  expect(importedPolicyDate('1/2/2027')).toBe('2027-01-02');
+  expect(importedPolicyDate('2026-08-28')).toBe('2026-08-28');
+  expect(() => importedPolicyDate('02/30/26')).toThrow();
+  const [row] = prepareIntakeRows([['Policy','Ref','Due','Date'],['POL','R','1.00','02/30/26']],
+    {policy:0,reference:1,amount:2,effective:3,transaction:-1}, 'inbox',0,[],'c');
+  expect(row.raw).toContain('02/30/26');
+  expect(row.importIssue).toContain('effective date');
 });

@@ -1,3 +1,4 @@
+import CommissionReferenceField from './CommissionReferenceField';
 import { formatUsdCents as money } from "../../../shared/money";
 import {
 createContext,
@@ -38,7 +39,7 @@ export type CommissionExceptionWorkspace = {
   departures: Departure[];
   adjustments: CommissionAdjustment[];
   carrierAdjustments?: { policyId: string; policyNumber: string; accountName: string; unpaidAdjustment: number; paidRecovery: number; partialAdjustment?: number }[];
-  producers: { id: string; name: string }[];
+  producers: { id: string; name: string; agreementReferences?: string[] }[];
 };
 
 const Access = createContext<(error: unknown) => void>(() => {});
@@ -204,8 +205,8 @@ export default function CommissionExceptions({
           <div>
             <h2>Shared commissions & employee changes</h2>
             <p className="muted">
-              Approve policy shares, review departure earnings, and document
-              compensation corrections.
+              Normal policy earnings use the saved producer and plan automatically.
+              Use this page only for shared-production splits, employee changes or corrections.
             </p>
           </div>
           <Button
@@ -225,7 +226,7 @@ export default function CommissionExceptions({
         {data && (
           <>
             <div className="commission-action-bar"><Button variant="secondary" onClick={()=>navigate({tab:'queue'})}>Back to work queue</Button>{(target.policyId||target.producerId||target.adjustmentId||target.departureId) && <Button variant="secondary" onClick={()=>navigate({tab:'exceptions'})}>Show all reviews</Button>}</div>
-            <Panel title="Approve a policy commission allocation">
+            <Panel title="Shared-production split (optional)">
               <AllocationForm data={data} refresh={refresh} />
             </Panel>
             <Panel title="Create a departure review">
@@ -241,7 +242,7 @@ export default function CommissionExceptions({
                 {data.carrierAdjustments.map(r => <tr key={r.policyId}><td>{r.accountName}<div className="small muted">{r.policyNumber}</div></td><td>{money(r.unpaidAdjustment)}</td><td>{money(r.partialAdjustment??0)}</td><td>{money(r.paidRecovery)}</td></tr>)}
               </tbody></Table></div>
             </section>}
-            <h3>Approved policy allocations</h3>
+            <h3>Approved shared-production splits</h3>
             {!data.policies.some((p) => p.allocations?.length) && (
               <div className="payroll-empty">
                 No shared allocations yet. Existing policies retain their
@@ -271,6 +272,7 @@ export default function CommissionExceptions({
                               <th>Employee</th>
                               <th>Policy share</th>
                               <th>Plan rate</th>
+                              <th>Effective share of agency receipts</th>
                               <th>Agreement</th>
                             </tr>
                           </thead>
@@ -280,6 +282,7 @@ export default function CommissionExceptions({
                                 <td>{p.producerName}</td>
                                 <td>{p.shareBps / 100}%</td>
                                 <td>{p.producerBps / 100}%</td>
+                                <td>{p.eligible === false ? 0 : p.shareBps * p.producerBps / 1_000_000}%</td>
                                 <td>
                                   {p.agreement} · plan version {p.planVersion}
                                 </td>
@@ -289,7 +292,7 @@ export default function CommissionExceptions({
                               <tr>
                                 <td>Retained house share</td>
                                 <td>{a.houseBps / 100}%</td>
-                                <td colSpan={2}>No employee earnings</td>
+                                <td colSpan={3}>No employee earnings</td>
                               </tr>
                             )}
                           </tbody>
@@ -364,8 +367,11 @@ function AllocationForm({
     [agreement, setAgreement] = useState(""),
     [house, setHouse] = useState("0"),
     [shares, setShares] = useState<Record<string, string>>({}),
-    [confirmed, setConfirmed] = useState(false);
-  useUnsavedChanges(!!policyId || !!agreement || !!Object.keys(shares).length);
+    [confirmed, setConfirmed] = useState(false),
+    [splitNeeded, setSplitNeeded] = useState(false);
+  const baseline = useRef(JSON.stringify({policyId,from,agreement,house,shares,confirmed,splitNeeded}));
+  useUnsavedChanges(JSON.stringify({policyId,from,agreement,house,shares,confirmed,splitNeeded}) !== baseline.current);
+  const deny = useContext(Access);
   const policy = data.policies.find((p) => p.id === policyId);
   const update = (id: string, value: string) => {
     setConfirmed(false);
@@ -374,9 +380,10 @@ function AllocationForm({
   return (
     <Form
       label="Approve policy allocation"
-      disabled={!confirmed || !policy}
+      disabled={!splitNeeded || !confirmed || !policy}
       refresh={refresh}
       action={async () => {
+        if (!splitNeeded) throw new Error("Use normal policy earnings unless a documented production split is needed.");
         await commissionAction("approvePolicyAllocation", {
           id: policyId,
           version: policy?.version,
@@ -391,13 +398,24 @@ function AllocationForm({
             })),
           confirmed,
         });
+        baseline.current = JSON.stringify({policyId:"",from:"",agreement:"",house:"0",shares:{},confirmed:false,splitNeeded:false});
         setPolicy("");
         setAgreement("");
         setFrom("");
+        setHouse("0");
         setShares({});
         setConfirmed(false);
+        setSplitNeeded(false);
       }}
     >
+      <div className="commission-notice">
+        <strong>A single producer normally needs no allocation here.</strong>
+        <p>The policy already supplies the employee's commission rate. Policy share means production credit, not the employee rate or the agency's remaining profit.</p>
+        <p>Example: 100% policy share at a 20% plan rate earns $20 from a $100 agency receipt. Entering 20% as the policy share earns only $4.</p>
+      </div>
+      <Confirm value={splitNeeded} set={value => {setSplitNeeded(value);setConfirmed(false);}}>
+        This policy needs a documented shared-production split or an intentional house share before employee rates apply.
+      </Confirm>
       <p>
         Employee earnings = eligible agency commission × policy share × the
         employee’s frozen plan rate. Shares, including any retained house share,
@@ -410,6 +428,7 @@ function AllocationForm({
           value={policyId}
           set={(v) => {
             setPolicy(v);
+            setAgreement("");
             setConfirmed(false);
           }}
           options={data.policies.map((p) => ({
@@ -446,10 +465,14 @@ function AllocationForm({
           />
         ))}
       </div>
-      <Field
+      <CommissionReferenceField
+        key={policyId}
         label="Shared-production agreement reference"
         value={agreement}
-        set={(v) => {
+        references={policy?.allocations?.map(allocation => allocation.agreement)}
+        scope={policy ? {entityType:"ACCOUNT",entityId:policy.accountId,policyId:policy.id,quoteId:policy.quoteId} : undefined}
+        onError={error => {if (isAuthorizationError(error)) deny(error);}}
+        change={(v) => {
           setAgreement(v);
           setConfirmed(false);
         }}
@@ -582,10 +605,11 @@ function DepartureForm({
           ]}
         />
       </div>
-      <Field
+      <CommissionReferenceField
         label="Departure agreement reference"
         value={draft.agreement}
-        set={set("agreement")}
+        references={[value?.agreement,...(data.producers.find(p => p.id === draft.producerId)?.agreementReferences ?? [])]}
+        change={set("agreement")}
       />
       <Field
         label="Departure supporting evidence"

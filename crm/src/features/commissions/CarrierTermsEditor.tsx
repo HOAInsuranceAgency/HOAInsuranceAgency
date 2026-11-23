@@ -1,3 +1,4 @@
+import CommissionReferenceField from '../../components/CommissionReferenceField';
 import { useEffect,useRef,useState } from 'react';
 import {
 COMMISSION_BASES,
@@ -337,7 +338,9 @@ export function CarrierEditor({
 
             </div>
           </CommissionPanel>
-          <Field
+          <CommissionReferenceField
+            scope={{entityType:"CARRIER",entityId:id}}
+            references={[terms?.evidence,...(terms?.arrangements?.map(term => term.evidence) ?? [])]}
             label={`Carrier agreement reference ${i + 1}`}
             value={a.evidence}
             change={(v) => update(i, { evidence: v })}

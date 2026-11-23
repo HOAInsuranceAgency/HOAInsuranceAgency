@@ -18,6 +18,7 @@ const h = vi.hoisted(() => ({
   session: vi.fn(),
   bind: vi.fn(),
   s3: vi.fn(),
+  sign: vi.fn(),
   db: vi.fn(),
   sources: new Map<string, Record<string, unknown>>(),
 }));
@@ -49,6 +50,7 @@ vi.mock('../../amplify/functions/crm-access/access', () => ({
     }
   },
 }));
+vi.mock('@aws-sdk/s3-request-presigner', () => ({getSignedUrl:h.sign}));
 vi.mock('@aws-sdk/client-s3', async (original) => ({
   ...(await original<typeof import('@aws-sdk/client-s3')>()),
   S3Client: class {
@@ -895,6 +897,51 @@ it('adopts a historical policy with receipt-only tracking and preserves its elig
     carrierTerms: { version: 4, receiptOnly: true, basis: 'UNSPECIFIED' }, entries: [] });
 });
 
+function historicalReceiptSetup() {
+  h.sources.set('Account:a', {id:'a',name:'Cedar HOA'});
+  h.sources.set('Policy:old', {id:'old',accountId:'a',carrierId:'c',updatedAt:'before',lines:['Property'],billType:'DIRECT'});
+  records.set('ACCOUNT:a', {...commissionAccount(),firstBoundOn:'2026-01-01'});
+  records.set('PLAN:producer', {id:'producer',producerId:'producer',name:'Producer',version:3,
+    terms:[{from:'2020-01-01',newBps:2000,renewalBps:1000,agreement:'Signed agreement'}]});
+  const carrier = {...commissionPolicy().carrierTerms,version:7,
+    arrangements:[paymentArrangement({from:'2027-01-01'})]};
+  records.set('CARRIER:c', carrier);
+  records.set('POLICY:p', commissionPolicy());
+  const input = {policyId:'old',producerId:'producer',transaction:'NEW',boundOn:'2026-01-01',
+    effectiveDate:'2026-01-01',expirationDate:'2027-01-01',premium:'10000',agencyRate:'10',
+    evidence:'Original binder and agency agreement',policyUpdatedAt:'before'};
+  return {input,carrier};
+}
+it('requires explicit confirmation to adopt actual receipts without replacing carrier forecasts', async () => {
+  const {input,carrier} = historicalReceiptSetup();
+  expect(await handler(request('adoptPolicy', input))).toMatchObject({ok:false,error:expect.stringMatching(/Configure carrier payment terms/)});
+  expect(await handler(request('adoptPolicy', {...input,actualReceiptsOnly:'true',confirmed:true}))).toMatchObject({ok:false});
+  expect(await handler(request('adoptPolicy', {...input,actualReceiptsOnly:true}))).toMatchObject({ok:false,error:expect.stringMatching(/Confirm actual-receipt/)});
+  expect(h.commit).not.toHaveBeenCalled();
+  expect(await handler(request('adoptPolicy', {...input,actualReceiptsOnly:true,confirmed:true}))).toEqual({ok:true});
+  expect(records.get('POLICY:old')).toMatchObject({producerBps:2000,planVersion:3,entries:[],
+    carrierTerms:receiptOnlyCarrierTerms(carrier),migrationEvidence:expect.stringContaining('for this policy only')});
+  expect(records.get('CARRIER:c')).toEqual(carrier);
+  expect(records.get('POLICY:p')).toEqual(commissionPolicy());
+  expect(h.commit.mock.calls[0][0].map((c:{kind:string})=>c.kind)).toEqual(['POLICY']);
+  for (const [kind,id,version] of [['CARRIER','c',7],['ACCOUNT','a',2],['PLAN','producer',3]]) {
+    expect(h.commit.mock.calls[0][2]).toContainEqual({ConditionCheck:{
+      TableName:'private-ledger',Key:{kind,id},ConditionExpression:'#v = :v',
+      ExpressionAttributeNames:{'#v':'version'},ExpressionAttributeValues:{':v':version},
+    }});
+  }
+});
+it.each(['account history','employee plan','stale policy','owner access'])('preserves %s checks for per-policy receipt tracking', async check => {
+  const {input} = historicalReceiptSetup();
+  if (check === 'account history') records.set('ACCOUNT:a', {...commissionAccount(),neverBound:true});
+  if (check === 'employee plan') records.delete('PLAN:producer');
+  const result = await handler(request('adoptPolicy', {...input,actualReceiptsOnly:true,confirmed:true,
+    ...(check === 'stale policy' ? {policyUpdatedAt:'stale'} : {})},check === 'owner access' ? 'PRODUCER' : 'OWNER'));
+  expect(result).toMatchObject({ok:false});
+  expect(h.commit).not.toHaveBeenCalled();
+  expect(records.has('POLICY:old')).toBe(false);
+});
+
 it('voids only a reviewed draft and retains its evidence without creating earnings', async () => {
   const original = { ...statement(), lines: [line()] };
   records.set('STATEMENT:s', original);
@@ -1158,4 +1205,23 @@ it('keeps fee cash separate from a departing employee’s pending carrier balanc
   expect(pending(fee)).toEqual([]);
   const carrier = appendEntry(fee, line({ agencyCents: 1000 }), statement(), 'carrier');
   expect(pending(carrier)).toMatchObject([{ expectedAgencyCents: 10000, receivedAgencyCents: 1000 }]);
+});
+
+it.each([
+  [true,'application/pdf',true], [true,'image/png',true], [true,'text/html',false],
+  [false,'application/pdf',false], ['true','application/pdf',false],
+])('uses inline statement links only for an explicit supported preview (%s, %s)',async(preview,contentType,expected)=>{
+  const originalBucket = process.env.COMMISSION_BUCKET;
+  process.env.COMMISSION_BUCKET = 'fictional-private-statements';
+  try {
+    h.s3.mockResolvedValue({ContentType:contentType,Metadata:{filename:'statement.pdf'}});
+    h.sign.mockResolvedValue('https://example.test/signed');
+    expect(await handler(request('file',{key:'statements/00000000-0000-0000-0000-000000000001',preview}))).toMatchObject({ok:true,previewable:expected});
+    expect(h.sign.mock.calls[0][1].input.ResponseContentDisposition).toBe((expected?'inline':'attachment')+'; filename="statement.pdf"');
+    expect(h.sign.mock.calls[0][1].input.ResponseContentType).toBe(expected?contentType:undefined);
+    expect(h.commit).not.toHaveBeenCalled();
+  } finally {
+    if (originalBucket === undefined) delete process.env.COMMISSION_BUCKET;
+    else process.env.COMMISSION_BUCKET = originalBucket;
+  }
 });

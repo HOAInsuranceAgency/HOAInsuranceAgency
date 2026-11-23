@@ -29,3 +29,12 @@ it("preserves Unicode names using an encoded header parameter and an ASCII fallb
   expect(downloadContentDisposition("résumé.pdf")).toBe('attachment; filename="r_sum_.pdf"; filename*=UTF-8\'\'r%C3%A9sum%C3%A9.pdf');
   expect(downloadContentDisposition("name\ud800.pdf")).not.toMatch(/[\ud800-\udfff]/);
 });
+
+it('signs an explicitly inline preview with the same safe filename handling',async()=>{
+  const client = fileClient({region:'us-east-1',credentials:{accessKeyId:'test',secretAccessKey:'test'}});
+  const disposition = downloadContentDisposition('statement.pdf','inline');
+  const signed = new URL(await getSignedUrl(client,new GetObjectCommand({Bucket:'test',Key:'stored.pdf',ResponseContentDisposition:disposition,ResponseContentType:'application/pdf'}),fileSigningOptions));
+  expect(signed.searchParams.get('response-content-disposition')).toBe('inline; filename="statement.pdf"');
+  expect(signed.searchParams.get('response-content-type')).toBe('application/pdf');
+  expect(downloadContentDisposition('statement.pdf')).toBe('attachment; filename="statement.pdf"');
+});

@@ -422,7 +422,7 @@ export async function intakeAction(
           "Allocated source rows are locked. Use a separate correction after posting.",
         );
       const row = validateIntakeRow(raw, intake.id, old);
-      if (row.reviewStatus !== "PENDING" && input.confirmed !== true)
+      if ((row.reviewStatus !== "PENDING" || !!row.deleted !== !!old?.deleted) && input.confirmed !== true)
         throw new Error(
           "Confirm the policy matches and eligibility decisions before saving reviewed rows.",
         );

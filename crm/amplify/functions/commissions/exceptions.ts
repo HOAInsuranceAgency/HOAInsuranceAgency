@@ -95,7 +95,7 @@ export async function exceptionAction(
       })),
       adjustments,
       carrierAdjustments: policies.map(p => ({ policyId: p.id, policyNumber: p.policyNumber, accountName: p.accountName, ...recoveryBalances(p, batches) })).filter(r => r.unpaidAdjustment || r.paidRecovery || r.partialAdjustment),
-      producers: plans.map((p) => ({ id: p.producerId, name: p.name })),
+      producers: plans.map((p) => ({ id: p.producerId, name: p.name, agreementReferences: [...new Set(p.terms.flatMap(term => [term.agreement, ...(term.gim ? [term.gim.agreement] : [])]))] })),
     };
   }
   const state = await reconciliation();
