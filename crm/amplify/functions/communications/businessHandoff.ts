@@ -224,7 +224,7 @@ export async function businessDeliveryContext(input:{accountId:string},actor:str
   const quotes = await readCompleteModels(nextToken => account.quotes({ nextToken, limit: 100 }), 'relations', 'Could not load package quotes', reads);
   for(const option of plan?.data.options ?? []){
     const assessment=packageAssessment(plan!.data,option,quotes,agencyDay(new Date().toISOString()));
-    context.choices.push({kind:'PACKAGE',recordId:option.id,label:option.name,...(!assessment.complete || option.quoteIds.some(id=>!quotes.some(q=>q.id===id && ['QUOTED','PRESENTED'].includes(q.status)))?{disabledReason:'Review the package and current open offers first'}:{})});
+    context.choices.push({kind:'PACKAGE',recordId:option.id,label:option.name,...(!assessment.complete || option.quoteIds.some(id=>!quotes.some(q=>q.id===id && q.ipfsRegisteredPolicyId == null && ['QUOTED','PRESENTED'].includes(q.status)))?{disabledReason:'Review the package and current open offers first'}:{})});
   }
   const documents = await readCompleteModels(nextToken => client.models.Document.listDocumentByEntityId({ entityId: account.id }, { filter: { entityType: { eq: 'ACCOUNT' } }, nextToken, limit: 100 }), 'relations', 'Could not load account PDFs', reads);
   for(const d of documents)if(allowedDocument(d,account.id)){context.documents.push({id:d.id,name:d.name,contentType:d.contentType!,size:d.sizeBytes ?? undefined,category:d.category ?? undefined});context.choices.push({kind:'DOCUMENT',recordId:d.id,label:d.name});}
@@ -483,8 +483,8 @@ async function applyAttempt(candidate:Row<AttemptRecord>,comm:Communication,veri
   if(d.kind==='PACKAGE' && commercial?.version!==priorPreview.data.commercialVersion)changed=true;
   if(d.kind==='PACKAGE')for(const [id,terms] of Object.entries(d.quoteTerms)){
     const result=await client.models.Quote.get({id}),q=result.data;
-    if(result.errors?.length || !q || q.accountId!==d.accountId || packageTerms(q)!==terms || !['QUOTED','PRESENTED'].includes(q.status)){changed=true;continue;}
-    writes.push({Update:{TableName:process.env.QUOTE_TABLE,Key:{id},UpdateExpression:'SET presentedAt = if_not_exists(presentedAt, :at), #status = :presented, updatedAt = :processed, lastWriteBy = :actor',ConditionExpression:'updatedAt = :old AND (#status = :quoted OR #status = :presented)',ExpressionAttributeNames:{'#status':'status'},ExpressionAttributeValues:{':at':comm.at,':processed':quoteProjectionTimestamp(q.updatedAt),':old':q.updatedAt,':actor':'communication-delivery',':quoted':'QUOTED',':presented':'PRESENTED'}}});
+    if(result.errors?.length || !q || q.ipfsRegisteredPolicyId != null || q.accountId!==d.accountId || packageTerms(q)!==terms || !['QUOTED','PRESENTED'].includes(q.status)){changed=true;continue;}
+    writes.push({Update:{TableName:process.env.QUOTE_TABLE,Key:{id},UpdateExpression:'SET presentedAt = if_not_exists(presentedAt, :at), #status = :presented, updatedAt = :processed, lastWriteBy = :actor',ConditionExpression:'updatedAt = :old AND attribute_not_exists(ipfsRegisteredPolicyId) AND (#status = :quoted OR #status = :presented)',ExpressionAttributeNames:{'#status':'status'},ExpressionAttributeValues:{':at':comm.at,':processed':quoteProjectionTimestamp(q.updatedAt),':old':q.updatedAt,':actor':'communication-delivery',':quoted':'QUOTED',':presented':'PRESENTED'}}});
   }
   if(changed)writes.length=0;
   // Individual send-attempt history is the evidence; legacy deliveredAt is not receipt.

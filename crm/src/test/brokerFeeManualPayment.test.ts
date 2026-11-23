@@ -379,3 +379,11 @@ it('recognizes an IPFS policy named only on old invoice lines', async () => {
   await expect(confirmInvoicePayment(actor,{invoiceId:'i'})).rejects.toThrow(/IPFS collects/);
   expect(h.transact).not.toHaveBeenCalled();
 });
+
+
+it('refuses a stale quote-only manual receipt after historical IPFS registration', async () => {
+  h.models.get('Quote:q')!.ipfsRegisteredPolicyId = 'legacy-policy';
+  await expect(confirmInvoicePayment(actor,{invoiceId:'i'})).rejects.toThrow(/IPFS collects/);
+  expect(h.deactivate).not.toHaveBeenCalled();
+  expect(h.transact).not.toHaveBeenCalled();
+});

@@ -83,7 +83,7 @@ export async function updateFeeQuoteAtomically(access: AccountAccess, context: N
   const conditions = ['#version = :old'];
   // Native metadata writes use wall-clock timestamps. Preserve explicit
   // pointer fences even if another writer repeats an earlier millisecond.
-  for(const [index,pointer] of ['sourcePricingInvoiceId','sourcePricingLoanId','status','presentedAt','bindAuthorizedAt','ipfsQuoteRef'].entries()) {
+  for(const [index,pointer] of ['sourcePricingInvoiceId','sourcePricingLoanId','ipfsRegisteredPolicyId','status','presentedAt','bindAuthorizedAt','ipfsQuoteRef'].entries()) {
     const name=`#pointer${index}`, value=`:pointer${index}`; names[name]=pointer;
     if(Object.hasOwn(previous,pointer)){conditions.push(`${name} = ${value}`);values[value]=previous[pointer];}
     else conditions.push(`attribute_not_exists(${name})`);

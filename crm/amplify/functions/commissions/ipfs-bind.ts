@@ -45,7 +45,7 @@ export function bindBillingConditions(quote: Data) {
   const values: Data = {};
   const conditions: string[] = [];
   for (const [index, field] of ['billType','clientBillingSelected','carrierBillToAgency','ipfsAmountFinanced',
-    'ipfsPriorBrokerFees','ipfsQuoteRef','sourcePricingInvoiceId','sourcePricingLoanId'].entries()) {
+    'ipfsPriorBrokerFees','ipfsQuoteRef','ipfsRegisteredPolicyId','sourcePricingInvoiceId','sourcePricingLoanId'].entries()) {
     const name = '#billing' + index, token = ':billing' + index;
     names[name] = field;
     if (quote[field] !== undefined) { values[token] = quote[field]; conditions.push(name + ' = ' + token); }

@@ -668,6 +668,14 @@ export async function handler(event: Event) {
         );
         return { ok: true, key, url };
       }
+      if (input.policyId) {
+        const policy = await store.get<CommissionPolicy>('POLICY', required(input.policyId, 'the policy holding the signed agreement'));
+        const archive = policy?.ipfsLegacyEvidence;
+        if (!archive || archive.key !== input.key) throw new Error('The policy has no matching retained IPFS agreement.');
+        return { ok: true, url: await getSignedUrl(s3, new GetObjectCommand({
+          Bucket, Key: archive.key, VersionId: archive.versionId, ResponseContentDisposition: downloadContentDisposition(archive.filename),
+        }), fileSigningOptions) };
+      }
       const key = required(input.key, 'a statement file');
       if (!/^statements\/[a-f0-9-]{36}$/.test(key)) throw new Error('Invalid statement file.');
       const source = await s3.send(new HeadObjectCommand({ Bucket, Key: key }));

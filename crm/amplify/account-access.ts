@@ -1,5 +1,5 @@
 import { INVOICE_INDEX_KEYS, isIndexedAccountModel, modelIndexFields, modelIndexKey, type ModelIndexMap } from './functions/storage/model-indexes';
-import { installQuoteFinancialStage, QUOTE_FINANCIAL_RESPONSE } from "./quote-financial-pipeline";
+import { installQuoteFinancialStage, QUOTE_FINANCIAL_RESPONSE, QUOTE_REGISTRATION_FENCE } from "./quote-financial-pipeline";
 import { installInvoiceLineDraftStage, INVOICE_LINE_DRAFT_RESPONSE } from "./invoice-line-draft-pipeline";
 import { readFileSync } from "node:fs";
 import { Asset } from "aws-cdk-lib/aws-s3-assets";
@@ -63,7 +63,7 @@ export function installAccountAccess(backend: typeof Backend, communicationTable
     }
   }
   backend.commissions.addEnvironment("COMMISSION_POLICY_ACCOUNT_INDEX", indexes[modelIndexKey("Policy", "accountId")]!);
-  const bindIndexes = ['Invoice.accountId', 'PfLoan.accountId', 'Document.entityId'] as const;
+  const bindIndexes = ['Invoice.accountId', 'InvoiceLine.invoiceId', 'PfLoan.accountId', 'Document.entityId'] as const;
   backend.commissions.addEnvironment('ACCESS_INDEXES', JSON.stringify(Object.fromEntries(bindIndexes.map(key => [key, indexes[key]]))));
   // Attach the exact additional grants from the existing permissions stack;
   // the generated data template has no room for these repeated ARN expressions.
@@ -119,7 +119,7 @@ export function installAccountAccess(backend: typeof Backend, communicationTable
     const fn = new CfnFunctionConfiguration(api, `Access_${key}`, {
       apiId: api.apiId, name: `access_${key}`, dataSourceName: source.name, functionVersion: "2018-05-29",
       requestMappingTemplate: mode === 'notify' ? LIVE_NOTIFY_REQUEST : `#if($util.authType() == "IAM Authorization")\n#if(!$util.isNull($ctx.identity.cognitoIdentityId))\n$util.unauthorized()\n#end\n#return($ctx.prev.result)\n#end\n${mode === "list" ? listAdminBypass : mode === "read" ? '#if(!$util.isNull($ctx.stash.assignmentList))\n#return($ctx.prev.result)\n#end\n' : ''}{"version":"2018-05-29","operation":"Invoke","payload":{"mode":"${mode}","model":"${model}","field":$util.toJson($ctx.info.fieldName),"operation":"${operation}","identity":$util.toJson($ctx.identity),"request":$util.toJson($ctx.request),"arguments":$util.toJson($ctx.arguments),"previous":$util.toJson($ctx.prev.result)${atomicResponse ? ',"nativeConditions":$util.toJson($ctx.stash.conditions),"nativeAuthFilter":$util.toJson($ctx.stash.authFilter)' : ''}}}`,
-      responseMappingTemplate: mode === 'notify' ? LIVE_NOTIFY_RESPONSE : `#if($ctx.error)\n$util.error($ctx.error.message, $ctx.error.type)\n#end\n${mode === "list" ? '$util.qr($ctx.stash.put("assignmentList", $ctx.result))\n' : ''}${atomicResponse ?? '$util.toJson($ctx.result)'}`,
+      responseMappingTemplate: mode === 'notify' ? LIVE_NOTIFY_RESPONSE : `#if($ctx.error)\n$util.error($ctx.error.message, $ctx.error.type)\n#end\n${mode === "write" && model === "Quote" && operation === "delete" ? QUOTE_REGISTRATION_FENCE : ''}${mode === "list" ? '$util.qr($ctx.stash.put("assignmentList", $ctx.result))\n' : ''}${atomicResponse ?? '$util.toJson($ctx.result)'}`,
     });
     // CDK's diagnostic construct paths duplicate these already descriptive
     // access_* names. Omit only that metadata to keep the staging data template

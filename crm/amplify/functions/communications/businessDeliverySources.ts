@@ -46,7 +46,7 @@ function version(model: SourceVersion['model'], record: { id: string; updatedAt:
 const publicFields = ['perOccurrenceDeductible', 'perUnitDeductible', 'blanketLimit', 'coinsurancePct', 'replacementCostType', 'glEachOccurrence', 'glDamageToRentedPremises', 'glMedicalExpense', 'glPersonalAdvInjury', 'glGeneralAggregate', 'glProductsCompletedOps', 'glClaimsMade', 'glAggregateAppliesTo', 'minimumEarnedPremiumPct'] as const;
 // Include private review inputs only in the server-side terms comparison, never
 // in public output. Fetching a partial review input would invalidate its fence.
-const quoteSourceFields = ['id', 'accountId', 'carrierId', 'status', 'premium', 'brokerFee', 'ipfsAmountFinanced', 'ipfsPriorBrokerFees', 'ipfsQuoteRef', 'clientBillingSelected', 'carrierBillToAgency', 'passThroughCharges', 'clientConditions', 'billType', 'commissionPct', 'lines', 'effectiveDate', 'expirationDate', 'offerExpiresAt', 'renewalPolicyId', 'notes', 'updatedAt', ...publicFields] as const;
+const quoteSourceFields = ['id', 'accountId', 'carrierId', 'status', 'premium', 'brokerFee', 'ipfsRegisteredPolicyId', 'ipfsAmountFinanced', 'ipfsPriorBrokerFees', 'ipfsQuoteRef', 'clientBillingSelected', 'carrierBillToAgency', 'passThroughCharges', 'clientConditions', 'billType', 'commissionPct', 'lines', 'effectiveDate', 'expirationDate', 'offerExpiresAt', 'renewalPolicyId', 'notes', 'updatedAt', ...publicFields] as const;
 async function sourceReads<T, R>(items: readonly T[], read: (item: T) => Promise<R>): Promise<R[]> {
   const results: R[] = [];
   // Bounded batches retain input order regardless of request completion order.
@@ -73,6 +73,7 @@ export async function loadDeliverySource(input: BusinessDeliverySelection): Prom
       if (result.errors?.length || !result.data || result.data.id !== id || result.data.accountId !== input.accountId) throw businessValidation('A package quote is unavailable on this account');
       return result.data;
     });
+    if (sourceQuotes.some(q => q.ipfsRegisteredPolicyId != null)) throw businessValidation('A previously bound IPFS policy cannot be included in a new proposal.');
     try { ipfsOfferGroups(sourceQuotes); }
     catch (error) { throw businessValidation(error instanceof Error ? error.message : 'Review the IPFS agreement references.'); }
     const assessment = packageAssessment(commercial.data, option, sourceQuotes, agencyDay(new Date().toISOString()));

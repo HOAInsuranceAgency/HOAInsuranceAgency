@@ -16,7 +16,7 @@ import { assertAdjustmentInvoiceProof, assertInitialInvoiceAvailable } from '../
 import { invoiceTotals } from '../../../../shared/invoiceTotals';
 import { GROUPED_INVOICE_REVIEW_ONLY, isGroupedInvoice } from '../../../../shared/groupedInvoiceGuard';
 import { initialQuotePublicationWrites } from '../quote-source-billing';
-import { policyCollectionWrites, assertHoaCollection } from '../ipfs-invoice';
+import { policyCollectionWrites, assertHoaCollection, hoaQuoteCollectionGuard } from '../ipfs-invoice';
 import { assertPremiumNotFinanced, assertStandalonePolicyBilling, standalonePolicyBillingGuard } from '../grouped-draft-billing';
 import { db, getFee, getModel, modelTable, versionCheck, type Write } from './store';
 import { assertBrokerFeeSigned } from './bindValidation';
@@ -81,7 +81,7 @@ export async function confirmInvoicePayment(event:{identity?:Identity;request?:R
   const sourceGuards = !policy && quote && invoice.status !== 'PAID' && invoice.sourcePricingVersion === 1 && !allocations.length
     ? await initialQuotePublicationWrites(invoice, quote, 'manual')
     : source ? [policy ? standalonePolicyBillingGuard(source as {id:string;updatedAt:string},true)
-      : versionCheck(modelTable('Quote'),source as {id:string;updatedAt:string})] : [];
+      : hoaQuoteCollectionGuard(source as {id:string;updatedAt:string})] : [];
   const guards:Write[]=[activeTeamUserCheck(access.actor),...invoiceGuards,...loanGuards,...lines.map(line=>versionCheck(modelTable('InvoiceLine'),line as {id:string;updatedAt:string})),...sourceGuards, ...collectionGuards.filter(write => !policy || write.ConditionCheck?.Key?.id !== policy.id)];
   if(!access.admin){
     if(!workflow)throw new Error('The account assignment could not be verified.');

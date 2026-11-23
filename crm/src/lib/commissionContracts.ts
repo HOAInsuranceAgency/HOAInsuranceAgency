@@ -29,4 +29,4 @@ export type CommissionOperation = keyof CommissionContracts;
 export type CommissionInput<K extends CommissionOperation> = CommissionContracts[K]['input'];
 export type CommissionResult<K extends CommissionOperation> = CommissionContracts[K]['result'];
 export interface CommissionFileUpload { action: 'upload'; size: number; contentType: string; filename: string }
-export interface CommissionFileRead { action?: 'read'; key: string }
+export interface CommissionFileRead { action?: 'read'; key: string; policyId?: string }

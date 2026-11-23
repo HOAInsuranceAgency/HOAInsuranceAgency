@@ -23,7 +23,7 @@ export type InvoiceSendOperation = {
   groupedDelivery?: GroupedDeliveryProof;
   retired?: { reason: "VOID"; invoiceId: string; retiredAt: string; closedLinkId: string | null };
 };
-type Dependencies = { database: Pick<DynamoDBDocumentClient, "send">; now?: () => number; uuid?: () => string; invoiceTable?: string; policyWrites?: Write[] };
+type Dependencies = { database: Pick<DynamoDBDocumentClient, "send">; now?: () => number; uuid?: () => string; invoiceTable?: string; sourceWrites?: Write[] };
 export class InvoiceSendBlocked extends Error {}
 const blocked = (message: string): never => { throw new InvoiceSendBlocked(message); };
 export function invoiceSendEnvironment() {
@@ -175,7 +175,7 @@ export async function beginInvoiceSend(invoice: Invoice, to: string[], expectedS
       ExpressionAttributeNames: { "#op": ATTRIBUTE, "#status": "status" },
       ExpressionAttributeValues: { ":op": operation, ":status": row.status, ...(row.updatedAt === undefined ? {} : { ":updated": row.updatedAt }), ...(previous ? { ":previous": previous } : {}) },
     };
-    if (deps.policyWrites?.length) await db.send(new TransactWriteCommand({ TransactItems: [{Update:update},...deps.policyWrites] }));
+    if (deps.sourceWrites?.length) await db.send(new TransactWriteCommand({ TransactItems: [{Update:update},...deps.sourceWrites] }));
     else await db.send(new UpdateCommand(update));
   } catch (error) {
     if (["TransactionCanceledException","ConditionalCheckFailedException"].includes((error as { name?: string }).name ?? "")) return blocked("Another send or edit won this invoice. Refresh it before trying again.");

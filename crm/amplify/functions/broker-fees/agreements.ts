@@ -68,7 +68,7 @@ export async function prepareBrokerFeeAgreement(accountId: string, quotes: Broke
   const rule = jurisdictionRule(settings?.brokerFeeJurisdictions, state, quotes);
   for (const quote of quotes) validateCollectionRoute(quote);
   const sources = await Promise.all(quotes.map(quote => getModel<Model>('Quote', quote.id)));
-  sources.forEach((source, index) => { if (!source || quotes[index].accountId !== accountId || !sameQuote(source, quotes[index]) || !['QUOTED', 'PRESENTED'].includes(String(source.status))) throw new Error('The package changed. Review the current quote terms before preparing its fee disclosure.'); });
+  sources.forEach((source, index) => { if (!source || source.ipfsRegisteredPolicyId != null || quotes[index].accountId !== accountId || !sameQuote(source, quotes[index]) || !['QUOTED', 'PRESENTED'].includes(String(source.status))) throw new Error('The package changed. Review the current quote terms before preparing its fee disclosure.'); });
   quotes = quotes.map((quote, index) => {
     const { agencyCommissionPct: _pct, agencyCommissionCents: _cents, ...base } = quote;
     if (!rule.discloseCarrierCommission) return base;
@@ -130,7 +130,7 @@ async function currentAgreement(token: string) {
   if (agreement.jurisdiction !== state || agreement.accountName !== String(account.legalName || account.name) || agreement.termsVersion !== `${BROKER_FEE_TERMS_VERSION}:${rule.version}` || JSON.stringify(agreement.stateForms) !== JSON.stringify(rule.forms) || JSON.stringify(agreement.agencySigner) !== JSON.stringify(frozenAgencySigner(rule))) unavailable();
   for (const [index, frozen] of agreement.quotes.entries()) {
     const current = quotes[index];
-    if (!current || !sameQuote(current, frozen) || !['QUOTED', 'PRESENTED', ...(agreement.signature ? ['BOUND'] : [])].includes(String(current.status))) unavailable();
+    if (!current || !agreement.signature && current.ipfsRegisteredPolicyId != null || !sameQuote(current, frozen) || !['QUOTED', 'PRESENTED', ...(agreement.signature ? ['BOUND'] : [])].includes(String(current.status))) unavailable();
   }
   return { link, agreement, account, settings, quotes: quotes as Model[] };
 }

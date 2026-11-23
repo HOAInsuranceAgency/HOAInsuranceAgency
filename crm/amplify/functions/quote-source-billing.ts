@@ -38,7 +38,11 @@ export async function quoteSourceBillingHistory(quote: RecordData, fee: BrokerFe
 function publishInvoicePointer(quote: RecordData, key: string): Write {
   if (typeof quote.updatedAt !== 'string' || !Number.isFinite(Date.parse(quote.updatedAt))) throw new Error('The current quoted billing source version could not be verified.');
   const values: RecordData = { ':old':quote.updatedAt, ':now':new Date(Math.max(Date.now(),Date.parse(quote.updatedAt)+1)).toISOString(), ':id':historyId(key) };
-  const names:Record<string,string>={'#pointer':SOURCE_INVOICE_POINTER},conditions=['updatedAt = :old', '(attribute_not_exists(ipfsAmountFinanced) OR ipfsAmountFinanced = :nil)'];
+  const names:Record<string,string>={'#pointer':SOURCE_INVOICE_POINTER},conditions=['updatedAt = :old', '(attribute_not_exists(ipfsAmountFinanced) OR ipfsAmountFinanced = :nil)', '(attribute_not_exists(ipfsRegisteredPolicyId) OR ipfsRegisteredPolicyId = :nil)', 'NOT (#status = :bound)', 'NOT (clientBillingSelected = :selected AND billType = :direct)'];
+  names['#status'] = 'status';
+  values[':bound'] = 'BOUND';
+  values[':selected'] = true;
+  values[':direct'] = 'DIRECT';
   values[':nil'] = null;
   // Fence both owner slots: a native note save may repeat a timestamp after
   // a concurrent invoice or loan publication has changed the other pointer.

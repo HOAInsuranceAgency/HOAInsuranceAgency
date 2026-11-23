@@ -1,12 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
-const h = vi.hoisted(() => ({ rows: new Map<string, any>(), models: new Map<string, any>(), objects: new Map<string, Uint8Array>(), beforeCommit: undefined as (() => void) | undefined, modelReads: [] as [string, string][], indexInvoices: undefined as any[] | undefined, invoiceInFlight: 0, maxInvoiceInFlight: 0, failedInvoice: undefined as string | undefined }));
+const h = vi.hoisted(() => ({ quoteBatches: [] as string[][], rows: new Map<string, any>(), models: new Map<string, any>(), objects: new Map<string, Uint8Array>(), beforeCommit: undefined as (() => void) | undefined, modelReads: [] as [string, string][], indexInvoices: undefined as any[] | undefined, invoiceInFlight: 0, maxInvoiceInFlight: 0, failedInvoice: undefined as string | undefined }));
 vi.mock('@aws-sdk/client-s3', () => ({ S3Client: class { async send(command: any) { if (command.constructor.name === 'PutObjectCommand') h.objects.set(command.input.Key, command.input.Body); return {}; } }, PutObjectCommand: class PutObjectCommand { constructor(public input: any) {} }, GetObjectCommand: class GetObjectCommand { constructor(public input: any) {} } }));
 vi.mock('@aws-sdk/s3-request-presigner', () => ({ getSignedUrl: async () => 'https://documents.example.test/signed.pdf' }));
 vi.mock('../../amplify/functions/broker-fees/disclosurePdf', () => ({ createBrokerFeeDisclosurePdf: async () => ({ bytes: new TextEncoder().encode('%PDF-1.7 signed test fixture') }) }));
 vi.mock('../../amplify/functions/broker-fees/store', async original => {
   const actual = await original<typeof import('../../amplify/functions/broker-fees/store')>();
   return { ...actual, table: () => 'Fees', modelTable: (model: string) => model,
+    db: { send: async (command: { input: { RequestItems: { Quote: { ConsistentRead: boolean; Keys: { id: string }[] } } } }) => {
+      const request = command.input.RequestItems.Quote;
+      if (!request.ConsistentRead) throw new Error('Expected a consistent quote read');
+      const ids = request.Keys.map(key => key.id);
+      h.quoteBatches.push(ids);
+      return { Responses: { Quote: ids.map(id => h.models.get('Quote:' + id)).filter(Boolean) } };
+    } },
     getRow: async (id: string) => h.rows.get(id), getFee: async (id: string) => h.rows.get(`fee:${id}`), getAgreement: async (id: string) => h.rows.get(id),
     getModel: async (model: string, id: string) => {
       h.modelReads.push([model, id]);
@@ -284,6 +291,16 @@ describe('IPFS proposal and signature cap reservations', () => {
     expect(balance.offers.q1).toMatchObject({ financedFeeCents: 20000, expiresAt: null });
     expect(balance.offers.q2).toMatchObject({ financedFeeCents: 10000, expiresAt: null });
     expect(JSON.stringify(await brokerFeeDisclosure(p.token, IPFS_DISCLOSURE_VERSION))).not.toContain('Q-17');
+  });
+
+  it('checks a shared lender offer in one consistent read for all current quotes', async () => {
+    const quotes = Array.from({ length: 10 }, (_, i) => setQuote('batch-' + i, 5, 'batch-ref', i * 5));
+    await prepared(quotes);
+    h.quoteBatches.length = 0;
+    const { readIpfsAgreementBalance } = await import('../../amplify/functions/broker-fees/ipfsAgreements');
+    const balance = await readIpfsAgreementBalance('a1', 'batch-ref');
+    expect(Object.keys(balance?.offers ?? {})).toHaveLength(10);
+    expect(h.quoteBatches).toEqual([quotes.map(q => q.id)]);
   });
 
   it('reserves earlier proposals separately from bound allocations while allowing independent equal-sized lender agreements', async () => {

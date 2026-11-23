@@ -17,6 +17,7 @@ import { isNonpayableAdjustmentStatement, type InvoicePaymentStatus } from "../.
 
 /** The fields the seeding rule reads off a Policy. */
 export interface PolicyLike {
+  ipfsRegisteredPolicyId?: string | null;
   ipfsAmountFinanced?: number | null;
   carrierBillType?: string | null;
   carrierBillToAgency?: boolean | null;
@@ -127,6 +128,9 @@ export function seededLineDescription(policy: PolicyLike): string {
 
 /** The fields the W8 anchor rules read off a Quote. */
 export interface QuoteLike {
+  clientBillingSelected?: boolean | null;
+  billType?: string | null;
+  ipfsRegisteredPolicyId?: string | null;
   ipfsAmountFinanced?: number | null;
   id: string;
   status?: string | null;
@@ -148,7 +152,7 @@ export function invoiceableQuotes<T extends QuoteLike>(
 ): T[] {
   return quotes.filter(
     (q) =>
-      !usesIpfs(q) && isOpen(q.status) &&
+      !usesIpfs(q) && !(q.clientBillingSelected === true && q.billType === "DIRECT") && isOpen(q.status) &&
       typeof q.premium === "number" &&
       q.premium > 0 &&
       !billedAnchorIds.has(q.id)

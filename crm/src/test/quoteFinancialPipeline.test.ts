@@ -25,6 +25,7 @@ it('retains native authorization before the atomic commit and skips only a serve
   expect(native.RequestMappingTemplate).toBe(`#if(!$util.isNull($ctx.stash.${QUOTE_FINANCIAL_STASH}))\n#return($ctx.stash.${QUOTE_FINANCIAL_STASH})\n#end\n{"operation":"UpdateItem","key":$util.toJson($ctx.arguments.input.id)}`);
   expect(native).not.toHaveProperty('RequestMappingTemplateS3Location');
   expect(QUOTE_FINANCIAL_RESPONSE).toContain(`$ctx.stash.put("${QUOTE_FINANCIAL_STASH}", $ctx.result.quote)`);
+  expect(QUOTE_FINANCIAL_RESPONSE).toContain('stash.conditions.add({"ipfsRegisteredPolicyId":{"attributeExists":false}})');
   expect(QUOTE_FINANCIAL_RESPONSE).not.toContain('$ctx.arguments');
   expect(QUOTE_FINANCIAL_RESPONSE).toContain('$ctx.result.committed == true');
 });

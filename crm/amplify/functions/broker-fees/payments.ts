@@ -1,4 +1,4 @@
-import { assertHoaCollection } from '../ipfs-invoice';
+import { assertHoaCollection, hoaQuoteCollectionGuard } from '../ipfs-invoice';
 import { agencyDay } from '../../../../shared/agencyTime';
 import { createHash, randomUUID } from 'node:crypto';
 import { QueryCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
@@ -133,7 +133,7 @@ export async function reserveFeeInvoice(source:Record<string,unknown>|string,inv
     const claim:BrokerFeeInvoiceSendClaim=resume?previousClaim:{invoiceId,token:randomUUID(),createdAt:new Date().toISOString(),phase:'PREPARING',totalCents:wantedTotal,previousLinkId:typeof invoice.stripePaymentLinkId==='string'?invoice.stripePaymentLinkId:null};
     const ids=[...new Set([...(base.issuedInvoiceIds??[]),invoiceId])];
     if(ids.length>100)throw new Error('This fee invoice history needs review before another payment is prepared.');
-    try {await transact([feePut({...base,issuedInvoiceIds:ids,invoiceSendClaim:claim},old),versionCheck(modelTable('Quote'),quote as {id:string;updatedAt:string}),versionCheck(modelTable('Invoice'),invoice as {id:string;updatedAt:string}),...loanGuards]);return claim;}
+    try {await transact([feePut({...base,issuedInvoiceIds:ids,invoiceSendClaim:claim},old),(policy ? versionCheck(modelTable('Quote'),quote as {id:string;updatedAt:string}) : hoaQuoteCollectionGuard(quote as {id:string;updatedAt:string})),versionCheck(modelTable('Invoice'),invoice as {id:string;updatedAt:string}),...loanGuards]);return claim;}
     catch(error){if(!retryable(error)||attempt===4)throw error;}
   }
 }

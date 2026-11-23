@@ -52,6 +52,8 @@ export async function bindPolicy(event: Event, input: Data) {
     accountId = required(quote.accountId, 'an account');
   const account = await access.requireRecord('Account', accountId);
   const policyId = `bound-${createHash('sha256').update(quoteId).digest('hex').slice(0, 40)}`;
+  if (quote.ipfsRegisteredPolicyId != null)
+    throw new Error('This quote belongs to a previously bound IPFS policy.');
   const previous = await get<CommissionPolicy>('POLICY', policyId);
   if (previous) {
     const policy = await access.requireRecord('Policy', policyId);
@@ -242,6 +244,7 @@ export async function bindPolicy(event: Event, input: Data) {
   const agreement = ipfsAgreementRef ? await allocateIpfsAgreement(accountId, ipfsAgreementRef, quote) : undefined;
   const initialFee=brokerFeeCents(quote.brokerFee as number|undefined)>0?await getFee(quoteId):undefined;
   const policy = {
+    ...(quote.clientBillingSelected === true ? {clientBillingSelected:true} : {}),
     commissionSnapshotId: policyId,
     ...(redirected ? { carrierBillToAgency: true } : {}),
     ...(ipfsAgreementRef ? { ipfsAmountFinanced: quote.ipfsAmountFinanced, ipfsAgreementRef, ipfsConfirmedAt: at, ipfsConfirmedBy: access.actor } : {}),
