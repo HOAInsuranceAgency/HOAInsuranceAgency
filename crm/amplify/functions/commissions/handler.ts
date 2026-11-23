@@ -408,7 +408,12 @@ export async function handler(event: Event) {
         1_000_000,
         'agency rate',
       );
-      const selectedCarrierTerms = selectCarrierPaymentTerms(carrierTerms, {
+      if (input.actualReceiptsOnly === true && input.confirmed !== true)
+        throw new Error('Confirm actual-receipt tracking for this historical policy before saving.');
+      // Historical receipt reconciliation need not replace the carrier's forecast defaults.
+      const selectedCarrierTerms = input.actualReceiptsOnly === true
+        ? receiptOnlyCarrierTerms(carrierTerms)
+        : selectCarrierPaymentTerms(carrierTerms, {
         effectiveDate,
         lines: Array.isArray(policy.lines) ? policy.lines.filter((line): line is string => typeof line === 'string') : undefined,
         billType: policy.billType as 'AGENCY' | 'DIRECT' | undefined,
@@ -441,7 +446,8 @@ export async function handler(event: Event) {
         [
           change('POLICY', {
             ...snapshot,
-            migrationEvidence: input.evidence,
+            migrationEvidence: String(input.evidence) + (input.actualReceiptsOnly === true
+              ? ' Owner confirmed actual-receipt tracking for this policy only; carrier defaults unchanged.' : ''),
             originalTermDates: {
               effectiveDate: policy.effectiveDate ?? null,
               expirationDate: policy.expirationDate ?? null,

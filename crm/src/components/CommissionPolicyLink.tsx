@@ -1,5 +1,5 @@
 import CommissionPlanSettings from './CommissionPlanSettings';
-import { useRef,useState,type ReactNode } from "react";
+import { useEffect,useRef,useState,type ReactNode } from "react";
 import type {
 CommissionAccount,
 CommissionOverview,
@@ -218,15 +218,20 @@ function PolicyTrackingForm({
     agencyRate: c.agencyRate == null ? "" : String(c.agencyRate),
     transaction: c.transaction,
   });
+  const historyNeedsReview = !c.classification?.firstBoundOn || !!c.classification.neverBound ||
+    (!!draft.boundOn && c.classification.firstBoundOn > draft.boundOn);
   const originalFields = useRef({ ...draft });
   const initial = useRef(JSON.stringify(draft)),
     [confirmed, setConfirmed] = useState(false),
     [correct, setCorrect] = useState(false),
+    [receiptOnly, setReceiptOnly] = useState(false),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
   const lock = useRef(false);
+  const historyError = /first.?bind|policy history/i.test(error);
+  useEffect(() => { setConfirmed(false); }, [c.classification?.version]);
   const { markClean } = useUnsavedChanges(
-    JSON.stringify(draft) !== initial.current || confirmed,
+    JSON.stringify(draft) !== initial.current || receiptOnly || confirmed,
     { busy },
   );
   const team = useAsyncResource(
@@ -270,14 +275,22 @@ function PolicyTrackingForm({
             : "Account classification and original bind history are needed."}
         </p>
       </div>
-      {!c.classification && (
-        <CommissionPanel open title="Complete missing account eligibility">
-          {renderAccountSetup(c.accountId, async () => {
-            await reloadContext();
-            await refresh();
-          })}
-        </CommissionPanel>
-      )}
+      {(historyNeedsReview || historyError) && <div className="commission-notice" role="alert">
+        <strong>Confirm the account's original first bind date before saving tracking.</strong>
+        <p>{c.classification?.neverBound
+          ? 'This account is marked Never bound with this agency, but the selected policy is already bound. Choose Previously bound with this agency below.'
+          : 'Review the account binding history below and enter its earliest actual bind date with this agency.'}</p>
+        <p>The policy bind date{draft.boundOn ? ' (' + draft.boundOn + ')' : ''} is separate from the account's first-ever bind date. Include business predating the CRM. Preserve the saved Standard/GIM classification unless its supporting records require a correction.</p>
+      </div>}
+      <CommissionPanel open={historyNeedsReview || historyError} title="Account eligibility & first bind history"
+        hint={c.classification?.firstBoundOn ? 'Saved first bind: ' + c.classification.firstBoundOn : 'Confirm prior account history here, then continue with this policy'}>
+        {renderAccountSetup(c.accountId, async () => {
+          setConfirmed(false);
+          setError('');
+          await reloadContext();
+          await refresh();
+        })}
+      </CommissionPanel>
       {!plan && team.data && (
         <CommissionPanel
           title="Assign the missing employee plan"
@@ -307,6 +320,7 @@ function PolicyTrackingForm({
                 policyId,
                 ...draft,
                 policyUpdatedAt: c.updatedAt,
+                actualReceiptsOnly: receiptOnly,
                 evidence:
                   "Owner confirmed original producer attribution and policy terms against CRM policy " +
                   policyId +
@@ -386,6 +400,15 @@ function PolicyTrackingForm({
               </Select>
             </label>
           </div>
+          <div className="commission-notice">
+            <strong>Carrier payment tracking</strong>
+            <p>Use the saved carrier terms when they cover this historical policy. If the old payment schedule is unknown or does not cover the policy, you can track verified receipts without a forecast.</p>
+            <label className="commission-check">
+              <Input type="checkbox" checked={receiptOnly} onChange={e => { setReceiptOnly(e.target.checked); setConfirmed(false); }} />
+              Track this policy using actual receipts only
+            </label>
+            <p className="small muted">This choice applies only to this policy's commission tracking. Carrier defaults and other policies stay unchanged. Expected payment dates remain unknown; source review, payment evidence and employee eligibility are still required.</p>
+          </div>
           <label className="commission-check">
             <Input
               type="checkbox"
@@ -405,7 +428,7 @@ function PolicyTrackingForm({
           </label>
           <Button
             variant="primary"
-            disabled={!confirmed || !plan || !c.classification}
+            disabled={!confirmed || !plan || historyNeedsReview || historyError}
           >
             Save tracking & use policy
           </Button>
