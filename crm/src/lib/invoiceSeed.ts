@@ -1,3 +1,4 @@
+import { usesIpfs } from "../../../shared/ipfsCollection";
 import { brokerFeeCents } from "../../../shared/brokerFees";
 import { normalizePassThroughCharges } from "../../../shared/passThroughCharges";
 import { isPaidOriginalPremium } from "../../../shared/invoiceAdjustments";
@@ -16,6 +17,10 @@ import { isNonpayableAdjustmentStatement, type InvoicePaymentStatus } from "../.
 
 /** The fields the seeding rule reads off a Policy. */
 export interface PolicyLike {
+  ipfsRegisteredPolicyId?: string | null;
+  ipfsAmountFinanced?: number | null;
+  carrierBillType?: string | null;
+  carrierBillToAgency?: boolean | null;
   id: string;
   status?: string | null;
   billType?: string | null;
@@ -59,7 +64,7 @@ export function unbilledAgencyPolicies<T extends PolicyLike>(
 ): T[] {
   return policies.filter(
     (p) =>
-      p.billType !== "DIRECT" &&
+      !usesIpfs(p) && p.billType !== "DIRECT" && (p.carrierBillType !== "DIRECT" || p.carrierBillToAgency === true) &&
       p.status === "ACTIVE" &&
       !billedPolicyIds.has(p.id)
   );
@@ -123,6 +128,10 @@ export function seededLineDescription(policy: PolicyLike): string {
 
 /** The fields the W8 anchor rules read off a Quote. */
 export interface QuoteLike {
+  clientBillingSelected?: boolean | null;
+  billType?: string | null;
+  ipfsRegisteredPolicyId?: string | null;
+  ipfsAmountFinanced?: number | null;
   id: string;
   status?: string | null;
   premium?: number | null;
@@ -143,7 +152,7 @@ export function invoiceableQuotes<T extends QuoteLike>(
 ): T[] {
   return quotes.filter(
     (q) =>
-      isOpen(q.status) &&
+      !usesIpfs(q) && !(q.clientBillingSelected === true && q.billType === "DIRECT") && isOpen(q.status) &&
       typeof q.premium === "number" &&
       q.premium > 0 &&
       !billedAnchorIds.has(q.id)

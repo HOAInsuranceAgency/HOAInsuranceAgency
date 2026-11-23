@@ -1,3 +1,4 @@
+import { usesIpfs } from "../../../shared/ipfsCollection";
 import { useAccountPermissions } from './AccountPermissions';
 import { assertGraphqlErrors } from '../lib/apiResponse';
 import { readBrokerFeeStatus, bindCommissionPolicy, type BrokerFeeStatus } from '../lib/brokerFees';
@@ -506,15 +507,21 @@ function BindForm({
   const [renewalEvidence, setRenewalEvidence] = useState("");
   const [hoaCollects, setHoaCollects] = useState(false);
   const issuedRenewal = owner && recordingRenewal;
-  const carrierBillType = issuedRenewal && quote.billType ? quote.billType : billType;
-  const collectionBillType = issuedRenewal && carrierBillType === "DIRECT" && hoaCollects ? "AGENCY" : carrierBillType;
+  const redirected = quote.carrierBillToAgency === true;
+  const ipfs = usesIpfs(quote);
+  const carrierBillType = redirected ? "DIRECT" : (issuedRenewal || quote.clientBillingSelected === true || ipfs) && quote.billType ? quote.billType : billType;
+  const [enteredIpfsRef, setIpfsAgreementRef] = useState("");
+  const ipfsAgreementRef = quote.ipfsQuoteRef || enteredIpfsRef;
+  const [ipfsConfirmation, setIpfsConfirmation] = useState("");
+  const ipfsKey = JSON.stringify([quote.id, packageTerms(quote), ipfsAgreementRef.trim()]);
+  const collectionBillType = redirected || (issuedRenewal && quote.clientBillingSelected !== true && carrierBillType === "DIRECT" && hoaCollects) ? "AGENCY" : carrierBillType;
   const renewalReady = !issuedRenewal || Boolean(renewalEvidence.trim() && policyNumber.trim());
   const hasBrokerFee = (quote.brokerFee ?? 0) > 0;
   const [paymentConfirmation, setPaymentConfirmation] = useState('');
   const paymentPreview = useAsyncResource(
     () => readCarrierPaymentPreview(quote.id, carrierBillType, issuedRenewal),
     [quote.id, quote.updatedAt, carrierBillType, issuedRenewal],
-    { manual: !carrierBillType || (hasBrokerFee && carrierBillType !== "AGENCY"), clearDataOnError: () => true , live: true },
+    { manual: !carrierBillType || (hasBrokerFee && collectionBillType !== "AGENCY"), clearDataOnError: () => true , live: true },
   );
   const paymentKey = JSON.stringify({ carrierBillType, issuedRenewal, preview: paymentPreview.data });
   const paymentReady = !!paymentPreview.data && !paymentPreview.loading && !paymentPreview.error &&
@@ -527,6 +534,7 @@ function BindForm({
     return fees.find(fee => fee.quoteId === quote.id) ?? null;
   }, [quote.id, quote.brokerFee, account.id], { initialData: null as BrokerFeeStatus | null, errorMessage: "Could not load broker fee status", live: { protectEdits: false, intervalMs: 15_000 } });
   const currentFeeSigned = Boolean(feeStatus.data?.signedAt && feeStatus.data.amountCents === brokerFeeCents(quote.brokerFee) && feeStatus.data.terms === authorizedQuoteTerms(quote));
+  const ipfsReady = !ipfs || Boolean(ipfsAgreementRef.trim() && ipfsConfirmation === ipfsKey && (!hasBrokerFee || currentFeeSigned));
   const bindLock = useRef(false);
   const live = useRef(true);
   useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
@@ -546,7 +554,7 @@ function BindForm({
   async function bind() {
     // Belt and braces: the button is disabled without one, but `bind` is the
     // thing that writes the row and an unset bill type must never reach it.
-    if (!carrierBillType || (hasBrokerFee && carrierBillType !== "AGENCY") || !renewalReady || !confirmed || !paymentReady || bindLock.current) return;
+    if (!carrierBillType || (hasBrokerFee && collectionBillType !== "AGENCY") || !renewalReady || !confirmed || !paymentReady || !ipfsReady || bindLock.current) return;
     bindLock.current = true;
     let policyCreated = false;
     setSaving(true);
@@ -554,6 +562,7 @@ function BindForm({
     try {
       const result = await bindCommissionPolicy({
         quoteId: quote.id, terms: packageTerms(quote), premium, agencyRate, billType: collectionBillType, policyNumber,
+        ...(ipfs ? { ipfsAgreementRef: ipfsAgreementRef.trim(), ipfsConfirmed: true } : {}),
         ...(issuedRenewal ? { issuedRenewalEvidence: renewalEvidence.trim(), carrierBillType } : {}),
         carrierTermsVersion: paymentPreview.data!.carrierTermsVersion,
         carrierArrangementId: paymentPreview.data!.payment?.id,
@@ -607,7 +616,7 @@ function BindForm({
           {issuedRenewal && <label className="field">Renewal evidence
             <Input value={renewalEvidence} maxLength={2000} disabled={saving} onChange={e => setRenewalEvidence(e.target.value)} />
           </label>}
-          {(quote.brokerFee ?? 0) > 0 && <div className="small" role="status"><strong>Broker fee: {fmtMoney(quote.brokerFee)}</strong><p>{feeStatus.loading ? "Checking signed disclosure and payment…" : feeStatus.error || (!currentFeeSigned ? "Client signature is needed on the current broker fee disclosure." : feeStatus.data!.collectedCents >= feeStatus.data!.amountCents ? "Disclosure signed · payment received." : feeStatus.data!.submittedCents >= feeStatus.data!.amountCents ? "Disclosure signed · payment submitted and clearing." : "Disclosure signed · fee payment is still needed.")}</p>{feeStatus.error && <Button variant="link" disabled={feeStatus.loading || saving} onClick={() => void feeStatus.refetch()}>Retry fee status</Button>}</div>}
+          {(quote.brokerFee ?? 0) > 0 && <div className="small" role="status"><strong>Broker fee: {fmtMoney(quote.brokerFee)}</strong><p>{feeStatus.loading ? (ipfs ? "Checking signed disclosure…" : "Checking signed disclosure and payment…") : feeStatus.error || (!currentFeeSigned ? "Client signature is needed on the current broker fee disclosure." : ipfs ? "Disclosure signed." : feeStatus.data!.collectedCents >= feeStatus.data!.amountCents ? "Disclosure signed · payment received." : feeStatus.data!.submittedCents >= feeStatus.data!.amountCents ? "Disclosure signed · payment submitted and clearing." : "Disclosure signed · fee payment is still needed.")}</p>{feeStatus.error && <Button variant="link" disabled={feeStatus.loading || saving} onClick={() => void feeStatus.refetch()}>Retry fee status</Button>}</div>}
           <div className="form-grid">
             <label className="field">Exact policy premium ($)<Input aria-label="Exact policy premium" inputMode="decimal" value={premium} disabled={saving} onChange={e => { setPremium(e.target.value); setConfirmed(false); }} /></label>
             <label className="field">Agency commission (%)<Input aria-label="Agency commission percentage" inputMode="decimal" value={agencyRate} disabled={saving} onChange={e => { setAgencyRate(e.target.value); setConfirmed(false); }} /></label>
@@ -616,17 +625,17 @@ function BindForm({
               <Select
                 id="bind-bill-type"
                 value={carrierBillType}
-                disabled={saving || (issuedRenewal && !!quote.billType) || hasBrokerFee}
+                disabled={saving || (issuedRenewal && !!quote.billType) || hasBrokerFee || ipfs || redirected || quote.clientBillingSelected === true}
                 onChange={(e) => setBillType(e.target.value as BillType | "")}
               >
                 <option value="">Choose…</option>
                 {BILL_TYPE_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value} disabled={hasBrokerFee && o.value === "DIRECT"}>
+                  <option key={o.value} value={o.value} disabled={hasBrokerFee && !redirected && o.value === "DIRECT"}>
                     {o.label}
                   </option>
                 ))}
               </Select>
-              {hasBrokerFee && <p className="small muted">Broker fees require agency billing, as set on the accepted quote.</p>}
+              {redirected ? <p className="small muted">The carrier bills HOA directly. {ipfs ? "IPFS collects from the client." : "HOA collects from the client."}</p> : hasBrokerFee && <p className="small muted">Broker fees require agency billing, as set on the accepted quote.</p>}
             </div>
             <div className="field">
               <label htmlFor="bind-policy-number">
@@ -641,8 +650,23 @@ function BindForm({
               />
             </div>
           </div>
-          {issuedRenewal && carrierBillType === "DIRECT" && <label><Input type="checkbox" checked={hoaCollects} disabled={saving} onChange={e => setHoaCollects(e.target.checked)} /> HOA will collect the premium</label>}
-          {carrierBillType === "DIRECT" && !issuedRenewal && (
+          {ipfs && (
+            <fieldset disabled={saving}>
+              <legend>IPFS collection confirmation</legend>
+              <label className="field">
+                IPFS agreement reference
+                <Input value={ipfsAgreementRef} readOnly={Boolean(quote.ipfsQuoteRef)} maxLength={200}
+                  onChange={e => { setIpfsAgreementRef(e.target.value); setIpfsConfirmation(""); }} />
+              </label>
+              <label>
+                <Input type="checkbox" checked={ipfsConfirmation === ipfsKey} disabled={!ipfsAgreementRef.trim()}
+                  onChange={e => setIpfsConfirmation(e.target.checked ? ipfsKey : "")} />
+                {' '}I verified the signed IPFS agreement and confirmed that IPFS received the client’s down payment.
+              </label>
+            </fieldset>
+          )}
+          {!redirected && quote.clientBillingSelected !== true && issuedRenewal && carrierBillType === "DIRECT" && <label><Input type="checkbox" checked={hoaCollects} disabled={saving} onChange={e => setHoaCollects(e.target.checked)} /> HOA will collect the premium</label>}
+          {carrierBillType === "DIRECT" && !issuedRenewal && !redirected && (
             <p className="small muted">
               The carrier bills the association and pays us commission
               afterwards.
@@ -677,7 +701,7 @@ function BindForm({
           <div className="form-actions quote-flow-actions">
             <Button variant="primary"
 
-              disabled={saving || !carrierBillType || (hasBrokerFee && carrierBillType !== "AGENCY") || !renewalReady || !confirmed || !paymentReady || !premium || !agencyRate}
+              disabled={saving || !carrierBillType || (hasBrokerFee && collectionBillType !== "AGENCY") || !renewalReady || !confirmed || !paymentReady || !ipfsReady || !premium || !agencyRate}
               onClick={bind}
             >
               {issuedRenewal ? saving ? "Recording…" : "Record renewal" : saving ? "Binding…" : "Confirm bind"}

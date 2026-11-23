@@ -1,3 +1,5 @@
+import { usesIpfs } from '../../../../shared/ipfsCollection';
+import { assertPriorIpfsBilling } from './ipfs-bind';
 import { QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { createHash } from 'node:crypto';
 import { PF_CONFIG_SHA256 } from '../../../../shared/premiumFinance/auditConfig';
@@ -20,6 +22,7 @@ export async function bindLinkWrites(quote: Data, policyId: string, at: string, 
   const accountId = String(quote.accountId), quoteId = String(quote.id);
   const { invoices, loans } = await quoteSourceBillingHistory(quote, fee);
   const writes: Transaction = [];
+  const external = usesIpfs(quote);
   let sourceBytes = 0;
   const checkBudget = () => {
     if (writes.length > MAX_LINKS) throw new Error('Too many quote-linked records to bind atomically. Review the quote attachments before binding.');
@@ -44,12 +47,13 @@ export async function bindLinkWrites(quote: Data, policyId: string, at: string, 
     sourceBytes += Buffer.byteLength(JSON.stringify(row), 'utf8');
     checkBudget();
   };
-  for (const invoice of invoices) {
+  if (external) writes.push(...assertPriorIpfsBilling(invoices, loans));
+  for (const invoice of external ? [] : invoices) {
     if (invoice.accountId !== accountId || invoice.quoteId !== quoteId)
       throw new Error('A quote invoice no longer matches its account and quote. Review it before binding.');
     attach('Invoice', invoice, ['accountId', 'quoteId', 'policyId', 'updatedAt', 'status', 'sourcePricingVersion']);
   }
-  for (const loan of loans) {
+  for (const loan of external ? [] : loans) {
     // A grouped/fee-allocation loan is not this quote's single-policy loan.
     // Terminal records retain the source they closed under, as in servicing.
     if (loan.quoteId !== quoteId || loan.groupedInvoiceId || Array.isArray(loan.groupedPolicyIds) && loan.groupedPolicyIds.length || !LIVE_LOANS.has(String(loan.status))) continue;

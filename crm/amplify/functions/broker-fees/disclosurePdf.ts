@@ -1,3 +1,5 @@
+import { usesIpfs } from '../../../../shared/ipfsCollection';
+import { quotePaymentInstructions } from '../../../../shared/quotePaymentInstructions';
 import { formatUsdCents as money } from '../../../../shared/money';
 import { PDFDocument, StandardFonts, rgb, type PDFPage } from 'pdf-lib';
 import type { BrokerFeeAgreement } from '../../../../shared/brokerFees';
@@ -68,7 +70,9 @@ export async function createBrokerFeeDisclosurePdf(agreement: BrokerFeeAgreement
   }
   y -= 4; text(`TOTAL BROKER FEES: ${money(agreement.totalCents)}`, 15, true); y -= 6;
   text(`Services: ${agreement.purpose}`);
-  text(`Payment and refunds: The broker fee is payable upfront and is not financed. ${agreement.refundTerms}`);
+  const hasIpfs = agreement.quotes.some(usesIpfs);
+  const payment = hasIpfs ? 'See Payment instructions by policy in this agreement.' : 'The broker fee is payable upfront and is not financed.';
+  text(`Payment and refunds: ${payment} ${agreement.refundTerms}`);
   text('Signing this agreement accepts only the stated broker fees and appended state disclosures. It does not authorize binding or establish insurance coverage. Client binding authorization and carrier confirmation remain separate.');
   if (agreement.stateForms.length) text(`${agreement.stateForms.length} approved state disclosure form(s) follow and are part of this agreement.`, 8);
   y -= 8;
@@ -82,6 +86,23 @@ export async function createBrokerFeeDisclosurePdf(agreement: BrokerFeeAgreement
     text(`Signed at: ${agreement.signature.signedAt}`, 8);
     text('The signer consented to electronic records and signature and represented authority to act for the client.', 8);
   } else text('Unsigned preview - client electronic signature is required.', 10, true);
+  if (hasIpfs) {
+    const schedule = agreement.quotes.map((quote, index) => {
+      const label = `${index + 1}. ${quote.carrierName || 'Carrier'} - ${(quote.lines ?? []).filter(Boolean).join(', ')}`;
+      const instructions = quotePaymentInstructions(quote);
+      const height = wrapped(label, 524, 10).length * 13 + wrapped(instructions, 524).length * 12 + 10;
+      return { label, instructions, height };
+    });
+    const heading = () => { text('Payment instructions by policy', 13, true); y -= 8; };
+    const scheduleHeight = schedule.reduce((total, item) => total + item.height, 34);
+    if (y - scheduleHeight < 58) newPage();
+    else y -= 10;
+    heading();
+    for (const item of schedule) {
+      if (y - item.height < 58) { newPage(); heading(); }
+      text(item.label, 10, true); text(item.instructions); y -= 10;
+    }
+  }
   for (const form of agreement.stateForms) {
     newPage(); text(form.title, 15, true); y -= 10;
     for (const paragraph of form.paragraphs) {

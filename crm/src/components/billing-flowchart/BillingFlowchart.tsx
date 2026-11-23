@@ -13,7 +13,7 @@ export function BillingFlowchart() {
           <dt>No broker fee and no IPFS request → use carrier direct bill when available</dt>
           <dd>The client pays the carrier in full or on the carrier’s installment plan. HOA collects $0. Skip the HOA CRM invoice.</dd>
           <dt>Broker fee, IPFS request or agency bill only → use agency billing</dt>
-          <dd>Select agency bill when the carrier offers it. If the carrier offers only direct bill, set the billing address on the carrier’s bill to HOA Insurance Agency. For a fee-bearing quote, confirm Agency bill in HOA CRM.</dd>
+          <dd>Select agency bill when the carrier offers it. If the carrier offers only direct bill, set the billing address on the carrier’s bill to HOA Insurance Agency. On the quote, set Client pays to HOA CRM or IPFS.</dd>
         </dl>
         <h3>For agency billing, which platform collects payment?</h3>
         <dl>

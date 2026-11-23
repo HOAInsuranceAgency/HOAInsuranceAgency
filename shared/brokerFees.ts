@@ -2,6 +2,7 @@ import { decodeAwsJson } from './apiResponse';
 
 /** Broker fees are agency revenue, separate from premium and carrier commission. */
 export const BROKER_FEE_PURPOSE = 'Insurance placement and policy servicing';
+export const IPFS_DISCLOSURE_VERSION = 'ipfs-v1';
 export const BROKER_FEE_TERMS_VERSION = '2026-11-04.v1';
 export const BROKER_FEE_REFUND_TERMS = 'Earned when coverage is bound and retained after binding, except refunds required by applicable law. If coverage is not bound, the fee is refundable.';
 export interface BrokerFeeAllocation { quoteId: string; amountCents: number; policyId?: string; }
@@ -9,10 +10,13 @@ export interface BrokerFeeInvoiceSendClaim {
   invoiceId: string; token: string; createdAt: string; phase: 'PREPARING' | 'PUBLISHED';
   totalCents: number; previousLinkId: string | null; linkId?: string;
 }
-export interface BrokerFeeSignature { name: string; email: string; role: string; signedAt: string; consent: true; ip?: string; }
+export interface BrokerFeeSignature { name: string; email: string; role: string; signedAt: string; consent: true; ip?: string; ipfsDisclosureVersion?: string; }
 export interface BrokerFeeQuote {
   id: string; accountId: string; carrierId?: string | null; carrierName?: string | null; lines?: (string | null)[] | null;
   premium?: number | null; brokerFee?: number | null; billType?: string | null; effectiveDate?: string | null; expirationDate?: string | null;
+  ipfsQuoteRef?: string | null;
+  ipfsAmountFinanced?: number | null;
+  ipfsPriorBrokerFees?: number | null;
   agencyCommissionPct?: number; agencyCommissionCents?: number;
   terms: string;
 }
@@ -28,11 +32,15 @@ export interface BrokerFeeRecord {
   agreementId?: string; signedAt?: string; policyId?: string; issuedInvoiceIds?: string[]; issuedLoanIds?: string[];
   invoiceSendClaim?: BrokerFeeInvoiceSendClaim;
   submittedCents: number; collectedCents: number; refundedCents: number;
+  ipfsCollectionRef?: string;
+  /** Actual placement-fee settlements from IPFS, already included in the fee totals above. */
+  ipfsRemittance?: { collectedCents: number; refundedCents: number };
   paymentSources?: Record<string, { status: 'PROCESSING' | 'PAID' | 'FAILED' | 'REFUNDED'; amountCents: number; refundedCents: number }>;
 }
 export interface BrokerFeePublicTerms {
   ok: boolean; state: 'open' | 'signed' | 'closed'; reason?: string; accountName?: string;
-  agreementId?: string; quotes?: Omit<BrokerFeeQuote, 'terms' | 'accountId' | 'carrierId'>[]; totalCents?: number; purpose?: string; refundTerms?: string;
+  requiresIpfsDisclosureVersion?: boolean;
+  agreementId?: string; quotes?: Omit<BrokerFeeQuote, 'terms' | 'accountId' | 'carrierId' | 'ipfsQuoteRef'>[]; totalCents?: number; purpose?: string; refundTerms?: string;
   agencySigner?: Pick<NonNullable<BrokerFeeAgreement['agencySigner']>, 'name' | 'title' | 'licenseNumber'>;
   stateForms?: BrokerFeeAgreement['stateForms']; signedAt?: string; downloadUrl?: string;
   payments?: { label: string; url: string }[];

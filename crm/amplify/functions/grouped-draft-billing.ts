@@ -1,4 +1,5 @@
 import { batchGetComplete } from './storage/batchGet';
+import { assertHoaCollection } from './ipfs-invoice';
 import { isGroupedInvoice } from '../../../shared/groupedInvoiceGuard';
 import { accountModels, db, getModel, modelTable, versionCheck, type Write } from './broker-fees/store';
 
@@ -7,6 +8,8 @@ export type BillingPolicy = {
   accountId?: unknown;
   billType?: unknown;
   carrierBillType?: unknown;
+  ipfsAmountFinanced?: unknown;
+  carrierBillToAgency?: unknown;
   groupedDraftInvoiceId?: unknown;
   updatedAt?: unknown;
 };
@@ -15,7 +18,8 @@ export class GroupedDraftBillingBlocked extends Error {}
 
 /** Review drafts reserve their policy terms without creating a receivable. */
 export async function assertStandalonePolicyBilling(policy: BillingPolicy): Promise<void> {
-  if (policy.carrierBillType === 'DIRECT' && policy.billType === 'AGENCY') {
+  assertHoaCollection(policy);
+  if (policy.carrierBillType === 'DIRECT' && policy.billType === 'AGENCY' && policy.carrierBillToAgency !== true) {
     throw new GroupedDraftBillingBlocked('This carrier-direct policy cannot be billed as an agency premium invoice.');
   }
   const draftId = policy.groupedDraftInvoiceId;
@@ -42,11 +46,12 @@ export function standalonePolicyBillingGuard(policy: BillingPolicy, checkVersion
     ConditionExpression: [
       'attribute_exists(id)',
       draftCondition,
-      'NOT (carrierBillType = :direct AND billType = :agency)',
+      '(NOT (carrierBillType = :direct AND billType = :agency) OR carrierBillToAgency = :yes)',
+      '(attribute_not_exists(ipfsAmountFinanced) OR ipfsAmountFinanced = :nil)',
       version?.ConditionExpression,
     ].filter(Boolean).join(' AND '),
     ...(version?.ExpressionAttributeNames ? { ExpressionAttributeNames: version.ExpressionAttributeNames } : {}),
-    ExpressionAttributeValues: { ...version?.ExpressionAttributeValues, ':draft': policy.groupedDraftInvoiceId ?? null, ':direct': 'DIRECT', ':agency': 'AGENCY' },
+    ExpressionAttributeValues: { ...version?.ExpressionAttributeValues, ':draft': policy.groupedDraftInvoiceId ?? null, ':direct': 'DIRECT', ':agency': 'AGENCY', ':yes': true, ':nil': null },
   } };
 }
 

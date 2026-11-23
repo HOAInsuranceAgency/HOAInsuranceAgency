@@ -15,14 +15,14 @@ export async function previewCarrierPaymentTerms(event: Event) {
     throw new Error('Only the active Owner can record an already-issued renewal.');
   const quote = await new AccountAccess(event.identity, undefined, event.request)
     .requireRecord('Quote', quoteId);
-  if (issuedRenewal && quote.billType != null && quote.billType !== billType)
+  if (issuedRenewal && quote.billType != null && (quote.carrierBillToAgency === true ? 'DIRECT' : quote.billType) !== billType)
     throw new Error('The carrier’s billing type must match the recorded quote.');
   const terms = await get<CarrierCommissionTerms>('CARRIER', required(quote.carrierId, 'a carrier'));
   if (!terms) throw new Error('An Owner must configure this carrier’s commission payment terms before binding.');
   const selected = selectCarrierPaymentTerms(terms, {
     effectiveDate: day(quote.effectiveDate),
     lines: Array.isArray(quote.lines) ? quote.lines.filter((v): v is string => typeof v === 'string') : [],
-    billType,
+    billType: quote.carrierBillToAgency === true ? 'DIRECT' : billType,
     transaction: issuedRenewal || quote.renewalPolicyId ? 'RENEWAL' : 'NEW',
   });
   const p = selected.payment;

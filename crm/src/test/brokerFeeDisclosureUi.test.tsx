@@ -31,3 +31,23 @@ it('leaves the signer entries available when saving fails', async () => {
   await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('quote changed'));
   expect(screen.getByLabelText('Your full name')).toHaveValue('Pat Manager'); expect(screen.queryByText('Disclosure signed and saved')).not.toBeInTheDocument();
 });
+
+it('shows the signed IPFS down payment split without offering an agency checkout', async () => {
+  const mock = terms();
+  h.load.mockResolvedValue({ ...mock, state: 'signed', quotes: [{ ...mock.quotes[0], brokerFee: 3500, billType: 'AGENCY', ipfsAmountFinanced: 10000 }], totalCents: 350000, payments: [{ label: 'Pay invoice INV-1', url: 'https://buy.stripe.com/example' }] });
+  render(<BrokerFeeDisclosure />);
+  const details = await screen.findByText(/Pay IPFS/);
+  expect(details).toHaveTextContent('$3,000.00 is financed and $500.00 is due with your down payment');
+  expect(screen.queryByRole('link', { name: /pay invoice/i })).not.toBeInTheDocument();
+  expect(screen.queryByText(/when the invoice is ready|excluded from premium financing/i)).not.toBeInTheDocument();
+});
+
+it('acknowledges the IPFS display version only after showing the fee split and taking consent', async () => {
+  const mock = terms(), user = userEvent.setup();
+  h.load.mockResolvedValue({ ...mock, quotes: [{ ...mock.quotes[0], billType: 'AGENCY', ipfsAmountFinanced: 1000, ipfsPriorBrokerFees: 100 }] });
+  render(<BrokerFeeDisclosure />);
+  expect(await screen.findByText(/Pay IPFS/)).toHaveTextContent('$200.00 is financed and $50.00 is due with your down payment');
+  await user.type(screen.getByLabelText('Your full name'), 'Pat Manager'); await user.type(screen.getByLabelText('Your email'), 'pat@example.com'); await user.type(screen.getByLabelText('Your role'), 'Treasurer');
+  await user.click(screen.getByRole('checkbox')); await user.click(screen.getByRole('button', { name: 'Sign fee agreement' }));
+  expect(h.sign).toHaveBeenCalledWith('private-token', expect.objectContaining({ consent: true, ipfsDisclosureVersion: 'ipfs-v1' }));
+});

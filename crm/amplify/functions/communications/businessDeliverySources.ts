@@ -1,3 +1,5 @@
+import { ipfsOfferGroups } from '../../../../shared/ipfsAgreementAllocation';
+import { quotePaymentInstructions } from '../../../../shared/quotePaymentInstructions';
 import { formatUsdDollars, formatUsdCents } from '../../../../shared/money';
 import type { Schema } from '../../data/resource';
 import { isBusinessDeliveryFile, type BusinessDeliverySelection, type PublicProposalQuote } from '../../../../shared/frontBusinessDelivery';
@@ -15,7 +17,7 @@ export interface SourceVersion { model: 'ACCOUNT' | 'QUOTE' | 'CERTIFICATE' | 'D
 export interface SourceFile { id: string; name: string; key: string; contentType: string; }
 export interface DeliverySource {
   account: Schema['Account']['type'];
-  title: string; facts: string[]; quotes: PublicProposalQuote[]; quoteTerms: Record<string, string>;
+  title: string; facts: string[]; quotes: PublicProposalQuote[]; quoteTerms: Record<string, string>; ipfsQuoteRefs: Record<string, string>;
   packageName?: string; requiredLines: string[]; files: SourceFile[];
   versions: SourceVersion[]; commercial?: Row<CommercialPlan>; fingerprint: string;
 }
@@ -44,7 +46,7 @@ function version(model: SourceVersion['model'], record: { id: string; updatedAt:
 const publicFields = ['perOccurrenceDeductible', 'perUnitDeductible', 'blanketLimit', 'coinsurancePct', 'replacementCostType', 'glEachOccurrence', 'glDamageToRentedPremises', 'glMedicalExpense', 'glPersonalAdvInjury', 'glGeneralAggregate', 'glProductsCompletedOps', 'glClaimsMade', 'glAggregateAppliesTo', 'minimumEarnedPremiumPct'] as const;
 // Include private review inputs only in the server-side terms comparison, never
 // in public output. Fetching a partial review input would invalidate its fence.
-const quoteSourceFields = ['id', 'accountId', 'carrierId', 'status', 'premium', 'brokerFee', 'passThroughCharges', 'clientConditions', 'billType', 'commissionPct', 'lines', 'effectiveDate', 'expirationDate', 'offerExpiresAt', 'renewalPolicyId', 'notes', 'updatedAt', ...publicFields] as const;
+const quoteSourceFields = ['id', 'accountId', 'carrierId', 'status', 'premium', 'brokerFee', 'ipfsRegisteredPolicyId', 'ipfsAmountFinanced', 'ipfsPriorBrokerFees', 'ipfsQuoteRef', 'clientBillingSelected', 'carrierBillToAgency', 'passThroughCharges', 'clientConditions', 'billType', 'commissionPct', 'lines', 'effectiveDate', 'expirationDate', 'offerExpiresAt', 'renewalPolicyId', 'notes', 'updatedAt', ...publicFields] as const;
 async function sourceReads<T, R>(items: readonly T[], read: (item: T) => Promise<R>): Promise<R[]> {
   const results: R[] = [];
   // Bounded batches retain input order regardless of request completion order.
@@ -59,7 +61,7 @@ export async function loadDeliverySource(input: BusinessDeliverySelection): Prom
   if (!Array.isArray(ids) || ids.length > 10 || new Set(ids).size !== ids.length) throw businessValidation('Choose up to 10 different PDF documents');
   ids.forEach(id => deliveryId(id, 'document'));
   if (input.kind !== 'PACKAGE' && ids.length) throw businessValidation('Additional carrier PDFs belong to a package presentation');
-  const versions = [version('ACCOUNT', account)], facts: string[] = [], quotes: PublicProposalQuote[] = [], files: SourceFile[] = [], quoteTerms: Record<string, string> = {};
+  const versions = [version('ACCOUNT', account)], facts: string[] = [], quotes: PublicProposalQuote[] = [], files: SourceFile[] = [], quoteTerms: Record<string, string> = {}, ipfsQuoteRefs: Record<string, string> = {};
   let commercial: Row<CommercialPlan> | undefined, title: string, packageName: string | undefined;
   let requiredLines: string[] = [];
   if (input.kind === 'PACKAGE') {
@@ -71,6 +73,9 @@ export async function loadDeliverySource(input: BusinessDeliverySelection): Prom
       if (result.errors?.length || !result.data || result.data.id !== id || result.data.accountId !== input.accountId) throw businessValidation('A package quote is unavailable on this account');
       return result.data;
     });
+    if (sourceQuotes.some(q => q.ipfsRegisteredPolicyId != null)) throw businessValidation('A previously bound IPFS policy cannot be included in a new proposal.');
+    try { ipfsOfferGroups(sourceQuotes); }
+    catch (error) { throw businessValidation(error instanceof Error ? error.message : 'Review the IPFS agreement references.'); }
     const assessment = packageAssessment(commercial.data, option, sourceQuotes, agencyDay(new Date().toISOString()));
     if (!assessment.complete) throw businessValidation(`Review the package before presenting it: ${assessment.problems.join('. ')}`);
     if (sourceQuotes.some(q => !['QUOTED', 'PRESENTED'].includes(q.status))) throw businessValidation('Only open reviewed offers can be presented');
@@ -88,7 +93,10 @@ export async function loadDeliverySource(input: BusinessDeliverySelection): Prom
       const carrier = carriers.get(q.carrierId!)!;
       versions.push(version('QUOTE', q), version('CARRIER', carrier));
       quoteTerms[q.id] = packageTerms(q);
+      if (q.ipfsQuoteRef) ipfsQuoteRefs[q.id] = q.ipfsQuoteRef;
       const publicQuote: PublicProposalQuote = { id: q.id, carrierName: carrier.name, premium: q.premium!, brokerFee: q.brokerFee ?? 0, billType: q.billType, lines: q.lines!.filter((line): line is string => !!line), effectiveDate: q.effectiveDate!, expirationDate: q.expirationDate!, offerExpiresAt: q.offerExpiresAt,
+        ...(q.ipfsAmountFinanced != null ? { ipfsAmountFinanced: q.ipfsAmountFinanced } : {}),
+        ...(q.ipfsPriorBrokerFees != null ? { ipfsPriorBrokerFees: q.ipfsPriorBrokerFees } : {}),
         passThroughCharges: normalizePassThroughCharges(q.passThroughCharges), clientConditions: q.clientConditions,
         ...Object.fromEntries(publicFields.map(field => [field, q[field] ?? null])) };
       quotes.push(publicQuote);
@@ -96,6 +104,7 @@ export async function loadDeliverySource(input: BusinessDeliverySelection): Prom
       for (const charge of publicQuote.passThroughCharges!) facts.push(`${charge.description}: ${formatUsdCents(charge.amountCents)}`);
       const charges = clientChargeBreakdown(publicQuote);
       if (charges.brokerFeeCents) facts.push(`HOA broker fee: ${formatUsdCents(charges.brokerFeeCents)}`);
+      facts.push(quotePaymentInstructions(publicQuote));
     }
     const totals = clientChargeTotals(quotes);
     if (totals.passThroughCents) facts.push(`Supplier fees and taxes: ${formatUsdCents(totals.passThroughCents)}`);
@@ -119,7 +128,7 @@ export async function loadDeliverySource(input: BusinessDeliverySelection): Prom
   // Identical carrier references in a package share one source fence.
   const distinctVersions = [...new Map(versions.map(v => [`${v.model}:${v.id}`, v])).values()];
   const fingerprint = hash(canonical({ selection: { accountId: input.accountId, kind: input.kind, recordId: input.recordId, documentIds: ids }, versions: distinctVersions, commercialVersion: commercial?.version, quoteTerms, packageName, requiredLines, files }));
-  return { account, title, facts, quotes, quoteTerms, packageName, requiredLines, files, versions: distinctVersions, commercial, fingerprint };
+  return { account, title, facts, quotes, quoteTerms, ipfsQuoteRefs, packageName, requiredLines, files, versions: distinctVersions, commercial, fingerprint };
 }
 /** Fence the exact reviewed records before claiming the non-idempotent external POST. */
 export function deliverySourceChecks(source: DeliverySource): Write[] {

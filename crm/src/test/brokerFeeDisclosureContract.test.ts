@@ -110,6 +110,7 @@ it.each(['accountName', 'agreementId', 'purpose', 'refundTerms'])(
 
 it.each([
   { id: undefined }, { brokerFee: undefined }, { lines: undefined }, { lines: null }, { lines: [] },
+  { ipfsAmountFinanced: 1000, ipfsPriorBrokerFees: -2 }, { ipfsAmountFinanced: 1000, ipfsPriorBrokerFees: '2' }, { ipfsPriorBrokerFees: 20 },
   { carrierName: {} }, { effectiveDate: 123 }, { expirationDate: {} },
   { premium: '10000' }, { brokerFee: '500' }, { brokerFee: -1 }, { lines: ['Property', {}] },
 ])('refuses malformed policy display fields: %j', async patch => {
@@ -164,4 +165,22 @@ it('accepts a closed response without requiring unavailable agreement or policy 
   const terms = { ok: true, state: 'closed', reason: 'This fictional link expired.' };
   fetchMock.mockResolvedValue(response(terms));
   expect(await disclosure.loadBrokerFeeDisclosure('fictional-token')).toEqual(terms);
+});
+
+it.each([0, -3, 100.001, '1000'])('rejects an invalid external financed amount %j before displaying a signing form', async amount => {
+  fetchMock.mockResolvedValue(response({ ...open(), quotes: [{ ...quote(), ipfsAmountFinanced: amount }] }));
+  await expect(disclosure.loadBrokerFeeDisclosure('fictional-token')).rejects.toThrow('unreadable');
+});
+
+it('negotiates IPFS display support after a legacy read and uses a versioned mutation for external fee consent', async () => {
+  const version = 'ipfs-v1', terms = { ...open(), quotes: [{ ...quote(), ipfsAmountFinanced: 1000 }] };
+  fetchMock.mockResolvedValueOnce(response({ ok: true, state: 'closed', requiresIpfsDisclosureVersion: true })).mockResolvedValueOnce(response(terms));
+  expect(await disclosure.loadBrokerFeeDisclosure('token')).toEqual(terms);
+  const initial = JSON.parse(fetchMock.mock.calls[0][1].body), retry = JSON.parse(fetchMock.mock.calls[1][1].body);
+  expect(initial.query).not.toContain('ipfsDisclosureVersion');
+  expect(retry.query).toContain('ipfsDisclosureVersion: $ipfsDisclosureVersion'); expect(retry.variables.ipfsDisclosureVersion).toBe(version);
+  fetchMock.mockResolvedValueOnce(response({ ...terms, state: 'signed', signedAt: '2026-11-22T10:00:00Z' }, 'signBrokerFeeDisclosure'));
+  await disclosure.signBrokerFeeDisclosure('token', { signerName: 'Pat Manager', signerEmail: 'pat@example.test', signerRole: 'Treasurer', consent: true, ipfsDisclosureVersion: version });
+  const mutation = JSON.parse(fetchMock.mock.calls[2][1].body);
+  expect(mutation.query).toContain('ipfsDisclosureVersion: $ipfsDisclosureVersion'); expect(mutation.variables.ipfsDisclosureVersion).toBe(version);
 });

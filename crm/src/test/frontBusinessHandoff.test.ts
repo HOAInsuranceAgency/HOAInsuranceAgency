@@ -2,9 +2,9 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import type { Communication } from '../../../shared/leadWorkflow';
 import type { BusinessDeliveryPreview, PrepareBusinessDraftInput } from '../../../shared/frontBusinessDelivery';
-const fee = vi.hoisted(() => ({ prepare: vi.fn(), disclosure: vi.fn() }));
+const fee = vi.hoisted(() => ({ prepare: vi.fn(), disclosure: vi.fn(), agreement: vi.fn() }));
 vi.mock('../../amplify/functions/broker-fees/agreements', () => ({ prepareBrokerFeeAgreement: fee.prepare }));
-vi.mock('../../amplify/functions/broker-fees/store', () => ({ getAgreement: async () => ({ id: 'bfa_test', quotes: [], stateForms: [] }) }));
+vi.mock('../../amplify/functions/broker-fees/store', () => ({ getAgreement: fee.agreement }));
 vi.mock('../../amplify/functions/broker-fees/disclosurePdf', () => ({ createBrokerFeeDisclosurePdf: fee.disclosure }));
 const h=vi.hoisted(()=>({rows:new Map<string,any>(),models:new Map<string,any>(),objects:new Map<string,Uint8Array>(),messages:new Map<string,any>(),front:vi.fn(),pdf:vi.fn(),identity:vi.fn(),enabled:vi.fn(),recipients:vi.fn(),attachment:vi.fn(),documents:vi.fn(),beforeCommit:undefined as undefined|(()=>void),posts:0,signatureHtml:'',threadSubject:undefined as string|undefined,conversationResolver:undefined as undefined|((id:string)=>Promise<{id:string;subject?:string}>)}));
 vi.mock('@aws-sdk/client-s3',()=>({S3Client:class{async send(command:any){const p=command.input;if(command.constructor.name==='PutObjectCommand'){h.objects.set(p.Key,new Uint8Array(p.Body));return{};}const body=h.objects.get(p.Key);if(!body)throw new Error('Missing object');return{ContentLength:body.length,Body:{transformToByteArray:async()=>body}};}},GetObjectCommand:class GetObjectCommand{constructor(public input:any){}},PutObjectCommand:class PutObjectCommand{constructor(public input:any){}}}));
@@ -54,6 +54,7 @@ beforeEach(()=>{
   vi.useFakeTimers();vi.setSystemTime(new Date(NOW));vi.clearAllMocks();h.rows.clear();h.models.clear();h.objects.clear();h.messages.clear();h.posts=0;h.beforeCommit=undefined;h.threadSubject=undefined;h.conversationResolver=undefined;
   for(const model of ['ACCOUNT','QUOTE','CARRIER','CERTIFICATE','DOCUMENT'])process.env[`${model}_TABLE`]=model[0]+model.slice(1).toLowerCase();
   process.env.COMMUNICATION_TABLE='Communication';process.env.DOCUMENT_BUCKET='test';
+  fee.agreement.mockResolvedValue({ id: 'bfa_test', quotes: [], stateForms: [] });
   fee.prepare.mockResolvedValue({ url: 'https://agency.example.test/broker-fee/?t=client-fee-token', agreementId: 'bfa_test' });
   fee.disclosure.mockResolvedValue({ bytes: PDF, filename: 'Broker fee disclosure.pdf', contentType: 'application/pdf' });
   const account={id:'a1',name:'Willow HOA',updatedAt:NOW,contacts:async()=>({data:[{name:'Current manager',email:'client@example.com',isPrimary:true},{name:'Former manager',email:'former@example.com',validUntil:'2026-11-01'}]}),quotes:async()=>({data:[h.models.get('Quote:q1')]}),certificates:async()=>({data:[...h.models.entries()].filter(([k])=>k.startsWith('Certificate:')).map(([,v])=>v)})};
@@ -502,4 +503,28 @@ describe('PDF/recipient source boundaries',()=>{
     const image=new Uint8Array([0xff,0xd8,0xff,0xe0,1,2,3]),key='documents/ACCOUNT/a1/photo/photo.jpg';h.models.set('Document:photo',{...doc,id:'photo',category:'OTHER',s3Key:key,name:'photo.jpg',contentType:'image/jpeg',updatedAt:NOW});h.objects.set(key,image);h.attachment.mockResolvedValue(image);
     const p=await previewBusinessDelivery({accountId:'a1',kind:'DOCUMENT',recordId:'photo'},'actor');expect(p.attachments[0].contentType).toBe('image/jpeg');expect(p.quotes).toEqual([]);expect((await prepareBusinessDraft(prepareInput(p),'actor')).state).toBe('DRAFT');await expect(previewBusinessDelivery({...selection,documentIds:['photo']},'actor')).rejects.toThrow('must be PDFs');
   });
+});
+
+
+it('carries a reviewed IPFS quote through the email and attaches the original signed agreement bytes', async () => {
+  const quote = h.models.get('Quote:q1');
+  Object.assign(quote, { billType: 'AGENCY', brokerFee: 3500, ipfsAmountFinanced: 10000, ipfsPriorBrokerFees: 1200, ipfsQuoteRef: 'PRIVATE-LENDER-ID', clientBillingSelected: true, carrierBillToAgency: true });
+  h.rows.get('commercial:a1').data.options[0].reviewed.terms.q1 = packageTerms(quote);
+  const signed = new TextEncoder().encode('%PDF-1.7 original signed document');
+  const signedDocumentKey = 'documents/ACCOUNT/a1/bfd_123/signed-broker-fee-disclosure.pdf';
+  h.objects.set(signedDocumentKey, signed);
+  fee.agreement.mockResolvedValue({ id: 'bfa_test', signature: { consent: true }, signedDocumentKey });
+  const preview = await previewBusinessDelivery(selection, 'actor');
+  expect(preview.body).toContain('Pay IPFS'); expect(preview.body).toContain('$1,800.00 is financed and $1,700.00 is due with your down payment');
+  expect(preview.body).toContain('Review your signed broker fee disclosure'); expect(preview.body).not.toContain('invoice payment link');
+  expect(preview.quotes[0]).toMatchObject({ ipfsAmountFinanced: 10000, ipfsPriorBrokerFees: 1200 });
+  expect(preview.quotes[0]).not.toHaveProperty('carrierBillToAgency');
+  expect(JSON.stringify(preview)).not.toContain('PRIVATE-LENDER-ID');
+  expect(fee.prepare).toHaveBeenCalledWith('a1', [expect.objectContaining({ ipfsAmountFinanced: 10000, ipfsPriorBrokerFees: 1200, terms: authorizedQuoteTerms(quote) })]);
+  expect(fee.disclosure).not.toHaveBeenCalled();
+  expect(preview.attachments.find(file => file.name === 'Signed broker fee disclosure.pdf')?.sha256).toBe(sha(signed));
+
+  fee.agreement.mockResolvedValue({ id: 'bfa_test', signature: { consent: true } });
+  await expect(previewBusinessDelivery(selection, 'actor')).rejects.toThrow('stored signed disclosure');
+  expect(fee.disclosure).not.toHaveBeenCalled();
 });

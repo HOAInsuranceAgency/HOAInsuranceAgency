@@ -69,21 +69,11 @@ const schema = a
     ]),
     PolicyStatus: a.enum(["ACTIVE", "EXPIRED", "CANCELLED", "NON_RENEWED"]),
     /**
-     * Who collects the premium from the association.
-     *
-     * AGENCY — the agency bills the insured, collects the gross premium and
-     * remits it to the carrier net of commission. These are the policies the
-     * Invoice model is about; see the note on it, which assumes exactly this
-     * arrangement.
-     *
-     * DIRECT — the carrier bills the insured itself and pays commission to the
-     * agency afterwards. Nothing passes through the agency's account, so a
-     * direct-bill policy is not something to raise a premium invoice for.
-     *
-     * Captured at bind because it is a term of the placement, not a property
-     * of the account: the same association can be agency bill with one carrier
-     * and direct bill with another, and which one it is decides whether anyone
-     * here is supposed to chase the money.
+     * Carrier payment arrangement on this term. For agency billing, the
+     * client pays HOA directly for pay-in-full or pays IPFS when the quote
+     * carries an IPFS financed amount. Direct bill means the carrier collects.
+     * carrierBillToAgency preserves a direct-bill carrier's arrangement when
+     * its bill is addressed to HOA and the client pays HOA or IPFS.
      */
     BillType: a.enum(["AGENCY", "DIRECT"]),
     /**
@@ -856,6 +846,14 @@ const schema = a
       premium: a.float(),
       /** Optional agency fee; never part of carrier premium. */
       brokerFee: a.float(),
+      /** Servicing-only link for a previously bound external-collection term. */
+      ipfsRegisteredPolicyId: a.id(),
+      ipfsAmountFinanced: a.float(),
+      ipfsPriorBrokerFees: a.float(),
+      ipfsReleaseReference: a.string(),
+      ipfsQuoteRef: a.string(),
+      clientBillingSelected: a.boolean(),
+      carrierBillToAgency: a.boolean(),
       passThroughCharges: a.json(),
       clientConditions: a.string(),
       billType: a.ref("BillType"),
@@ -931,6 +929,12 @@ const schema = a
       billType: a.ref("BillType"),
       /** Original carrier billing when HOA collects a direct-billed premium. */
       carrierBillType: a.ref("BillType"),
+      carrierBillToAgency: a.boolean(),
+      ipfsAmountFinanced: a.float(),
+      ipfsPriorBrokerFees: a.float(),
+      ipfsAgreementRef: a.string(),
+      ipfsConfirmedAt: a.datetime(),
+      ipfsConfirmedBy: a.string(),
       groupedDraftInvoiceId: a.id(),
       /**
        * ── Premium-finance eligibility facts (W3), mostly retired ──
@@ -2197,11 +2201,11 @@ const schema = a
       .handler(a.handler.function(uploadPortal)),
 
     brokerFeeDisclosure: a.query()
-      .arguments({ token: a.string().required() }).returns(a.json())
+      .arguments({ token: a.string().required(), ipfsDisclosureVersion: a.string() }).returns(a.json())
       .authorization(allow => [allow.publicApiKey()])
       .handler(a.handler.function(brokerFees)),
     signBrokerFeeDisclosure: a.mutation()
-      .arguments({ token: a.string().required(), signerName: a.string().required(), signerEmail: a.string().required(), signerRole: a.string().required(), consent: a.boolean().required() })
+      .arguments({ token: a.string().required(), signerName: a.string().required(), signerEmail: a.string().required(), signerRole: a.string().required(), consent: a.boolean().required(), ipfsDisclosureVersion: a.string() })
       .returns(a.json()).authorization(allow => [allow.publicApiKey()])
       .handler(a.handler.function(brokerFees)),
     brokerFeeAction: a.mutation()

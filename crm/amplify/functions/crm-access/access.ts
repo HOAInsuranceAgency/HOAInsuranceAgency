@@ -1,3 +1,5 @@
+import { assertHoaCollection } from '../ipfs-invoice';
+import { needsIpfsClosure, usesIpfs, validateCollectionRoute } from '../../../../shared/ipfsCollection';
 import type { TransactWriteCommandInput } from '@aws-sdk/lib-dynamodb';
 import { HeadObjectCommand } from '@aws-sdk/client-s3';
 import { fileClient } from './file-signing';
@@ -244,16 +246,29 @@ export class AccountAccess {
     }
     if (model === "AgencySettings" && ["brokerFeeJurisdictions","brokerFeeJurisdictionsVersion"].some(key=>Object.hasOwn(input,key))) throw new Error("Save reviewed broker fee rules through Agency settings.");
     if (model === "Quote" && operation === "delete") {
+      const quote = await this.get("Quote",id(input.id));
+      if (usesIpfs(quote)) throw new Error("Resolve the IPFS collection before removing this quote.");
       const fee=await getFee(id(input.id));
       if(fee&&(fee.signedAt||fee.submittedCents>0||fee.collectedCents>0||fee.policyId))throw new Error("Quotes with signed fee or payment history cannot be deleted. Preserve the record and its adjustments.");
     }
     if (model === "Quote" && ["create","update"].includes(operation)) {
+      if (Object.hasOwn(input, 'ipfsRegisteredPolicyId')) throw new Error('The historical IPFS collection link is server-owned.');
       if(Object.hasOwn(input,"passThroughCharges"))normalizePassThroughCharges(input.passThroughCharges);
       if(Object.hasOwn(input,"clientConditions"))normalizeClientConditions(input.clientConditions);
       if (Object.hasOwn(input,"brokerFee")) brokerFeeCents(input.brokerFee as number|null);
       const previous = input.id ? await this.get("Quote",id(input.id)) : undefined;
+      if (previous?.ipfsRegisteredPolicyId != null) throw new Error('This registered IPFS quote is retained with its bound policy.');
+      const nextBilling = { ...previous, ...input };
+      validateCollectionRoute(nextBilling);
+      const leavingIpfs = needsIpfsClosure(previous) && !usesIpfs(nextBilling);
+      if (previous?.status === 'BOUND' && (usesIpfs(previous) || previous.carrierBillToAgency === true) &&
+          Object.hasOwn(input,'status') && input.status !== 'BOUND') throw new Error('The bound payment route belongs to the issued policy.');
+      if (leavingIpfs && (typeof input.ipfsReleaseReference !== 'string' || !input.ipfsReleaseReference.trim() || input.ipfsReleaseReference.length > 200)) throw new Error('Confirm the IPFS payment request is closed before changing collection.');
+      if (!leavingIpfs && Object.hasOwn(input,'ipfsReleaseReference')) throw new Error('IPFS release evidence belongs to a collection change.');
+      if (previous?.status === 'BOUND' && ['ipfsAmountFinanced','ipfsPriorBrokerFees','ipfsQuoteRef','clientBillingSelected','carrierBillToAgency'].some(key => Object.hasOwn(input,key) && (input[key] ?? null) !== (previous[key] ?? null))) throw new Error('Bound billing terms cannot be changed.');
       assertBrokerFeeAgencyBilling({...previous,...input} as {brokerFee?:number|null;billType?:string|null});
       if(previous&&Object.hasOwn(input,"accountId")&&input.accountId!==previous.accountId) {
+        if (usesIpfs(previous)) throw new Error("Keep the IPFS agreement on its original account.");
         const feeHistory=await getFee(id(previous.id));
         if(brokerFeeCents(previous.brokerFee as number|undefined)>0||brokerFeeCents(input.brokerFee as number|undefined)>0||feeHistory)throw new Error("A quote with fee history must retain its original account.");
         const billing=await quoteSourceBillingHistory(previous,undefined);
@@ -279,9 +294,15 @@ export class AccountAccess {
       if (isGroupedInvoice(previous ?? {}) || previous?.supersededByGroupedInvoiceId || Object.hasOwn(input, 'groupedPolicyIds') || Object.hasOwn(input, 'groupedFinanceLoanId') || input.sourcePricingVersion === 3) throw new Error(GROUPED_INVOICE_REVIEW_ONLY);
       if(operation==="create") {
         if(![1,2].includes(input.sourcePricingVersion as number)||input.status!=="DRAFT"||!input.quoteId&&!input.policyId)throw new Error("Create a source-priced draft invoice from its quote or policy.");
+        if (input.quoteId) {
+          const quote = await this.get('Quote',id(input.quoteId));
+          assertHoaCollection(quote);
+          if (!input.policyId && quote?.status === 'BOUND') throw new Error('Use the bound policy when creating its invoice.');
+        }
         if (input.policyId) {
           const policy = await this.get('Policy', id(input.policyId));
-          if (policy?.carrierBillType === 'DIRECT' && policy.billType === 'AGENCY') throw new Error('This carrier premium must use the grouped review workflow.');
+          assertHoaCollection(policy);
+          if (policy?.carrierBillType === 'DIRECT' && policy.billType === 'AGENCY' && policy.carrierBillToAgency !== true) throw new Error('This carrier premium must use the grouped review workflow.');
           if (id(policy?.groupedDraftInvoiceId) && (await this.get('Invoice', id(policy?.groupedDraftInvoiceId)))?.status !== 'VOID') throw new Error('This policy already belongs to a grouped invoice.');
         }
         if(input.sourcePricingVersion===2)await assertAdjustmentInvoiceProof(input,(model,key)=>this.get(model,key));
@@ -315,6 +336,10 @@ export class AccountAccess {
       for(const parent of [invoice,previousInvoice])if(parent) {
         if (isGroupedInvoice(parent) || parent.supersededByGroupedInvoiceId) throw new Error(GROUPED_INVOICE_REVIEW_ONLY);
         if(rollover)continue;
+        if (operation !== 'delete') {
+          const source = parent.policyId ? await this.get('Policy', id(parent.policyId)) : parent.quoteId ? await this.get('Quote', id(parent.quoteId)) : undefined;
+          assertHoaCollection(source);
+        }
         if (["PAID","PROCESSING"].includes(String(parent.status))) throw new Error("Payment allocation lines cannot change after payment is submitted.");
         if([1,2].includes(Number(parent.sourcePricingVersion))&&(parent.status==="SENT"||parent.stripePaymentLinkId))throw new Error("Void the issued source-priced invoice before changing its payment lines.");
         if(["DRAFT","SENT"].includes(String(parent.status))&&await this.issuedBrokerFeeInvoice(parent))throw new Error("Void the issued fee invoice before changing its payment lines.");
@@ -350,8 +375,8 @@ export class AccountAccess {
     if (model === "Quote" && input.status === "BOUND" && (operation === "create" || (await this.get("Quote", id(input.id)))?.status !== "BOUND")) throw new Error("Use the bind workflow to mark a quote bound.");
     if (model === "Policy" && operation === "update") {
       const prior = await this.get("Policy", id(input.id));
-      if (['carrierBillType', 'groupedDraftInvoiceId'].some(field => Object.hasOwn(input, field) && (input[field] ?? null) !== (prior?.[field] ?? null))) throw new Error('Carrier billing and grouped invoice provenance are server-owned.');
-      if (prior?.carrierBillType && Object.hasOwn(input, 'billType') && input.billType !== prior.billType) throw new Error('Preserve the reviewed carrier billing and HOA collection arrangement.');
+      if (['carrierBillType', 'groupedDraftInvoiceId', 'carrierBillToAgency', 'ipfsAmountFinanced', 'ipfsPriorBrokerFees', 'ipfsAgreementRef', 'ipfsConfirmedAt', 'ipfsConfirmedBy'].some(field => Object.hasOwn(input, field) && (input[field] ?? null) !== (prior?.[field] ?? null))) throw new Error('Carrier billing and grouped invoice provenance are server-owned.');
+      if ((prior?.clientBillingSelected === true || prior?.carrierBillType || usesIpfs(prior)) && Object.hasOwn(input, 'billType') && input.billType !== prior?.billType) throw new Error('Preserve the reviewed carrier billing and HOA collection arrangement.');
       assertBrokerFeeAgencyBilling({...prior,...input} as {brokerFee?:number|null;billType?:string|null});
       if(Object.hasOwn(input,"passThroughCharges")&&((input.passThroughCharges!=null)!==(prior?.passThroughCharges!=null)||JSON.stringify(normalizePassThroughCharges(input.passThroughCharges))!==JSON.stringify(normalizePassThroughCharges(prior?.passThroughCharges)))||Object.hasOwn(input,"clientConditions")&&normalizeClientConditions(input.clientConditions)!==normalizeClientConditions(prior?.clientConditions))throw new Error("Bound policy charges and client conditions are immutable. Record a reviewed adjustment instead.");
       if (Object.hasOwn(input, "commissionSnapshotId") && input.commissionSnapshotId !== prior?.commissionSnapshotId) throw new Error("Commission provenance is server-owned.");

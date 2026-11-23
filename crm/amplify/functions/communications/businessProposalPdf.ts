@@ -1,3 +1,5 @@
+import { usesIpfs } from '../../../../shared/ipfsCollection';
+import { quotePaymentInstructions } from '../../../../shared/quotePaymentInstructions';
 import { formatUsdDollars as dollars } from '../../../../shared/money';
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from 'pdf-lib';
 import type { PublicProposalQuote } from '../../../../shared/frontBusinessDelivery';
@@ -10,6 +12,7 @@ export interface BusinessProposalInput {
   packageName: string;
   requiredLines: string[];
   quotes: PublicProposalQuote[];
+  hasSourceDocuments?: boolean;
   reference?: string;
   preparedAt?: string;
 }
@@ -111,8 +114,7 @@ export async function createBusinessProposalPdf(input: BusinessProposalInput) {
     if (fee && quote.billType !== 'AGENCY') throw new Error('Broker fees require agency billing. Review this quote before preparing its proposal.');
     if (fee) line(`HOA broker fee: ${dollars(fee / 100)}`, 11, true);
     line(`Total quoted policy cost: ${dollars(amounts.clientTotalCents / 100)}`, 11, true);
-    if (quote.billType === 'AGENCY') line('Agency billed - pay HOA Insurance Agency using your invoice payment link.', 9, false, true);
-    else if (quote.billType === 'DIRECT') line('Carrier billed premium - your HOA invoice identifies any charges payable separately to the agency.', 9, false, true);
+    line(quotePaymentInstructions(quote), 9, false, true);
     line(`Policy term: ${quote.effectiveDate} to ${quote.expirationDate}`, 10);
     line(`Offer valid through: ${quote.offerExpiresAt || 'Not recorded - confirm with the carrier'}`, 10, false, true);
     const terms: [string, unknown, boolean?][] = [
@@ -143,12 +145,17 @@ export async function createBusinessProposalPdf(input: BusinessProposalInput) {
   if (totals.passThroughCents) line(`Supplier fees and taxes: ${dollars(totals.passThroughCents / 100)}`, 13, true);
   if (totals.brokerFeeCents) line(`HOA broker fees: ${dollars(totals.brokerFeeCents / 100)}`, 13, true);
   line(`Total quoted policy cost: ${dollars(totals.clientTotalCents / 100)}`, 15, true);
-  if (totals.brokerFeeCents) line('HOA broker fees require a separate signed fee agreement and are payable upfront. They are excluded from premium financing.', 9, false, true);
+  if (totals.brokerFeeCents) line(input.quotes.some(quote => usesIpfs(quote) && quote.brokerFee)
+    ? 'HOA broker fees require a separate signed fee agreement.'
+    : 'HOA broker fees require a separate signed fee agreement and are payable upfront. They are excluded from premium financing.', 9, false, true);
   gap(8);
   line('Agency compensation: HOA Insurance Agency may receive commissions from insurers for placing and servicing coverage. Any HOA broker fee is itemized separately. Contact the agency for additional compensation information.', 9, false, true);
   gap(5);
-  line('Payment: Your HOA Insurance Agency invoice identifies the amount payable to the agency and provides the payment link. Wholesaler payment instructions in source documents are for agency remittance; contact us before making a separate payment to avoid paying twice.', 9, false, true);
-  gap(5);
+  if (totals.brokerFeeCents && input.quotes.every(quote => !usesIpfs(quote) && quote.billType === 'AGENCY')) line('Your HOA Insurance Agency invoice identifies the amount due for policies payable to HOA and provides the payment link.', 9, false, true);
+  if (input.hasSourceDocuments) {
+    line('Wholesaler payment instructions in source documents are for agency remittance.', 9, false, true);
+    gap(5);
+  }
   line('Review the carrier quotations for full terms, taxes, fees, exclusions, conditions, and payment requirements. Values not recorded here are not represented as included coverage.', 9, false, true);
   gap(5); line('This proposal and its email do not bind insurance. Client authorization and carrier confirmation remain separate steps.', 9, false, true);
   const pages = pdf.getPages();

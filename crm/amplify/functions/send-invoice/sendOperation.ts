@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { GetCommand, UpdateCommand, type DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
+import { GetCommand, TransactWriteCommand, UpdateCommand, type DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import type { Write } from "../broker-fees/store";
 import { hash, MailDeliveryError } from "../transactional-mail/contract";
 
@@ -23,7 +23,7 @@ export type InvoiceSendOperation = {
   groupedDelivery?: GroupedDeliveryProof;
   retired?: { reason: "VOID"; invoiceId: string; retiredAt: string; closedLinkId: string | null };
 };
-type Dependencies = { database: Pick<DynamoDBDocumentClient, "send">; now?: () => number; uuid?: () => string; invoiceTable?: string };
+type Dependencies = { database: Pick<DynamoDBDocumentClient, "send">; now?: () => number; uuid?: () => string; invoiceTable?: string; sourceWrites?: Write[] };
 export class InvoiceSendBlocked extends Error {}
 const blocked = (message: string): never => { throw new InvoiceSendBlocked(message); };
 export function invoiceSendEnvironment() {
@@ -169,14 +169,16 @@ export async function beginInvoiceSend(invoice: Invoice, to: string[], expectedS
   if (previous && !replacement && previous.leaseUntil > now) return blocked("This invoice send is still in progress. Wait two minutes before checking it again.");
   const operation: InvoiceSendOperation = { version: 1, key, recipients, previousSentAt: replacement ? row.sentAt : previous?.previousSentAt ?? row.sentAt ?? null, leaseId: uuid(), leaseUntil: now + LEASE_MS };
   try {
-    await db.send(new UpdateCommand({ TableName: table, Key: { id: invoice.id },
+    const update = { TableName: table, Key: { id: invoice.id },
       UpdateExpression: "SET #op = :op",
       ConditionExpression: `attribute_exists(id) AND #status = :status AND ${row.updatedAt === undefined ? "attribute_not_exists(updatedAt)" : "updatedAt = :updated"} AND ${previous ? "#op = :previous" : "attribute_not_exists(#op)"}`,
       ExpressionAttributeNames: { "#op": ATTRIBUTE, "#status": "status" },
       ExpressionAttributeValues: { ":op": operation, ":status": row.status, ...(row.updatedAt === undefined ? {} : { ":updated": row.updatedAt }), ...(previous ? { ":previous": previous } : {}) },
-    }));
+    };
+    if (deps.sourceWrites?.length) await db.send(new TransactWriteCommand({ TransactItems: [{Update:update},...deps.sourceWrites] }));
+    else await db.send(new UpdateCommand(update));
   } catch (error) {
-    if ((error as { name?: string }).name === "ConditionalCheckFailedException") return blocked("Another send or edit won this invoice. Refresh it before trying again.");
+    if (["TransactionCanceledException","ConditionalCheckFailedException"].includes((error as { name?: string }).name ?? "")) return blocked("Another send or edit won this invoice. Refresh it before trying again.");
     // An uncertain reservation is not permission to reach Stripe or the sender.
     throw error;
   }

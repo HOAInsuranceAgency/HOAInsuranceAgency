@@ -5,6 +5,7 @@ ACCOUNT_COMMISSION_CLASSES,
 batchPaidCents,
 carrierReconciliationBalances,
 commissionRevenueLabel,
+isIpfsBrokerEntry,
 COMMISSION_REVIEW_CATEGORIES,
 decimal,
 policyTotals,
@@ -134,7 +135,7 @@ export function Ledger({
       />
       {!!earningRows.length && <section className="card"><h2>Shared commission & adjustment earnings</h2><div className="commission-scroll"><Table><thead><tr>{owner&&<th>Employee</th>}<th>Policy</th><th>Date</th><th>Source</th><th>Share / rate</th><th>Employee amount</th><th>Status</th></tr></thead><tbody>{visibleEarnings.map(e=><tr key={e.id}>{owner&&<td>{e.producerName}</td>}<td>{e.accountName}<div className="small muted">{e.policyNumber}</div></td><td>{e.receivedOn}</td><td>{payrollSourceLabel(e)}</td><td>{e.shareBps===undefined?'—':e.shareBps/100+'% share · '+e.producerBps/100+'% rate'}</td><td>{money(e.amountCents)}</td><td>{e.batchId?(data.batches.find(b=>b.id===e.batchId)?.status??'Allocated'):e.status}
       {owner && e.status==='PAYABLE' && !e.batchId && e.amountCents>0 && <Button variant="secondary" onClick={()=>navigate({tab:'payroll',earningKeys:[JSON.stringify(['earning',e.id])],producerId:e.producerId})}>Prepare off-cycle payment</Button>}
-      {owner && <Button variant="secondary" onClick={()=>navigate(payrollRevenueKind(e)==='IPFS_FEE' && !e.adjustmentId ? {tab:'ipfs',policyId:e.policyId} : {tab:'exceptions',...(e.adjustmentId?{adjustmentId:e.adjustmentId}:{policyId:e.policyId}),producerId:e.producerId})}>Review source & decisions</Button>}</td></tr>)}</tbody></Table></div>{pageCount > 1 && <nav aria-label="Earnings history pages"><Button variant="secondary" disabled={page === 0} onClick={()=>setEarningsPage(page-1)}>Previous earnings</Button><span> Page {page+1} of {pageCount} · {filteredEarnings.length} earnings </span><Button variant="secondary" disabled={page+1 === pageCount} onClick={()=>setEarningsPage(page+1)}>Next earnings</Button></nav>}<p className="small muted">Totals and downloads include the complete ledger. Shared earnings reference one carrier receipt. Compensation adjustments do not change agency cash received.</p></section>}
+      {owner && <Button variant="secondary" onClick={()=>navigate((payrollRevenueKind(e)==='IPFS_FEE' || isIpfsBrokerEntry(e.entryId)) && !e.adjustmentId ? {tab:'ipfs',policyId:e.policyId} : {tab:'exceptions',...(e.adjustmentId?{adjustmentId:e.adjustmentId}:{policyId:e.policyId}),producerId:e.producerId})}>Review source & decisions</Button>}</td></tr>)}</tbody></Table></div>{pageCount > 1 && <nav aria-label="Earnings history pages"><Button variant="secondary" disabled={page === 0} onClick={()=>setEarningsPage(page-1)}>Previous earnings</Button><span> Page {page+1} of {pageCount} · {filteredEarnings.length} earnings </span><Button variant="secondary" disabled={page+1 === pageCount} onClick={()=>setEarningsPage(page+1)}>Next earnings</Button></nav>}<p className="small muted">Totals and downloads include the complete ledger. Shared receipt earnings reference their original transaction. Compensation adjustments do not change agency cash received.</p></section>}
       {!data.policies.length && !earningRows.length && (
         <div className="card">
           No commission snapshots yet.{' '}

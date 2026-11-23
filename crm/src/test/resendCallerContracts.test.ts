@@ -50,6 +50,9 @@ beforeEach(() => {
   h.db.mockReset().mockImplementation(async command => {
     if (command.constructor.name === "QueryCommand" && command.input.TableName === "synthetic-loan-table") return { Items: [] };
     if (command.constructor.name === "GetCommand" && command.input.TableName === "synthetic-policy-table") return { Item: structuredClone(h.policy) };
+    if (command.input.TransactItems?.some((item: any) => item.Update?.Key?.id === 'hoa-collection-policy:synthetic-policy')) {
+      h.order.push("collection-reserved"); return {};
+    }
     h.order.push("business-write"); return {};
   });
   h.cognito.mockReset().mockImplementation(async command => command.constructor.name === "AdminCreateUserCommand" ? { User: { Username: "synthetic-member", Attributes: [{ Name: "sub", Value: h.createdSub }] } } : {});
@@ -58,7 +61,7 @@ beforeEach(() => {
     HOA_MIGRATION_APP_ID: "d1nuh9rw1hcuxo", HOA_MIGRATION_PREVIEW: "false", HOA_MIGRATION_WORKERS_ENABLED: "true",
     MAGIC_LINK_BASE_URL: "https://crm.protectmyhoa.com", MAGIC_LINK_FROM: "noreply@protectmyhoa.com",
     USER_POOL_ID: "synthetic-destination-pool", PORTAL_URL: "https://crm.protectmyhoa.com", INVITE_FROM: "noreply@protectmyhoa.com",
-    AGENCY_MAILBOX: "insurance@protectmyhoa.com", ACCOUNTING_MAILBOX: "accounting@example.com", INVOICE_TABLE: "synthetic-invoice-table",
+    AGENCY_MAILBOX: "insurance@protectmyhoa.com", ACCOUNTING_MAILBOX: "accounting@example.com", INVOICE_TABLE: "synthetic-invoice-table", BROKER_FEE_TABLE: "synthetic-fees",
     POLICY_TABLE: "synthetic-policy-table",
     MARKETING_REPORT_FROM: "insurance@protectmyhoa.com", STRIPE_WEBHOOK_SECRET: "whsec_synthetic_only",
   })) vi.stubEnv(key, value);
@@ -118,6 +121,7 @@ describe("real sender to Resend adapter contracts", () => {
     expect(body.text).toContain("Synthetic HOA"); expect(body.html).toContain("INV-SYN-001"); expect(details.idempotencyKey).toContain("synthetic-invoice");
     expect(Buffer.from(body.attachments![0].content, "base64").toString()).toBe("%PDF-1.7");
     const mime = Buffer.from(command.input.Content.Raw.Data).toString(); expect(mime).not.toMatch(/^Bcc:/mi); expect(mime).toContain(body.attachments![0].content);
+    expect(h.order.indexOf("collection-reserved")).toBeLessThan(h.order.indexOf("mail"));
     expect(h.order.indexOf("mail")).toBeLessThan(h.order.indexOf("business-write"));
   });
   it("invoice does not mark a deferred message sent", async () => {

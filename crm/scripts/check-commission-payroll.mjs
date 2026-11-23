@@ -37,6 +37,10 @@ const mockSources = {
   policy: `export const object=v=>typeof v==='string'?JSON.parse(v):v??{};export class AccessDenied extends Error {constructor(){super('Not authorized');this.name='Unauthorized';}}`,
   status: `export async function assertUserSession(){if(globalThis[Symbol.for('commission-payroll-test')].disabled)throw new Error('Inactive session');} export const teamUserDisabled=async id=>globalThis[Symbol.for('commission-payroll-test')].disabledOwners.has(id);export const activeTeamUserCheck=id=>({ConditionCheck:{Key:{userId:id}}});`,
   bind: `export async function bindPolicy(){throw new Error('Binding is not used by payroll tests');}`,
+  // IPFS accounting has its own integration tests and uses a separate private store.
+  ipfs: `export function registerLegacyIpfsCollection(){throw new Error('Unexpected IPFS registration in payroll tests');}
+    export function ipfsBrokerReceiptWrites(){throw new Error('Unexpected IPFS remittance in payroll tests');}`,
+  liveWrite: `export const sendCrmWrite = write => write;`,
   signing: `export const downloadContentDisposition=()=>'';export const fileSigningOptions={};export const fileClient=()=>({send:async()=>({})});`,
   sdk: `export class GetCommand{constructor(input){this.input=input;}};export class QueryCommand{};export class PutObjectCommand{};export class GetObjectCommand{};export class HeadObjectCommand{};export const getSignedUrl=async()=>{throw new Error('Signing is not used by payroll tests');};`,
   cognito: `export class ListUsersInGroupCommand{constructor(input){this.input=input;}};export class CognitoIdentityProviderClient{async send(c){const s=globalThis[Symbol.for('commission-payroll-test')];if(c.input.GroupName!=='OWNER')throw new Error('Wrong group');return {Users:structuredClone(s.owners)};}}`,
@@ -54,7 +58,10 @@ const hook = registerHooks({
     if (specifier.startsWith('.')) {
       let url = new URL(specifier, context.parentURL);
       if (!/\.[cm]?[jt]sx?$/.test(url.pathname) && existsSync(fileURLToPath(url) + '.ts')) url = new URL(url.href + '.ts');
-      const substitutions = { '/commissions/store.ts': 'store', '/commissions/bind.ts': 'bind', '/crm-access/access.ts': 'access', '/crm-access/policy.ts': 'policy', '/crm-access/user-status.ts': 'status', '/crm-access/file-signing.ts': 'signing', '/transactional-mail/client.ts': 'mail', '/transactional-mail/contract.ts': 'contract' };
+      const substitutions = {
+        '/commissions/ipfs-registration.ts': 'ipfs', '/broker-fees/ipfsRemittances.ts': 'ipfs',
+        '/functions/live-write.ts': 'liveWrite',
+        '/commissions/store.ts': 'store', '/commissions/bind.ts': 'bind', '/crm-access/access.ts': 'access', '/crm-access/policy.ts': 'policy', '/crm-access/user-status.ts': 'status', '/crm-access/file-signing.ts': 'signing', '/transactional-mail/client.ts': 'mail', '/transactional-mail/contract.ts': 'contract' };
       for (const [suffix,name] of Object.entries(substitutions)) if (url.pathname.endsWith(suffix)) return { url: `mock:${name}`, shortCircuit: true };
       return next(url.href, context);
     }

@@ -9,6 +9,7 @@ const h = vi.hoisted(() => ({
   read: vi.fn(),
   action: vi.fn(),
   policies: vi.fn(),
+  documents: vi.fn(),
   carriers: vi.fn(),
   createCarrier: vi.fn(),
   communications: vi.fn(),
@@ -23,7 +24,7 @@ vi.mock('../lib/commissions', () => ({
 }));
 vi.mock('../lib/client', () => ({
   client: {
-    models: { Policy: { list: h.policies }, Carrier: { list: h.carriers, create: h.createCarrier } },
+    models: { Document: { listDocumentByEntityId: h.documents }, Policy: { list: h.policies }, Carrier: { list: h.carriers, create: h.createCarrier } },
   },
   listAllPages: async (list: (token?: string) => Promise<{ data: unknown[] }>) =>
     (await list()).data,
@@ -892,5 +893,52 @@ it('allows an Owner to record the fee entered in IPFS and match its settlement i
   await waitFor(() => expect(h.action).toHaveBeenCalledWith('postIpfsFee', {
     policyId: 'p', version: 1, kind: 'RECEIPT', amountCents: 12050, lineRef: 'A-1', settlementRef: 'D-1',
     receivedOn: '2026-10-15',
+  }));
+});
+
+it('matches an IPFS-collected policy broker fee without creating expected lender compensation', async () => {
+  h.owner = true;
+  const policy = { ...commissionPolicy(), brokerFeeCents: 350000, ipfsCollectionRef: 'PFA-123', ipfsAmountFinancedCents: 1000000 };
+  h.read.mockResolvedValue({ ...snapshot(), policies: [policy] });
+  render(<Commissions />);
+  await screen.findByText('Producer earned');
+  fireEvent.click(screen.getByRole('tab', { name: 'IPFS fees' }));
+  expect(screen.getByText('PFA-123')).toBeVisible();
+  fireEvent.change(screen.getByLabelText('Policy term to record or reconcile'), { target: { value: 'p' } });
+  expect(screen.getByLabelText('Remittance fee source')).toHaveValue('BROKER_FEE');
+  expect(screen.queryByRole('option', { name: 'Separate lender compensation' })).not.toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText('Allocated fee amount ($)'), { target: { value: '3500.00' } });
+  fireEvent.change(screen.getByLabelText('Actual settlement date'), { target: { value: '2026-10-15' } });
+  fireEvent.change(screen.getByLabelText('Unique IPFS transaction or allocation reference'), { target: { value: 'Line 1' } });
+  fireEvent.change(screen.getByLabelText('Verified remittance or deposit reference'), { target: { value: 'Deposit 1' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Post verified settlement' }));
+  await waitFor(() => expect(h.action).toHaveBeenCalledWith('postIpfsFee', {
+    policyId: 'p', version: 1, revenueKind: 'BROKER_FEE', kind: 'RECEIPT', amountCents: 350000,
+    lineRef: 'Line 1', settlementRef: 'Deposit 1', receivedOn: '2026-10-15',
+  }));
+  expect(h.action).toHaveBeenCalledTimes(1);
+});
+
+
+it('requires an attached term document and explicit confirmation before registering a historical fee-free policy', async () => {
+  h.owner = true;
+  h.read.mockResolvedValue({ ...snapshot(), policies: [commissionPolicy()] });
+  h.documents.mockResolvedValue({ data: [{ id: 'doc', name: 'Signed IPFS agreement', s3Key: 'documents/ACCOUNT/a/doc/pfa.pdf',
+    entityType: 'ACCOUNT', entityId: 'a', category: 'OTHER', quoteId: 'q' }], nextToken: null });
+  render(<Commissions />);
+  await screen.findByText('Producer earned');
+  fireEvent.click(screen.getByRole('tab', { name: 'IPFS fees' }));
+  fireEvent.change(screen.getByLabelText('Policy term to record or reconcile'), { target: { value: 'p' } });
+  fireEvent.click(screen.getByText('Register a previously bound IPFS term'));
+  await screen.findByRole('option', { name: 'Signed IPFS agreement' });
+  const register = screen.getByRole('button', { name: 'Register IPFS collection' });
+  expect(register).toBeDisabled();
+  fireEvent.change(screen.getByLabelText('Signed IPFS agreement reference'), { target: { value: 'PFA-1' } });
+  fireEvent.change(screen.getByLabelText('Agreement amount financed ($)'), { target: { value: '1000' } });
+  fireEvent.change(screen.getByLabelText('Signed agreement document'), { target: { value: 'doc' } });
+  fireEvent.click(screen.getByLabelText(/Verified zero broker fee/));
+  fireEvent.click(register);
+  await waitFor(() => expect(h.action).toHaveBeenCalledWith('registerLegacyIpfsCollection', {
+    policyId: 'p', version: 1, agreementRef: 'PFA-1', amountFinancedCents: 100000, documentId: 'doc', confirmed: true,
   }));
 });

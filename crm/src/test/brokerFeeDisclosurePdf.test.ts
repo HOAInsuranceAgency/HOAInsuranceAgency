@@ -35,3 +35,29 @@ it('includes per-policy carrier compensation only in the explicitly disclosed pr
   const fixture = brokerFeePdfFixture(); fixture.quotes = fixture.quotes.map(quote => ({ ...quote, agencyCommissionPct: 15, agencyCommissionCents: Math.round(quote.premium! * 15) }));
   const { pages } = await extract((await createBrokerFeeDisclosurePdf(fixture)).bytes); expect(pages[0]).toContain('Carrier commission'); expect(pages[0]).toContain('$1,500.00 (15%)'); expect(pages[0]).toContain('$1,800.00 (15%)');
 });
+
+it('prints the signed IPFS split and distinct collectors for a mixed package before its state forms', async () => {
+  const fixture = brokerFeePdfFixture();
+  Object.assign(fixture.quotes[0], { ipfsAmountFinanced: 10000, brokerFee: 3500 });
+  Object.assign(fixture.quotes[1], { ipfsAmountFinanced: 10000 });
+  fixture.totalCents = 400000;
+  const { pages, all } = await extract((await createBrokerFeeDisclosurePdf(fixture)).bytes);
+  expect(pages).toHaveLength(2);
+  expect(pages[0]).toContain('TOTAL BROKER FEES: $4,000.00');
+  for (const value of ['Payment instructions by policy', '$3,000.00', '$500.00', 'down payment', 'full $250.00 broker fee is financed', 'pay HOA Insurance Agency']) expect(pages[0]).toContain(value);
+  expect(pages[1]).toContain('State-specific disclosure'); expect(pages[1]).toContain('Pat Property Manager');
+  expect(all).not.toContain('broker fee is payable upfront and is not financed');
+});
+
+
+it('paginates the IPFS schedule of a 25-policy package without losing any instructions', async () => {
+  const fixture = brokerFeePdfFixture();
+  fixture.quotes = Array.from({ length: 25 }, (_, i) => ({ ...fixture.quotes[0], id: `q${i}`, ipfsAmountFinanced: 100, carrierName: `Example Mutual ${i + 1}` }));
+  fixture.totalCents = 25 * 25000;
+  const { pages } = await extract((await createBrokerFeeDisclosurePdf(fixture)).bytes);
+  expect(pages.length).toBeGreaterThan(3);
+  expect(pages[0]).toContain('25. Example Mutual 25');
+  expect(pages[1]).toContain('Payment instructions by policy');
+  expect(pages.at(-2)).toContain('25. Example Mutual 25');
+  expect(pages.at(-1)).toContain('Pat Property Manager');
+});

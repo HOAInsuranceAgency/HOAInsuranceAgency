@@ -19,8 +19,14 @@ export interface ReportIndexPageOptions {
  * definitions, and IAM disallows full scans. No per-record GraphQL hydration.
  * https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/ql-reference.select.html */
 export async function reportIndexPage(options: ReportIndexPageOptions) {
+  return partitionIndexPage({ ...options, values: reportIds(options.values, 25) });
+}
+
+/** Server-owned DynamoDB partition keys can include characters outside the public report ID format. */
+export async function partitionIndexPage(options: ReportIndexPageOptions) {
   const { table, index, partition, fields, nextToken, pageSize = 500 } = options;
-  const values = reportIds(options.values, 25).sort();
+  if (options.values.length > 25 || options.values.some(value => typeof value !== 'string' || !value || Buffer.byteLength(value) > 2048)) throw new Error('Invalid indexed partition keys.');
+  const values = [...new Set(options.values)].sort();
   if (!/^[a-zA-Z0-9_.-]{3,255}$/.test(table) || !/^[a-zA-Z0-9_.-]{3,255}$/.test(index) ||
     !/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(partition) ||
     fields !== '*' && (!Array.isArray(fields) || !fields.length || fields.length > 100 || fields.some(field => !/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(field)))) {
