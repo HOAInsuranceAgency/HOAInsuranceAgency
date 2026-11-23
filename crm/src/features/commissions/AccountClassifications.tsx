@@ -1,3 +1,4 @@
+import CommissionReferenceField from '../../components/CommissionReferenceField';
 import { useContext,useState } from 'react';
 import {
 ACCOUNT_COMMISSION_CLASSES,
@@ -123,7 +124,9 @@ export function AccountClassificationEditor({
           change={setFirstBoundOn}
         />
       )}
-      <Field
+      <CommissionReferenceField
+        scope={{entityType:"ACCOUNT",entityId:id}}
+        references={[account?.bindingEvidence]}
         label="First-bind history reference"
         value={bindingEvidence}
         change={setBindingEvidence}
@@ -179,7 +182,9 @@ export function AccountClassificationEditor({
               </Select>
             </label>
           </div>
-          <Field
+          <CommissionReferenceField
+            scope={{entityType:"ACCOUNT",entityId:id}}
+            references={account?.periods.map(period => period.evidence)}
             label={`Classification reference ${i + 1}`}
             value={p.evidence}
             change={(v) => setPeriods(periods.map((r, j) => (i === j ? { ...r, evidence: v } : r)))}

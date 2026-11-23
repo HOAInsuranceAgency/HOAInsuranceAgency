@@ -18,6 +18,7 @@ const h = vi.hoisted(() => ({
   session: vi.fn(),
   bind: vi.fn(),
   s3: vi.fn(),
+  sign: vi.fn(),
   db: vi.fn(),
   sources: new Map<string, Record<string, unknown>>(),
 }));
@@ -49,6 +50,7 @@ vi.mock('../../amplify/functions/crm-access/access', () => ({
     }
   },
 }));
+vi.mock('@aws-sdk/s3-request-presigner', () => ({getSignedUrl:h.sign}));
 vi.mock('@aws-sdk/client-s3', async (original) => ({
   ...(await original<typeof import('@aws-sdk/client-s3')>()),
   S3Client: class {
@@ -1203,4 +1205,23 @@ it('keeps fee cash separate from a departing employee’s pending carrier balanc
   expect(pending(fee)).toEqual([]);
   const carrier = appendEntry(fee, line({ agencyCents: 1000 }), statement(), 'carrier');
   expect(pending(carrier)).toMatchObject([{ expectedAgencyCents: 10000, receivedAgencyCents: 1000 }]);
+});
+
+it.each([
+  [true,'application/pdf',true], [true,'image/png',true], [true,'text/html',false],
+  [false,'application/pdf',false], ['true','application/pdf',false],
+])('uses inline statement links only for an explicit supported preview (%s, %s)',async(preview,contentType,expected)=>{
+  const originalBucket = process.env.COMMISSION_BUCKET;
+  process.env.COMMISSION_BUCKET = 'fictional-private-statements';
+  try {
+    h.s3.mockResolvedValue({ContentType:contentType,Metadata:{filename:'statement.pdf'}});
+    h.sign.mockResolvedValue('https://example.test/signed');
+    expect(await handler(request('file',{key:'statements/00000000-0000-0000-0000-000000000001',preview}))).toMatchObject({ok:true,previewable:expected});
+    expect(h.sign.mock.calls[0][1].input.ResponseContentDisposition).toBe((expected?'inline':'attachment')+'; filename="statement.pdf"');
+    expect(h.sign.mock.calls[0][1].input.ResponseContentType).toBe(expected?contentType:undefined);
+    expect(h.commit).not.toHaveBeenCalled();
+  } finally {
+    if (originalBucket === undefined) delete process.env.COMMISSION_BUCKET;
+    else process.env.COMMISSION_BUCKET = originalBucket;
+  }
 });

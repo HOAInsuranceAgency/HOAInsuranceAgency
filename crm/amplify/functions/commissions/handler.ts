@@ -659,14 +659,17 @@ export async function handler(event: Event) {
       const filename = source.Metadata?.filename
         ? decodeURIComponent(source.Metadata.filename)
         : 'carrier-statement';
+      const previewable = input.preview === true && ['application/pdf', 'image/png', 'image/jpeg'].includes(source.ContentType ?? '');
       return {
         ok: true,
+        previewable,
         url: await getSignedUrl(
           s3,
           new GetObjectCommand({
             Bucket,
             Key: key,
-            ResponseContentDisposition: downloadContentDisposition(filename),
+            ResponseContentDisposition: downloadContentDisposition(filename, previewable ? 'inline' : 'attachment'),
+            ...(previewable ? { ResponseContentType: source.ContentType } : {}),
           }),
           fileSigningOptions,
         ),

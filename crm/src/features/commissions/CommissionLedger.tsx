@@ -197,7 +197,7 @@ export function Ledger({
             </p>
             {owner ? (
               <>
-                <div className="commission-action-bar"><Button variant="secondary" onClick={() => navigate({ tab: 'exceptions', policyId: p.id, producerId: p.producerId })}>Review shares, adjustments & employee decisions</Button></div>
+                <div className="commission-action-bar"><Button variant="secondary" onClick={() => navigate({ tab: 'exceptions', policyId: p.id, producerId: p.producerId })}>Corrections or shared-production exceptions</Button></div>
                 <CarrierBalances balances={carrierReconciliationBalances(p, asOf)} />
                 <CommissionPanel title="Manage expected receipts">
                   <ReceiptForecastEditor

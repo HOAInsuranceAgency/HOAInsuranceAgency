@@ -1,4 +1,4 @@
-import { useEffect,useState } from 'react';
+import { useState } from 'react';
 import { parseStatementCsv } from '../../../shared/commissionImport';
 import type { StatementIntake } from '../../../shared/commissionIntake';
 import { displayCommissionAmount,suggestImportMapping } from '../lib/commissionSourceGuidance';
@@ -8,18 +8,11 @@ import { useAsyncResource } from '../lib/useAsyncResource';
 import { Button } from './ui/Button';
 import { Table } from './ui/Table';
 export default function CommissionSourcePreview({ intake, onError }: { intake: StatementIntake; onError: (e: unknown) => void }) {
-  const [shown, setShown] = useState(() => window.matchMedia?.('(min-width: 1200px)').matches ?? false);
-  useEffect(()=>{
-    const media=window.matchMedia?.('(min-width: 1200px)');
-    if(!media)return;
-    const resized=()=>setShown(media.matches);
-    media.addEventListener('change',resized);
-    return()=>media.removeEventListener('change',resized);
-  },[]);
+  const [shown, setShown] = useState(false);
   const source = useAsyncResource(async () => {
     if (!shown) return null;
     try {
-      const { url } = await commissionAction<{url:string}>('file', { key:intake.source });
+      const { url, previewable } = await commissionAction<{url:string;previewable?:boolean}>('file', { key:intake.source, preview:true });
       const ext = intake.filename.split('.').at(-1)?.toLowerCase();
       if (ext === 'csv' || ext === 'xlsx') {
         const response = await fetch(url);
@@ -27,16 +20,16 @@ export default function CommissionSourcePreview({ intake, onError }: { intake: S
         const tables = ext === 'csv' ? [{ name: intake.filename, rows: parseStatementCsv(await response.text()) }] : readCommissionWorkbook(new Uint8Array(await response.arrayBuffer()));
         return { url, ext, tables };
       }
-      return { url, ext, tables: undefined };
+      return { url, ext, previewable, tables: undefined };
     } catch (error) { onError(error); throw error; }
-  }, [intake.id, shown], { clearDataOnError: () => true });
+  }, [intake.id, intake.source, intake.filename, shown], { clearDataOnError: () => true });
   return <aside className="intake-original">
     <div className="commission-section-heading"><h3>Original document</h3><Button variant="secondary" onClick={() => setShown(v=>!v)}>{shown ? 'Hide original' : 'Show original'}</Button></div>
     {shown && <><p className="small">Compare with the source before confirming. Recognized amount columns display as currency; the original file is unchanged. {intake.filename}</p>
       {source.error && <p role="alert">{source.error}<Button variant="secondary" onClick={() => void source.refetch()}>Reload original</Button></p>}
       {source.loading && <p role="status">Loading original…</p>}
       {source.data && (source.data.tables ? source.data.tables.map((table,i) => <details key={i} open={i===0}><summary>{table.name}</summary><div className="commission-scroll"><Table><tbody>{table.rows.slice(0,200).map((r,j)=><tr key={j}>{r.map((cell,k)=><td key={k}>{j > 0 && k === suggestImportMapping(table.rows[0] ?? []).amount ? displayCommissionAmount(cell) : cell}</td>)}</tr>)}</tbody></Table></div>{table.rows.length>200 && <p>First 200 source rows shown. Open the original for the complete document.</p>}</details>) :
-        source.data.ext === 'pdf' ? <iframe title="Original carrier statement" src={source.data.url} /> : <img src={source.data.url} alt="Original carrier statement" />)}
+        source.data.previewable ? (source.data.ext === 'pdf' ? <iframe title="Original carrier statement" src={source.data.url} /> : <img src={source.data.url} alt="Original carrier statement" />) : <p>Use the original file link to open this document.</p>)}
       {source.data && <a href={source.data.url} target="_blank" rel="noreferrer">Open complete original</a>}
     </>}
   </aside>;

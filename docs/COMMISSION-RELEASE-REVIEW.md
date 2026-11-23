@@ -88,3 +88,14 @@ Regression checks use fictional rows and policy identities only. No source PDFs,
 Existing CRM policy adoption now displays the account first-bind editor even when a Standard/GIM classification is already saved. Missing history, a Never bound flag on the existing policy's account, or a first-bind date later than the policy bind opens the correction form and prevents repeated save attempts. The Owner supplies the original date and evidence; the policy bind date is not silently copied into account history. Saving the correction preserves the in-progress policy fields and clears the prior confirmation for a fresh review.
 
 Historical policy adoption also offers an explicit **Track this policy using actual receipts only** choice. It creates receipt-only terms in that policy snapshot and records the choice in migration evidence, leaving the carrier's saved arrangements and every other policy unchanged. The choice requires confirmation; producer agreements, original account history, term validation, access control and concurrent-version checks still apply. Receipt posting and payroll retain their separate human approvals.
+
+
+### Original documents, saved references and optional production splits
+
+Original previews start closed on every screen size and do not reopen on resize or navigation. Only an explicit Show original requests a file link. PDF/image previews use an inline response for a supported stored content type; ordinary downloads keep attachment disposition and the original safe filename handling. Unsupported preview types are link-only.
+
+Reference fields offer saved agreement references and, when applicable, account/carrier document choices. The document list is loaded when the field is used, is limited to the current account/carrier and policy/quote links, traverses pages, and clears on scope change or access denial. New external references remain possible; no suggested reference is silently approved. Employee plan references remain separate from shared-production evidence.
+
+Shared-production allocations are optional exceptions. Single-producer policies already use their saved rates. The allocation screen requires an explicit split purpose, explains that policy share and plan rate multiply, and displays the effective percentage for existing splits. Opening an exception with a preselected policy no longer creates a false unsaved-change warning. Posted earnings remain immutable; historical corrections use the existing reviewed adjustment workflow.
+
+Check with fictional records: navigate between steps without requesting an original (no file request or download); explicitly preview a PDF and verify inline headers; choose scoped saved references and verify no foreign policy documents appear; open an ordinary policy without creating a split; verify a 20% production share at a 20% employee rate displays 4%; and confirm a posted earning correction requires separate review and approval.

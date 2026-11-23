@@ -1,3 +1,4 @@
+import CommissionReferenceField from '../../components/CommissionReferenceField';
 import { useState } from 'react';
 import { decimal, ipfsFeeBalances, type CommissionEntry, type CommissionPolicy } from '../../../../shared/commissions';
 import { Input } from '../../components/ui/Input';
@@ -55,7 +56,7 @@ function IpfsFeeEditor({ policy, refresh }: { policy: CommissionPolicy; refresh:
       <p>Enter the agency fee recorded in IPFS. For an agreement covering several policies, enter each term’s share.</p>
       <div className="form-grid">
         <Field label="Expected fee ($)" value={amount} change={setAmount} />
-        <Field label="IPFS agreement reference" value={agreement} change={setAgreement} />
+        <CommissionReferenceField label="IPFS agreement reference" value={agreement} change={setAgreement} references={[policy.ipfsAgreementRef]} scope={{entityType:"ACCOUNT",entityId:policy.accountId,policyId:policy.id,quoteId:policy.quoteId}} />
       </div>
     </ActionForm>
     {!!policy.ipfsFeeCents && <Settlement policy={policy} refresh={refresh} />}
