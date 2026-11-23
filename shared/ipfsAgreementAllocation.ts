@@ -1,6 +1,8 @@
 import { brokerFeeCents } from './brokerFees';
 import { ipfsFeeSplit, ipfsFinancedCents, usesIpfs, validateCollectionRoute, type IpfsCollectionSource } from './ipfsCollection';
 
+export class IpfsAllocationError extends Error {}
+
 export type IpfsFeeOffer = {
   feeCents: number; financedFeeCents: number; priorFeeCents: number;
   termsHash: string; expiresAt: string | null;
@@ -25,13 +27,13 @@ export function ipfsOfferGroups<T extends IpfsCollectionSource>(quotes: readonly
     const ref = typeof quote.ipfsQuoteRef === 'string' ? normalizeIpfsQuoteRef(quote.ipfsQuoteRef) : '';
     if (!ref) {
       if (financed.length > 1 || brokerFeeCents(quote.brokerFee) || brokerFeeCents(quote.ipfsPriorBrokerFees)) {
-        throw new Error('Enter the IPFS quote or agreement reference on each financed policy before presenting these terms.');
+        throw new IpfsAllocationError('Enter the IPFS quote or agreement reference on each financed policy before presenting these terms.');
       }
       continue;
     }
     const group = groups.get(ref) ?? [];
     if (group.length && ipfsFinancedCents(group[0].ipfsAmountFinanced) !== ipfsFinancedCents(quote.ipfsAmountFinanced)) {
-      throw new Error('Use the same amount financed for policies on the same IPFS agreement.');
+      throw new IpfsAllocationError('Use the same amount financed for policies on the same IPFS agreement.');
     }
     group.push(quote);
     groups.set(ref, group);
@@ -40,10 +42,10 @@ export function ipfsOfferGroups<T extends IpfsCollectionSource>(quotes: readonly
 }
 
 function validateAmounts(prior: BoundAmounts, amountFinancedCents: number) {
-  if (prior.amountFinancedCents !== amountFinancedCents) throw new Error('The IPFS amount financed must match the existing agreement for this account.');
+  if (prior.amountFinancedCents !== amountFinancedCents) throw new IpfsAllocationError('The IPFS amount financed must match the existing agreement for this account.');
   if (!Number.isSafeInteger(prior.brokerFeesCents) || prior.brokerFeesCents < 0
     || prior.financedBrokerFeesCents !== Math.min(Math.floor(amountFinancedCents * 3 / 10), prior.brokerFeesCents)) {
-    throw new Error('Review the recorded IPFS agreement allocation before continuing.');
+    throw new IpfsAllocationError('Review the recorded IPFS agreement allocation before continuing.');
   }
 }
 
@@ -54,7 +56,7 @@ export function advanceIpfsAgreement(quote: IpfsCollectionSource, prior?: BoundA
   const brokerFeesCents = (prior?.brokerFeesCents ?? 0) + split.feeCents;
   const financedBrokerFeesCents = (prior?.financedBrokerFeesCents ?? 0) + split.financedFeeCents;
   if (!Number.isSafeInteger(brokerFeesCents) || financedBrokerFeesCents !== Math.min(Math.floor(amountFinancedCents * 3 / 10), brokerFeesCents)) {
-    throw new Error('The broker fee split differs from the remaining cap on this IPFS agreement. Check fees from other policies and bind earlier terms first.');
+    throw new IpfsAllocationError('The broker fee split differs from the remaining cap on this IPFS agreement. Check fees from other policies and bind earlier terms first.');
   }
   return { amountFinancedCents, brokerFeesCents, financedBrokerFeesCents, split };
 }
@@ -68,10 +70,10 @@ export function validateIpfsOffers(offers: Record<string, IpfsFeeOffer>, bound: 
   for (const offer of Object.values(offers).sort((a, b) => a.priorFeeCents - b.priorFeeCents || b.financedFeeCents - a.financedFeeCents)) {
     if (!Number.isSafeInteger(offer.feeCents) || offer.feeCents <= 0 || !Number.isSafeInteger(offer.priorFeeCents) || offer.priorFeeCents < 0
       || offer.financedFeeCents !== Math.min(offer.feeCents, Math.max(0, cap - allocated))) {
-      throw new Error('The proposed fee split conflicts with other policies on this IPFS agreement. Check the agreement reference and broker fees allocated before each policy.');
+      throw new IpfsAllocationError('The proposed fee split conflicts with other policies on this IPFS agreement. Check the agreement reference and broker fees allocated before each policy.');
     }
     allocated += offer.feeCents;
-    if (!Number.isSafeInteger(allocated)) throw new Error('Review the total broker fees on the IPFS agreement.');
+    if (!Number.isSafeInteger(allocated)) throw new IpfsAllocationError('Review the total broker fees on the IPFS agreement.');
   }
 }
 

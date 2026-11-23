@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import type { BrokerFeeQuote } from '../../../../shared/brokerFees';
 import { brokerFeeCents } from '../../../../shared/brokerFees';
 import { ipfsFeeSplit, ipfsFinancedCents } from '../../../../shared/ipfsCollection';
-import { ipfsOfferGroups, normalizeIpfsQuoteRef, validateIpfsOffers, type IpfsAgreementBalance, type IpfsFeeOffer } from '../../../../shared/ipfsAgreementAllocation';
+import { IpfsAllocationError, ipfsOfferGroups, normalizeIpfsQuoteRef, validateIpfsOffers, type IpfsAgreementBalance, type IpfsFeeOffer } from '../../../../shared/ipfsAgreementAllocation';
 import { authorizedQuoteTerms } from '../../../../shared/quoteAuthorization';
 import { feePut, getModel, getRow, type Write } from './store';
 
@@ -35,19 +35,34 @@ export async function ipfsOfferWrites(accountId: string, quotes: readonly Broker
     const prior = await readIpfsAgreementBalance(accountId, reference);
     const amountFinancedCents = ipfsFinancedCents(group[0].ipfsAmountFinanced);
     if (prior && prior.amountFinancedCents !== amountFinancedCents &&
-      (prior.hasBoundTerms || prior.brokerFeesCents || Object.keys(prior.offers ?? {}).length)) throw new Error('The IPFS amount financed must match the existing agreement for this account.');
+      (prior.hasBoundTerms || prior.brokerFeesCents || Object.keys(prior.offers ?? {}).length)) throw new IpfsAllocationError('The IPFS amount financed must match the existing agreement for this account.');
     const balance: IpfsAgreementBalance = prior ?? { kind: 'IPFS_AGREEMENT', id: ipfsAgreementKey(accountId, reference), accountId, amountFinancedCents, brokerFeesCents: 0, financedBrokerFeesCents: 0, version: 0 };
     const offers = new Map(Object.entries(balance.offers ?? {}));
     for (const quote of group) {
       const split = ipfsFeeSplit(quote);
       if (!split.feeCents) continue;
       const termsHash = hash(quote.terms), previous = offers.get(quote.id);
+      let through = expiresAt;
+      if (previous?.termsHash === termsHash) {
+        if (previous.expiresAt === null) through = null;
+        else if (through && previous.expiresAt > through) through = previous.expiresAt;
+      }
       offers.set(quote.id, { feeCents: split.feeCents, financedFeeCents: split.financedFeeCents,
         priorFeeCents: brokerFeeCents(quote.ipfsPriorBrokerFees), termsHash,
-        expiresAt: previous?.termsHash === termsHash && previous.expiresAt === null ? null : expiresAt });
+        expiresAt: through });
     }
     const next = { ...balance, amountFinancedCents, offers: Object.fromEntries(offers) };
     validateIpfsOffers(next.offers, next);
+    if (expiresAt === null) {
+      // A signed down-payment split must survive expiry of another package's
+      // unsigned offer. Terms in this signature are promoted together.
+      const signed = Object.fromEntries([...offers].filter(([, offer]) => offer.expiresAt === null));
+      try { validateIpfsOffers(signed, next); }
+      catch (error) {
+        if (error instanceof IpfsAllocationError) throw new IpfsAllocationError('An earlier policy on this IPFS quote must be signed first. Ask the agency for the current disclosure.');
+        throw error;
+      }
+    }
     // The same version is used by presenting, signing and binding. Concurrent
     // callers must recalculate if the other transaction commits first.
     writes.push(feePut(next, prior));

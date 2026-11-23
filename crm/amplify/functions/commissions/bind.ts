@@ -34,7 +34,7 @@ import {
 } from '../../../../shared/commissions';
 import { db, get, commit, table, type Data, type Transaction } from './store';
 import type { Event } from './handler';
-import { allocateIpfsAgreement, normalizedIpfsRef } from './ipfs-bind';
+import { allocateIpfsAgreement, bindBillingConditions, normalizedIpfsRef } from './ipfs-bind';
 import { bindLinkWrites } from './bind-links';
 
 /** Financial snapshot, policy, quote status and client conversion share one
@@ -297,6 +297,7 @@ export async function bindPolicy(event: Event, input: Data) {
   const accountAccessCheck = capabilityGuards.find(isAccountGuard)?.ConditionCheck;
   const accountCondition = 'updatedAt = :old' +
     (accountAccessCheck?.ConditionExpression ? ` AND (${accountAccessCheck.ConditionExpression})` : '');
+  const billingGuard = bindBillingConditions(quote);
   const guards: Transaction = [
     ...(agreement ? [agreement.write] : []),
     // Binding also updates/checks this Account. Fold the visibility-stage fence
@@ -318,10 +319,11 @@ export async function bindPolicy(event: Event, input: Data) {
         Key: { id: quoteId },
         UpdateExpression: 'SET #s = :bound, updatedAt = :at, lastWriteBy = :actor' +
           (fillQuoteBillType ? ', #bt = :carrierBillType' : ''),
-        ConditionExpression: 'updatedAt = :old AND #s = :status' +
+        ConditionExpression: 'updatedAt = :old AND #s = :status AND ' + billingGuard.expression +
           (fillQuoteBillType ? ' AND (attribute_not_exists(#bt) OR attribute_type(#bt, :nullType))' : ''),
-        ExpressionAttributeNames: { '#s': 'status', ...(fillQuoteBillType ? { '#bt': 'billType' } : {}) },
+        ExpressionAttributeNames: { ...billingGuard.names, '#s': 'status', ...(fillQuoteBillType ? { '#bt': 'billType' } : {}) },
         ExpressionAttributeValues: {
+          ...billingGuard.values,
           ':bound': 'BOUND',
           ':at': at,
           ':actor': access.actor,

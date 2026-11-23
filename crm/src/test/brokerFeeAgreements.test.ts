@@ -240,7 +240,7 @@ it('freezes the externally financed amount, closes stale links, and retains the 
   const original = structuredClone(h.rows.get(pif.agreementId)), signedFile = h.objects.get(original.signedDocumentKey);
   Object.assign(h.models.get('Quote:q1'), { ipfsAmountFinanced: 500, ipfsQuoteRef: 'A' });
   expect((await brokerFeeDisclosure(pif.token)).state).toBe('closed');
-  await expect(prepared([{ ...snapshot(), ipfsAmountFinanced: null }])).rejects.toThrow('package changed');
+  await expect(prepared([{ ...snapshot(), ipfsAmountFinanced: null, ipfsQuoteRef: null }])).rejects.toThrow('package changed');
   const external = await prepared();
   expect(external.agreementId).not.toBe(pif.agreementId);
   expect(await brokerFeeDisclosure(external.token)).toMatchObject({ state: 'closed', requiresIpfsDisclosureVersion: true });
@@ -289,7 +289,8 @@ describe('IPFS proposal and signature cap reservations', () => {
   it('reserves earlier proposals separately from bound allocations while allowing independent equal-sized lender agreements', async () => {
     const first = await prepared([setQuote('q1', 200, 'A')]);
     await expect(prepared([setQuote('q2', 200, 'a')])).rejects.toThrow('other policies');
-    await prepared([setQuote('q2', 200, 'a', 200)]);
+    const second = await prepared([setQuote('q2', 200, 'a', 200)]);
+    await expect(signBrokerFeeDisclosure(second.token, signed)).rejects.toThrow('earlier policy');
     await prepared([setQuote('q3', 200, 'B')]);
     await signBrokerFeeDisclosure(first.token, signed);
     vi.advanceTimersByTime(15 * 86_400_000);

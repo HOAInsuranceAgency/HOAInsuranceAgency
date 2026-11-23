@@ -136,6 +136,9 @@ it('requires the signed current fee disclosure on IPFS and records its collector
       policyId: 'p', ipfsCollectionRef: 'agreement-123', amountCents: 50000, submittedCents: 0, collectedCents: 0,
     }) }) }),
   ]));
+  h.rows.get('Document:doc-bfa_combined')!.brokerFeeAgreementId = 'unrelated-disclosure';
+  await expect(brokerFeeBindWrites(quote, 'p', 'AGENCY', fee.version, 'agreement-123')).rejects.toThrow(/signed disclosure for this IPFS/);
+  h.rows.get('Document:doc-bfa_combined')!.brokerFeeAgreementId = disclosure.id;
   fee.submittedCents = 1;
   await expect(brokerFeeBindWrites(quote, 'p', 'AGENCY', fee.version, 'agreement-123')).rejects.toThrow(/existing HOA fee payment/);
   fee.submittedCents = 0;

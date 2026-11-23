@@ -37,3 +37,19 @@ export function assertPriorIpfsBilling(invoices: Data[], loans: Data[]): Transac
   }
   return checks;
 }
+
+/** Native metadata saves can repeat a timestamp. Fence the billing route and
+ * payment owners themselves in the same write that closes the accepted quote. */
+export function bindBillingConditions(quote: Data) {
+  const names: Record<string,string> = {};
+  const values: Data = {};
+  const conditions: string[] = [];
+  for (const [index, field] of ['billType','clientBillingSelected','carrierBillToAgency','ipfsAmountFinanced',
+    'ipfsPriorBrokerFees','ipfsQuoteRef','sourcePricingInvoiceId','sourcePricingLoanId'].entries()) {
+    const name = '#billing' + index, token = ':billing' + index;
+    names[name] = field;
+    if (quote[field] !== undefined) { values[token] = quote[field]; conditions.push(name + ' = ' + token); }
+    else conditions.push('attribute_not_exists(' + name + ')');
+  }
+  return { expression:conditions.join(' AND '), names, values };
+}

@@ -2,6 +2,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { IPFS_DISCLOSURE_VERSION, BROKER_FEE_PURPOSE, BROKER_FEE_REFUND_TERMS, BROKER_FEE_TERMS_VERSION, brokerFeeCents, type BrokerFeeAgreement, type BrokerFeePublicTerms, type BrokerFeeQuote, type BrokerFeeRecord, type BrokerFeeSignature } from '../../../../shared/brokerFees';
+import { IpfsAllocationError } from '../../../../shared/ipfsAgreementAllocation';
 import { ipfsOfferWrites } from './ipfsAgreements';
 import { ipfsFinancedCents, usesIpfs, validateCollectionRoute } from '../../../../shared/ipfsCollection';
 import { authorizedQuoteTerms } from '../../../../shared/quoteAuthorization';
@@ -184,13 +185,17 @@ async function termsDto(agreement: BrokerFeeAgreement): Promise<BrokerFeePublicT
 const refreshDisclosure = 'Reopen the disclosure from your proposal email and refresh the page to review the IPFS payment instructions.';
 export async function brokerFeeDisclosure(token: string, ipfsDisclosureVersion?: unknown): Promise<BrokerFeePublicTerms> {
   try {
-    const { agreement } = await currentAgreement(token);
+    const { agreement, quotes } = await currentAgreement(token);
     if (agreement.quotes.some(usesIpfs) && ipfsDisclosureVersion !== IPFS_DISCLOSURE_VERSION) {
       return { ok: true, state: 'closed', requiresIpfsDisclosureVersion: true, reason: refreshDisclosure };
     }
+    // A fee allocation in a separate proposal can expire or be amended without
+    // changing this quote's own fields. Revalidate an unbound term before display.
+    const open = agreement.quotes.filter((frozen, i) => usesIpfs(frozen) && quotes[i].status !== 'BOUND');
+    if (open.length) await ipfsOfferWrites(agreement.accountId, open, agreement.signature ? null : agreement.expiresAt);
     return await termsDto(agreement);
   }
-  catch (error) { if (error instanceof Error && (error.message.startsWith('This fee disclosure')||error.message==='Broker fees require agency billing.')) return { ok: true, state: 'closed', reason: error.message }; throw error; }
+  catch (error) { if (error instanceof Error && (error instanceof IpfsAllocationError || error.message.startsWith('This fee disclosure')||error.message==='Broker fees require agency billing.')) return { ok: true, state: 'closed', reason: error.message }; throw error; }
 }
 export async function signBrokerFeeDisclosure(token: string, signer: { signerName: unknown; signerEmail: unknown; signerRole: unknown; consent: unknown; ipfsDisclosureVersion?: unknown }, ip?: string): Promise<BrokerFeePublicTerms> {
   const current = await currentAgreement(token), { agreement, account, settings, quotes, link } = current;

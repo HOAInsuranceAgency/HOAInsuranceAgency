@@ -67,7 +67,7 @@ function IpfsFeeEditor({ policy, refresh }: { policy: CommissionPolicy; refresh:
         policyId: policy.id, version: policy.version, expectedCents: decimal(amount), agreementRef: agreement,
         ...(policy.ipfsCollectionRef ? { revenueKind: 'IPFS_FEE' as const } : {}),
       })}>
-      <p>Enter additional compensation that IPFS agreed to pay the agency for financing. For a shared agreement, enter this term’s share.</p>
+      <p>For a shared agreement, enter this term’s share of the additional lender compensation.</p>
       <div className="form-grid">
         <Field label="Expected fee ($)" value={amount} change={setAmount} />
         <Field label="IPFS agreement reference" value={agreement} change={setAgreement} />
@@ -104,7 +104,6 @@ function LegacyRegistration({ policy, refresh }: { policy: CommissionPolicy; ref
     disabled={!confirmed || !documentId} draft={{ amount, reference, documentId, confirmed }}
     submit={() => commissionAction('registerLegacyIpfsCollection', { policyId: policy.id, version: policy.version,
       agreementRef: reference, amountFinancedCents: decimal(amount), documentId, confirmed })}>
-    <p>Use the signed agreement for a previously bound, fee-free agency-billed term. Registration prevents future HOA client billing for the term.</p>
     <div className="form-grid">
       <Field label="Signed IPFS agreement reference" value={reference} change={setReference} />
       <Field label="Agreement amount financed ($)" value={amount} change={setAmount} />
@@ -116,8 +115,8 @@ function LegacyRegistration({ policy, refresh }: { policy: CommissionPolicy; ref
       </label>
     </div>
     {docs.error && <p role="alert">{docs.error}</p>}
-    {!docs.loading && !docs.error && !docs.data?.length && <p>Upload the signed IPFS agreement under Account documents and link it to this policy or quote.</p>}
-    <label><Input type="checkbox" checked={confirmed} onChange={event => setConfirmed(event.target.checked)} /> I verified this term and its financed amount against the signed agreement. The client owes no broker fee and IPFS collected the down payment.</label>
+    {!docs.loading && !docs.error && !docs.data?.length && <p>In Account documents, upload the signed IPFS agreement and link it to this term.</p>}
+    <label><Input type="checkbox" checked={confirmed} onChange={event => setConfirmed(event.target.checked)} /> Verified zero broker fee and IPFS down payment against the signed agreement</label>
   </ActionForm>;
 }
 
@@ -141,7 +140,6 @@ function Settlement({ policy, sources, refresh }: { policy: CommissionPolicy; so
       lineRef: reference, settlementRef: deposit, receivedOn: date,
       ...(remittanceTotal.trim() ? { settlementTotalCents: decimal(remittanceTotal) } : {}), ...(originalId ? { originalId } : {}),
     })}>
-    {policy.ipfsCollectionRef && <p>Record cash when the agency receives the IPFS remittance. The client’s down payment and installments are collected by IPFS.</p>}
     <div className="form-grid">
       <label className="field">Remittance fee source
         <Select value={source} onChange={event => { setSource(event.target.value as IpfsRevenueKind); setOriginalId(''); }}>
