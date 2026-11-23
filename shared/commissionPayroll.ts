@@ -1,5 +1,5 @@
 import { departureDecision, type CommissionEarning, type CommissionDeparture } from './commissionExceptions';
-import { assertCommissionReviewed, commissionRevenueLabel, day, integer, required, sum, validateAllocationSnapshot, type CommissionBatch, type CommissionPolicy, type CommissionStatement } from './commissions';
+import { assertCommissionReviewed, commissionRevenueLabel, day, integer, isIpfsBrokerEntry, required, sum, validateAllocationSnapshot, type CommissionBatch, type CommissionPolicy, type CommissionStatement } from './commissions';
 
 export const PAYROLL_TIME_ZONE = 'America/New_York';
 export const COMMISSION_START_MONTH = '2026-10';
@@ -96,7 +96,9 @@ type PayrollSource = Pick<CommissionBatch['lines'][number], 'source' | 'entryId'
 
 /** Early IPFS payroll records have only the immutable, server-generated receipt ID. */
 export function payrollRevenueKind(row: PayrollSource) {
-  return row.revenueKind ?? (/^ipfs:[0-9a-f]{64}$/.test(row.entryId) ? 'IPFS_FEE' : undefined);
+  if (row.revenueKind) return row.revenueKind;
+  if (/^ipfs:[0-9a-f]{64}$/.test(row.entryId)) return 'IPFS_FEE';
+  if (isIpfsBrokerEntry(row.entryId)) return 'BROKER_FEE';
 }
 
 export function payrollSourceLabel(row: PayrollSource): string {

@@ -1,3 +1,4 @@
+import { usesIpfs } from "../../../../shared/ipfsCollection";
 import { useRef, useState } from "react";
 import {
   client,
@@ -83,7 +84,7 @@ function AccountPolicies({ accountId }: { accountId: string }) {
       number: (p) => p.policyNumber,
       carrier: (p) => (p.carrierId ? carrierName(p.carrierId) : null),
       lines: (p) => (p.lines ?? []).filter(Boolean).join(", "),
-      billType: (p) => p.billType,
+      billType: (p) => usesIpfs(p) ? "IPFS" : p.billType,
       premium: (p) => p.premium,
       commission: (p) => p.commissionPct,
       effective: (p) => p.effectiveDate,
@@ -162,7 +163,7 @@ function AccountPolicies({ accountId }: { accountId: string }) {
                   <td className="small">{(p.lines ?? []).filter(Boolean).join(", ") || "—"}</td>
                   {/* Blank for anything bound before the field existed, which
                       is honest — "Direct" would be a guess about money. */}
-                  <td className="small">{BILL_TYPE_SHORT[p.billType ?? ""] ?? "—"}</td>
+                  <td className="small">{usesIpfs(p) ? "IPFS" : BILL_TYPE_SHORT[p.billType ?? ""] ?? "—"}{p.carrierBillToAgency && " · carrier direct"}{usesIpfs(p) && p.ipfsAgreementRef && <div>Agreement {p.ipfsAgreementRef}</div>}</td>
                   <td>{fmtMoney(p.premium)}<PolicyCharges source={p} />{(p.brokerFeeRefunded ?? 0) > 0 && <div className="small muted">{fmtMoney(p.brokerFeeRefunded)} HOA broker fee refunded</div>}</td>
                   <td className="small">{commissionCell(p)}</td>
                   <td className="small">{termsSummary(p)}</td>

@@ -1,3 +1,5 @@
+import { policyCollectionWrites, assertHoaCollection, hoaQuoteCollectionGuard } from '../ipfs-invoice';
+import { initialQuotePublicationWrites } from '../quote-source-billing';
 import { assertPremiumNotFinanced } from '../legacy-premium-billing';
 import { isPositiveNonBrokerCharge } from "../../../../shared/invoiceAdjustments";
 import Stripe from 'stripe';
@@ -26,6 +28,9 @@ export async function confirmInvoicePayment(event:{identity?:Identity;request?:R
   const policy=invoice.policyId?await access.requireRecord('Policy',id(invoice.policyId)):undefined;
   const quoteId=id(policy?.quoteId)||id(invoice.quoteId);
   const quote=quoteId?await access.requireRecord('Quote',quoteId):undefined;
+  assertHoaCollection(policy);
+  assertHoaCollection(quote);
+  if (!policy && quote?.status === 'BOUND' && invoice.status !== 'PAID') throw new Error('Roll this invoice onto its bound policy before recording a payment.');
   let source=policy??quote;
   if(source&&source.accountId!==invoice.accountId)throw new Error('The invoice source could not be verified.');
   await assertInitialInvoiceAvailable(invoice);
@@ -46,6 +51,7 @@ export async function confirmInvoicePayment(event:{identity?:Identity;request?:R
     const policyIds = [id(invoice.policyId), ...charges.map(line => id(line.policyId))].filter(Boolean);
     await assertPremiumNotFinanced(String(invoice.accountId), policyIds, quoteId, policy?.sourcePricingLoanId ?? quote?.sourcePricingLoanId);
   }
+  const collectionGuards = invoice.status === 'PAID' ? [] : await policyCollectionWrites(String(invoice.accountId),String(invoice.id),[id(policy?.id),...lines.map(line => id(line.policyId))],id(policy?.id));
   const fee=quoteId?await getFee(quoteId):undefined;
   validateInvoiceSourceCharges({invoice:{accountId:String(invoice.accountId),policyId:invoice.policyId as string|undefined,status:invoice.status as string|undefined,sourcePricingVersion:invoice.sourcePricingVersion as number|undefined},source:source?{id:String(source.id),accountId:String(source.accountId),premium:source.premium as number|undefined,billType:source.billType as string|undefined,passThroughCharges:source.passThroughCharges}:null,lines});
   if(invoice.sourcePricingVersion===2&&invoiceTotals(lines).retail<=0)throw new Error('A zero or credit adjustment is not an incoming payment and cannot be marked paid.');
@@ -66,7 +72,10 @@ export async function confirmInvoicePayment(event:{identity?:Identity;request?:R
   }
   const loanGuards=fee&&allocations.length?await assertNoFeeLoanCheckout(fee):[];
   const workflow=await access.get('Communication',`workflow:${invoice.accountId}`);
-  const guards:Write[]=[activeTeamUserCheck(access.actor),...invoiceGuards,...loanGuards,...lines.map(line=>versionCheck(modelTable('InvoiceLine'),line as {id:string;updatedAt:string})),...(source?[versionCheck(modelTable(policy?'Policy':'Quote'),source as {id:string;updatedAt:string})]:[])];
+  const sourceGuards = !policy && quote && invoice.status !== 'PAID' && invoice.sourcePricingVersion === 1 && !allocations.length
+    ? await initialQuotePublicationWrites(invoice,quote,'manual')
+    : source ? [policy ? versionCheck(modelTable('Policy'),source as {id:string;updatedAt:string}) : hoaQuoteCollectionGuard(source as {id:string;updatedAt:string})] : [];
+  const guards:Write[]=[activeTeamUserCheck(access.actor),...invoiceGuards,...loanGuards,...lines.map(line=>versionCheck(modelTable('InvoiceLine'),line as {id:string;updatedAt:string})),...sourceGuards,...collectionGuards.filter(write => !policy || write.ConditionCheck?.Key?.id !== policy.id)];
   if(!access.admin){
     if(!workflow)throw new Error('The account assignment could not be verified.');
     guards.push({ConditionCheck:{TableName:modelTable('Communication'),Key:{id:`workflow:${invoice.accountId}`},ConditionExpression:'#data = :data',ExpressionAttributeNames:{'#data':'data'},ExpressionAttributeValues:{':data':workflow.data}}});

@@ -19,6 +19,7 @@ import { useEditProtection, useUnsavedChanges } from "../lib/editProtection";
 import { isAuthorizationError } from "../lib/authorizationError";
 import {
   batchPaidCents,
+  isIpfsBrokerEntry,
   sum,
   decimal,
   type CommissionBatch,
@@ -1493,7 +1494,7 @@ function EmployeeCalculations({cycle,workspace}:{cycle:PayrollCycle;workspace:Pa
       {rows.filter(r=>r.producerId===id).map(r=>{
         const source=workspace.sourceLinks?.find(s=>s.policyId===r.policyId&&s.entryId===r.entryId);
         return <div className="commission-work-item" key={payrollRowKey(r)}><div><strong>{r.policyNumber} · {money(r.amountCents)}</strong><p>{r.receivedOn} · agency {money(r.agencyCents)} · {r.shareBps===undefined?'':(r.shareBps/100)+'% share × '}{r.producerBps/100}% saved rate{' · '+payrollSourceLabel(r)}</p></div>
-          <button className="secondary" onClick={()=>navigate(payrollRevenueKind(r) === 'IPFS_FEE' ? {tab:'ipfs',policyId:r.policyId} : source?{tab:'statements',...(source.intakeId?{intakeId:source.intakeId}:{statementId:source.statementId})}:{tab:'ledger',policyId:r.policyId})}>Open source</button>
+          <button className="secondary" onClick={()=>navigate(payrollRevenueKind(r) === 'IPFS_FEE' || isIpfsBrokerEntry(r.entryId) ? {tab:'ipfs',policyId:r.policyId} : source?{tab:'statements',...(source.intakeId?{intakeId:source.intakeId}:{statementId:source.statementId})}:{tab:'ledger',policyId:r.policyId})}>Open source</button>
           {cycle.status==='OPEN' && <button className="secondary" onClick={()=>navigate({tab:'payroll',earningKeys:[payrollRowKey(r)],producerId:r.producerId})}>Prepare off-cycle payment</button>}
         </div>;
       })}

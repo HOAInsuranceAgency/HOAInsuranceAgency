@@ -1,3 +1,4 @@
+import { isIpfsEvidenceDocument } from '../../../shared/ipfsEvidence';
 import { payrollRevenueKind, payrollSourceLabel } from "../../../shared/commissionPayroll";
 import { formatUsdCents as money, formatUsdDollars } from "../../../shared/money";
 import { getCurrentUser } from 'aws-amplify/auth';
@@ -30,6 +31,8 @@ import {
   decimal,
   policyTotals,
   ipfsFeeBalances,
+  isIpfsBrokerEntry,
+  type IpfsRevenueKind,
   commissionRevenueLabel,
   isCarrierReceipt,
   type CommissionEntry,
@@ -277,7 +280,7 @@ function Ledger({
       />
       {!!earningRows.length && <section className="card"><h2>Shared commission & adjustment earnings</h2><div className="commission-scroll"><table><thead><tr>{owner&&<th>Employee</th>}<th>Policy</th><th>Date</th><th>Source</th><th>Share / rate</th><th>Employee amount</th><th>Status</th></tr></thead><tbody>{visibleEarnings.map(e=><tr key={e.id}>{owner&&<td>{e.producerName}</td>}<td>{e.accountName}<div className="small muted">{e.policyNumber}</div></td><td>{e.receivedOn}</td><td>{payrollSourceLabel(e)}</td><td>{e.shareBps===undefined?'—':e.shareBps/100+'% share · '+e.producerBps/100+'% rate'}</td><td>{money(e.amountCents)}</td><td>{e.batchId?(data.batches.find(b=>b.id===e.batchId)?.status??'Allocated'):e.status}
       {owner && e.status==='PAYABLE' && !e.batchId && e.amountCents>0 && <button className="secondary" onClick={()=>navigate({tab:'payroll',earningKeys:[JSON.stringify(['earning',e.id])],producerId:e.producerId})}>Prepare off-cycle payment</button>}
-      {owner && <button className="secondary" onClick={()=>navigate({tab:'exceptions',...(e.adjustmentId?{adjustmentId:e.adjustmentId}:{policyId:e.policyId}),producerId:e.producerId})}>Review source & decisions</button>}</td></tr>)}</tbody></table></div>{pageCount > 1 && <nav aria-label="Earnings history pages"><button className="secondary" disabled={page === 0} onClick={()=>setEarningsPage(page-1)}>Previous earnings</button><span> Page {page+1} of {pageCount} · {filteredEarnings.length} earnings </span><button className="secondary" disabled={page+1 === pageCount} onClick={()=>setEarningsPage(page+1)}>Next earnings</button></nav>}<p className="small muted">Totals and downloads include the complete ledger. Shared earnings reference one agency receipt. Compensation adjustments do not change agency cash received.</p></section>}
+      {owner && <button className="secondary" onClick={()=>navigate((payrollRevenueKind(e)==='IPFS_FEE' || isIpfsBrokerEntry(e.entryId)) && !e.adjustmentId ? {tab:'ipfs',policyId:e.policyId} : {tab:'exceptions',...(e.adjustmentId?{adjustmentId:e.adjustmentId}:{policyId:e.policyId}),producerId:e.producerId})}>Review source & decisions</button>}</td></tr>)}</tbody></table></div>{pageCount > 1 && <nav aria-label="Earnings history pages"><button className="secondary" disabled={page === 0} onClick={()=>setEarningsPage(page-1)}>Previous earnings</button><span> Page {page+1} of {pageCount} · {filteredEarnings.length} earnings </span><button className="secondary" disabled={page+1 === pageCount} onClick={()=>setEarningsPage(page+1)}>Next earnings</button></nav>}<p className="small muted">Totals and downloads include the complete ledger. Shared earnings reference one agency receipt. Compensation adjustments do not change agency cash received.</p></section>}
       {!data.policies.length && !earningRows.length && (
         <div className="card">
           No commission snapshots yet.{' '}
@@ -2147,24 +2150,33 @@ function carrierComparison(line: LineDraft, policy?: CommissionPolicy) {
 }
 
 type Refresh = () => Promise<void>;
+const sourceLabels = { BROKER_FEE: 'Policy broker fee', IPFS_FEE: 'Separate lender compensation' };
+
+function feeSources(policy: CommissionPolicy): IpfsRevenueKind[] {
+  const sources: IpfsRevenueKind[] = [];
+  if (policy.ipfsCollectionRef && policy.brokerFeeCents) sources.push('BROKER_FEE');
+  if (policy.ipfsFeeCents) sources.push('IPFS_FEE');
+  return sources;
+}
 
 function IpfsFees({ policies, refresh }: { policies: CommissionPolicy[]; refresh: Refresh }) {
   const { target } = useCommissionWorkflow();
   const [policyId, setPolicyId] = useState(target.policyId ?? '');
   const policy = policies.find(row => row.id === policyId);
-  const fees = policies.filter(row => (row.ipfsFeeCents ?? 0) > 0);
+  const fees = policies.flatMap(row => feeSources(row).map(source => ({ row, source })));
   return (
     <>
-      <h2>IPFS financing fees</h2>
+      <h2>IPFS remittances</h2>
       {fees.length ? <div className="commission-scroll"><table>
         <thead><tr>
-          <th>Policy term</th><th>IPFS agreement</th><th>Expected</th><th>Received</th>
+          <th>Policy term</th><th>Fee source</th><th>IPFS agreement</th><th>Expected</th><th>Received</th>
           <th>Refunded</th><th>Net received</th><th>Outstanding</th>
         </tr></thead>
-        <tbody>{fees.map(row => {
-          const balance = ipfsFeeBalances(row);
-          return <tr key={row.id}>
-            <td>{row.accountName} · {row.policyNumber} · {row.effectiveDate}</td><td>{row.ipfsAgreementRef}</td>
+        <tbody>{fees.map(({ row, source }) => {
+          const balance = ipfsFeeBalances(row, source);
+          return <tr key={row.id + source}>
+            <td>{row.accountName} · {row.policyNumber} · {row.effectiveDate}</td><td>{sourceLabels[source]}</td>
+            <td>{source === 'BROKER_FEE' ? row.ipfsCollectionRef : row.ipfsAgreementRef}</td>
             <td>{money(balance.expected)}</td><td>{money(balance.collected)}</td>
             <td>{money(balance.refunded)}</td><td>{money(balance.net)}</td><td>{money(balance.outstanding)}</td>
           </tr>;
@@ -2187,22 +2199,68 @@ function IpfsFees({ policies, refresh }: { policies: CommissionPolicy[]; refresh
 function IpfsFeeEditor({ policy, refresh }: { policy: CommissionPolicy; refresh: Refresh }) {
   const [amount, setAmount] = useState(String((policy.ipfsFeeCents ?? 0) / 100));
   const [agreement, setAgreement] = useState(policy.ipfsAgreementRef ?? '');
-  return <>
-    <ActionForm title="Expected IPFS fee" button="Save expected fee" onDone={refresh}
+  const sources = feeSources(policy);
+  const [register, setRegister] = useState(false);
+  const compensationForm = <ActionForm title="Expected lender compensation" button="Save expected fee" onDone={refresh}
       submit={() => commissionAction('saveIpfsFee', {
         policyId: policy.id, version: policy.version, expectedCents: decimal(amount), agreementRef: agreement,
+        ...(policy.ipfsCollectionRef ? { revenueKind: 'IPFS_FEE' } : {}),
       })}>
-      <p>Enter the agency fee recorded in IPFS. For an agreement covering several policies, enter each term’s share.</p>
+      <p>For a shared agreement, enter this term’s share of the additional lender compensation.</p>
       <div className="form-grid">
         <Field label="Expected fee ($)" value={amount} change={setAmount} />
         <Field label="IPFS agreement reference" value={agreement} change={setAgreement} />
       </div>
-    </ActionForm>
-    {!!policy.ipfsFeeCents && <Settlement policy={policy} refresh={refresh} />}
+    </ActionForm>;
+  return <>
+    {policy.ipfsCollectionRef ? <details>
+      <summary>Record separate lender compensation</summary>
+      {compensationForm}
+    </details> : compensationForm}
+    {!policy.ipfsCollectionRef && !policy.brokerFeeCents && <details onToggle={event => setRegister(event.currentTarget.open)}>
+      <summary>Register a previously bound IPFS term</summary>
+      {register && <LegacyRegistration policy={policy} refresh={refresh} />}
+    </details>}
+    {!!sources.length && <Settlement policy={policy} sources={sources} refresh={refresh} />}
   </>;
 }
 
-function Settlement({ policy, refresh }: { policy: CommissionPolicy; refresh: Refresh }) {
+function LegacyRegistration({ policy, refresh }: { policy: CommissionPolicy; refresh: Refresh }) {
+  const [amount, setAmount] = useState('');
+  const [reference, setReference] = useState('');
+  const [documentId, setDocumentId] = useState('');
+  const [confirmed, setConfirmed] = useState(false);
+  const docs = useAsyncResource(async () => {
+    const rows = await listAllPages(async nextToken => {
+      const page = await client.models.Document.listDocumentByEntityId({ entityId: policy.accountId },
+        { filter: { entityType: { eq: 'ACCOUNT' } }, nextToken, selectionSet: ['id', 'name', 's3Key', 'entityType', 'entityId', 'category', 'policyId', 'quoteId', 'policyIds', 'quoteIds'] });
+      if (page.errors?.length) throw new Error(page.errors[0].message);
+      return page;
+    });
+    return rows.filter(doc => isIpfsEvidenceDocument(doc, policy));
+  }, [policy.id, policy.accountId, policy.quoteId], { errorMessage: 'Could not load linked agreement documents.' });
+  return <ActionForm title="Verify existing IPFS collection" button="Register IPFS collection" onDone={refresh}
+    disabled={!confirmed || !documentId}
+    submit={() => commissionAction('registerLegacyIpfsCollection', { policyId: policy.id, version: policy.version,
+      agreementRef: reference, amountFinancedCents: decimal(amount), documentId, confirmed })}>
+    <div className="form-grid">
+      <Field label="Signed IPFS agreement reference" value={reference} change={setReference} />
+      <Field label="Agreement amount financed ($)" value={amount} change={setAmount} />
+      <label className="field">Signed agreement document
+        <select value={documentId} onChange={event => setDocumentId(event.target.value)}>
+          <option value="">Choose an attached document…</option>
+          {docs.data?.map(doc => <option key={doc.id} value={doc.id}>{doc.name}</option>)}
+        </select>
+      </label>
+    </div>
+    {docs.error && <p role="alert">{docs.error}</p>}
+    {!docs.loading && !docs.error && !docs.data?.length && <p>In Account documents, upload the signed IPFS agreement and link it to this term.</p>}
+    <label><input type="checkbox" checked={confirmed} onChange={event => setConfirmed(event.target.checked)} /> Verified zero broker fee and IPFS down payment against the signed agreement</label>
+  </ActionForm>;
+}
+
+function Settlement({ policy, sources, refresh }: { policy: CommissionPolicy; sources: IpfsRevenueKind[]; refresh: Refresh }) {
+  const [source, setSource] = useState(sources[0]);
   const [kind, setKind] = useState<CommissionEntry['kind']>('RECEIPT');
   const [originalId, setOriginalId] = useState('');
   const [amount, setAmount] = useState('');
@@ -2210,16 +2268,23 @@ function Settlement({ policy, refresh }: { policy: CommissionPolicy; refresh: Re
   const [reference, setReference] = useState('');
   const [deposit, setDeposit] = useState('');
   const [remittanceTotal, setRemittanceTotal] = useState('');
-  const entries = policy.entries.filter(entry => entry.revenueKind === 'IPFS_FEE');
+  const entries = policy.entries.filter(entry => entry.revenueKind === source &&
+    (source !== 'BROKER_FEE' || isIpfsBrokerEntry(entry.id)));
   const originals = entries.filter(entry => kind === 'REVERSAL' ? entry.kind !== 'REVERSAL' : entry.kind === 'REVERSAL');
   return <ActionForm title="Reconcile IPFS remittance" button="Post verified settlement"
     onDone={refresh}
     submit={() => commissionAction('postIpfsFee', {
       policyId: policy.id, version: policy.version, kind, amountCents: decimal(amount),
+      ...(policy.ipfsCollectionRef ? { revenueKind: source } : {}),
       lineRef: reference, settlementRef: deposit, receivedOn: date,
       ...(remittanceTotal.trim() ? { settlementTotalCents: decimal(remittanceTotal) } : {}), ...(originalId ? { originalId } : {}),
     })}>
     <div className="form-grid">
+      <label className="field">Remittance fee source
+        <select value={source} onChange={event => { setSource(event.target.value as IpfsRevenueKind); setOriginalId(''); }}>
+          {sources.map(value => <option key={value} value={value}>{sourceLabels[value]}</option>)}
+        </select>
+      </label>
       <label className="field">IPFS transaction
         <select value={kind} onChange={event => { setKind(event.target.value as CommissionEntry['kind']); setOriginalId(''); }}>
           <option value="RECEIPT">Fee received</option>
@@ -2243,6 +2308,6 @@ function Settlement({ policy, refresh }: { policy: CommissionPolicy; refresh: Re
       <Field label="Unique IPFS transaction or allocation reference" value={reference} change={setReference} />
       <Field label="Verified remittance or deposit reference" value={deposit} change={setDeposit} />
     </div>
-    <p className="small">For a shared remittance, enter the verified total for this transaction type, the same deposit reference and a distinct allocation reference per policy. A single-policy remittance uses the allocated fee as its total.</p>
+    <p className="small">Use the verified fee subtotal for this transaction type, excluding premium. For a shared remittance, use the same deposit reference and a distinct allocation reference for each policy and fee source. A single allocation uses its fee amount as the subtotal.</p>
   </ActionForm>;
 }

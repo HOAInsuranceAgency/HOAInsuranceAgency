@@ -148,6 +148,15 @@ export interface CommissionPolicy {
   brokerFeeCents?: number;
   ipfsFeeCents?: number;
   ipfsAgreementRef?: string;
+  /** IPFS collects the client's premium and any placement fee under this agreement. */
+  ipfsCollectionRef?: string;
+  ipfsAmountFinancedCents?: number;
+  ipfsFinancedBrokerFeeCents?: number;
+  ipfsDownPaymentBrokerFeeCents?: number;
+  ipfsConfirmedAt?: string;
+  ipfsConfirmedBy?: string;
+  ipfsLegacyDocumentId?: string;
+  ipfsLegacyEvidence?: { key: string; versionId: string; filename: string; sha256: string };
   producerBps: number;
   agreement: string;
   planVersion: number;
@@ -519,11 +528,16 @@ export function commissionRevenueLabel(kind: CommissionEntry['revenueKind']) {
   if (kind === 'IPFS_FEE') return 'IPFS financing fee';
   return kind === 'BROKER_FEE' ? 'Broker fee' : 'Carrier commission';
 }
-export function ipfsFeeBalances(policy: CommissionPolicy) {
-  const entries = policy.entries.filter(entry => entry.revenueKind === 'IPFS_FEE');
+export type IpfsRevenueKind = 'BROKER_FEE' | 'IPFS_FEE';
+
+export function isIpfsBrokerEntry(entryId: string) {
+  return /^ipfs-broker:[0-9a-f]{64}$/.test(entryId);
+}
+export function ipfsFeeBalances(policy: CommissionPolicy, revenueKind: IpfsRevenueKind = 'IPFS_FEE') {
+  const entries = policy.entries.filter(entry => entry.revenueKind === revenueKind);
   const collected = sum(entries.filter(entry => entry.kind === 'RECEIPT').map(entry => entry.agencyCents));
   const net = sum(entries.map(entry => entry.agencyCents));
-  const expected = policy.ipfsFeeCents ?? 0;
+  const expected = (revenueKind === 'BROKER_FEE' ? policy.brokerFeeCents : policy.ipfsFeeCents) ?? 0;
   return { expected, collected, refunded: collected - net, net, outstanding: expected - collected };
 }
 export function policyTotals(policy: CommissionPolicy) {

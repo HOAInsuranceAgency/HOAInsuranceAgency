@@ -1,3 +1,4 @@
+import { policyCollectionWrites, assertHoaCollection, hoaQuoteCollectionGuard, IpfsInvoiceBlocked } from "../ipfs-invoice";
 import { assertPremiumNotFinanced, LegacyPremiumBillingBlocked } from "../legacy-premium-billing";
 import { captureHandledFailure } from "../monitoring";
 import { initialQuotePublicationWrites } from "../quote-source-billing";
@@ -548,6 +549,7 @@ export const handler = async (event: {
      * policy — and a lost or declined quote bills coverage that will never
      * exist.
      */
+    if (!paymentStatus) { assertHoaCollection(policy); assertHoaCollection(quoteAnchor); }
     if (!paymentStatus && quoteAnchor && !isOpenQuoteStatus(quoteAnchor.status)) {
       return {
         ok: false,
@@ -671,10 +673,17 @@ export const handler = async (event: {
 
     // Completed retries must return before starting another fee link claim.
     // This lease also serializes same-invoice Stripe retries in production.
+    const policyWrites = !paymentStatus && invoiceTotals(lines).retail > 0
+      ? await policyCollectionWrites(invoice.accountId, invoice.id, [...linePolicyIds, ...(headerPolicyId ? [headerPolicyId] : [])], headerPolicyId) : [];
+    const quoteGuard = !paymentStatus && quoteAnchor ? hoaQuoteCollectionGuard(quoteAnchor) : undefined;
+    const sourceWrites = quoteGuard ? [...policyWrites, quoteGuard] : policyWrites;
     const tracked = ["resend", "ses"].includes(process.env.HOA_TRANSACTIONAL_MAIL_PROVIDER ?? "")
-      ? await beginInvoiceSend(invoice, to, event.arguments?.expectedSentAt, { database: ddb })
+      ? await beginInvoiceSend(invoice, to, event.arguments?.expectedSentAt, { database: ddb, sourceWrites })
       : undefined;
     if (tracked?.completed) return tracked.completed;
+    if (!tracked && sourceWrites.length) {
+      await ddb.send(new TransactWriteCommand({ TransactItems: sourceWrites }));
+    }
 
     let disclosureUrl: string | undefined;
     let paymentLabel: string | undefined;
@@ -705,7 +714,7 @@ export const handler = async (event: {
       split,
       allocations,
       feeSendClaim,
-      adjustmentProof?[...adjustmentProof.guards,versionCheck(modelTable('Policy'),adjustmentProof.policy as {id:string;updatedAt:string})]:invoice.sourcePricingVersion===1&&quoteAnchor&&!allocations.length?await initialQuotePublicationWrites(invoice,quoteAnchor):[]
+      adjustmentProof?[...adjustmentProof.guards,versionCheck(modelTable('Policy'),adjustmentProof.policy as {id:string;updatedAt:string})]:invoice.sourcePricingVersion===1&&quoteAnchor&&!allocations.length?await initialQuotePublicationWrites(invoice,quoteAnchor):quoteGuard?[quoteGuard]:[]
     );
 
     /**
@@ -870,7 +879,7 @@ export const handler = async (event: {
     console.log(`send-invoice sent ${invoice.number ?? invoiceId} to ${to.join(", ")}`);
     return result;
   } catch (err) {
-    if (err instanceof SendBlocked || err instanceof LegacyPremiumBillingBlocked || err instanceof InvoiceSendBlocked || err instanceof MailDeliveryError) {
+    if (err instanceof SendBlocked || err instanceof IpfsInvoiceBlocked || err instanceof LegacyPremiumBillingBlocked || err instanceof InvoiceSendBlocked || err instanceof MailDeliveryError) {
       return { ok: false, error: err.message };
     }
     captureHandledFailure(err);

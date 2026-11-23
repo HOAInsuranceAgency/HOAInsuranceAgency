@@ -9,7 +9,7 @@ import { handler } from '../../amplify/functions/broker-fees/handler';
 beforeEach(() => { vi.clearAllMocks(); delete process.env.HOA_MIGRATION_PREVIEW; delete process.env.HOA_MIGRATION_BUSINESS_HELD; h.disclosure.mockResolvedValue({ ok: true, state: 'open' }); h.sign.mockResolvedValue({ ok: true, state: 'signed' }); h.session.mockResolvedValue(undefined); h.account.mockResolvedValue({ id: 'a1' }); h.fees.mockResolvedValue([]); });
 it('accepts Amplify top-level fieldName for public token reads', async () => {
   expect(await handler({ fieldName: 'brokerFeeDisclosure', arguments: { token: 'test-token' } })).toEqual({ ok: true, state: 'open' });
-  expect(h.disclosure).toHaveBeenCalledWith('test-token'); expect(h.session).not.toHaveBeenCalled();
+  expect(h.disclosure).toHaveBeenCalledWith('test-token', undefined); expect(h.session).not.toHaveBeenCalled();
 });
 it('does not let an anonymous caller read account fee status', async () => {
   h.session.mockRejectedValue(new Error('Sign in to access the CRM.'));

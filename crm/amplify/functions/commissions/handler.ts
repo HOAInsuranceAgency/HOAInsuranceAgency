@@ -1,3 +1,5 @@
+import { registerLegacyIpfsCollection } from './ipfs-registration';
+import { ipfsBrokerReceiptWrites } from '../broker-fees/ipfsRemittances';
 import { policyReceiptEarnings, workspaceEarnings } from "./earnings";
 import { payrollRevenueKind } from '../../../../shared/commissionPayroll';
 import { feeReceiptEligible, receiptEarnings, type CommissionEarning } from '../../../../shared/commissionExceptions';
@@ -31,6 +33,7 @@ import {
   validateReceiptForecast,
   carrierReconciliationBalances,
   ipfsFeeBalances,
+  isIpfsBrokerEntry,
   type CommissionReceiptForecast,
   type CommissionAccount,
   MONEY_MAX,
@@ -505,12 +508,18 @@ export async function handler(event: Event) {
       );
       return { ok: true };
     }
+    if (operation === 'registerLegacyIpfsCollection') {
+      await registerLegacyIpfsCollection(input, actor);
+      return { ok: true };
+    }
     if (operation === 'saveIpfsFee' || operation === 'postIpfsFee') {
       const policyId = required(input.policyId, 'a bound policy');
       const policy = await store.get<CommissionPolicy>('POLICY', policyId);
       if (!policy) throw new Error('Commission policy not found.');
-      const balances = ipfsFeeBalances(policy);
       if (operation === 'saveIpfsFee') {
+        if (policy.ipfsCollectionRef && input.revenueKind !== 'IPFS_FEE')
+          throw new Error('Confirm that this is separate lender compensation. The placement fee is already recorded.');
+        const balances = ipfsFeeBalances(policy);
         currentVersion(input, policy);
         const expected = integer(input.expectedCents, 0, MONEY_MAX, 'expected IPFS fee');
         const agreement = expected ? required(input.agreementRef, 'the IPFS agreement reference', 200) : undefined;
@@ -520,6 +529,11 @@ export async function handler(event: Event) {
         await store.commit([change('POLICY', { ...policy, ipfsFeeCents: expected, ipfsAgreementRef: agreement }, policy)], actor);
         return { ok: true };
       }
+      const revenueKind = input.revenueKind ?? (policy.ipfsCollectionRef ? undefined : 'IPFS_FEE');
+      if (revenueKind !== 'IPFS_FEE' && revenueKind !== 'BROKER_FEE')
+        throw new Error('Select the broker fee or separate lender compensation for this remittance.');
+      const agreement = revenueKind === 'BROKER_FEE' ? policy.ipfsCollectionRef : policy.ipfsAgreementRef;
+      const balances = ipfsFeeBalances(policy, revenueKind);
       const receivedOn = day(input.receivedOn);
       if (receivedOn > agencyToday()) throw new Error('A settlement cannot be future dated.');
       const lineRef = required(input.lineRef, 'a unique IPFS transaction or allocation reference', 200);
@@ -531,7 +545,7 @@ export async function handler(event: Event) {
         throw new Error('Choose an IPFS transaction type.');
       const originalId = kind === 'RECEIPT' ? undefined : required(input.originalId, 'the original IPFS transaction');
       const id = hash(lineRef.toLowerCase());
-      const allocation = { id, policyId, transactionKind: kind, lineRef, settlementRef, receivedOn, amount, originalId, settlementTotalCents };
+      const allocation = { id, policyId, revenueKind, transactionKind: kind, lineRef, settlementRef, receivedOn, amount, originalId, settlementTotalCents };
       // A remittance can carry both fees and refunds. Match and cap each signed component
       // to its verified subtotal independently, even when its policies belong to separate accounts.
       const settlementId = hash(JSON.stringify([settlementRef.toLowerCase(), kind]));
@@ -540,7 +554,8 @@ export async function handler(event: Event) {
         store.get<{ id: string; version: number; totalCents: number; allocatedCents: number; receivedOn: string }>('IPFS_SETTLEMENT', settlementId),
       ]);
       if (previous) {
-        if (previous.policyId !== policyId || previous.transactionKind !== kind || previous.receivedOn !== receivedOn ||
+        if (previous.policyId !== policyId || (previous.revenueKind ?? 'IPFS_FEE') !== revenueKind ||
+            previous.transactionKind !== kind || previous.receivedOn !== receivedOn ||
             previous.amount !== amount || previous.originalId !== originalId || previous.settlementRef.toLowerCase() !== settlementRef.toLowerCase() ||
             previous.settlementTotalCents !== settlementTotalCents)
           throw new Error('This IPFS allocation reference was already posted with different details.');
@@ -552,18 +567,22 @@ export async function handler(event: Event) {
       const allocatedCents = (settlement?.allocatedCents ?? 0) + amount;
       if (allocatedCents > settlementTotalCents)
         throw new Error('Allocations exceed the verified IPFS fee total for this remittance.');
-      if (!policy.ipfsAgreementRef || !balances.expected) throw new Error('Record the expected fee and IPFS agreement first.');
+      if (!agreement || !balances.expected)
+        throw new Error(revenueKind === 'BROKER_FEE' ? 'This term has no bound IPFS placement fee.' : 'Record the expected fee and IPFS agreement first.');
       if (kind === 'RECEIPT' && amount > balances.outstanding)
         throw new Error('The receipt exceeds the outstanding IPFS fee. Verify the agreement amount and allocation.');
       const original = originalId ? policy.entries.find(entry => entry.id === originalId) : undefined;
+      if (originalId && revenueKind === 'BROKER_FEE' && !isIpfsBrokerEntry(originalId))
+        throw new Error('Select the original broker fee transaction from an IPFS remittance.');
       const eligible = original?.eligible ?? feeReceiptEligible(policy, receivedOn);
-      const entryId = `ipfs:${id}`;
+      const entryId = revenueKind === 'BROKER_FEE' ? `ipfs-broker:${id}` : `ipfs:${id}`;
       const next = appendEntry(policy, {
-        policyId, lineRef, kind, originalId, eligible, revenueKind: 'IPFS_FEE',
+        policyId, lineRef, kind, originalId, eligible, revenueKind,
         agencyCents: kind === 'REVERSAL' ? -amount : amount,
-        eligibilityNote: `IPFS settlement ${settlementRef} · agreement ${policy.ipfsAgreementRef}`,
+        eligibilityNote: `IPFS settlement ${settlementRef} · agreement ${agreement}`,
       }, { id: entryId, receivedOn }, entryId);
       const entry = next.entries[next.entries.length - 1];
+      const feeWrites = revenueKind === 'BROKER_FEE' ? await ipfsBrokerReceiptWrites(policy, entry) : [];
       const shared = entry.allocationId ? receiptEarnings(next, entry, await policyReceiptEarnings([policy])) : [];
       const reconciliation = await store.get<{ id: string; version: number }>('PAYROLL_STATE', 'reconciliation');
       const holds = await holdReceiptPayroll([{ policy: next, entry, earnings: shared }]);
@@ -574,7 +593,7 @@ export async function handler(event: Event) {
         change('IPFS_TRANSACTION', allocation),
         change('IPFS_SETTLEMENT', { id: settlementId, receivedOn, totalCents: settlementTotalCents, allocatedCents }, settlement),
         change('POLICY', next, policy),
-      ], actor);
+      ], actor, feeWrites);
       return { ok: true };
     }
     if (operation === 'saveReceiptForecast') {
@@ -650,6 +669,14 @@ export async function handler(event: Event) {
           fileSigningOptions,
         );
         return { ok: true, key, url };
+      }
+      if (input.policyId) {
+        const policy = await store.get<CommissionPolicy>('POLICY', required(input.policyId, 'the policy holding the signed agreement'));
+        const archive = policy?.ipfsLegacyEvidence;
+        if (!archive || archive.key !== input.key) throw new Error('The policy has no matching retained IPFS agreement.');
+        return { ok: true, url: await getSignedUrl(s3, new GetObjectCommand({
+          Bucket, Key: archive.key, VersionId: archive.versionId, ResponseContentDisposition: downloadContentDisposition(archive.filename),
+        }), fileSigningOptions) };
       }
       const key = required(input.key, 'a statement file');
       if (!/^statements\/[a-f0-9-]{36}$/.test(key)) throw new Error('Invalid statement file.');

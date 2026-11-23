@@ -341,3 +341,31 @@ describe('outside payment while an invoice send owns the fee', () => {
     expect(paymentRows()).toHaveLength(0); expect(h.models.get('Invoice:i')?.status).toBe('SENT'); expect(h.rows.get('fee:q')?.collectedCents).toBe(0);
   });
 });
+
+it.each(['Quote', 'Policy'])('blocks an HOA manual receipt on an IPFS %s before touching Stripe or recording cash', async model => {
+  const source = { ...quote, ipfsAmountFinanced: 1000 };
+  if (model === 'Policy') {
+    h.models.set('Policy:p', { ...source, id: 'p', quoteId: 'q' });
+    h.models.get('Invoice:i')!.policyId = 'p';
+  } else h.models.set('Quote:q', source);
+  await expect(confirmInvoicePayment(actor, { invoiceId: 'i' })).rejects.toThrow(/IPFS collects/);
+  expect(h.deactivate).not.toHaveBeenCalled();
+  expect(h.transact).not.toHaveBeenCalled();
+  expect(paymentRows()).toEqual([]);
+});
+
+it('recognizes an IPFS policy named only on old invoice lines', async () => {
+  delete h.models.get('Invoice:i')!.quoteId;
+  h.models.get('InvoiceLine:fee-line')!.policyId = 'p';
+  h.models.set('Policy:p', { id:'p', accountId:'a', ipfsAmountFinanced: 1000 });
+  await expect(confirmInvoicePayment(actor,{invoiceId:'i'})).rejects.toThrow(/IPFS collects/);
+  expect(h.transact).not.toHaveBeenCalled();
+});
+
+
+it('refuses a stale quote-only manual receipt after historical IPFS registration', async () => {
+  h.models.get('Quote:q')!.ipfsRegisteredPolicyId = 'legacy-policy';
+  await expect(confirmInvoicePayment(actor,{invoiceId:'i'})).rejects.toThrow(/IPFS collects/);
+  expect(h.deactivate).not.toHaveBeenCalled();
+  expect(h.transact).not.toHaveBeenCalled();
+});

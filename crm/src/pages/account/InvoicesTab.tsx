@@ -1,3 +1,4 @@
+import { usesIpfs } from "../../../../shared/ipfsCollection";
 import { useRef, useState } from "react";
 import {
   client,
@@ -151,6 +152,7 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
         const policy = kind === "policy" ? loaded.policies.find((p) => p.id === anchorId) : null;
         const quote = kind === "quote" ? loaded.quotes.find((q) => q.id === anchorId) : null;
         const source = policy ?? quote;
+        if (usesIpfs(source)) throw new Error("IPFS collects from the client. Skip the HOA CRM invoice.");
         const adjustment = policy ? findAdjustmentOriginal(policy, loaded.invoices, loaded.lines) : null;
         if ((source?.brokerFee ?? 0) > 0 && source?.billType !== "AGENCY") throw new Error("Broker fees require agency billing. Correct the source quote before invoicing.");
         /**
@@ -283,7 +285,7 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
   const busyAnchors = liveAnchorIds(invoices, lines);
   const adjustmentOriginals = new Map(policies.map(policy => [policy.id, findAdjustmentOriginal(policy, invoices, lines)]));
   const initialPolicyIds = new Set(unbilledAgencyPolicies(policies, busyAnchors).map(policy => policy.id));
-  const openPolicies = policies.filter(policy => policy.billType !== "DIRECT" && !busyAnchors.has(policy.id)
+  const openPolicies = policies.filter(policy => !usesIpfs(policy) && policy.billType !== "DIRECT" && !busyAnchors.has(policy.id)
     && (!policy.quoteId || !busyAnchors.has(policy.quoteId))
     && (initialPolicyIds.has(policy.id) || adjustmentOriginals.get(policy.id)));
   const openQuotes = invoiceableQuotes(quotes, busyAnchors, isOpenQuoteStatus);

@@ -147,6 +147,7 @@ it.each([
     'getAccountClassification',
     'saveCarrier',
     'saveReceiptForecast',
+    'registerLegacyIpfsCollection',
     'saveIpfsFee',
     'postIpfsFee',
     'file',

@@ -36,7 +36,7 @@ const claim = { invoiceId: 'i', token: 'stable', createdAt: '2026-11-04T15:00:00
 beforeEach(() => {
   vi.resetAllMocks(); vi.useFakeTimers(); vi.setSystemTime(new Date('2026-11-04T15:00:00Z'));
   vi.spyOn(console, 'log').mockImplementation(() => {}); vi.spyOn(console, 'warn').mockImplementation(() => {}); vi.spyOn(console, 'error').mockImplementation(() => {});
-  vi.stubEnv('HOA_TRANSACTIONAL_MAIL_PROVIDER', 'resend'); vi.stubEnv('STRIPE_SECRET_KEY', 'fixture'); vi.stubEnv('INVOICE_TABLE', 'Invoice');
+  vi.stubEnv('HOA_TRANSACTIONAL_MAIL_PROVIDER', 'resend'); vi.stubEnv('STRIPE_SECRET_KEY', 'fixture'); vi.stubEnv('INVOICE_TABLE', 'Invoice'); vi.stubEnv('BROKER_FEE_TABLE','Fees');
   vi.stubEnv('PF_LOAN_TABLE', ''); vi.stubEnv('SITE_URL', '');
   vi.stubEnv('ACCESS_TABLES', JSON.stringify({ Policy: 'Policy', Quote: 'Quote', Invoice: 'Invoice', InvoiceLine: 'InvoiceLine', PfLoan: 'PfLoan' }));
   vi.stubEnv('ACCESS_INDEXES', JSON.stringify({ 'Invoice.accountId': 'by-account', 'InvoiceLine.invoiceId': 'by-invoice' }));
@@ -541,4 +541,48 @@ describe('actual fee-free initial quote publication',()=>{
     h.records.set('Invoice:other',{id:'other',accountId:'a',quoteId:'q',sourcePricingVersion:1,status:'SENT',updatedAt:'2026-11-04T13:00:00Z',stripePaymentLinkId:'other-link'});
     expect(await send()).toMatchObject({ok:false});expect(h.link).not.toHaveBeenCalled();expect(h.mail).not.toHaveBeenCalled();
   });
+});
+
+it.each(['DRAFT','SENT'])('blocks a payable %s IPFS invoice on both sides of bind, including a fee-free term', async status => {
+  Object.assign(h.quote, { ipfsAmountFinanced: 1000, brokerFee: 0 });
+  Object.assign(h.invoice, { status, stripePaymentLinkId: 'prior', paymentUrl: 'https://example.test/prior' });
+  await expect(send()).resolves.toMatchObject({ ok: false, error: expect.stringContaining('IPFS collects') });
+  h.invoice.policyId = 'p';
+  h.records.set('Policy:p', { ...h.quote, id: 'p', quoteId: 'q', brokerFee: 500 });
+  await expect(send()).resolves.toMatchObject({ ok: false, error: expect.stringContaining('IPFS collects') });
+  expect(h.begin).not.toHaveBeenCalled();
+  expect(h.mail).not.toHaveBeenCalled();
+  expect(h.link).not.toHaveBeenCalled();
+  expect(h.retrieve).not.toHaveBeenCalled();
+});
+
+
+it('rejects a historical quote registered to an IPFS policy before starting a resend', async () => {
+  h.quote.ipfsRegisteredPolicyId = 'legacy-policy';
+  Object.assign(h.invoice, {status:'SENT', sourcePricingVersion:1});
+  await expect(send()).resolves.toMatchObject({ ok:false, error:expect.stringContaining('IPFS collects') });
+  expect(h.begin).not.toHaveBeenCalled();
+  expect(h.mail).not.toHaveBeenCalled();
+  expect(h.link).not.toHaveBeenCalled();
+});
+
+it('fences the original quote and its registration marker before any payable send is reserved', async () => {
+  h.begin.mockRejectedValueOnce(new Error('Concurrent registration.'));
+  await expect(send()).resolves.toMatchObject({ok:false});
+  expect(h.begin).toHaveBeenCalledOnce();
+  const options = h.begin.mock.calls[0][3];
+  const guard = options.sourceWrites.find((write: any) => write.ConditionCheck?.TableName === 'Quote')?.ConditionCheck;
+  expect(guard).toMatchObject({ Key:{id:'q'}, ExpressionAttributeValues:expect.objectContaining({ ':bound':'BOUND', ':account':'a' }) });
+  expect(guard.ConditionExpression).toContain('attribute_not_exists(ipfsRegisteredPolicyId)');
+  expect(h.link).not.toHaveBeenCalled();
+  expect(h.mail).not.toHaveBeenCalled();
+});
+
+
+it('keeps a signed carrier-only client route out of HOA sends without changing historic unflagged direct terms', async () => {
+  Object.assign(h.quote,{clientBillingSelected:true, billType:'DIRECT', brokerFee:0});
+  await expect(send()).resolves.toMatchObject({ok:false, error:expect.stringContaining('carrier bills this client directly')});
+  expect(h.begin).not.toHaveBeenCalled();
+  expect(h.mail).not.toHaveBeenCalled();
+  expect(h.link).not.toHaveBeenCalled();
 });
