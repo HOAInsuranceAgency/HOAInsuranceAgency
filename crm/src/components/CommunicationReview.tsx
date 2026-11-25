@@ -2,12 +2,12 @@ import { useEffect, useRef, useState } from "react";
 import { fmtProviderPhone } from "../lib/client";
 import { communicationRequest as request, type Communication } from "../lib/communications";
 import { useAsyncResource } from "../lib/useAsyncResource";
+import { useMounted } from "../lib/useMounted";
 import { isAuthorizationError } from "../lib/authorizationError";
 
 function useReviewMutation() {
   const [busy, setBusy] = useState(false), [error, setError] = useState("");
-  const pending = useRef(false), mounted = useRef(true);
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const pending = useRef(false), mounted = useMounted();
   async function run(action: () => Promise<unknown>, onSaved: () => void) {
     if (pending.current) return;
     pending.current = true; setBusy(true); setError("");
@@ -109,8 +109,7 @@ function ActivityLinker({ accountId, conversationId, onSaved }: LinkerProps) {
   const [id, setId] = useState(""), [error, setError] = useState(""), [loadingMore, setLoadingMore] = useState(false);
   const rows = useAsyncResource(() => request<{ items: { id: string; communicationId: string; phone?: string; at?: string; resolved?: boolean }[]; nextToken?: string }>("work", { kind: "TRIAGE" }), [accountId, conversationId], { initialData: { items: [] } });
   const currentRows = useRef(rows.data); currentRows.current = rows.data;
-  const pending = useRef(false), mounted = useRef(true);
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const pending = useRef(false), mounted = useMounted();
   return <details><summary>Link a call or text to this conversation</summary><p className="muted small">Review the source before choosing its association.</p>
     {rows.data.items.filter(r => !r.resolved).map(r => <p key={r.id}><button className="link" onClick={() => setId(r.communicationId)}>{r.phone ? fmtProviderPhone(r.phone) : "Unknown contact"} · {r.at ? new Date(r.at).toLocaleString() : "Time unavailable"}</button></p>)}
     {rows.data.nextToken && <button className="link" disabled={loadingMore || rows.loading} onClick={async () => {
