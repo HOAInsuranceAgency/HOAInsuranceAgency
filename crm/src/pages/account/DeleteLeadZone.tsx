@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { remove } from "../../lib/scopedStorage";
 import {
@@ -10,6 +10,7 @@ import {
 import { useIsAdmin } from "../../lib/auth";
 import ConfirmButton from "../../components/ConfirmButton";
 import { communicationRequest } from '../../lib/communications';
+import { useMounted } from '../../lib/useMounted';
 
 /**
  * Leads (and only leads — clients carry bound policies and stay for the
@@ -40,8 +41,7 @@ export function DeleteLeadZone({ account }: { account: Account }) {
   const isAdmin = useIsAdmin();
   const [error, setError] = useState("");
   const navigate = useNavigate();
-  const mounted = useRef(true);
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const mounted = useMounted();
 
   // Throws rather than swallowing: <ConfirmButton> keeps the pair armed on a
   // rejection, so a failed cascade can be retried or backed out of, and the
