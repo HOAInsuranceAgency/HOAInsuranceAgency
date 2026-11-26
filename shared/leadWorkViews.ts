@@ -1,7 +1,3 @@
-import type { LeadTask } from "./leadWorkflow";
-
-export const LEAD_WORK_VIEWS = ["Needs attention", "Upcoming", "All open"] as const;
-export type LeadWorkView = typeof LEAD_WORK_VIEWS[number];
 const agencyDate = new Intl.DateTimeFormat("en-CA", {
   timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
 });
@@ -13,8 +9,4 @@ export function needsAttention(task: { kind?: string; dueAt?: string; blocker?: 
   return !!task.blocker && (task.blocker.reviewAt <= now || dueToday(task.blocker.reviewAt, now)) || ["RESPONSE", "CALLBACK", "CARRIER", "CORRECTION"].includes(task.kind ?? "")
     || !task.dueAt || !Number.isFinite(Date.parse(task.dueAt))
     || Date.parse(task.dueAt) <= Date.parse(now) || dueToday(task.dueAt, now);
-}
-export function workContext(task: Pick<LeadTask, "kind" | "custom">) {
-  if (task.kind === "FOLLOW_UP") return task.custom ? "Follow-up" : "Waiting on prospect";
-  return { RESPONSE: "Reply needed", CALLBACK: "Return call", CARRIER: "Carrier response", DOCUMENTS: "Documents", CORRECTION: "Delivery needs attention", TRIAGE: "Needs linking", FIRST_CONTACT: "First contact", ANNUAL_RETURN: "Next renewal opportunity", PROSPECT_UPDATE: "Keep prospect informed", RENEWAL_START: "Renewal preparation", SUBMISSION: "Carrier submission", QUOTE_TARGET: "Usable quotes", QUOTE_PRESENTATION: "Present quote", BIND: "Binding", SERVICE: "Client service" }[task.kind];
 }
