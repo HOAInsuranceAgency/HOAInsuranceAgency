@@ -1,6 +1,7 @@
 import { Button, type ButtonVariant } from "./ui/Button";
 import { useEffect, useId, useRef, useState } from "react";
 import { friendlyError } from '../lib/client';
+import { useMounted } from '../lib/useMounted';
 
 /**
  * A destructive button that arms itself instead of firing, replacing the
@@ -68,15 +69,8 @@ export default function ConfirmButton({
   const [error, setError] = useState('');
   const pending = useRef(false);
   const cancelRef = useRef<HTMLButtonElement>(null);
-  const alive = useRef(true);
+  const alive = useMounted();
   const messageId = useId();
-
-  useEffect(() => {
-    alive.current = true;
-    return () => {
-      alive.current = false;
-    };
-  }, []);
 
   // Arming removes the button the user just pressed, so put focus somewhere
   // deliberate. Cancel, not confirm: a stray second Enter should back out of a

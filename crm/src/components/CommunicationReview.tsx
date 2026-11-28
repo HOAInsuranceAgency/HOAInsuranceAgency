@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { fmtProviderPhone } from "../lib/client";
 import { communicationRequest as request, type Communication } from "../lib/communications";
 import { useAsyncResource } from "../lib/useAsyncResource";
+import { useMounted } from "../lib/useMounted";
 import { isAuthorizationError } from "../../../shared/authorizationError";
 import { useSaveStatus } from "./SaveStatus";
 
@@ -115,8 +116,7 @@ function ActivityLinker({ accountId, conversationId, onSaved }: LinkerProps) {
   const [id, setId] = useState(""), [error, setError] = useState(""), [loadingMore, setLoadingMore] = useState(false);
   const rows = useAsyncResource(() => request("work", { kind: "TRIAGE" }), [accountId, conversationId], { initialData: { items: [] } , live: true });
   const currentRows = useRef(rows.data); currentRows.current = rows.data;
-  const pending = useRef(false), mounted = useRef(true);
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const pending = useRef(false), mounted = useMounted();
   return <details><summary>Link a call or text to this conversation</summary><p className="muted small">Review the source before choosing its association.</p>
     {rows.data.items.filter(r => !r.resolved).map(r => <p key={r.id}><Button variant="link"  disabled={!r.communicationId} onClick={() => { if (r.communicationId) setId(r.communicationId); }}>{r.phone ? fmtProviderPhone(r.phone) : "Unknown contact"} · {r.at ? new Date(r.at).toLocaleString() : "Time unavailable"}</Button></p>)}
     {rows.data.nextToken && <Button variant="link"  disabled={loadingMore || rows.loading} onClick={async () => {
